@@ -125,6 +125,10 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
   // label never swaps optimistically.
   let pendingControl: PendingControl | null = null;
   let controlError: string | null = null;
+  // Control commands change the session revision. Keep later revisioned
+  // prompt commands behind the full control round-trip so a fast tap on
+  // Send cannot race the model/thinking/fast delta and be rejected stale.
+  let controlBarrier: Promise<void> | null = null;
   /** Challenges the user decided and the shell acknowledged; hidden locally. */
   const decidedChallenges = new Set<string>();
   const listeners = new Set<() => void>();
@@ -224,7 +228,7 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
    * anything but acceptance. Reconciliation is the server's session state
    * arriving as frames — never a local echo.
    */
-  const applyControlCommand = async (
+  const runControlCommand = async (
     control: PendingControl,
     command: string,
     args: Record<string, unknown>,
@@ -246,6 +250,43 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
     else if (outcome.kind === "unknown") controlError = CONTROL_UNKNOWN;
     notify();
     return outcome;
+  };
+
+  const applyControlCommand = (
+    control: PendingControl,
+    command: string,
+    args: Record<string, unknown>,
+  ): Promise<PromptOutcome> => {
+    const previous = controlBarrier;
+    const task =
+      previous === null
+        ? runControlCommand(control, command, args)
+        : previous.then(() => runControlCommand(control, command, args));
+    const barrier = task.then(
+      () => undefined,
+      () => undefined,
+    );
+    controlBarrier = barrier;
+    void barrier.then(() => {
+      if (controlBarrier === barrier) controlBarrier = null;
+    });
+    return task;
+  };
+
+  const waitForControlCommands = async (): Promise<void> => {
+    while (controlBarrier !== null) {
+      const barrier = controlBarrier;
+      await barrier;
+      if (controlBarrier === barrier) return;
+    }
+  };
+
+  const sendAfterControlCommands = async (
+    command: string,
+    args: Record<string, unknown>,
+  ): Promise<PromptOutcome> => {
+    await waitForControlCommands();
+    return sendCommand(command, args, true);
   };
 
   const applyFrame = (frame: TranscriptFrame) => {
@@ -380,13 +421,13 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
 
   const submitPrompt = async (intent: SessionIntent): Promise<PromptOutcome> => {
     if (intent.kind === "prompt") {
-      return sendCommand("session.prompt", { message: intent.text }, true);
+      return sendAfterControlCommands("session.prompt", { message: intent.text });
     }
     if (intent.kind === "steer") {
-      return sendCommand("session.steer", { message: intent.text }, true);
+      return sendAfterControlCommands("session.steer", { message: intent.text });
     }
     if (intent.kind === "followUp") {
-      return sendCommand("session.followUp", { message: intent.text }, true);
+      return sendAfterControlCommands("session.followUp", { message: intent.text });
     }
     if (intent.kind === "setModel") {
       // Session-scoped switch: the host resolves a role or a concrete

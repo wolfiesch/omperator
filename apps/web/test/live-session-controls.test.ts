@@ -309,6 +309,29 @@ describe("control commands leave immediately with exact payloads", () => {
     // The label still shows server truth until a frame confirms the switch.
     expect(after.modelLabel).toBe("Luna 5.6");
   });
+
+  it("holds a fast prompt behind an in-flight model revision", async () => {
+    const { shell, runtime } = await startedRuntime();
+    const gate = deferred<boolean>();
+    shell.commandBehavior = { kind: "defer", gate };
+
+    runtime.dispatch({ kind: "setModel", selector: null, role: "smol" });
+    const prompt = runtime.submitPrompt({
+      kind: "prompt",
+      text: "send after the model switch",
+      attachments: [],
+    });
+
+    expect(runtime.getSnapshot().controls.pendingControl).toBe("model");
+    expect(shell.commandCount("session.prompt")).toBe(0);
+
+    gate.resolve(true);
+    expect((await prompt).kind).toBe("accepted");
+    const commands = shell.commands.map((request) => request.intent.command);
+    expect(commands.indexOf("session.model.set")).toBeGreaterThanOrEqual(0);
+    expect(commands.indexOf("session.prompt")).toBeGreaterThan(commands.indexOf("session.model.set"));
+    expect(runtime.getSnapshot().controls.pendingControl).toBeNull();
+  });
 });
 
 describe("server reconciliation", () => {
