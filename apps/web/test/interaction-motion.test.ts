@@ -4,6 +4,7 @@
 // can't silently ship as a hard pop again.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { decodeCommandResult, decodeHello } from "@t4-code/protocol";
 import { describe, expect, it } from "vite-plus/test";
 
 const SRC = join(import.meta.dirname, "../src");
@@ -168,5 +169,64 @@ describe("session refresh renders without flicker", () => {
     expect(bootstrap).toContain("#161616");
     expect(bootstrap).toContain("tokens.css");
     expect(bootstrap).toContain("omp:workspace:v1");
+  });
+
+  it("boots app-wire hello and image decoders without native Object.hasOwn", () => {
+    const originalHasOwn = Object.getOwnPropertyDescriptor(Object, "hasOwn");
+    try {
+      Object.defineProperty(Object, "hasOwn", {
+        configurable: true,
+        writable: true,
+        value: undefined,
+      });
+      const doc = {
+        documentElement: {
+          classList: { add: () => undefined },
+          style: {} as Record<string, string>,
+          dataset: {} as Record<string, string>,
+        },
+      };
+      const runBootstrap = new Function(
+        "document",
+        "localStorage",
+        "matchMedia",
+        "location",
+        "window",
+        bootstrap,
+      );
+      runBootstrap(
+        doc,
+        { getItem: () => null },
+        () => ({ matches: false }),
+        { hash: "" },
+        { addEventListener: () => undefined },
+      );
+      expect(typeof Object.hasOwn).toBe("function");
+      expect(
+        decodeHello({
+          v: "omp-app/1",
+          type: "hello",
+          protocol: { min: "omp-app/1", max: "omp-app/1" },
+          client: { name: "T4 Code", version: "test", build: "test", platform: "android" },
+          requestedFeatures: ["transcript.images"],
+          savedCursors: [],
+          authentication: { deviceId: "android", deviceToken: "A".repeat(43) },
+        }),
+      ).toMatchObject({ type: "hello", requestedFeatures: ["transcript.images"] });
+      expect(
+        decodeCommandResult("session.image.read", {
+          sha256: "a".repeat(64),
+          mimeType: "image/png",
+          size: 1,
+          offset: 0,
+          nextOffset: 1,
+          complete: true,
+          content: "AA==",
+        }),
+      ).toMatchObject({ mimeType: "image/png", complete: true });
+    } finally {
+      if (originalHasOwn === undefined) delete (Object as { hasOwn?: unknown }).hasOwn;
+      else Object.defineProperty(Object, "hasOwn", originalHasOwn);
+    }
   });
 });

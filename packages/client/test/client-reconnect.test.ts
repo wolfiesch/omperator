@@ -104,7 +104,7 @@ class FakeTransport implements OmpTransport {
   lastClientFrame(): ClientFrame { return decodeClientFrame(this.sent[this.sent.length - 1]!); }
 }
 
-function responseFor(command: CommandFrame, result: unknown = {}): ServerFrame {
+function responseFor(command: CommandFrame, result: Record<string, unknown> = {}): ServerFrame {
   return {
     v: V,
     type: "response",
@@ -112,8 +112,14 @@ function responseFor(command: CommandFrame, result: unknown = {}): ServerFrame {
     commandId: command.commandId,
     hostId: command.hostId,
     ...(command.sessionId === undefined ? {} : { sessionId: command.sessionId }),
+    command: command.command,
     ok: true,
-    result,
+    result: {
+      ...(command.command === "session.attach"
+        ? { attached: true, cursor: { epoch: "epoch-a", seq: 0 } }
+        : {}),
+      ...result,
+    },
   };
 }
 function snapshot(seq = 0, session = SESSION): ServerFrame {

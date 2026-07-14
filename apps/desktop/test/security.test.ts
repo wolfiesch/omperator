@@ -23,6 +23,7 @@ describe("desktop security boundaries", () => {
     expect(contentSecurityPolicy(trusted, false)).not.toContain("ws://127.0.0.1:5173");
     for (const policy of [development, contentSecurityPolicy(trusted, false)]) {
       expect(policy).toContain("font-src 'self' data:");
+      expect(policy).toContain("img-src 'self' data: blob:");
     }
     const production = contentSecurityPolicy(trusted, false);
     expect(production).toContain("script-src 'self'");
@@ -33,6 +34,8 @@ describe("desktop security boundaries", () => {
     const duplicateProduction = duplicateContentSecurityPolicy({ origin: trusted.origin, url: trusted.url }, false);
     expect(duplicateDevelopment).toContain("font-src 'self' data:");
     expect(duplicateProduction).toContain("font-src 'self' data:");
+    expect(duplicateDevelopment).toContain("img-src 'self' data: blob:");
+    expect(duplicateProduction).toContain("img-src 'self' data: blob:");
     expect(duplicateProduction).toContain("script-src 'self'");
     expect(duplicateProduction).not.toContain("script-src 'self' 'unsafe-inline'");
     expect(duplicateProduction).toContain("connect-src 'none'");

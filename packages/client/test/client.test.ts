@@ -144,8 +144,37 @@ class DeferredStore implements CursorStore {
   }
 }
 
-function responseFor(command: CommandFrame, result: unknown = {}): ServerFrame {
-  return { v: V, type: "response", requestId: command.requestId, commandId: command.commandId, hostId: command.hostId, ...(command.sessionId === undefined ? {} : { sessionId: command.sessionId }), ok: true, result };
+function defaultResultFor(command: CommandFrame): Record<string, unknown> {
+  if (command.command === "host.list" || command.command === "session.list") {
+    return {
+      cursor: { epoch: "epoch-a", seq: 0 },
+      sessions: [],
+      totalCount: 0,
+      truncated: false,
+    };
+  }
+  if (command.command === "session.attach") {
+    return { attached: true, cursor: { epoch: "epoch-a", seq: 0 } };
+  }
+  if (command.command === "session.cancel") return { cancelled: true };
+  return {};
+}
+function responseFor(command: CommandFrame, result: Record<string, unknown> = {}): ServerFrame {
+  return {
+    v: V,
+    type: "response",
+    requestId: command.requestId,
+    commandId: command.commandId,
+    hostId: command.hostId,
+    ...(command.sessionId === undefined ? {} : { sessionId: command.sessionId }),
+    command: command.command,
+    ok: true,
+    result: { ...defaultResultFor(command), ...result },
+  };
+}
+
+async function flushMicrotasks(turns = 12): Promise<void> {
+  for (let turn = 0; turn < turns; turn += 1) await Promise.resolve();
 }
 function confirmationFor(command: CommandFrame): ServerFrame {
   return {
@@ -202,8 +231,8 @@ describe("OmpClient protocol state machine", () => {
     const commands = transport.sent.slice(-2).map((raw) => decodeClientFrame(raw)).filter((frame): frame is CommandFrame => frame.type === "command");
     transport.emit(responseFor(commands[1]!, { n: 2 }));
     transport.emit(responseFor(commands[0]!, { n: 1 }));
-    expect((await first).result).toEqual({ n: 1 });
-    expect((await second).result).toEqual({ n: 2 });
+    expect((await first).result).toMatchObject({ n: 1 });
+    expect((await second).result).toMatchObject({ n: 2 });
     await client.close();
   });
   it.each(["approve", "deny"] as const)(
@@ -392,6 +421,88 @@ describe("OmpClient protocol state machine", () => {
     const capabilityClient = await readyClient(noCapability);
     await expect(capabilityClient.command({ hostId: HOST, sessionId: SESSION, command: "session.prompt", args: {} })).rejects.toMatchObject({ code: "capability" });
     await capabilityClient.close();
+  });
+
+  it("retries one rejected hello with the configured compatibility feature set", async () => {
+    const clock = new FakeClock();
+    const hellos: string[][] = [];
+    const first = new FakeTransport({
+      onSend: (frame, transport) => {
+        if (frame.type !== "hello") return;
+        hellos.push([...frame.requestedFeatures]);
+        transport.drop(1008, "invalid frame");
+      },
+    });
+    const second = new FakeTransport({
+      welcome: welcome(),
+      onSend: (frame) => {
+        if (frame.type === "hello") hellos.push([...frame.requestedFeatures]);
+      },
+    });
+    const transports = [first, second];
+    const errors: string[] = [];
+    const client = new OmpClient({
+      transport: () => transports.shift() ?? new FakeTransport(),
+      hostId: HOST,
+      timers: clock,
+      clock,
+      random: () => 0,
+      reconnect: { baseMs: 2, maxMs: 2, attemptCap: 2 },
+      requestedFeatures: ["resume", "prompt.images", "transcript.images"],
+      compatibilityRequestedFeatures: ["resume"],
+    });
+    client.onError((error) => errors.push(error.message));
+
+    const connecting = client.connect();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(client.state).toBe("reconnect-wait");
+    clock.advanceBy(1);
+    await connecting;
+
+    expect(hellos).toEqual([
+      ["resume", "prompt.images", "transcript.images"],
+      ["resume"],
+    ]);
+    expect(errors).toContain(
+      "Host uses an earlier feature set; reconnecting in compatibility mode.",
+    );
+    expect(client.state).toBe("ready");
+    await client.close();
+  });
+
+  it("fails promptly when a host also rejects the compatibility hello", async () => {
+    const clock = new FakeClock();
+    let attempts = 0;
+    const client = new OmpClient({
+      transport: () => {
+        attempts += 1;
+        return new FakeTransport({
+          onSend: (frame, transport) => {
+            if (frame.type === "hello") transport.drop(1008, "invalid frame");
+          },
+        });
+      },
+      hostId: HOST,
+      timers: clock,
+      clock,
+      random: () => 0,
+      reconnect: { baseMs: 2, maxMs: 2, attemptCap: 8 },
+      requestedFeatures: ["resume", "prompt.images", "transcript.images"],
+      compatibilityRequestedFeatures: ["resume"],
+    });
+
+    const connecting = client.connect();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    clock.advanceBy(1);
+
+    await expect(connecting).rejects.toMatchObject({ code: "protocol" });
+    expect(attempts).toBe(2);
+    expect(client.state).toBe("fatal");
+    expect(client.resources().timers).toBe(0);
   });
 
   it("reports bounded decoder diagnostics without echoing frame values", async () => {
@@ -712,8 +823,49 @@ describe("OmpClient protocol state machine", () => {
     await client.close();
     await expect(first).rejects.toMatchObject({ code: "closed" });
     const startup = new OmpClient({ transport: async () => { throw new Error("startup"); }, hostId: HOST, reconnect: { attemptCap: 0 } });
+    const startupErrors: string[] = [];
+    const stopStartupErrors = startup.onError((error) => startupErrors.push(error.message));
     await expect(startup.connect()).rejects.toMatchObject({ code: "transport" });
+    expect(startupErrors).toContain("transport error");
+    expect(startup.state).toBe("fatal");
+    stopStartupErrors();
     expect(startup.resources()).toEqual({ timers: 0, socket: false, socketHandlers: 0, pending: 0, cursorSaves: 0, listeners: 0 });
+  });
+
+  it("shares a pending transport open and recovers when the next factory succeeds", async () => {
+    const clock = new FakeClock();
+    let releaseFirst!: () => void;
+    const first = new Promise<OmpTransport>((_resolve, reject) => {
+      releaseFirst = () => reject(new Error("open timed out"));
+    });
+    const second = new FakeTransport({ welcome: welcome() });
+    let factoryCalls = 0;
+    const client = new OmpClient({
+      transport: () => {
+        factoryCalls += 1;
+        return factoryCalls === 1 ? first : second;
+      },
+      hostId: HOST,
+      timers: clock,
+      clock,
+      random: () => 0,
+      reconnect: { baseMs: 2, maxMs: 2, attemptCap: 2 },
+    });
+
+    const firstConnect = client.connect();
+    const secondConnect = client.connect();
+    await flushMicrotasks();
+    expect(client.state).toBe("connecting");
+    expect(factoryCalls).toBe(1);
+
+    releaseFirst();
+    await flushMicrotasks();
+    expect(client.state).toBe("reconnect-wait");
+    clock.advanceBy(1);
+    await Promise.all([firstConnect, secondConnect]);
+    expect(factoryCalls).toBe(2);
+    expect(client.state).toBe("ready");
+    await client.close();
   });
 });
 

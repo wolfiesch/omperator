@@ -291,8 +291,8 @@ importers:
   packages/protocol:
     dependencies:
       '@oh-my-pi/app-wire':
-        specifier: file:../../vendor/app-wire/oh-my-pi-app-wire-0.5.3.tgz
-        version: file:vendor/app-wire/oh-my-pi-app-wire-0.5.3.tgz
+        specifier: file:../../vendor/app-wire/oh-my-pi-app-wire-0.5.5.tgz
+        version: file:vendor/app-wire/oh-my-pi-app-wire-0.5.5.tgz
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -638,9 +638,9 @@ packages:
     resolution: {integrity: sha512-IYqDGiTXab6FniAgnSdZwgWbomxpy9FtYvLKs7wCUs2a8RkITG+DFGO1DM9cr+E3/RgADRpFjrKVaJ1z6sjtEg==}
     engines: {node: '>= 20.19.0'}
 
-  '@oh-my-pi/app-wire@file:vendor/app-wire/oh-my-pi-app-wire-0.5.3.tgz':
-    resolution: {integrity: sha512-gYmwAFDw4TVtiR3lRzpmbTA8Uk+YuVDbv100HUjDUNVnnDOI3cXxYfKVv6HJneKmflOux1Yu4s7N97fsCwBdMA==, tarball: file:vendor/app-wire/oh-my-pi-app-wire-0.5.3.tgz}
-    version: 0.5.3
+  '@oh-my-pi/app-wire@file:vendor/app-wire/oh-my-pi-app-wire-0.5.5.tgz':
+    resolution: {integrity: sha512-1fNE37IRSz3Mp583YlF4Su0mT8xUE8UzAHUTRZB85ahvrmMdPnO8ZBQsaocOQN3A9Yk+bqEKTvP7ow56IvlisA==, tarball: file:vendor/app-wire/oh-my-pi-app-wire-0.5.5.tgz}
+    version: 0.5.5
     engines: {bun: '>=1.3.14'}
 
   '@oxc-project/runtime@0.138.0':
@@ -3737,7 +3737,7 @@ snapshots:
 
   '@noble/hashes@2.2.0': {}
 
-  '@oh-my-pi/app-wire@file:vendor/app-wire/oh-my-pi-app-wire-0.5.3.tgz': {}
+  '@oh-my-pi/app-wire@file:vendor/app-wire/oh-my-pi-app-wire-0.5.5.tgz': {}
 
   '@oxc-project/runtime@0.138.0': {}
 

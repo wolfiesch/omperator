@@ -25,6 +25,11 @@ import {
   type ThinkingLevel,
 } from "./intents.ts";
 import type { ComposerControlsSnapshot } from "./session-controls.ts";
+import {
+  createTranscriptImageSource,
+  TRANSCRIPT_IMAGE_FIXTURE_REASON,
+  type TranscriptImageSource,
+} from "./transcript-images.ts";
 
 /** How current this session's connection is; mirrors shell freshness. */
 export type SessionLink = "live" | "cached" | "offline";
@@ -63,6 +68,8 @@ export type PromptOutcome =
   | { readonly kind: "unknown"; readonly reason: string };
 
 export interface SessionRuntime {
+  /** Bounded, metadata-authorized reads for durable transcript images. */
+  readonly transcriptImages: TranscriptImageSource;
   getSnapshot(): SessionRuntimeSnapshot;
   subscribe(listener: () => void): () => void;
   dispatch(intent: SessionIntent): void;
@@ -109,6 +116,10 @@ export function createFixtureSessionRuntime(options: FixtureRuntimeOptions): Ses
   const pendingTicks: TranscriptFrame[][] = [];
   let timer: ReturnType<typeof setInterval> | null = null;
   let paused = false;
+  const transcriptImages = createTranscriptImageSource({
+    availability: { available: false, reason: TRANSCRIPT_IMAGE_FIXTURE_REASON },
+    readChunk: async () => ({ accepted: false }),
+  });
 
   const notify = () => {
     snapshot = null;
@@ -156,6 +167,7 @@ export function createFixtureSessionRuntime(options: FixtureRuntimeOptions): Ses
   ensureTimer();
 
   return {
+    transcriptImages,
     getSnapshot() {
       if (snapshot === null) {
         const controls: ComposerControlsSnapshot = {
@@ -266,6 +278,7 @@ export function createFixtureSessionRuntime(options: FixtureRuntimeOptions): Ses
         clearInterval(timer);
         timer = null;
       }
+      transcriptImages.dispose();
       listeners.clear();
     },
   };

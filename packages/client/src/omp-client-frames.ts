@@ -66,7 +66,7 @@ export function sendClientHello(
     v: PROTOCOL_VERSION,
     type: "hello",
     protocol: { min: PROTOCOL_VERSION, max: PROTOCOL_VERSION },
-    client: options.client ?? { name: "t4-code", version: "0.1.11", build: "client", platform: "electron" },
+    client: options.client ?? { name: "t4-code", version: "0.1.12", build: "client", platform: "electron" },
     requestedFeatures: [...(options.requestedFeatures ?? ["resume"])],
     savedCursors,
     ...(options.capabilities === undefined ? {} : { capabilities: { client: [...options.capabilities] } }),

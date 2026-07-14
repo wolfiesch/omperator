@@ -19,6 +19,10 @@ import {
   type TranscriptNotice,
   type TranscriptProjection,
 } from "./projection.ts";
+import {
+  transcriptImagesFromEntry,
+  type TranscriptImageReference,
+} from "./image-metadata.ts";
 
 /** Pure elapsed formatter: "42s" under a minute, then "3m 7s". */
 export function formatElapsed(fromIso: string, nowMs: number): string {
@@ -35,6 +39,8 @@ export type TranscriptRow =
       readonly role: "user" | "assistant";
       readonly text: string;
       readonly reasoning: string;
+      readonly images: readonly TranscriptImageReference[];
+      readonly imageIssue: string | null;
       /** Live rows stream in place; settled rows come from durable entries. */
       readonly live: boolean;
       readonly startedAt: string;
@@ -42,7 +48,7 @@ export type TranscriptRow =
   | {
       readonly id: string;
       readonly kind: "tool-group";
-      readonly calls: readonly ToolCall[];
+      readonly calls: readonly TranscriptToolCall[];
       /** True while any call in the group is still running. */
       readonly running: boolean;
     }
@@ -63,6 +69,11 @@ export type TranscriptRow =
       readonly kind: "working";
       readonly startedAt: string;
     };
+
+export interface TranscriptToolCall extends ToolCall {
+  readonly images: readonly TranscriptImageReference[];
+  readonly imageIssue: string | null;
+}
 
 export interface AttentionState {
   readonly approval: ApprovalRequest | null;
@@ -92,8 +103,9 @@ function textOf(data: Record<string, unknown>, key: string): string {
 }
 
 /** Durable tool entries fold into synthetic settled ToolCalls. */
-function toolCallFromEntry(entry: DurableEntry): ToolCall {
+function toolCallFromEntry(entry: DurableEntry): TranscriptToolCall {
   const data = entry.data;
+  const transcriptImages = transcriptImagesFromEntry(entry);
   return {
     callId: entry.id,
     tool: textOf(data, "tool") || "tool",
@@ -104,12 +116,14 @@ function toolCallFromEntry(entry: DurableEntry): ToolCall {
     progress: [],
     result: data.result === undefined || data.result === null ? null : plainRecord(data.result),
     endedAt: entry.timestamp,
+    images: transcriptImages.images,
+    imageIssue: transcriptImages.issue,
   };
 }
 
 function rowsFromEntries(entries: readonly DurableEntry[]): TranscriptRow[] {
   const rows: TranscriptRow[] = [];
-  let pendingTools: ToolCall[] = [];
+  let pendingTools: TranscriptToolCall[] = [];
   let pendingToolGroupId = "";
 
   const flushTools = () => {
@@ -129,12 +143,15 @@ function rowsFromEntries(entries: readonly DurableEntry[]): TranscriptRow[] {
       case "message": {
         flushTools();
         const role = textOf(entry.data, "role") === "user" ? "user" : "assistant";
+        const transcriptImages = transcriptImagesFromEntry(entry);
         rows.push({
           id: entry.id,
           kind: "message",
           role,
           text: textOf(entry.data, "text"),
           reasoning: textOf(entry.data, "reasoning"),
+          images: transcriptImages.images,
+          imageIssue: transcriptImages.issue,
           live: false,
           startedAt: entry.timestamp,
         });
@@ -202,7 +219,11 @@ export function deriveTranscriptRows(projection: TranscriptProjection): Transcri
   const rows = rowsFromEntries(projection.entries);
 
   if (projection.toolCalls.size > 0) {
-    const calls = [...projection.toolCalls.values()];
+    const calls: TranscriptToolCall[] = [...projection.toolCalls.values()].map((call) => ({
+      ...call,
+      images: [],
+      imageIssue: null,
+    }));
     rows.push({
       id: "live-tools",
       kind: "tool-group",
@@ -218,6 +239,8 @@ export function deriveTranscriptRows(projection: TranscriptProjection): Transcri
       role: message.role,
       text: message.text,
       reasoning: message.reasoning,
+      images: [],
+      imageIssue: null,
       live: true,
       startedAt: message.startedAt,
     });
@@ -270,7 +293,29 @@ export interface StableRowsState {
   readonly result: TranscriptRow[];
 }
 
-function toolCallsEqual(a: ToolCall, b: ToolCall): boolean {
+function imageReferencesEqual(
+  left: readonly TranscriptImageReference[],
+  right: readonly TranscriptImageReference[],
+): boolean {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    const a = left[index];
+    const b = right[index];
+    if (
+      a === undefined ||
+      b === undefined ||
+      a.entryId !== b.entryId ||
+      a.sha256 !== b.sha256 ||
+      a.mimeType !== b.mimeType
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function toolCallsEqual(a: TranscriptToolCall, b: TranscriptToolCall): boolean {
   if (a === b) return true;
   if (
     a.callId !== b.callId ||
@@ -281,6 +326,8 @@ function toolCallsEqual(a: ToolCall, b: ToolCall): boolean {
     a.endedAt !== b.endedAt ||
     a.args !== b.args ||
     a.result !== b.result ||
+    a.imageIssue !== b.imageIssue ||
+    !imageReferencesEqual(a.images, b.images) ||
     a.progress.length !== b.progress.length
   ) {
     return false;
@@ -300,6 +347,8 @@ function rowsEqual(a: TranscriptRow, b: TranscriptRow): boolean {
         a.role === b.role &&
         a.text === b.text &&
         a.reasoning === b.reasoning &&
+        a.imageIssue === b.imageIssue &&
+        imageReferencesEqual(a.images, b.images) &&
         a.live === b.live &&
         a.startedAt === b.startedAt
       );

@@ -98,6 +98,7 @@ export class OmpClient {
   private authenticationValue: "local" | "pairing-required" | "paired" | undefined;
   private granted = new Set<string>();
   private closedByUser = false;
+  private compatibilityFallbackUsed = false;
   private connectWaiters: ConnectWaiter[] = [];
 
   constructor(options: OmpClientOptions) {
@@ -214,7 +215,13 @@ export class OmpClient {
     if (isTerminalState(this.stateValue)) throw this.error("closed", "client is closed");
     const ready = new Promise<void>((resolve, reject) => this.connectWaiters.push({ resolve, reject }));
     this.closedByUser = false;
-    if (this.stateValue === "idle") this.connection.begin();
+    if (this.stateValue === "idle") {
+      // The transport factory may itself await a WebSocket/Unix-socket open.
+      // Publish connecting before that await so failures can legally enter
+      // reconnect-wait/fatal and concurrent connect() calls share one attempt.
+      this.transition("connecting");
+      this.connection.begin();
+    }
     return ready;
   }
 
@@ -355,8 +362,15 @@ export class OmpClient {
     }
   }
   private sendHello(): void {
+    const helloOptions =
+      this.compatibilityFallbackUsed && this.options.compatibilityRequestedFeatures !== undefined
+        ? {
+            ...this.options,
+            requestedFeatures: this.options.compatibilityRequestedFeatures,
+          }
+        : this.options;
     sendClientHello(
-      this.options,
+      helloOptions,
       [...this.cursorJournal.records.values()],
       (encoded) => this.connection.send(encoded),
       (input) => decodeOutgoingFrame(input),
@@ -506,8 +520,28 @@ export class OmpClient {
     if (pending?.kind === "pair") this.pendingRequests.settle(id, undefined, this.error("auth", "pairing request failed", false, { code: frame.code }));
   }
 
-  private handleDisconnect(_code?: number, _reason?: string): void {
+  private handleDisconnect(code?: number, reason?: string): void {
     if (this.closedByUser || isTerminalState(this.stateValue)) return;
+    const helloRejected =
+      this.stateValue === "handshaking" && code === 1008 && reason?.trim() === "invalid frame";
+    if (helloRejected) {
+      if (
+        !this.compatibilityFallbackUsed &&
+        this.options.compatibilityRequestedFeatures !== undefined
+      ) {
+        this.compatibilityFallbackUsed = true;
+        this.emitError(
+          this.error(
+            "protocol",
+            "Host uses an earlier feature set; reconnecting in compatibility mode.",
+            true,
+          ),
+        );
+      } else {
+        this.fatal(this.error("protocol", "Host rejected the protocol hello."));
+        return;
+      }
+    }
     this.clearTimer("handshakeTimer");
     this.heartbeatNonce = undefined;
     this.reconnectHealth.clear();

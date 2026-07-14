@@ -21,8 +21,13 @@ export function resolveReducedMotion(
 // across renders.
 function subscribe(onChange: () => void): () => void {
 	const mediaQuery = window.matchMedia(REDUCED_MOTION_QUERY);
-	mediaQuery.addEventListener("change", onChange);
-	return () => mediaQuery.removeEventListener("change", onChange);
+	if (typeof mediaQuery.addEventListener === "function") {
+		mediaQuery.addEventListener("change", onChange);
+		return () => mediaQuery.removeEventListener("change", onChange);
+	}
+	// Android System WebView before MediaQueryList EventTarget support.
+	mediaQuery.addListener(onChange);
+	return () => mediaQuery.removeListener(onChange);
 }
 
 function getSnapshot(): boolean {

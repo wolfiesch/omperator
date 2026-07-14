@@ -42,8 +42,13 @@ function pairingWelcome(host = "host-fixture"): WelcomeFrame {
 }
 class Transport implements OmpTransport {
   private readonly helloFrame: WelcomeFrame;
-  constructor(helloFrame: WelcomeFrame = welcome()) {
+  private readonly helloRejection: { readonly code: number; readonly reason: string } | undefined;
+  constructor(
+    helloFrame: WelcomeFrame = welcome(),
+    helloRejection?: { readonly code: number; readonly reason: string },
+  ) {
     this.helloFrame = helloFrame;
+    this.helloRejection = helloRejection;
   }
   readonly sent: string[] = [];
   closed = false;
@@ -55,8 +60,15 @@ class Transport implements OmpTransport {
   send(data: string): void {
     this.sent.push(data);
     for (const listener of this.sentListeners) listener();
-    if (JSON.parse(data).type === "hello")
-      for (const listener of this.messages) listener(JSON.stringify(this.helloFrame));
+    if (JSON.parse(data).type === "hello") {
+      if (this.helloRejection !== undefined) {
+        for (const listener of this.closes) {
+          listener(this.helloRejection.code, this.helloRejection.reason);
+        }
+      } else {
+        for (const listener of this.messages) listener(JSON.stringify(this.helloFrame));
+      }
+    }
   }
   waitForSent(index: number): Promise<Record<string, unknown>> {
     const existing = this.sent[index];
@@ -153,6 +165,37 @@ function manager(
 }
 
 describe("desktop target manager boundaries", () => {
+  it("falls back from both image features for a pre-image appserver", async () => {
+    const transports: Transport[] = [];
+    const runtime = new DesktopTargetManager({
+      cursorStore: new Store(),
+      transportFactory: () => {
+        const next = new Transport(
+          welcome(),
+          transports.length === 0 ? { code: 1008, reason: "invalid frame" } : undefined,
+        );
+        transports.push(next);
+        return next as never;
+      },
+      events: { onFrame: () => {}, onState: () => {}, onError: () => {} },
+    });
+
+    await runtime.connect();
+
+    expect(transports).toHaveLength(2);
+    const firstHello = JSON.parse(transports[0]?.sent[0] ?? "{}") as {
+      requestedFeatures?: string[];
+    };
+    const fallbackHello = JSON.parse(transports[1]?.sent[0] ?? "{}") as {
+      requestedFeatures?: string[];
+    };
+    expect(firstHello.requestedFeatures).toContain("prompt.images");
+    expect(firstHello.requestedFeatures).toContain("transcript.images");
+    expect(fallbackHello.requestedFeatures).not.toContain("prompt.images");
+    expect(fallbackHello.requestedFeatures).not.toContain("transcript.images");
+    await runtime.close();
+  });
+
   it("serializes concurrent target lifecycle and closes each generation", async () => {
     const transports: Transport[] = [];
     const registry = new Registry();

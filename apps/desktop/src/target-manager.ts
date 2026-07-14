@@ -7,6 +7,12 @@ import { createLocalTransport, type UnixWebSocketTransport } from "./transport.t
 import { createRemoteWebSocketTransport, type RemoteWebSocketTransport } from "./remote-runtime/transport.ts";
 import { validateRemoteTarget, type CredentialStore, type PublicRemoteTarget, type RemoteTargetRecord, type RemoteTargetRegistry } from "./remote-runtime/registry.ts";
 const DEFAULT_CAPABILITIES: readonly DeviceCapability[] = Object.freeze([...DEVICE_CAPABILITIES]);
+const REQUESTED_FEATURES: readonly string[] = ADDITIVE_FEATURES;
+const COMPATIBILITY_FEATURES: readonly string[] = Object.freeze(
+  REQUESTED_FEATURES.filter(
+    (feature) => feature !== "prompt.images" && feature !== "transcript.images",
+  ),
+);
 
 export type DesktopTargetState = "disconnected" | "connecting" | "connected" | "pairing-required" | "error";
 export interface PublicDesktopTarget {
@@ -331,8 +337,9 @@ export class DesktopTargetManager {
       }),
       cursorStore: this.cursorStoreFactory(targetId),
       capabilities: requestedCapabilities,
-      requestedFeatures: ADDITIVE_FEATURES,
-      client: { name: "T4 Code", version: "0.1.11", build: "desktop", platform: process.platform },
+      requestedFeatures: REQUESTED_FEATURES,
+      compatibilityRequestedFeatures: COMPATIBILITY_FEATURES,
+      client: { name: "T4 Code", version: "0.1.12", build: "desktop", platform: process.platform },
       reconnect: { attemptCap: 12, baseMs: 250, maxMs: 10_000 },
     };
     const client = createOmpClient(clientOptions);

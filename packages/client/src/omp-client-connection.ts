@@ -81,8 +81,8 @@ export class OmpClientConnection {
         }),
       ];
       this.callbacks.connected(transport, generation);
-    }).catch(() => {
-      if (generation === this.generationValue) this.callbacks.close(undefined, "transport unavailable");
+    }).catch((error: unknown) => {
+      if (generation === this.generationValue) this.callbacks.error(error);
     });
   }
 

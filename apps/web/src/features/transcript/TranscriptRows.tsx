@@ -24,10 +24,12 @@ import {
 } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 
+import type { TranscriptImageSource } from "../session-runtime/transcript-images.ts";
 import { useAnchoredDisclosure } from "./disclosure-anchor.tsx";
 import { CopyButton, Markdown } from "./Markdown.tsx";
 import type { ToolCall, TranscriptNotice } from "./projection.ts";
 import { formatElapsed, type TranscriptRow } from "./rows.ts";
+import { TranscriptImages } from "./TranscriptImages.tsx";
 
 // ---------------------------------------------------------------------------
 // Self-ticking elapsed label
@@ -97,12 +99,24 @@ function ReasoningDisclosure({ reasoning }: { readonly reasoning: string }) {
   );
 }
 
-function MessageRow({ row }: { readonly row: Extract<TranscriptRow, { kind: "message" }> }) {
+function MessageRow({
+  row,
+  imageSource,
+}: {
+  readonly row: Extract<TranscriptRow, { kind: "message" }>;
+  readonly imageSource: TranscriptImageSource;
+}) {
   if (row.role === "user") {
     return (
       <div className="group/message flex justify-end py-2">
         <div className="relative max-w-[85%] rounded-lg bg-secondary px-3 py-2">
           <Markdown text={row.text} />
+          <TranscriptImages
+            images={row.images}
+            issue={row.imageIssue}
+            label="Attached"
+            source={imageSource}
+          />
           <span className="mt-1 flex justify-end opacity-100 transition-opacity duration-(--motion-duration-fast) sm:absolute sm:-left-8 sm:top-1.5 sm:mt-0 sm:block sm:opacity-0 sm:focus-within:opacity-100 sm:group-hover/message:opacity-100">
             <CopyButton label="Copy message" text={row.text} />
           </span>
@@ -114,6 +128,12 @@ function MessageRow({ row }: { readonly row: Extract<TranscriptRow, { kind: "mes
     <div className="group/message py-2">
       {row.reasoning !== "" && <ReasoningDisclosure reasoning={row.reasoning} />}
       <Markdown text={row.text} />
+      <TranscriptImages
+        images={row.images}
+        issue={row.imageIssue}
+        label="Response"
+        source={imageSource}
+      />
       <div
         className={cn(
           "mt-1 flex h-11 items-center gap-1 opacity-100 transition-opacity duration-(--motion-duration-fast) sm:h-6 sm:opacity-0 sm:focus-within:opacity-100 sm:group-hover/message:opacity-100",
@@ -247,9 +267,11 @@ function DiffBody({ diff }: { readonly diff: string }) {
 const ToolCallRow = memo(function ToolCallRow({
   call,
   nowMs,
+  imageSource,
 }: {
-  readonly call: ToolCall;
+  readonly call: Extract<TranscriptRow, { kind: "tool-group" }>["calls"][number];
   readonly nowMs: number;
+  readonly imageSource: TranscriptImageSource;
 }) {
   const [open, setOpen] = useState(false);
   const anchoredToggle = useAnchoredDisclosure();
@@ -301,6 +323,13 @@ const ToolCallRow = memo(function ToolCallRow({
           {call.progress.join("\n")}
         </pre>
       )}
+      <TranscriptImages
+        className="mr-1 ml-7"
+        images={call.images}
+        issue={call.imageIssue}
+        label={`${meta?.label ?? call.tool} result`}
+        source={imageSource}
+      />
       <AnimatedHeight>
         {open && (
           <div className="disclosure-content-enter mt-1 mb-1.5 ml-7 space-y-1.5">
@@ -337,14 +366,16 @@ const ToolCallRow = memo(function ToolCallRow({
 function ToolGroupRow({
   row,
   nowMs,
+  imageSource,
 }: {
   readonly row: Extract<TranscriptRow, { kind: "tool-group" }>;
   readonly nowMs: number;
+  readonly imageSource: TranscriptImageSource;
 }) {
   return (
     <div className="my-1.5 rounded-lg border border-border/60 px-1 py-1">
       {row.calls.map((call) => (
-        <ToolCallRow call={call} key={call.callId} nowMs={nowMs} />
+        <ToolCallRow call={call} imageSource={imageSource} key={call.callId} nowMs={nowMs} />
       ))}
     </div>
   );
@@ -465,16 +496,18 @@ function WorkingRow({
 export const TranscriptRowContent = memo(function TranscriptRowContent({
   row,
   nowMs,
+  imageSource,
 }: {
   readonly row: TranscriptRow;
   /** Elapsed-label time base from the session runtime snapshot. */
   readonly nowMs: number;
+  readonly imageSource: TranscriptImageSource;
 }) {
   switch (row.kind) {
     case "message":
-      return <MessageRow row={row} />;
+      return <MessageRow imageSource={imageSource} row={row} />;
     case "tool-group":
-      return <ToolGroupRow nowMs={nowMs} row={row} />;
+      return <ToolGroupRow imageSource={imageSource} nowMs={nowMs} row={row} />;
     case "notice":
       return <NoticeRow row={row} />;
     case "unknown-entry":

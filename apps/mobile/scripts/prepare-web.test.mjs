@@ -48,6 +48,7 @@ test("the bundled document restricts connections without constraining the hosted
   const hostedIndex = await readFile(resolve(mobileRoot, "../web/index.html"), "utf8");
 
   assert.match(prepareScript, /connect-src 'self' wss:\/\/\*\.ts\.net:\*/);
+  assert.match(prepareScript, /img-src 'self' data: blob:/);
   assert.match(prepareScript, /http-equiv="Content-Security-Policy"/);
   assert.doesNotMatch(prepareScript, /connect-src \*/);
   assert.doesNotMatch(hostedIndex, /http-equiv="Content-Security-Policy"/);

@@ -174,6 +174,7 @@ test("gateway serves configured app and reports real upstream health", async () 
       contentSecurityPolicy ?? "",
       /connect-src 'self' wss:\/\/host\.example-tailnet\.ts\.net:8445/u,
     );
+    assert.match(contentSecurityPolicy ?? "", /img-src 'self' data: blob:/u);
     assert.doesNotMatch(contentSecurityPolicy ?? "", /\*/u);
 
     const assetResponse = await fetch(`${running.url}/app.js`);

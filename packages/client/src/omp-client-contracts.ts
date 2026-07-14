@@ -63,7 +63,10 @@ export interface OmpClientOptions {
   transport: OmpTransportFactory;
   hostId?: string; expectedHostId?: string;
   client?: { name: string; version: string; build: string; platform: string };
-  requestedFeatures?: readonly string[]; requiredFeatures?: readonly string[]; capabilities?: readonly string[];
+  requestedFeatures?: readonly string[];
+  /** One-shot fallback for hosts that reject a hello containing newer additive features. */
+  compatibilityRequestedFeatures?: readonly string[];
+  requiredFeatures?: readonly string[]; capabilities?: readonly string[];
   authentication?: () => { deviceId: string; deviceToken: string } | undefined;
   cursorStore?: CursorStore; projection?: ProjectionStore; clock?: Clock; timers?: TimerScheduler; ids?: IdFactory;
   random?: () => number; reconnect?: { baseMs?: number; maxMs?: number; attemptCap?: number };

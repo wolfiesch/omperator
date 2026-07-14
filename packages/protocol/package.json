@@ -1,19 +1,19 @@
 {
   "name": "@t4-code/protocol",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "private": true,
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
     "./desktop-ipc": "./src/desktop-ipc.ts"
   },
-  "dependencies": {
-    "@oh-my-pi/app-wire": "file:../../vendor/app-wire/oh-my-pi-app-wire-0.5.3.tgz"
-  },
   "scripts": {
     "build": "tsgo --noEmit",
     "typecheck": "tsgo --noEmit",
     "test": "vp test run --passWithNoTests"
+  },
+  "dependencies": {
+    "@oh-my-pi/app-wire": "file:../../vendor/app-wire/oh-my-pi-app-wire-0.5.5.tgz"
   },
   "devDependencies": {
     "@types/node": "catalog:",

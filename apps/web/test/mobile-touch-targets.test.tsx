@@ -67,10 +67,12 @@ describe("phone touch targets", () => {
         attachments={[
           {
             id: "attachment-1",
-            kind: "file",
-            mediaType: "text/plain",
-            name: "notes.txt",
+            kind: "image",
+            mediaType: "image/png",
+            name: "proof.png",
             sizeBytes: 12,
+            file: new File(["proof"], "proof.png", { type: "image/png" }),
+            previewUrl: "blob:test/proof.png",
           },
         ]}
         onRemove={() => {}}
@@ -80,6 +82,7 @@ describe("phone touch targets", () => {
     expect(buttonTags(runOptions)[0]).toContain("min-h-11");
     expect(buttonTags(context)[0]).toContain("h-11");
     expect(buttonTags(attachments)[0]).toContain("size-11");
+    expect(attachments).toContain('<img alt="" class="size-4 shrink-0 rounded-sm object-cover"');
   });
 
   it("keeps all compact runtime triggers at 44 CSS pixels", () => {

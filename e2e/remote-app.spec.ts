@@ -17,6 +17,8 @@ const JITI = resolve(
 const FIXTURE_PROCESS = resolve(REPO_ROOT, "e2e/fixture-process.ts");
 const SESSION_VIEW_ID = "host-stream/session-stream";
 const SESSION_TITLE = "stream-v1 fixture";
+// Chromium can report an exact 44 CSS px box a few floating-point ulps below 44.
+const MIN_TOUCH_TARGET_PX = 43.99;
 const CONNECTED_COPY =
   "This Tailnet connection is live. Choose a session from the list on the left to inspect it.";
 
@@ -719,8 +721,8 @@ for (const viewport of [
     expect(geometry.top).toBeGreaterThanOrEqual(0);
     expect(geometry.right).toBeLessThanOrEqual(geometry.viewportWidth + 0.5);
     expect(geometry.bottom).toBeLessThanOrEqual(geometry.viewportHeight + 0.5);
-    expect(geometry.width).toBeGreaterThanOrEqual(44);
-    expect(geometry.height).toBeGreaterThanOrEqual(44);
+    expect(geometry.width).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
+    expect(geometry.height).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
     expect(geometry.documentWidth).toBeLessThanOrEqual(geometry.viewportWidth);
     expect(geometry.bodyWidth).toBeLessThanOrEqual(geometry.viewportWidth);
 
@@ -757,8 +759,8 @@ for (const viewport of [
       expect(actionGeometry.top, name).toBeGreaterThanOrEqual(0);
       expect(actionGeometry.right, name).toBeLessThanOrEqual(actionGeometry.viewportWidth + 0.5);
       expect(actionGeometry.bottom, name).toBeLessThanOrEqual(actionGeometry.viewportHeight + 0.5);
-      expect(actionGeometry.width, name).toBeGreaterThanOrEqual(44);
-      expect(actionGeometry.height, name).toBeGreaterThanOrEqual(44);
+      expect(actionGeometry.width, name).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
+      expect(actionGeometry.height, name).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
     }
     // Stop is a challenged command in real OMP. Exercise the actual
     // request -> confirmation -> confirm -> original-request response
@@ -785,8 +787,8 @@ for (const viewport of [
     expect(approvalGeometry.top).toBeGreaterThanOrEqual(0);
     expect(approvalGeometry.right).toBeLessThanOrEqual(approvalGeometry.viewportWidth + 0.5);
     expect(approvalGeometry.bottom).toBeLessThanOrEqual(approvalGeometry.viewportHeight + 0.5);
-    expect(approvalGeometry.width).toBeGreaterThanOrEqual(44);
-    expect(approvalGeometry.height).toBeGreaterThanOrEqual(44);
+    expect(approvalGeometry.width).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
+    expect(approvalGeometry.height).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
     await approve.click();
     await expect(page.getByText("Approval needed", { exact: true })).toBeHidden();
     await fixture.advanceBy(30);
@@ -818,8 +820,8 @@ test("manages a session from a phone and converges another live client", async (
     const initialActions = rail.getByRole("button", { name: `Actions for ${SESSION_TITLE}` });
     const initialActionsBox = await initialActions.boundingBox();
     expect(initialActionsBox).not.toBeNull();
-    expect(initialActionsBox!.width).toBeGreaterThanOrEqual(44);
-    expect(initialActionsBox!.height).toBeGreaterThanOrEqual(44);
+    expect(initialActionsBox!.width).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
+    expect(initialActionsBox!.height).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
     await initialActions.click();
     const renameAction = page.getByRole("button", { name: "Rename", exact: true });
     await expect(renameAction).toBeVisible();
@@ -862,7 +864,7 @@ test("manages a session from a phone and converges another live client", async (
     const archivedFilter = rail.getByRole("button", { name: "Archived · 1", exact: true });
     const archivedFilterBox = await archivedFilter.boundingBox();
     expect(archivedFilterBox).not.toBeNull();
-    expect(archivedFilterBox!.height).toBeGreaterThanOrEqual(44);
+    expect(archivedFilterBox!.height).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
 
     await expect(observer.getByText(/Archived · read-only/u).first()).toBeVisible();
     await expect(observer.getByRole("textbox", { name: "Message the session" })).toHaveCount(0);

@@ -26,4 +26,4 @@ We read every report and will reply to tell you what happens next. This is a sma
 
 - T4 Code is a desktop client. The OMP runtime is a separate project; runtime vulnerabilities belong at <https://github.com/can1357/oh-my-pi>.
 - Pairing credentials are encrypted with the OS keychain via Electron `safeStorage`. Reports about credential handling, the pairing flow, or the `t4-code://` deep-link handler are especially welcome.
-- The macOS v0.1.11 build is unsigned and unnotarized; that is a known, disclosed limitation, not a vulnerability report. Removing `com.apple.quarantine` changes Gatekeeper handling but does not sign, notarize, or verify the app.
+- The macOS v0.1.12 build is unsigned and unnotarized; that is a known, disclosed limitation, not a vulnerability report. Removing `com.apple.quarantine` changes Gatekeeper handling but does not sign, notarize, or verify the app.

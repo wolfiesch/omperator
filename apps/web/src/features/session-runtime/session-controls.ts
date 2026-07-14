@@ -65,7 +65,7 @@ export interface ComposerControlsSnapshot {
   /** No live protocol exists for mode; only the fixture supports it. */
   readonly modeSupported: boolean;
   readonly mode: SessionMode | null;
-  /** No live protocol carries attachments; only the fixture accepts them. */
+  /** The host negotiated the bounded `prompt.images` upload protocol. */
   readonly attachmentsSupported: boolean;
   /** Which control has a command in flight; the UI holds, never lies. */
   readonly pendingControl: PendingControl | null;
@@ -380,7 +380,8 @@ export function deriveComposerControls(input: DeriveControlsInput): ComposerCont
     fast: state.fast === true,
     modeSupported: false,
     mode: null,
-    attachmentsSupported: false,
+    attachmentsSupported:
+      granted.includes("sessions.prompt") && granted.includes("prompt.images"),
     pendingControl,
     controlError,
   };

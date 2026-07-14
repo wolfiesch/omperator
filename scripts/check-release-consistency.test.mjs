@@ -17,28 +17,28 @@ function changed(path, replace) {
 }
 
 test("current source tree has one consistent release version", () => {
-  assert.deepEqual(collectReleaseConsistencyErrors(files, "v0.1.11"), []);
+  assert.deepEqual(collectReleaseConsistencyErrors(files, "v0.1.12"), []);
 });
 
 test("rejects a tag that differs from the package version", () => {
   assert.ok(
     collectReleaseConsistencyErrors(files, "v9.9.9").some((error) =>
-      error.includes("release tag v9.9.9 does not match v0.1.11"),
+      error.includes("release tag v9.9.9 does not match v0.1.12"),
     ),
   );
 });
 
 test("rejects workspace, site, README, and runtime version drift", () => {
   const cases = [
-    ["apps/web/package.json", (text) => text.replace('"version": "0.1.11"', '"version": "0.1.3"')],
+    ["apps/web/package.json", (text) => text.replace('"version": "0.1.12"', '"version": "0.1.3"')],
     [
       "apps/site/src/release.ts",
-      (text) => text.replace('RELEASE_TAG = "v0.1.11"', 'RELEASE_TAG = "v0.1.3"'),
+      (text) => text.replace('RELEASE_TAG = "v0.1.12"', 'RELEASE_TAG = "v0.1.3"'),
     ],
-    ["README.md", (text) => text.replace("Download v0.1.11", "Download v0.1.3")],
+    ["README.md", (text) => text.replace("Download v0.1.12", "Download v0.1.3")],
     [
       "apps/desktop/src/target-manager.ts",
-      (text) => text.replace('version: "0.1.11"', 'version: "0.1.3"'),
+      (text) => text.replace('version: "0.1.12"', 'version: "0.1.3"'),
     ],
     [
       "apps/site/src/docs/content.ts",
@@ -68,7 +68,7 @@ test("rejects version drift in a newly added workspace package", () => {
 
 test("rejects app-wire matrix changes until the release surfaces agree", () => {
   const drifted = changed("compat/omp-app-matrix.json", (text) =>
-    text.replace('"version": "0.5.3"', '"version": "0.5.1"'),
+    text.replace('"version": "0.5.5"', '"version": "0.5.1"'),
   );
   assert.ok(collectReleaseConsistencyErrors(drifted).length > 0);
 });
@@ -76,7 +76,7 @@ test("rejects app-wire matrix changes until the release surfaces agree", () => {
 test("rejects app-wire provenance changes until the release surfaces agree", () => {
   const drifted = changed("compat/omp-app-matrix.json", (text) =>
     text.replace(
-      '"sourceCommit": "15527d1f00bac22705f63f80b29c0c30e67fc5da"',
+      '"sourceCommit": "6a87fa6407ebff20417b4d52885a6bb3091003ea"',
       '"sourceCommit": "0000000000000000000000000000000000000000"',
     ),
   );
@@ -90,7 +90,7 @@ test("rejects app-wire provenance changes until the release surfaces agree", () 
 test("rejects drift between the compatibility matrix and vendored app-wire manifest", () => {
   const drifted = changed("vendor/app-wire/manifest.json", (text) =>
     text.replace(
-      '"sourceTreeHash": "4961ea9c522a3bbf9a9900424dd475a48148c729"',
+      '"sourceTreeHash": "a2495fe8781c979184fe7fb9a6d37d8f33bad30f"',
       '"sourceTreeHash": "0000000000000000000000000000000000000000"',
     ),
   );
@@ -105,10 +105,10 @@ test("rejects drift in verified OMP runtime provenance", () => {
   const cases = [
     (text) =>
       text.replace(
-        "15527d1f00bac22705f63f80b29c0c30e67fc5da",
+        "6a87fa6407ebff20417b4d52885a6bb3091003ea",
         "0000000000000000000000000000000000000000",
       ),
-    (text) => text.replace('"sourceTag": "t4code-16.5.1-appserver-1"', '"sourceTag": "wrong-tag"'),
+    (text) => text.replace('"sourceTag": "t4code-16.5.1-appserver-4"', '"sourceTag": "wrong-tag"'),
     (text) =>
       text.replace(
         '"upstreamCommit": "14b5da76a9aece9a469288718d22c3d624daf033"',
@@ -133,31 +133,31 @@ test("accepts a coordinated app-wire provenance update without editing the workf
     "compat/omp-app-matrix.json",
     coordinated
       .get("compat/omp-app-matrix.json")
-      .replace('"version": "0.5.3"', '"version": "0.5.4"')
-      .replace("oh-my-pi-app-wire-0.5.3.tgz", "oh-my-pi-app-wire-0.5.4.tgz"),
+      .replace('"version": "0.5.5"', '"version": "0.5.6"')
+      .replace("oh-my-pi-app-wire-0.5.5.tgz", "oh-my-pi-app-wire-0.5.6.tgz"),
   );
   coordinated.set(
     "apps/site/src/release.ts",
     coordinated
       .get("apps/site/src/release.ts")
-      .replace('APP_WIRE_VERSION = "0.5.3"', 'APP_WIRE_VERSION = "0.5.4"'),
+      .replace('APP_WIRE_VERSION = "0.5.5"', 'APP_WIRE_VERSION = "0.5.6"'),
   );
   coordinated.set(
     "README.md",
     coordinated
       .get("README.md")
-      .replace("`@oh-my-pi/app-wire` 0.5.3", "`@oh-my-pi/app-wire` 0.5.4"),
+      .replace("`@oh-my-pi/app-wire` 0.5.5", "`@oh-my-pi/app-wire` 0.5.6"),
   );
   coordinated.set(
     "docs/CURRENT_RELEASE_NOTES.md",
-    coordinated.get("docs/CURRENT_RELEASE_NOTES.md").replace("app-wire 0.5.3", "app-wire 0.5.4"),
+    coordinated.get("docs/CURRENT_RELEASE_NOTES.md").replace("app-wire 0.5.5", "app-wire 0.5.6"),
   );
   coordinated.set(
     "vendor/app-wire/manifest.json",
     coordinated
       .get("vendor/app-wire/manifest.json")
-      .replace('"version": "0.5.3"', '"version": "0.5.4"')
-      .replace("oh-my-pi-app-wire-0.5.3.tgz", "oh-my-pi-app-wire-0.5.4.tgz"),
+      .replace('"version": "0.5.5"', '"version": "0.5.6"')
+      .replace("oh-my-pi-app-wire-0.5.5.tgz", "oh-my-pi-app-wire-0.5.6.tgz"),
   );
 
   assert.deepEqual(collectReleaseConsistencyErrors(coordinated), []);
@@ -173,7 +173,7 @@ test("rejects stale README release URLs while allowing historical prose", () => 
   const staleLink = changed("README.md", (text) => `${text}\n[Old release](${oldReleaseUrl})\n`);
   assert.ok(
     collectReleaseConsistencyErrors(staleLink).some((error) =>
-      error.includes("release URL for v0.1.3; expected v0.1.11"),
+      error.includes("release URL for v0.1.3; expected v0.1.12"),
     ),
   );
   assert.deepEqual(collectReleaseConsistencyErrors(files), []);

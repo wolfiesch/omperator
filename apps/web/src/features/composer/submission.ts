@@ -78,15 +78,47 @@ export interface SubmissionGate {
   ) => Promise<PromptOutcome | null>;
 }
 
+/**
+ * Session-durable in-flight ownership. The composer supplies a store-backed
+ * latch so A to B to A navigation cannot manufacture a second unlocked gate
+ * while the first submission is still awaiting the host.
+ */
+export interface SubmissionLatch {
+  readonly pending: () => boolean;
+  readonly begin: () => SubmissionToken | null;
+  readonly current: (token: SubmissionToken) => boolean;
+  readonly end: (token: SubmissionToken) => void;
+}
+
+export type SubmissionToken = string;
+
+function createLocalSubmissionLatch(): SubmissionLatch {
+  let generation = 0;
+  let active: SubmissionToken | null = null;
+  return {
+    pending: () => active !== null,
+    begin: () => {
+      if (active !== null) return null;
+      generation += 1;
+      active = `local-${generation}`;
+      return active;
+    },
+    current: (token) => active === token,
+    end: (token) => {
+      if (active === token) active = null;
+    },
+  };
+}
+
 export function createSubmissionGate(
   submitPrompt: (intent: SessionIntent) => Promise<PromptOutcome>,
+  latch: SubmissionLatch = createLocalSubmissionLatch(),
 ): SubmissionGate {
-  let inFlight = false;
   return {
-    pending: () => inFlight,
+    pending: latch.pending,
     async submit(intent, submitted, io) {
-      if (inFlight) return null;
-      inFlight = true;
+      const token = latch.begin();
+      if (token === null) return null;
       io.setNotice(null);
       let outcome: PromptOutcome;
       try {
@@ -99,16 +131,21 @@ export function createSubmissionGate(
           kind: "unknown",
           reason: "The connection dropped before the host answered. Check the transcript before sending again.",
         };
+      }
+      try {
+        // Confirmed deletion invalidates this owner. Its late outcome must not
+        // recreate UI state, clear a newer draft, or run accepted callbacks.
+        if (!latch.current(token)) return null;
+        const settlement = settleSubmission(outcome, submitted, io.getDraft());
+        if (settlement.clearDraft) io.clearDraft();
+        if (settlement.removeAttachmentIds.length > 0) {
+          io.removeAttachments(settlement.removeAttachmentIds);
+        }
+        io.setNotice(settlement.notice);
+        return outcome;
       } finally {
-        inFlight = false;
+        latch.end(token);
       }
-      const settlement = settleSubmission(outcome, submitted, io.getDraft());
-      if (settlement.clearDraft) io.clearDraft();
-      if (settlement.removeAttachmentIds.length > 0) {
-        io.removeAttachments(settlement.removeAttachmentIds);
-      }
-      io.setNotice(settlement.notice);
-      return outcome;
     },
   };
 }

@@ -36,8 +36,13 @@ import type {
   SessionRuntime,
   SessionRuntimeSnapshot,
 } from "./controller.ts";
-import type { SessionIntent } from "./intents.ts";
+import { IMAGE_PROMPTS_UNSUPPORTED_REASON, type SessionIntent } from "./intents.ts";
+import { runImagePromptUpload } from "./image-upload.ts";
 import { promptRejectionReason } from "./command-errors.ts";
+import {
+  createTranscriptImageSource,
+  type TranscriptImageAvailability,
+} from "./transcript-images.ts";
 import {
   commandSupport,
   deriveComposerControls,
@@ -131,6 +136,56 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
   /** Challenges the user decided and the shell acknowledged; hidden locally. */
   const decidedChallenges = new Set<string>();
   const listeners = new Set<() => void>();
+  let transcriptImagesAttached = false;
+
+  const transcriptImages = createTranscriptImageSource({
+    hostId: options.hostId,
+    sessionId: options.sessionId,
+    availability: {
+      available: false,
+      reason: "Waiting for this session to finish connecting.",
+    },
+    // The controller command is not abortable. Keep the cache load slot held
+    // until it actually settles; the source checks its cancellation token
+    // immediately afterward and discards the response. This prevents rapid
+    // unmounts from creating unbounded detached RPC reads.
+    readChunk: (reference, offset) =>
+      controller.command(targetId, {
+        hostId: wireHostId,
+        sessionId: wireSessionId,
+        command: "session.image.read",
+        args: { entryId: reference.entryId, sha256: reference.sha256, offset },
+      }),
+  });
+
+  const transcriptImageAvailability = (
+    runtime: DesktopRuntimeSnapshot,
+  ): TranscriptImageAvailability => {
+    if (runtime.connections.get(targetId) !== "connected") {
+      return { available: false, reason: "Reconnect to this host to load transcript images." };
+    }
+    const host = runtime.hosts.get(options.hostId);
+    if (host === undefined || !host.grantedCapabilities.includes("sessions.read")) {
+      return {
+        available: false,
+        reason: "This target does not grant transcript image access.",
+      };
+    }
+    if (!host.grantedFeatures.includes("transcript.images")) {
+      return {
+        available: false,
+        reason: "This OMP host does not offer transcript image reads.",
+      };
+    }
+    if (!transcriptImagesAttached) {
+      return { available: false, reason: "Waiting for this session to finish connecting." };
+    }
+    return { available: true };
+  };
+
+  const syncTranscriptImageAvailability = (runtime: DesktopRuntimeSnapshot) => {
+    transcriptImages.setAvailability(transcriptImageAvailability(runtime));
+  };
 
   const warmSession = (runtime: DesktopRuntimeSnapshot): SessionProjection | undefined =>
     runtime.projection.sessions.get(projectionKey);
@@ -327,7 +382,14 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
     args: Record<string, unknown>,
   ): Promise<PromptOutcome> => {
     await waitForControlCommands();
-    return sendCommand(command, args, true);
+    const leaseRevision = expectedRevision();
+    if (leaseRevision === undefined) return { kind: "unknown", reason: UNKNOWN_REASON };
+    // Ordinary prompts are revision-optional on the wire for the same reason
+    // as steer/follow-up: live output or a just-reconciled control can advance
+    // the projection between composition and host receipt. The prompt lease
+    // still binds against the captured authoritative revision; only the
+    // volatile compare-and-swap field stays off the command itself.
+    return sendCommand(command, args, false, true, undefined, leaseRevision);
   };
 
   // Active turns advance the session revision while output streams. Steer and
@@ -363,7 +425,11 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
     if (connected !== previousConnected) {
       previousConnected = connected;
       connectionGeneration += 1;
-      if (!connected) attached = false;
+      if (!connected) {
+        attached = false;
+        transcriptImagesAttached = false;
+        syncTranscriptImageAvailability(runtime);
+      }
     }
     if (!connected) return;
     if (attached) return;
@@ -378,10 +444,17 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
     void controller
       .attachSession(targetId, options.hostId, options.sessionId)
       .then((result) => {
-        if (result.accepted !== true || generation !== connectionGeneration) attached = false;
+        const current = controller.getSnapshot();
+        transcriptImagesAttached = result.accepted === true && generation === connectionGeneration;
+        if (!transcriptImagesAttached) attached = false;
+        syncTranscriptImageAvailability(current);
+        notify();
       })
       .catch(() => {
         attached = false;
+        transcriptImagesAttached = false;
+        syncTranscriptImageAvailability(controller.getSnapshot());
+        notify();
       })
       .finally(() => {
         attaching = false;
@@ -394,6 +467,7 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
         }
       });
   };
+  syncTranscriptImageAvailability(controller.getSnapshot());
   attachIfConnected(controller.getSnapshot());
 
   const unsubscribeFrames = controller.subscribeFrames(
@@ -414,6 +488,7 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
   // surface through the controller snapshot; re-derive on every change.
   const unsubscribeRuntime = controller.subscribe((runtime) => {
     attachIfConnected(runtime);
+    syncTranscriptImageAvailability(runtime);
     notify();
   });
 
@@ -479,6 +554,30 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
 
   const submitPrompt = async (intent: SessionIntent): Promise<PromptOutcome> => {
     if (intent.kind === "prompt") {
+      if (intent.attachments.length > 0) {
+        const granted = grantedFor(controller.getSnapshot());
+        if (!granted.includes("sessions.prompt") || !granted.includes("prompt.images")) {
+          return { kind: "rejected", reason: IMAGE_PROMPTS_UNSUPPORTED_REASON };
+        }
+        await waitForControlCommands();
+        return runImagePromptUpload({
+          targetId,
+          attachments: intent.attachments,
+          command: (command, args) =>
+            controller.command(targetId, {
+              hostId: wireHostId,
+              sessionId: wireSessionId,
+              command,
+              args: { ...args },
+            }),
+          sendPrompt: (images) =>
+            sendAfterControlCommands("session.prompt", {
+              message: intent.text,
+              images: images.map((image) => ({ ...image })),
+            }),
+          rejectionReason: promptRejectionReason,
+        });
+      }
       return sendAfterControlCommands("session.prompt", { message: intent.text });
     }
     if (intent.kind === "steer") {
@@ -576,6 +675,7 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
   };
 
   return {
+    transcriptImages,
     getSnapshot(): SessionRuntimeSnapshot {
       if (snapshot === null) {
         const runtime = controller.getSnapshot();
@@ -661,6 +761,7 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
       disposed = true;
       unsubscribeFrames();
       unsubscribeRuntime();
+      transcriptImages.dispose();
       listeners.clear();
     },
   };

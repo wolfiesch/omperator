@@ -19,7 +19,7 @@ import {
   type SessionsFrame,
   type SettingsFrame,
 } from "@t4-code/protocol";
-import { createDesktopRuntimeController } from "@t4-code/client";
+import { createDesktopRuntimeController, type DesktopRuntimeController } from "@t4-code/client";
 
 import { createLiveSessionRuntime } from "../src/features/session-runtime/live-runtime.ts";
 import type { SessionRuntime } from "../src/features/session-runtime/controller.ts";
@@ -80,6 +80,7 @@ const CONTROL_COMMANDS = [
 
 interface Setup {
   readonly shell: FakeShell;
+  readonly controller: DesktopRuntimeController;
   readonly runtime: SessionRuntime;
 }
 
@@ -87,13 +88,19 @@ async function startedRuntime(options?: {
   readonly items?: CatalogItem[];
   readonly settings?: Record<string, unknown>;
   readonly skipCatalog?: boolean;
+  readonly capabilities?: readonly string[];
+  readonly features?: readonly string[];
 }): Promise<Setup> {
   const shell = new FakeShell();
   const controller = createDesktopRuntimeController({ shell });
   await controller.start();
   shell.emitFrame({
     targetId: "local",
-    frame: makeWelcome(HOST, ["sessions.prompt", "sessions.manage"]),
+    frame: makeWelcome(
+      HOST,
+      options?.capabilities ?? ["sessions.prompt", "sessions.manage"],
+      options?.features ?? [],
+    ),
   });
   shell.emitFrame({
     targetId: "local",
@@ -123,7 +130,7 @@ async function startedRuntime(options?: {
     hostId: HOST,
     sessionId: SESSION,
   });
-  return { shell, runtime };
+  return { shell, controller, runtime };
 }
 
 function sessionsUpsert(seq: number, extra: Record<string, unknown>): SessionsFrame {
@@ -135,7 +142,9 @@ function sessionsUpsert(seq: number, extra: Record<string, unknown>): SessionsFr
       {
         hostId: hostId(HOST),
         sessionId: sessionId(SESSION),
-        project: { projectId: "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"] },
+        project: {
+          projectId: "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"],
+        },
         revision: revision("rev-1"),
         title: "Session",
         status: "active",
@@ -286,9 +295,15 @@ describe("defaults from live host settings", () => {
 describe("control commands leave immediately with exact payloads", () => {
   it("setModel sends session.model.set with role/selector and session persistence", async () => {
     const { shell, runtime } = await startedRuntime();
-    const roleOutcome = await runtime.submitPrompt({ kind: "setModel", selector: null, role: "smol" });
+    const roleOutcome = await runtime.submitPrompt({
+      kind: "setModel",
+      selector: null,
+      role: "smol",
+    });
     expect(roleOutcome.kind).toBe("accepted");
-    const roleCommand = shell.commands.find((request) => request.intent.command === "session.model.set");
+    const roleCommand = shell.commands.find(
+      (request) => request.intent.command === "session.model.set",
+    );
     expect(roleCommand?.intent.args).toEqual({ role: "smol", persistence: "session" });
     expect(roleCommand?.intent.expectedRevision).toBeDefined();
 
@@ -296,7 +311,10 @@ describe("control commands leave immediately with exact payloads", () => {
     const selectorCommand = shell.commands.findLast(
       (request) => request.intent.command === "session.model.set",
     );
-    expect(selectorCommand?.intent.args).toEqual({ selector: "openai/gpt-6", persistence: "session" });
+    expect(selectorCommand?.intent.args).toEqual({
+      selector: "openai/gpt-6",
+      persistence: "session",
+    });
 
     // The wire takes role XOR selector: a cycle-role pick that also knows
     // its resolved selector still sends only the role.
@@ -314,7 +332,9 @@ describe("control commands leave immediately with exact payloads", () => {
   it("setThinking sends session.thinking.set with the level", async () => {
     const { shell, runtime } = await startedRuntime();
     await runtime.submitPrompt({ kind: "setThinking", level: "xhigh" });
-    const sent = shell.commands.find((request) => request.intent.command === "session.thinking.set");
+    const sent = shell.commands.find(
+      (request) => request.intent.command === "session.thinking.set",
+    );
     expect(sent?.intent.args).toEqual({ level: "xhigh" });
   });
 
@@ -343,9 +363,15 @@ describe("control commands leave immediately with exact payloads", () => {
   });
 
   it("holds a fast prompt until the accepted model revision reconciles", async () => {
-    const { shell, runtime } = await startedRuntime();
+    const { shell, controller, runtime } = await startedRuntime();
     const modelGate = deferred<boolean>();
     const listGate = deferred<boolean>();
+    const leaseRevisions: (string | undefined)[] = [];
+    const originalPromptLease = controller.commandWithPromptLease;
+    controller.commandWithPromptLease = async function (targetId, intent, leaseRevision) {
+      leaseRevisions.push(leaseRevision);
+      return originalPromptLease.call(this, targetId, intent, leaseRevision);
+    };
     shell.commandBehavior = { kind: "defer", gate: modelGate };
 
     const model = runtime.submitPrompt({ kind: "setModel", selector: null, role: "smol" });
@@ -376,11 +402,14 @@ describe("control commands leave immediately with exact payloads", () => {
     expect((await prompt).kind).toBe("accepted");
     const commands = shell.commands.map((request) => request.intent.command);
     expect(commands.indexOf("session.model.set")).toBeGreaterThanOrEqual(0);
-    expect(commands.indexOf("session.prompt")).toBeGreaterThan(commands.indexOf("session.model.set"));
+    expect(commands.indexOf("session.prompt")).toBeGreaterThan(
+      commands.indexOf("session.model.set"),
+    );
     expect(
       shell.commands.find((request) => request.intent.command === "session.prompt")?.intent
         .expectedRevision,
-    ).toBe(revision("rev-2"));
+    ).toBeUndefined();
+    expect(leaseRevisions).toContain("rev-2");
     expect(runtime.getSnapshot().controls.pendingControl).toBeNull();
   });
 });
@@ -544,7 +573,11 @@ describe("honest unsupported controls", () => {
   it("a refused catalog item carries the host's own reason", async () => {
     const { runtime } = await startedRuntime({
       items: [
-        { ...commandItem("session.model.set"), supported: false, reason: "Model is pinned by policy" },
+        {
+          ...commandItem("session.model.set"),
+          supported: false,
+          reason: "Model is pinned by policy",
+        },
       ],
     });
     const controls = runtime.getSnapshot().controls;
@@ -559,5 +592,19 @@ describe("honest unsupported controls", () => {
     expect(controls.attachmentsSupported).toBe(false);
     const outcome = await runtime.submitPrompt({ kind: "setMode", mode: "plan" });
     expect(outcome.kind).toBe("rejected");
+  });
+
+  it("enables attachments only when prompt capability and image feature are both granted", async () => {
+    const imageHost = await startedRuntime({
+      capabilities: ["sessions.prompt"],
+      features: ["prompt.images"],
+    });
+    expect(imageHost.runtime.getSnapshot().controls.attachmentsSupported).toBe(true);
+
+    const featureOnly = await startedRuntime({
+      capabilities: [],
+      features: ["prompt.images"],
+    });
+    expect(featureOnly.runtime.getSnapshot().controls.attachmentsSupported).toBe(false);
   });
 });

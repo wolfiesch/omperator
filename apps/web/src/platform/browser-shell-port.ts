@@ -63,6 +63,11 @@ import {
 } from "./native-mobile.ts";
 
 const TARGET_ID = "remote";
+const COMPATIBILITY_FEATURES: readonly string[] = Object.freeze(
+  ADDITIVE_FEATURES.filter(
+    (feature) => feature !== "prompt.images" && feature !== "transcript.images",
+  ),
+);
 
 const MAX_URL_LENGTH = 2048;
 const MAX_LABEL_LENGTH = 128;
@@ -266,6 +271,7 @@ export function createBrowserShellPort(
       transport: transportFactory,
       capabilities: DEVICE_CAPABILITIES,
       requestedFeatures: ADDITIVE_FEATURES,
+      compatibilityRequestedFeatures: COMPATIBILITY_FEATURES,
       authentication: () => authentication,
       privilegedPairResult: async (result) => {
         await persistNativeMobileCredentials(result);
@@ -273,7 +279,7 @@ export function createBrowserShellPort(
       },
       client: {
         name: "T4 Code",
-        version: "0.1.11",
+        version: "0.1.12",
         build: mobilePlatform ?? "browser",
         platform: mobilePlatform ?? (platform === "darwin" ? "darwin" : "linux"),
       },

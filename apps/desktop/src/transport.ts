@@ -67,22 +67,32 @@ export function ensureMacRuntimeDirectory(path: string): void {
 export interface UnixWebSocketTransportOptions {
   readonly socketPath: string;
   readonly validatePath?: boolean;
+  readonly handshakeTimeoutMs?: number;
 }
 
 export class UnixWebSocketTransport implements OmpTransport {
   private readonly socketPath: string;
   private readonly shouldValidate: boolean;
+  private readonly handshakeTimeoutMs: number;
   private socket: WebSocket | undefined;
   private readonly messages = new Set<(data: string | Uint8Array) => void>();
   private readonly closes = new Set<(code?: number, reason?: string) => void>();
   private readonly errors = new Set<(error: unknown) => void>();
   private closed = false;
   private openReject: (() => void) | undefined;
+  private openTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(options: UnixWebSocketTransportOptions) {
     if (!options.socketPath.startsWith("/")) throw new Error("Unix socket path must be absolute");
+    if (
+      options.handshakeTimeoutMs !== undefined &&
+      (!Number.isSafeInteger(options.handshakeTimeoutMs) || options.handshakeTimeoutMs <= 0)
+    ) {
+      throw new Error("handshake timeout must be a positive safe integer");
+    }
     this.socketPath = options.socketPath;
     this.shouldValidate = options.validatePath ?? true;
+    this.handshakeTimeoutMs = options.handshakeTimeoutMs ?? 10_000;
   }
 
   open(): Promise<void> {
@@ -92,14 +102,36 @@ export class UnixWebSocketTransport implements OmpTransport {
     const socket = new WebSocket("ws://omp.local/ws", {
       perMessageDeflate: false,
       maxPayload: 1_048_576,
+      handshakeTimeout: this.handshakeTimeoutMs + 100,
       createConnection: () => netConnect({ path: socketPath }),
     });
     this.socket = socket;
     const { promise, resolve, reject } = Promise.withResolvers<void>();
     let settled = false;
-    this.openReject = () => { if (!settled) { settled = true; reject(new Error("local transport closed")); } };
-    const succeed = (): void => { if (!settled) { settled = true; this.openReject = undefined; resolve(); } };
-    const fail = (): void => { if (!settled) { settled = true; this.openReject = undefined; reject(new Error("local transport unavailable")); } };
+    const clearOpenTimer = (): void => {
+      if (this.openTimer === undefined) return;
+      clearTimeout(this.openTimer);
+      this.openTimer = undefined;
+    };
+    const fail = (message = "local transport unavailable"): void => {
+      if (settled) return;
+      settled = true;
+      clearOpenTimer();
+      this.openReject = undefined;
+      reject(new Error(message));
+    };
+    this.openReject = () => fail("local transport closed");
+    const succeed = (): void => {
+      if (settled) return;
+      settled = true;
+      clearOpenTimer();
+      this.openReject = undefined;
+      resolve();
+    };
+    this.openTimer = setTimeout(() => {
+      fail("local websocket handshake timed out");
+      if (socket.readyState === WebSocket.CONNECTING) socket.terminate();
+    }, this.handshakeTimeoutMs);
     socket.on("open", succeed);
     socket.on("message", (data, isBinary) => {
       if (isBinary) return;
@@ -128,6 +160,8 @@ export class UnixWebSocketTransport implements OmpTransport {
     this.closed = true;
     this.openReject?.();
     this.openReject = undefined;
+    if (this.openTimer !== undefined) clearTimeout(this.openTimer);
+    this.openTimer = undefined;
     const socket = this.socket;
     this.socket = undefined;
     if (socket !== undefined) {
@@ -159,4 +193,3 @@ export function createLocalTransport(): UnixWebSocketTransport {
   if (process.platform === "darwin") ensureMacRuntimeDirectory(dirname(socketPath));
   return new UnixWebSocketTransport({ socketPath });
 }
-

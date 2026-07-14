@@ -9,21 +9,21 @@
       "sourceBlobSha": "1a4dc6b689558a9f8d834c12d7ecb2bb64e0d7c8",
       "targetPath": "apps/web/src/features/transcript/TranscriptTimeline.tsx",
       "classification": "adapted",
-    "checksum": "sha256:e47a30af1647a6a47a163d2185acfeec06ef947491a8e31c93a7746ae35f5f07"
+      "checksum": "sha256:7354db68084ca22e3dfbcd46cefceca343a6b86f0a6907e6c37d2a919102d1f8"
     },
     {
       "sourcePath": "apps/web/src/components/chat/MessagesTimeline.tsx",
       "sourceBlobSha": "1a4dc6b689558a9f8d834c12d7ecb2bb64e0d7c8",
       "targetPath": "apps/web/src/features/transcript/rows.ts",
       "classification": "adapted",
-      "checksum": "sha256:47759dd83be3db8bf4d4aa7b18709260438577cc345a63c71f6f2f5b87b6ee62"
+      "checksum": "sha256:3514fcffdbb8f67b901e157c997eeb9a8efb5f1e0b527b87428eec6041a521b4"
     },
     {
       "sourcePath": "apps/web/src/components/chat/MessagesTimeline.tsx",
       "sourceBlobSha": "1a4dc6b689558a9f8d834c12d7ecb2bb64e0d7c8",
       "targetPath": "apps/web/src/features/transcript/TranscriptRows.tsx",
       "classification": "adapted",
-    "checksum": "sha256:fd4c62b3bd5d00e28942512337197b0ec62d881188e018c370510da0e607f4bc"
+      "checksum": "sha256:81f9ad15c5dc90dfd09bc8791ae1e08b10d9b02d3bac8a083b73ee8531ad10b0"
     },
     {
       "sourcePath": "packages/shared/src/searchRanking.ts;apps/web/src/components/chat/composerSlashCommandSearch.ts",
@@ -44,7 +44,7 @@
       "sourceBlobSha": "fdb8bfe7b183480b7b71f2213d907cc211be0e64",
       "targetPath": "apps/web/src/features/composer/composer-store.ts",
       "classification": "adapted",
-      "checksum": "sha256:35fdbcbe350ae97a7f4cf105ed413fb17bea6615c8988a3f375210fdd860798a"
+      "checksum": "sha256:10797b73bb749811230ad227c0c1d3414edfe150207690e94220db93046ad2fc"
     }
   ]
 }

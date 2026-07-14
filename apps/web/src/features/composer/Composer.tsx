@@ -12,14 +12,22 @@ import { ArrowUp, ListTodo, Paperclip, Square } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { PromptOutcome } from "../session-runtime/controller.ts";
-import type { PromptAttachment, SessionIntent } from "../session-runtime/intents.ts";
+import {
+  IMAGE_PROMPTS_UNSUPPORTED_REASON,
+  type SessionIntent,
+} from "../session-runtime/intents.ts";
 import {
   thinkingLabel,
   type ComposerControlsSnapshot,
 } from "../session-runtime/session-controls.ts";
 import { useWorkspace, workspaceStore } from "../../state/store-instance.ts";
 import { selectSessionView } from "../../state/workspace-store.ts";
-import { admitAttachments, type AttachmentCandidate } from "./attachments.ts";
+import {
+  admitAttachments,
+  toPromptAttachment,
+  type AttachmentCandidate,
+  type StagedAttachment,
+} from "./attachments.ts";
 import { composerStore, useComposer } from "./composer-store.ts";
 import { ContextMeter } from "./ContextMeter.tsx";
 import { AttachmentChips, RunOptionsMenu } from "./ComposerControls.tsx";
@@ -35,12 +43,21 @@ import {
 import {
   createSubmissionGate,
   type SubmissionIo,
+  type SubmissionLatch,
   type SubmissionNotice,
   type SubmittedPrompt,
 } from "./submission.ts";
 
 const MAX_TEXTAREA_HEIGHT = 220;
-const EMPTY_ATTACHMENTS: readonly PromptAttachment[] = [];
+const EMPTY_ATTACHMENTS: readonly StagedAttachment[] = [];
+const EMPTY_REJECTIONS: readonly string[] = [];
+const IMAGE_REVISION_REASON = "Images cannot be added to a plan revision. Remove them or finish the revision first.";
+const IMAGE_ACTIVE_TURN_REASON =
+  "Images can be sent with the next prompt after the running turn finishes.";
+
+function filesToCandidates(files: ArrayLike<File>): AttachmentCandidate[] {
+  return Array.from(files, (file) => ({ file }));
+}
 
 // ---------------------------------------------------------------------------
 // Composer
@@ -99,14 +116,18 @@ export function Composer({
   const attachments = useComposer(
     (state) => state.attachmentsBySessionId[sessionId] ?? EMPTY_ATTACHMENTS,
   );
+  const notice = useComposer((state) => state.submissionNoticeBySessionId[sessionId] ?? null);
+  const sending = useComposer(
+    (state) => state.pendingSubmissionBySessionId[sessionId] !== undefined,
+  );
+  const rejections = useComposer(
+    (state) => state.attachmentRejectionsBySessionId[sessionId] ?? EMPTY_REJECTIONS,
+  );
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [caret, setCaret] = useState(0);
   const [menuIndex, setMenuIndex] = useState(0);
   const [menuDismissed, setMenuDismissed] = useState(false);
-  const [rejections, setRejections] = useState<readonly string[]>([]);
-  const [notice, setNotice] = useState<SubmissionNotice>(null);
-  const [sending, setSending] = useState(false);
 
   const disabled = !canPrompt || readOnlyReason !== null;
   const disabledReason =
@@ -154,6 +175,11 @@ export function Composer({
     },
     [sessionId],
   );
+  const setRejections = useCallback(
+    (next: readonly string[]) =>
+      composerStore.getState().setAttachmentRejections(sessionId, next),
+    [sessionId],
+  );
 
   const acceptSlash = useCallback(
     (index: number) => {
@@ -173,10 +199,18 @@ export function Composer({
     [slashItems, setDraft],
   );
 
-  // One submission gate per runtime seam: it drops double-submits while a
-  // send is pending and applies the outcome — clear on accepted, keep the
-  // exact draft/attachments/caret on rejected or unknown.
-  const gate = useMemo(() => createSubmissionGate(submitPrompt), [submitPrompt]);
+  // The latch lives in the session-keyed composer store, so switching away
+  // and back cannot create an unlocked second gate while this send is live.
+  const latch = useMemo<SubmissionLatch>(
+    () => ({
+      pending: () => composerStore.getState().pendingSubmissionBySessionId[sessionId] !== undefined,
+      begin: () => composerStore.getState().beginSubmission(sessionId),
+      current: (token) => composerStore.getState().isSubmissionCurrent(sessionId, token),
+      end: (token) => composerStore.getState().finishSubmission(sessionId, token),
+    }),
+    [sessionId],
+  );
+  const gate = useMemo(() => createSubmissionGate(submitPrompt, latch), [submitPrompt, latch]);
 
   const submissionIo = useMemo<SubmissionIo>(
     () => ({
@@ -189,17 +223,16 @@ export function Composer({
       removeAttachments: (ids) => {
         for (const id of ids) composerStore.getState().removeAttachment(sessionId, id);
       },
-      setNotice,
+      setNotice: (next: SubmissionNotice) =>
+        composerStore.getState().setSubmissionNotice(sessionId, next),
     }),
-    [sessionId, resizeTextarea],
+    [sessionId, resizeTextarea, setRejections],
   );
 
   const runSubmission = useCallback(
     (intent: SessionIntent, submitted: SubmittedPrompt, onAccepted?: () => void) => {
       if (gate.pending()) return;
-      setSending(true);
       void gate.submit(intent, submitted, submissionIo).then((outcome) => {
-        setSending(false);
         if (outcome !== null && outcome.kind === "accepted") onAccepted?.();
       });
     },
@@ -209,7 +242,15 @@ export function Composer({
   const submit = useCallback(() => {
     const text = draft.trim();
     if (text === "" && attachments.length === 0) return;
+    if (attachments.length > 0 && !controls.attachmentsSupported) {
+      setRejections([IMAGE_PROMPTS_UNSUPPORTED_REASON]);
+      return;
+    }
     if (revisingPlanId !== null) {
+      if (attachments.length > 0) {
+        setRejections([IMAGE_REVISION_REASON]);
+        return;
+      }
       // The revision banner stays until the host accepts the note, so a
       // rejected revision keeps both the draft and the revising context.
       runSubmission(
@@ -220,39 +261,71 @@ export function Composer({
       return;
     }
     if (turnActive) {
+      if (attachments.length > 0) {
+        setRejections([IMAGE_ACTIVE_TURN_REASON]);
+        return;
+      }
       runSubmission({ kind: "steer", text }, { text: draft, attachmentIds: [] });
       return;
     }
     runSubmission(
-      { kind: "prompt", text, attachments },
+      { kind: "prompt", text, attachments: attachments.map(toPromptAttachment) },
       { text: draft, attachmentIds: attachments.map((attachment) => attachment.id) },
     );
-  }, [draft, attachments, turnActive, revisingPlanId, onCancelRevise, runSubmission]);
+  }, [
+    draft,
+    attachments,
+    controls.attachmentsSupported,
+    turnActive,
+    revisingPlanId,
+    onCancelRevise,
+    runSubmission,
+  ]);
 
   const queueFollowUp = useCallback(() => {
     const text = draft.trim();
     if (text === "") return;
+    if (attachments.length > 0) {
+      setRejections([IMAGE_ACTIVE_TURN_REASON]);
+      return;
+    }
     runSubmission({ kind: "followUp", text }, { text: draft, attachmentIds: [] });
-  }, [draft, runSubmission]);
+  }, [draft, attachments.length, runSubmission]);
+
+  const reportUnsupportedImages = useCallback(() => {
+    setRejections([IMAGE_PROMPTS_UNSUPPORTED_REASON]);
+  }, []);
 
   const intake = useCallback(
     (candidates: readonly AttachmentCandidate[]) => {
-      if (!controls.attachmentsSupported) return;
-      const result = admitAttachments(attachments, candidates);
+      if (!controls.attachmentsSupported) {
+        reportUnsupportedImages();
+        return;
+      }
+      const stagedBySession = composerStore.getState().attachmentsBySessionId;
+      const existing = stagedBySession[sessionId] ?? [];
+      let stagedBytes = 0;
+      let stagedCount = 0;
+      for (const staged of Object.values(stagedBySession)) {
+        stagedCount += staged.length;
+        for (const attachment of staged) stagedBytes += attachment.sizeBytes;
+      }
+      const result = admitAttachments(existing, candidates, { stagedBytes, stagedCount });
       if (result.accepted.length > 0) {
         composerStore.getState().addAttachments(sessionId, result.accepted);
       }
       setRejections(result.rejections);
     },
-    [attachments, sessionId, controls.attachmentsSupported],
+    [sessionId, controls.attachmentsSupported, reportUnsupportedImages],
   );
 
-  const filesToCandidates = (files: ArrayLike<File>): AttachmentCandidate[] =>
-    Array.from(files, (file) => ({
-      name: file.name,
-      mediaType: file.type || "application/octet-stream",
-      sizeBytes: file.size,
-    }));
+  const requestAttachmentPicker = useCallback(() => {
+    if (!controls.attachmentsSupported) {
+      reportUnsupportedImages();
+      return;
+    }
+    fileInputRef.current?.click();
+  }, [controls.attachmentsSupported, reportUnsupportedImages]);
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const keyInput = {
@@ -298,6 +371,7 @@ export function Composer({
     const action = resolveComposerKey(keyInput);
     if (action === "submit") {
       event.preventDefault();
+      if (sending) return;
       submit();
     }
     // "newline" falls through to the textarea's default behavior.
@@ -366,17 +440,12 @@ export function Composer({
         <div
           className="min-w-0 max-w-full rounded-xl border border-input bg-(--composer-background) shadow-(--composer-shadow) backdrop-blur-(--composer-blur)"
           onDragOver={(event) => {
-            if (
-              !disabled &&
-              controls.attachmentsSupported &&
-              event.dataTransfer.types.includes("Files")
-            ) {
-              event.preventDefault();
-            }
+            if (event.dataTransfer.types.includes("Files")) event.preventDefault();
           }}
           onDrop={(event) => {
-            if (disabled || !controls.attachmentsSupported) return;
+            if (event.dataTransfer.files.length === 0) return;
             event.preventDefault();
+            if (disabled) return;
             intake(filesToCandidates(event.dataTransfer.files));
           }}
         >
@@ -413,8 +482,9 @@ export function Composer({
             }}
             onKeyDown={handleKeyDown}
             onPaste={(event) => {
-              if (disabled || event.clipboardData.files.length === 0) return;
+              if (event.clipboardData.files.length === 0) return;
               event.preventDefault();
+              if (disabled) return;
               intake(filesToCandidates(event.clipboardData.files));
             }}
             onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
@@ -433,7 +503,7 @@ export function Composer({
           />
           {controls.attachmentsSupported && (
             <input
-              accept="image/png,image/jpeg,image/webp,image/gif,text/*,application/json"
+              accept="image/png,image/jpeg,image/webp,image/gif"
               className="hidden"
               multiple
               onChange={(event) => {
@@ -452,23 +522,27 @@ export function Composer({
               onIntent={onIntent}
             />
             <span className="min-w-0 flex-1" />
-            {controls.attachmentsSupported && (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <IconButton
-                      aria-label="Attach files"
-                      disabled={disabled}
-                      onClick={() => fileInputRef.current?.click()}
-                      size="icon-sm"
-                    >
-                      <Paperclip />
-                    </IconButton>
-                  }
-                />
-                <TooltipPopup side="top">Attach images or text files</TooltipPopup>
-              </Tooltip>
-            )}
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <IconButton
+                    aria-label={
+                      controls.attachmentsSupported ? "Attach images" : "Image prompts unavailable"
+                    }
+                    disabled={disabled}
+                    onClick={requestAttachmentPicker}
+                    size="icon-sm"
+                  >
+                    <Paperclip />
+                  </IconButton>
+                }
+              />
+              <TooltipPopup side="top">
+                {controls.attachmentsSupported
+                  ? "Attach PNG, JPEG, WebP, or GIF images"
+                  : "This host does not support image prompts yet"}
+              </TooltipPopup>
+            </Tooltip>
             <ContextMeter usedTokens={contextUsedTokens} windowTokens={contextWindowTokens} />
             {turnActive && (
               <>
@@ -527,16 +601,16 @@ export function Composer({
                 />
               </RunOptionsMenu>
               <span className="min-w-0 flex-1" />
-              {controls.attachmentsSupported && (
-                <IconButton
-                  aria-label="Attach files"
-                  disabled={disabled}
-                  onClick={() => fileInputRef.current?.click()}
-                  size="icon-xl"
-                >
-                  <Paperclip />
-                </IconButton>
-              )}
+              <IconButton
+                aria-label={
+                  controls.attachmentsSupported ? "Attach images" : "Image prompts unavailable"
+                }
+                disabled={disabled}
+                onClick={requestAttachmentPicker}
+                size="icon-xl"
+              >
+                <Paperclip />
+              </IconButton>
               <ContextMeter usedTokens={contextUsedTokens} windowTokens={contextWindowTokens} />
             </div>
             <MobileComposerActions

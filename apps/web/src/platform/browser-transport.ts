@@ -8,10 +8,13 @@ export interface BrowserTransportOptions {
   /** Full WebSocket URL. Only ws: and wss: URLs are accepted. */
   readonly url: string;
   readonly protocols?: string | string[];
+  /** Maximum time to wait for the browser WebSocket open event. */
+  readonly openTimeoutMs?: number;
 }
 
 export const MAX_BROWSER_URL_LENGTH = 2048;
 export const MAX_BROWSER_MESSAGE_BYTES = 4 * 1024 * 1024;
+export const DEFAULT_BROWSER_OPEN_TIMEOUT_MS = 10_000;
 const MAX_CLOSE_REASON_LENGTH = 256;
 
 function validateUrl(value: string): string {
@@ -35,8 +38,10 @@ function byteLength(value: string): number {
 export class BrowserWebSocketTransport implements OmpTransport {
   private readonly url: string;
   private readonly protocols: string | string[] | undefined;
+  private readonly openTimeoutMs: number;
   private socket: WebSocket | undefined;
   private socketCleanup: (() => void) | undefined;
+  private rejectOpening: ((message?: string) => void) | undefined;
   private readonly messages = new Set<(data: string | Uint8Array) => void>();
   private readonly closes = new Set<(code?: number, reason?: string) => void>();
   private readonly errors = new Set<(error: unknown) => void>();
@@ -44,6 +49,10 @@ export class BrowserWebSocketTransport implements OmpTransport {
   constructor(options: BrowserTransportOptions) {
     this.url = validateUrl(options.url);
     this.protocols = options.protocols;
+    this.openTimeoutMs = options.openTimeoutMs ?? DEFAULT_BROWSER_OPEN_TIMEOUT_MS;
+    if (!Number.isSafeInteger(this.openTimeoutMs) || this.openTimeoutMs <= 0) {
+      throw new Error("invalid browser transport open timeout");
+    }
   }
 
   open(): Promise<void> {
@@ -56,6 +65,7 @@ export class BrowserWebSocketTransport implements OmpTransport {
 
     return new Promise<void>((resolve, reject) => {
       let settled = false;
+      let openTimer: ReturnType<typeof setTimeout> | undefined;
       let socket: WebSocket;
       try {
         socket = new WebSocket(this.url, this.protocols);
@@ -66,27 +76,40 @@ export class BrowserWebSocketTransport implements OmpTransport {
       socket.binaryType = "arraybuffer";
       this.socket = socket;
 
+      const clearOpenTimer = (): void => {
+        if (openTimer === undefined) return;
+        clearTimeout(openTimer);
+        openTimer = undefined;
+      };
       const cleanup = (): void => {
+        clearOpenTimer();
         socket.removeEventListener("open", onOpen);
         socket.removeEventListener("error", onError);
         socket.removeEventListener("message", onMessage);
         socket.removeEventListener("close", onClose);
         if (this.socketCleanup === cleanup) this.socketCleanup = undefined;
       };
-      const fail = (): void => {
+      const fail = (message = "browser transport connection failed"): void => {
         if (!settled) {
           settled = true;
-          reject(new Error("browser transport connection failed"));
+          clearOpenTimer();
+          if (this.rejectOpening === fail) this.rejectOpening = undefined;
+          reject(new Error(message));
         }
       };
       const onOpen = (): void => {
         if (!settled) {
           settled = true;
+          clearOpenTimer();
+          if (this.rejectOpening === fail) this.rejectOpening = undefined;
           resolve();
         }
       };
       const onError = (): void => {
+        cleanup();
+        if (this.socket === socket) this.socket = undefined;
         fail();
+        try { socket.close(); } catch { /* best effort */ }
         for (const listener of this.errors) listener(new Error("browser transport error"));
       };
       const onMessage = (event: MessageEvent): void => {
@@ -117,10 +140,18 @@ export class BrowserWebSocketTransport implements OmpTransport {
         for (const listener of this.closes) listener(event.code, reason);
       };
       this.socketCleanup = cleanup;
+      this.rejectOpening = fail;
       socket.addEventListener("open", onOpen);
       socket.addEventListener("error", onError);
       socket.addEventListener("message", onMessage);
       socket.addEventListener("close", onClose);
+      openTimer = setTimeout(() => {
+        if (settled) return;
+        cleanup();
+        if (this.socket === socket) this.socket = undefined;
+        fail("browser transport connection timed out");
+        try { socket.close(); } catch { /* best effort */ }
+      }, this.openTimeoutMs);
     });
   }
 
@@ -133,9 +164,11 @@ export class BrowserWebSocketTransport implements OmpTransport {
 
   close(): void {
     const socket = this.socket;
+    const rejectOpening = this.rejectOpening;
     this.socket = undefined;
     this.socketCleanup?.();
     this.socketCleanup = undefined;
+    rejectOpening?.("browser transport closed while opening");
     if (socket !== undefined) {
       try { socket.close(1000, "client closed"); } catch { /* best effort */ }
     }

@@ -141,7 +141,7 @@ function gatewayCsp(allowedOrigin) {
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
-    "img-src 'self' data:",
+    "img-src 'self' data: blob:",
     `connect-src 'self' ${websocketOrigin}`,
     "object-src 'none'",
     "base-uri 'none'",

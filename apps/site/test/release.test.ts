@@ -1,4 +1,4 @@
-// Release contract guard: exact v0.1.11 asset names and URLs, and the
+// Release contract guard: exact v0.1.12 asset names and URLs, and the
 // platform-detection rule the hero download button relies on.
 import { describe, expect, it } from "vite-plus/test";
 import {
@@ -19,13 +19,13 @@ import {
 } from "../src/release.ts";
 
 describe("release assets", () => {
-  it("carries the five contracted v0.1.11 filenames", () => {
+  it("carries the five contracted v0.1.12 filenames", () => {
     expect(RELEASE_ASSETS.map((a) => a.filename)).toEqual([
-      "T4-Code-0.1.11-android.apk",
-      "T4-Code-0.1.11-linux-amd64.deb",
-      "T4-Code-0.1.11-linux-x86_64.AppImage",
-      "T4-Code-0.1.11-mac-arm64.dmg",
-      "T4-Code-0.1.11-mac-arm64.zip",
+      "T4-Code-0.1.12-android.apk",
+      "T4-Code-0.1.12-linux-amd64.deb",
+      "T4-Code-0.1.12-linux-x86_64.AppImage",
+      "T4-Code-0.1.12-mac-arm64.dmg",
+      "T4-Code-0.1.12-mac-arm64.zip",
     ]);
   });
 
@@ -37,8 +37,8 @@ describe("release assets", () => {
 
   it("targets the public LycaonLLC repo", () => {
     expect(REPO_URL).toBe("https://github.com/LycaonLLC/t4-code");
-    expect(RELEASE_TAG).toBe("v0.1.11");
-    expect(RELEASE_VERSION).toBe("0.1.11");
+    expect(RELEASE_TAG).toBe("v0.1.12");
+    expect(RELEASE_VERSION).toBe("0.1.12");
   });
 
   it("splits assets by platform with correct architectures", () => {
@@ -59,15 +59,15 @@ describe("release assets", () => {
 
 describe("OMP integration contract", () => {
   it("pins the verified runtime tag, commit, and app-wire package", () => {
-    expect(OMP_RUNTIME_TAG).toBe("t4code-16.5.1-appserver-1");
-    expect(OMP_RUNTIME_COMMIT).toBe("15527d1f00bac22705f63f80b29c0c30e67fc5da");
+    expect(OMP_RUNTIME_TAG).toBe("t4code-16.5.1-appserver-4");
+    expect(OMP_RUNTIME_COMMIT).toBe("6a87fa6407ebff20417b4d52885a6bb3091003ea");
     expect(OMP_RUNTIME_URL).toBe(
-      "https://github.com/lyc-aon/oh-my-pi/tree/t4code-16.5.1-appserver-1",
+      "https://github.com/lyc-aon/oh-my-pi/tree/t4code-16.5.1-appserver-4",
     );
     expect(OMP_UPSTREAM_TAG).toBe("v16.5.1");
     expect(OMP_UPSTREAM_COMMIT).toBe("14b5da76a9aece9a469288718d22c3d624daf033");
     expect(OMP_UPSTREAM_URL).toBe("https://github.com/can1357/oh-my-pi/tree/v16.5.1");
-    expect(APP_WIRE_VERSION).toBe("0.5.3");
+    expect(APP_WIRE_VERSION).toBe("0.5.5");
   });
 });
 

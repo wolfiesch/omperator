@@ -57,7 +57,12 @@ export interface PromptAttachment {
   readonly mediaType: string;
   readonly sizeBytes: number;
   readonly kind: "image" | "file";
+  /** Renderer-local bytes. Live runtimes consume this before issuing wire commands. */
+  readonly file?: File;
 }
+
+export const IMAGE_PROMPTS_UNSUPPORTED_REASON =
+  "Image prompts are not available on this host yet. Your draft and any staged images stay here.";
 
 export type SessionIntent =
   | {

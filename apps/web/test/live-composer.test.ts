@@ -22,7 +22,11 @@ import {
   type SessionSnapshotFrame,
   type SessionsFrame,
 } from "@t4-code/protocol";
-import type { CommandResultError } from "@t4-code/protocol/desktop-ipc";
+import type {
+  CommandRequest,
+  CommandResult,
+  CommandResultError,
+} from "@t4-code/protocol/desktop-ipc";
 
 import {
   createSubmissionGate,
@@ -32,6 +36,8 @@ import {
 } from "../src/features/composer/submission.ts";
 import { createLiveSessionRuntime } from "../src/features/session-runtime/live-runtime.ts";
 import type { SessionRuntime } from "../src/features/session-runtime/controller.ts";
+import { IMAGE_PROMPTS_UNSUPPORTED_REASON } from "../src/features/session-runtime/intents.ts";
+import { IMAGE_UPLOAD_CHUNK_BYTES } from "../src/features/session-runtime/image-upload.ts";
 import { obtainLiveRuntime } from "../src/features/session-runtime/useSessionRuntime.ts";
 import { deriveWorkspaceData, sessionViewId } from "../src/platform/live-workspace.ts";
 import {
@@ -222,6 +228,7 @@ describe("prompt submission outcomes", () => {
     expect(shell.commandCount("session.prompt")).toBe(1);
     const sent = shell.commands.find((request) => request.intent.command === "session.prompt");
     expect(sent?.intent.args).toEqual({ message: "ship it" });
+    expect(sent?.intent.expectedRevision).toBeUndefined();
   });
 
   it("does not send before the first session snapshot establishes a revision", async () => {
@@ -243,6 +250,99 @@ describe("prompt submission outcomes", () => {
     expect(outcome?.kind).toBe("unknown");
     expect(harness.draft()).toBe("ship it");
     expect(shell.commandCount("session.prompt")).toBe(0);
+  });
+
+  it("rejects image metadata without a negotiated upload protocol instead of dropping it", async () => {
+    const { shell, runtime } = await startedRuntime();
+
+    const outcome = await runtime.submitPrompt({
+      kind: "prompt",
+      text: "inspect this",
+      attachments: [
+        {
+          id: "attachment-proof",
+          kind: "image",
+          mediaType: "image/png",
+          name: "proof.png",
+          sizeBytes: 12,
+        },
+      ],
+    });
+
+    expect(outcome).toEqual({ kind: "rejected", reason: IMAGE_PROMPTS_UNSUPPORTED_REASON });
+    expect(shell.commandCount("session.prompt")).toBe(0);
+  });
+
+  it("uploads negotiated images and sends only ordered image refs in the prompt", async () => {
+    const { shell, runtime } = await startedRuntime(["sessions.prompt"], ["prompt.images"]);
+    const imageId = "123e4567-e89b-42d3-a456-426614174000";
+    const bytes = new Uint8Array([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02, 0x03,
+    ]);
+    const file = new File([bytes], "proof-from-android.png", { type: "" });
+    let received = 0;
+    shell.command = async (request: CommandRequest): Promise<CommandResult> => {
+      shell.commands.push(request);
+      const command = request.intent.command;
+      let result: unknown;
+      if (command === "session.image.begin") {
+        result = { imageId, chunkBytes: IMAGE_UPLOAD_CHUNK_BYTES };
+      } else if (command === "session.image.chunk") {
+        const content = String(request.intent.args?.content);
+        received += atob(content).length;
+        result = { imageId, received, complete: received === file.size };
+      } else if (command === "session.image.discard") {
+        result = { discarded: true };
+      } else if (command === "session.prompt") {
+        result = { accepted: true };
+      }
+      return {
+        targetId: request.targetId,
+        requestId: `image-req-${shell.commands.length}`,
+        commandId: `image-cmd-${shell.commands.length}`,
+        accepted: true,
+        ...(result === undefined ? {} : { result }),
+      };
+    };
+
+    expect(runtime.getSnapshot().controls.attachmentsSupported).toBe(true);
+    const outcome = await runtime.submitPrompt({
+      kind: "prompt",
+      text: "inspect this image",
+      attachments: [
+        {
+          id: "attachment-proof",
+          kind: "image",
+          mediaType: "image/png",
+          name: file.name,
+          sizeBytes: file.size,
+          file,
+        },
+      ],
+    });
+
+    expect(outcome).toEqual({ kind: "accepted" });
+    expect(
+      shell.commands
+        .filter((request) => request.intent.command.startsWith("session.image."))
+        .map((request) => request.intent.command),
+    ).toEqual(["session.image.begin", "session.image.chunk", "session.image.discard"]);
+    const begin = shell.commands.find(
+      (request) => request.intent.command === "session.image.begin",
+    );
+    expect(begin?.intent.args).toMatchObject({
+      mimeType: "image/png",
+      size: file.size,
+      sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    });
+    const prompt = shell.commands.find((request) => request.intent.command === "session.prompt");
+    expect(prompt?.intent.args).toEqual({
+      message: "inspect this image",
+      images: [{ imageId }],
+    });
+    expect(JSON.stringify(prompt?.intent.args)).not.toContain(file.name);
+    expect(JSON.stringify(prompt?.intent.args)).not.toContain("iVBOR");
+    expect(shell.commandCount("session.prompt")).toBe(1);
   });
 
   it.each(REJECTION_CASES)(
@@ -685,11 +785,13 @@ describe("authoritative live runtime protocol", () => {
     });
 
     let promptLeaseCalled = false;
+    let promptLeaseRevision: string | undefined;
     let controllerLeaseCalled = false;
 
     const origPromptLease = controller.commandWithPromptLease;
     controller.commandWithPromptLease = async function (targetId, intent, leaseRevision) {
       promptLeaseCalled = true;
+      promptLeaseRevision = leaseRevision;
       return origPromptLease.call(this, targetId, intent, leaseRevision);
     };
 
@@ -706,6 +808,8 @@ describe("authoritative live runtime protocol", () => {
     const cmd1 = shell.commands.find((c) => c.intent.command === "session.prompt");
     expect(cmd1).toBeDefined();
     expect(cmd1?.intent.args).toEqual({ message: "ship it", leaseId: "prompt-lease-fixture" });
+    expect(cmd1?.intent.expectedRevision).toBeUndefined();
+    expect(promptLeaseRevision).toBe("rev-1");
 
     // 2. steer -> session.steer
     promptLeaseCalled = false;
@@ -740,7 +844,7 @@ describe("authoritative live runtime protocol", () => {
     expect(cmd4?.intent.expectedRevision).toBeUndefined();
   });
 
-  it("keeps the revision on prompts but omits it from active-turn steer and follow-up", async () => {
+  it("omits volatile revisions from prompt, steer, and follow-up commands", async () => {
     const { shell, runtime } = await startedRuntime();
 
     await runtime.submitPrompt(PROMPT);
@@ -752,7 +856,7 @@ describe("authoritative live runtime protocol", () => {
     const followUp = shell.commands.find(
       (request) => request.intent.command === "session.followUp",
     );
-    expect(prompt?.intent.expectedRevision).toBe(revision("rev-1"));
+    expect(prompt?.intent.expectedRevision).toBeUndefined();
     expect(steer?.intent.expectedRevision).toBeUndefined();
     expect(followUp?.intent.expectedRevision).toBeUndefined();
   });

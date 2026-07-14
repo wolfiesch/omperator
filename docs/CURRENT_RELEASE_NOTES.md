@@ -1,16 +1,18 @@
-## OMP 16.5.1 compatibility
+## Image prompts and transcript images
 
-T4 Code v0.1.11 adopts the official OMP 16.5.1 release. The host runtime now includes upstream fixes for interrupted session turns, organization-scoped Anthropic accounts, credential rotation, subagent model selection, bounded transcript retention, and RPC disconnect cleanup.
+T4 Code v0.1.12 can attach up to eight PNG, JPEG, WebP, or GIF images to one prompt, with a 20 MiB limit per image. Drafts remain local until the host accepts them, and interrupted or uncertain sends stay recoverable instead of being silently discarded.
 
-## Desktop runtime
+Transcript images are loaded by verified digest through bounded work queues and per-session caches. Animated images include pause and play controls, and T4 follows the device's reduced-motion preference.
 
-The merged RPC shutdown path rejects pending extension UI, host tool, and host URI requests before it drains accepted work. T4's session teardown then releases the persistent session lock and flushes the postmortem before the worker exits. This sequence prevents a dead client from leaving queued work or a stale session lock.
+## Connection recovery
+
+Desktop, browser, and Android transports now stop waiting and reconnect when a host accepts a socket but does not complete setup. T4 first advertises image support and performs one compatibility retry without that feature when an older host rejects the handshake.
 
 ## Runtime compatibility
 
-T4 Code v0.1.11 uses app-wire 0.5.3 from integration commit [15527d1f](https://github.com/lyc-aon/oh-my-pi/commit/15527d1f00bac22705f63f80b29c0c30e67fc5da), source tree `4961ea9c522a3bbf9a9900424dd475a48148c729`. The app-wire source tree and packaged artifact are unchanged from v0.1.10; provenance now points at the OMP 16.5.1 integration.
+T4 Code v0.1.12 vendors app-wire 0.5.5 from integration commit [6a87fa64](https://github.com/lyc-aon/oh-my-pi/commit/6a87fa6407ebff20417b4d52885a6bb3091003ea), source tree `a2495fe8781c979184fe7fb9a6d37d8f33bad30f`. Image prompts activate only when the host advertises the additive image capability; the compatibility handshake keeps older appservers available.
 
-The matching OMP 16.5.1 runtime is tagged [t4code-16.5.1-appserver-1](https://github.com/lyc-aon/oh-my-pi/tree/t4code-16.5.1-appserver-1). It carries forward bounded replay and terminal events, complete session projection, catalog-backed lifecycle controls, ordered remote delivery, failed-worker reaping, recoverable crash state, settled close state, cross-client convergence, and restart-safe RPC teardown.
+The matching OMP 16.5.1 runtime is built from [6a87fa64](https://github.com/lyc-aon/oh-my-pi/commit/6a87fa6407ebff20417b4d52885a6bb3091003ea) and tagged [t4code-16.5.1-appserver-4](https://github.com/lyc-aon/oh-my-pi/tree/t4code-16.5.1-appserver-4). It carries forward T4's appserver and lifecycle integration, adds bounded prompt-image uploads and transcript-image reads, and tightens public wire decoding, typed command results, canonical response boundaries, and RPC event limits.
 
 The integration is based on the official upstream [v16.5.1 tag](https://github.com/can1357/oh-my-pi/tree/v16.5.1), commit [14b5da76](https://github.com/can1357/oh-my-pi/commit/14b5da76a9aece9a469288718d22c3d624daf033). Official upstream OMP v16.5.1 has no `appserver` command and cannot host T4 Code.
 

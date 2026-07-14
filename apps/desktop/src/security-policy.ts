@@ -34,7 +34,7 @@ export function rendererUrl(options: { readonly isPackaged: boolean; readonly de
 export function contentSecurityPolicy(trusted: TrustedRenderer, development: boolean): string {
   const script = development ? "'self' 'unsafe-inline'" : "'self'";
   const connect = development ? `connect-src ${trusted.origin}` : "connect-src 'none'";
-  return ["default-src 'self'", `script-src ${script}`, "style-src 'self' 'unsafe-inline'", "font-src 'self' data:", "img-src 'self' data:", connect, "object-src 'none'", "base-uri 'none'", "frame-src 'none'", "frame-ancestors 'none'", "form-action 'none'"].join("; ");
+  return ["default-src 'self'", `script-src ${script}`, "style-src 'self' 'unsafe-inline'", "font-src 'self' data:", "img-src 'self' data: blob:", connect, "object-src 'none'", "base-uri 'none'", "frame-src 'none'", "frame-ancestors 'none'", "form-action 'none'"].join("; ");
 }
 
 export function isTrustedNavigation(value: string, trusted: TrustedRenderer): boolean {

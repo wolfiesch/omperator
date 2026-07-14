@@ -146,6 +146,7 @@ export function SessionMain({ session }: SessionMainProps) {
         ) : (
           <TranscriptTimeline
             bottomInset={archived ? 16 : dockHeight + 16}
+            imageSource={runtime.transcriptImages}
             key={session.id}
             nowMs={snapshot.nowMs}
             rows={rows}

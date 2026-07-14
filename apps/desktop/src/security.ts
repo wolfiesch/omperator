@@ -79,7 +79,7 @@ export function contentSecurityPolicy(trusted: TrustedRenderer, development: boo
     `script-src ${script}`,
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
-    "img-src 'self' data:",
+    "img-src 'self' data: blob:",
     connect,
     "object-src 'none'",
     "base-uri 'none'",

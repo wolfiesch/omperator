@@ -43,6 +43,7 @@ import {
 
 import type { SessionListView, WorkspaceSession } from "../lib/workspace-data.ts";
 import { formatRelativeTime, type ProjectGroup, type SessionRow } from "../lib/session-tree.ts";
+import { composerStore } from "../features/composer/composer-store.ts";
 import { createLiveSession } from "../features/session-runtime/live-create.ts";
 import {
   archiveLiveSession,
@@ -135,6 +136,11 @@ function SessionRowItem({
         else if (action === "archive") await archiveLiveSession(controller, address);
         else if (action === "restore") await restoreLiveSession(controller, address);
         else await deleteLiveSession(controller, address);
+        // Archive/restore preserves the same draft contract as A to B to A.
+        // Only confirmed permanent deletion releases its staged blob URLs.
+        if (action === "delete") {
+          composerStore.getState().disposeSession(session.id);
+        }
         const verb =
           action === "rename"
             ? "renamed"

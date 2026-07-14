@@ -11,12 +11,14 @@ import {
 } from "@t4-code/client";
 import { useSyncExternalStore } from "react";
 
+import { bindAuthoritativeComposerCleanup } from "../features/composer/authoritative-cleanup.ts";
 import { rendererPlatform } from "../state/store-instance.ts";
 
 const RUNTIME_SLOT = Symbol.for("t4-code.web.desktop-runtime");
 
 interface RuntimeSlot {
   controller: DesktopRuntimeController;
+  disposeComposerCleanup: () => void;
   started: boolean;
 }
 
@@ -34,7 +36,12 @@ export function acquireRuntimeController(
 ): DesktopRuntimeController {
   let slot = holder[RUNTIME_SLOT];
   if (slot === undefined) {
-    slot = { controller: createDesktopRuntimeController({ shell }), started: false };
+    const controller = createDesktopRuntimeController({ shell });
+    slot = {
+      controller,
+      disposeComposerCleanup: bindAuthoritativeComposerCleanup(controller),
+      started: false,
+    };
     holder[RUNTIME_SLOT] = slot;
   }
   return slot.controller;
@@ -59,6 +66,7 @@ export function startRuntimeController(shell: DesktopShellPort, holder: RuntimeS
     window.addEventListener(
       "pagehide",
       () => {
+        slot.disposeComposerCleanup();
         void controller.stop();
         delete holder[RUNTIME_SLOT];
       },

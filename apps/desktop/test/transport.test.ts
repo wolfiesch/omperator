@@ -1,6 +1,6 @@
 import { createServer as createHttpServer } from "node:http";
 import { chmodSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { createServer as createNetServer, type Server } from "node:net";
+import { createServer as createNetServer, type Server, type Socket } from "node:net";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -76,6 +76,30 @@ describeUnix("Unix socket ownership and resolution", () => {
       transport.close();
       await new Promise<void>((resolve) => webSocketServer.close(() => resolve()));
       await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("bounds a local WebSocket handshake that never answers", async () => {
+    const directory = fixtureDirectory();
+    const socketPath = join(directory, "stalled.sock");
+    const sockets = new Set<Socket>();
+    const server = createNetServer((socket) => {
+      sockets.add(socket);
+      socket.once("close", () => sockets.delete(socket));
+    });
+    const transport = new UnixWebSocketTransport({
+      socketPath,
+      validatePath: false,
+      handshakeTimeoutMs: 25,
+    });
+    try {
+      await listenUnix(server, socketPath);
+      await expect(transport.open()).rejects.toThrow("handshake timed out");
+    } finally {
+      transport.close();
+      for (const socket of sockets) socket.destroy();
+      await closeServer(server);
       rmSync(directory, { recursive: true, force: true });
     }
   });

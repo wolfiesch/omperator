@@ -3,14 +3,12 @@ import { cn, IconButton } from "@t4-code/ui";
 import {
   Check,
   ChevronDown,
-  FileText,
-  Image as ImageIcon,
   SlidersHorizontal,
   X,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
-import type { PromptAttachment } from "../session-runtime/intents.ts";
+import type { StagedAttachment } from "./attachments.ts";
 
 export interface ControlChoice {
   readonly id: string;
@@ -155,29 +153,29 @@ export function AttachmentChips({
   attachments,
   onRemove,
 }: {
-  readonly attachments: readonly PromptAttachment[];
+  readonly attachments: readonly StagedAttachment[];
   readonly onRemove: (id: string) => void;
 }) {
   if (attachments.length === 0) return null;
   return (
     <ul
       aria-label="Attachments"
-      className="flex flex-wrap gap-x-1.5 gap-y-4 px-3 py-2.5 sm:gap-y-1.5 sm:pt-2.5 sm:pb-0"
+      className="flex touch-pan-x flex-nowrap gap-1.5 overflow-x-auto overflow-y-hidden overscroll-x-contain px-3 py-1.5 sm:flex-wrap sm:overflow-visible sm:pt-2.5 sm:pb-0"
     >
       {attachments.map((attachment) => (
         <li
-          className="flex h-7 items-center gap-1.5 rounded-md border border-input bg-background pr-0.5 pl-1.5 text-xs sm:h-6"
+          className="flex h-11 shrink-0 items-center gap-1.5 rounded-md border border-input bg-background pr-0.5 pl-1.5 text-xs sm:h-6"
           key={attachment.id}
         >
-          {attachment.kind === "image" ? (
-            <ImageIcon aria-hidden="true" className="size-3 shrink-0 text-muted-foreground" />
-          ) : (
-            <FileText aria-hidden="true" className="size-3 shrink-0 text-muted-foreground" />
-          )}
-          <span className="max-w-40 truncate">{attachment.name}</span>
+          <img
+            alt=""
+            className="size-4 shrink-0 rounded-sm object-cover"
+            src={attachment.previewUrl}
+          />
+          <span className="max-w-32 truncate sm:max-w-40">{attachment.name}</span>
           <IconButton
             aria-label={`Remove ${attachment.name}`}
-            className="-my-2 -mr-2 size-11 sm:my-0 sm:mr-0 sm:size-5"
+            className="size-11 sm:size-5"
             onClick={() => onRemove(attachment.id)}
             size="icon-xs"
           >
