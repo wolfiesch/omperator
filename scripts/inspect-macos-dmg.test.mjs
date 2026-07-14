@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 
 import { findMountedApp, inspectMacosDmg } from "./inspect-macos-dmg.mjs";
 
-const dmgPath = "/tmp/T4-Code-0.1.8-mac-arm64.dmg";
+const dmgPath = "/tmp/T4-Code-0.1.9-mac-arm64.dmg";
 const mountPoint = "/tmp/t4-code-dmg-test";
 
 function directory(name) {

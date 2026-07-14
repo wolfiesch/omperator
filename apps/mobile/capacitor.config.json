@@ -1,0 +1,17 @@
+{
+  "appId": "com.lycaonsolutions.t4code",
+  "appName": "T4 Code",
+  "webDir": "dist",
+  "loggingBehavior": "debug",
+  "appendUserAgent": " T4CodeMobile/0.1.9",
+  "android": {
+    "path": "android",
+    "minWebViewVersion": 60,
+    "allowMixedContent": false,
+    "webContentsDebuggingEnabled": false
+  },
+  "server": {
+    "hostname": "localhost",
+    "androidScheme": "https"
+  }
+}

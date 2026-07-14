@@ -11,7 +11,8 @@ import {
   OMP_RUNTIME_VERSION,
   OMP_UPSTREAM_COMMIT,
   OMP_UPSTREAM_URL,
-  RELEASE_ASSETS,
+  assetsFor,
+  primaryAsset,
   RELEASE_TAG,
   RELEASE_VERSION,
   RELEASES_URL,
@@ -40,19 +41,40 @@ export interface DocGroup {
   readonly topics: readonly DocTopic[];
 }
 
-const linuxDeb = RELEASE_ASSETS[0]!;
-const linuxAppImage = RELEASE_ASSETS[1]!;
-const macDmg = RELEASE_ASSETS[2]!;
-const macZip = RELEASE_ASSETS[3]!;
+function assetOfKind(platform: "linux" | "mac", kind: "appimage" | "zip") {
+  const found = assetsFor(platform).find((asset) => asset.kind === kind);
+  if (!found) throw new Error(`no ${kind} asset for ${platform}`);
+  return found;
+}
+
+const androidApk = primaryAsset("android");
+const linuxDeb = primaryAsset("linux");
+const linuxAppImage = assetOfKind("linux", "appimage");
+const macDmg = primaryAsset("mac");
+const macZip = assetOfKind("mac", "zip");
 
 const install: DocTopic = {
   id: "install",
   title: "Install",
-  lede: "T4 Code ships for Linux (x86_64) and macOS (Apple Silicon). Download from the GitHub release, install, and you are ready for first run.",
+  lede: "T4 Code ships for Android, Linux (x86_64), and macOS (Apple Silicon). iOS TestFlight is coming soon.",
   blocks: [
     {
       kind: "p",
       text: `All downloads live on the [v${RELEASE_VERSION} release page](${RELEASES_URL}).`,
+    },
+    { kind: "h2", id: "install-android", text: "Android" },
+    {
+      kind: "p",
+      text: `Download the [Android APK](${androidApk.url}) on your phone and open it. Android may ask you to allow app installs from your browser before it opens the package.`,
+    },
+    {
+      kind: "p",
+      text: "The Android app is a thin client. It connects to the T4 Code host that runs your OMP sessions; it does not run OMP or an app server on your phone.",
+    },
+    { kind: "h2", id: "install-ios", text: "iPhone and iPad" },
+    {
+      kind: "p",
+      text: "iOS TestFlight is coming soon. This page will carry the TestFlight link when the build is ready.",
     },
     { kind: "h2", id: "install-linux", text: "Linux (x86_64)" },
     { kind: "p", text: "The `.deb` package is the smoothest path on Debian and Ubuntu:" },
@@ -98,7 +120,7 @@ const install: DocTopic = {
     { kind: "h2", id: "install-requirements", text: "Requirements" },
     {
       kind: "p",
-      text: `T4 Code is a desktop front end for [Oh My Pi](${OMP_URL}). You need an \`omp\` build with desktop appserver support installed on the machine that runs your sessions, either this one or a remote host you pair with.`,
+      text: `T4 Code is a client for [Oh My Pi](${OMP_URL}). You need an \`omp\` build with desktop appserver support installed on the machine that runs your sessions, either this one or a remote host you pair with.`,
     },
     {
       kind: "p",
@@ -114,9 +136,13 @@ const install: DocTopic = {
 const firstRun: DocTopic = {
   id: "first-run",
   title: "First run",
-  lede: "On first launch, T4 Code finds your local Oh My Pi install and manages its app server for you.",
+  lede: "Desktop builds can manage a local Oh My Pi app server. Android connects to the T4 gateway on your computer.",
   blocks: [
-    { kind: "h2", id: "first-run-discovery", text: "How T4 finds omp" },
+    {
+      kind: "note",
+      text: "The discovery and service steps below apply to Linux and macOS. On Android, connect Tailscale to the same tailnet as your computer, then enter the gateway's full HTTPS address in T4 Code.",
+    },
+    { kind: "h2", id: "first-run-discovery", text: "How desktop T4 finds omp" },
     { kind: "p", text: "T4 Code checks these places, in order, and uses the first match:" },
     {
       kind: "ol",
@@ -134,7 +160,7 @@ const firstRun: DocTopic = {
       kind: "p",
       text: "Before trusting a match, T4 runs `omp appserver status --json` and checks the answer. A build that cannot answer is skipped.",
     },
-    { kind: "h2", id: "first-run-service", text: "Who keeps the app server running" },
+    { kind: "h2", id: "first-run-service", text: "Who keeps the desktop app server running" },
     {
       kind: "p",
       text: "T4 Code registers the app server with your operating system so it stays up across restarts:",

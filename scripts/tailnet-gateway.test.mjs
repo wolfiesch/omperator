@@ -8,9 +8,12 @@ import { test } from "node:test";
 import WebSocket, { WebSocketServer } from "ws";
 
 import {
+  CAPACITOR_NATIVE_ORIGINS,
   cacheControlForStaticPath,
   injectBackendConfig,
   normalizeAllowedOrigin,
+  normalizeNativeAllowedOrigins,
+  optionsFromEnvironment,
   resolveAppSocket,
   safeStaticPath,
   startTailnetGateway,
@@ -94,6 +97,33 @@ test("origin validation accepts only explicit Tailscale HTTPS origins", () => {
   }
 });
 
+test("native origin validation is pinned to Capacitor's Android and iOS defaults", () => {
+  assert.deepEqual(normalizeNativeAllowedOrigins(), ["https://localhost", "capacitor://localhost"]);
+  assert.deepEqual(normalizeNativeAllowedOrigins(["capacitor://localhost", "https://localhost"]), [
+    ...CAPACITOR_NATIVE_ORIGINS,
+  ]);
+  for (const value of [
+    ["*"],
+    ["null"],
+    ["http://localhost", "capacitor://localhost"],
+    ["https://localhost", "capacitor://localhost", "https://mobile.example.com"],
+  ]) {
+    assert.throws(() => normalizeNativeAllowedOrigins(value), /must contain exactly/u);
+  }
+});
+
+test("gateway environment parses the explicit comma-separated native origin set", () => {
+  const options = optionsFromEnvironment({
+    T4_ALLOWED_ORIGIN: ALLOWED_ORIGIN,
+    T4_NATIVE_ALLOWED_ORIGINS: "https://localhost,capacitor://localhost",
+    XDG_RUNTIME_DIR: "/run/user/1000",
+  });
+  assert.deepEqual(normalizeNativeAllowedOrigins(options.nativeAllowedOrigins), [
+    "https://localhost",
+    "capacitor://localhost",
+  ]);
+});
+
 test("backend injection is explicit, credential-free, and script-safe", () => {
   const source = "<html><head></head><body></body></html>";
   const injected = injectBackendConfig(source, {
@@ -139,6 +169,12 @@ test("gateway serves configured app and reports real upstream health", async () 
     assert.equal(indexResponse.status, 200);
     assert.match(await indexResponse.text(), /id="t4-backend"/u);
     assert.equal(indexResponse.headers.get("x-frame-options"), "DENY");
+    const contentSecurityPolicy = indexResponse.headers.get("content-security-policy");
+    assert.match(
+      contentSecurityPolicy ?? "",
+      /connect-src 'self' wss:\/\/host\.example-tailnet\.ts\.net:8445/u,
+    );
+    assert.doesNotMatch(contentSecurityPolicy ?? "", /\*/u);
 
     const assetResponse = await fetch(`${running.url}/app.js`);
     assert.equal(assetResponse.status, 200);
@@ -175,26 +211,32 @@ test("gateway serves configured app and reports real upstream health", async () 
   }
 });
 
-test("gateway rejects cross-origin sockets and bridges the allowed browser to Unix", async () => {
+test("gateway rejects cross-origin sockets and bridges only the web and native allowlist", async () => {
   const running = await fixture();
   try {
-    const denied = new WebSocket(`${running.url.replace("http", "ws")}/v1/ws`, {
-      headers: { Origin: "https://attacker.example-tailnet.ts.net" },
-    });
-    const deniedStatus = await new Promise((resolvePromise, reject) => {
-      denied.once("unexpected-response", (_request, response) => resolvePromise(response.statusCode));
-      denied.once("open", () => reject(new Error("cross-origin socket opened")));
-      denied.once("error", () => {});
-    });
-    assert.equal(deniedStatus, 403);
+    for (const origin of ["https://attacker.example-tailnet.ts.net", "null", "*"]) {
+      const denied = new WebSocket(`${running.url.replace("http", "ws")}/v1/ws`, {
+        headers: { Origin: origin },
+      });
+      const deniedStatus = await new Promise((resolvePromise, reject) => {
+        denied.once("unexpected-response", (_request, response) =>
+          resolvePromise(response.statusCode),
+        );
+        denied.once("open", () => reject(new Error(`socket opened for denied origin ${origin}`)));
+        denied.once("error", () => {});
+      });
+      assert.equal(deniedStatus, 403);
+    }
 
-    const allowed = new WebSocket(`${running.url.replace("http", "ws")}/v1/ws`, {
-      headers: { Origin: ALLOWED_ORIGIN },
-    });
-    await websocketOpen(allowed);
-    allowed.send("hello");
-    assert.equal(await websocketMessage(allowed), "upstream:hello");
-    allowed.close();
+    for (const origin of [ALLOWED_ORIGIN, ...CAPACITOR_NATIVE_ORIGINS]) {
+      const allowed = new WebSocket(`${running.url.replace("http", "ws")}/v1/ws`, {
+        headers: { Origin: origin },
+      });
+      await websocketOpen(allowed);
+      allowed.send(`hello:${origin}`);
+      assert.equal(await websocketMessage(allowed), `upstream:hello:${origin}`);
+      allowed.close();
+    }
   } finally {
     await running.close();
   }

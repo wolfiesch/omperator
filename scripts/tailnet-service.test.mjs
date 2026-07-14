@@ -24,15 +24,23 @@ const CONFIG = {
   webRoot: "/home/alice/t4-code/apps/web/dist",
   appSocket: "/run/user/1000/omp/appserver.sock",
   allowedOrigin: "https://workstation.example-tailnet.ts.net:8445",
+  nativeAllowedOrigins: ["https://localhost", "capacitor://localhost"],
   port: DEFAULT_GATEWAY_PORT,
   label: "Alice's workstation",
 };
 
 test("service config requires an exact Tailnet HTTPS origin and absolute local paths", () => {
   assert.deepEqual(validateServiceConfig(CONFIG), CONFIG);
+  const legacyConfig = { ...CONFIG };
+  delete legacyConfig.nativeAllowedOrigins;
+  assert.deepEqual(validateServiceConfig(legacyConfig), CONFIG);
   assert.throws(
     () => validateServiceConfig({ ...CONFIG, allowedOrigin: "https://public.example.com" }),
     /Tailscale HTTPS origin/u,
+  );
+  assert.throws(
+    () => validateServiceConfig({ ...CONFIG, nativeAllowedOrigins: ["*"] }),
+    /must contain exactly/u,
   );
   assert.throws(
     () => validateServiceConfig({ ...CONFIG, webRoot: "apps/web/dist" }),
@@ -53,6 +61,10 @@ test("Linux paths are user-scoped and the systemd unit is shell-free and loopbac
   const unit = renderSystemdUnit({ ...CONFIG, label: 'host "$(touch /tmp/nope)" 100%' });
   assert.match(unit, /ExecStart="\/opt\/node\/bin\/node" "\/home\/alice\/t4-code\/scripts\/tailnet-gateway\.mjs"/u);
   assert.match(unit, /Environment="T4_GATEWAY_HOST=127\.0\.0\.1"/u);
+  assert.match(
+    unit,
+    /Environment="T4_NATIVE_ALLOWED_ORIGINS=https:\/\/localhost,capacitor:\/\/localhost"/u,
+  );
   assert.match(unit, /Environment="T4_HOST_LABEL=host \\"\\\$\(touch \/tmp\/nope\)\\" 100%%"/u);
   assert.match(unit, /NoNewPrivileges=true/u);
   assert.match(unit, /ProtectHome=read-only/u);
@@ -98,6 +110,10 @@ test("macOS paths and launch agent preserve argv and environment as XML data", (
   assert.match(plist, /<key>ProgramArguments<\/key>/u);
   assert.match(plist, /<string>\/opt\/node\/bin\/node<\/string>/u);
   assert.match(plist, /<key>T4_GATEWAY_HOST<\/key>\s+<string>127\.0\.0\.1<\/string>/u);
+  assert.match(
+    plist,
+    /<key>T4_NATIVE_ALLOWED_ORIGINS<\/key>\s+<string>https:\/\/localhost,capacitor:\/\/localhost<\/string>/u,
+  );
   assert.match(plist, /<string>A&amp;B &lt;host&gt;<\/string>/u);
   assert.match(plist, /<key>Umask<\/key><integer>63<\/integer>/u);
 });

@@ -4,38 +4,47 @@ T4 Code is a free, open-source (MIT) desktop app for [Oh My Pi](https://github.c
 
 ![T4 Code main window](docs/assets/t4-code-main.png)
 
-[**Download v0.1.8**](https://github.com/LycaonLLC/t4-code/releases/tag/v0.1.8) · [**Docs**](https://t4code.net/docs) · [**Get the source**](#build-from-source)
+[**Download v0.1.9**](https://github.com/LycaonLLC/t4-code/releases/tag/v0.1.9) · [**Docs**](https://t4code.net/docs) · [**Get the source**](#build-from-source)
 
 ## Requirements
 
-T4 Code needs an OMP build with desktop appserver support. For v0.1.8, use the public integration build below.
+T4 Code needs an OMP build with desktop appserver support. For v0.1.9, use the public integration build below.
 
-T4 Code v0.1.8 was verified with OMP 16.5.0 built from [`d4a0b934`](https://github.com/lyc-aon/oh-my-pi/commit/d4a0b9344e1796c0e56041cfeea3431a8a728e61), tagged [`t4code-16.5.0-appserver-3`](https://github.com/lyc-aon/oh-my-pi/tree/t4code-16.5.0-appserver-3). That public integration is based on the official upstream [`v16.5.0`](https://github.com/can1357/oh-my-pi/tree/v16.5.0) tag at [`3047c27c`](https://github.com/can1357/oh-my-pi/commit/3047c27c332c5629c8e063283d349384c10c9a56). It adds bounded large-session replay, complete desktop runtime events, catalog-backed session management, ordered remote delivery, cross-client control-state convergence, terminal streaming-state settlement, and restart-safe session teardown. The official upstream v16.5.0 tag has no `appserver` command, so it cannot host T4 Code. The verified runtime is a normal build from the public `lyc-aon/oh-my-pi` source; T4 Code does not depend on private home-directory files, an auth broker, or a custom Codex CLI fork. T4 Code vendors `@oh-my-pi/app-wire` 0.5.2 from integration commit [`5d4315ee`](https://github.com/lyc-aon/oh-my-pi/commit/5d4315eea317260fec030e2b4726f10fed0cd5f6), source tree `713688e8099d4553a0a30b1bf415a7cffb5963f4`.
+T4 Code v0.1.9 was verified with OMP 16.5.0 built from [`d4a0b934`](https://github.com/lyc-aon/oh-my-pi/commit/d4a0b9344e1796c0e56041cfeea3431a8a728e61), tagged [`t4code-16.5.0-appserver-3`](https://github.com/lyc-aon/oh-my-pi/tree/t4code-16.5.0-appserver-3). That public integration is based on the official upstream [`v16.5.0`](https://github.com/can1357/oh-my-pi/tree/v16.5.0) tag at [`3047c27c`](https://github.com/can1357/oh-my-pi/commit/3047c27c332c5629c8e063283d349384c10c9a56). It adds bounded large-session replay, complete desktop runtime events, catalog-backed session management, ordered remote delivery, cross-client control-state convergence, terminal streaming-state settlement, and restart-safe session teardown. The official upstream v16.5.0 tag has no `appserver` command, so it cannot host T4 Code. The verified runtime is a normal build from the public `lyc-aon/oh-my-pi` source; T4 Code does not depend on private home-directory files, an auth broker, or a custom Codex CLI fork. T4 Code vendors `@oh-my-pi/app-wire` 0.5.2 from integration commit [`5d4315ee`](https://github.com/lyc-aon/oh-my-pi/commit/5d4315eea317260fec030e2b4726f10fed0cd5f6), source tree `713688e8099d4553a0a30b1bf415a7cffb5963f4`.
 
 | Platform | Arch | Package |
 | --- | --- | --- |
+| Android | arm64, armv7, x86_64 | `.apk` (**signed**) |
 | Linux | x86_64 | `.deb`, AppImage |
 | macOS | Apple Silicon (arm64) | `.dmg`, `.zip` (**unsigned, see below**) |
 
-No Windows build and no Intel Mac build in v0.1.8.
+No Windows build and no Intel Mac build in v0.1.9. The iOS TestFlight build is coming soon.
 
-## What changed in v0.1.8
+## What changed in v0.1.9
 
-- The Tailnet browser client can now be installed to an Android or iPhone home screen. The titlebar download button uses the browser's native install prompt when available and otherwise shows the Add to Home Screen path.
-- Installed web apps open in a standalone window with the T4 Code icon. The same titlebar slot becomes a Reload T4 Code button, so a phone user does not need browser chrome to refresh the client.
-- Queue and Steer now work during an active turn without sending a stale session revision. Normal prompts keep their revision guard, and negotiated prompt leases remain supported.
-- Fast mode now explains what the host actually requests: provider priority processing when supported. It does not imply a lower thinking effort.
-- The installed client remains online-only. It fetches the current gateway UI on launch and does not cache host configuration, transcripts, or session state for offline use.
-- The arbitrary physical-line ceiling is gone. File boundaries are now judged by cohesion and reviewability instead of a hard line count.
-- The manifest, phone icons, gateway content type, install states, active-turn commands, and 320 × 568 titlebar layout are covered by unit and built-app browser tests. The verified OMP 16.5.0 and app-wire 0.5.2 runtime contract is unchanged from v0.1.7.
+- Android now has a signed, installable APK. It is a thin client: the UI ships inside the app, while sessions and runtime state stay on your T4 Code host.
+- First run accepts an HTTPS Tailscale hostname, checks the secure WebSocket route, and then uses the normal T4 pairing flow.
+- Android device credentials are encrypted with an app-specific Android Keystore key. Only the non-secret Tailnet hostname is kept in web storage.
+- The Tailnet gateway accepts the exact Capacitor Android and iOS origins while continuing to reject wildcard, opaque, and untrusted origins.
+- The connection screen and titlebar controls are sized for small phone displays. A user can clear the saved host and pair again without reinstalling.
+- The browser-installable PWA remains available, and the iOS download slot now reports that TestFlight is coming soon without advertising a build that is not published.
 
 ## Install
+
+### Android
+
+1. On the Android phone, sign in to Tailscale with an account that can reach the T4 Code host.
+2. Download [`T4-Code-0.1.9-android.apk`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.9/T4-Code-0.1.9-android.apk).
+3. If Android asks, allow your browser or file manager to install unknown apps, then install the APK.
+4. Open T4 Code and enter the host's HTTPS Tailscale address, including its port.
+
+The APK does not contain an appserver or expose one to the public internet. It connects to the separately running Tailnet gateway on your OMP host.
 
 ### Linux (Debian/Ubuntu)
 
 ```sh
-wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.8/T4-Code-0.1.8-linux-amd64.deb
-sudo apt install ./T4-Code-0.1.8-linux-amd64.deb
+wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.9/T4-Code-0.1.9-linux-amd64.deb
+sudo apt install ./T4-Code-0.1.9-linux-amd64.deb
 ```
 
 Use `apt install` rather than `dpkg -i` so system dependencies resolve automatically.
@@ -43,17 +52,17 @@ Use `apt install` rather than `dpkg -i` so system dependencies resolve automatic
 ### Linux (AppImage)
 
 ```sh
-wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.8/T4-Code-0.1.8-linux-x86_64.AppImage
-chmod +x T4-Code-0.1.8-linux-x86_64.AppImage
-./T4-Code-0.1.8-linux-x86_64.AppImage
+wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.9/T4-Code-0.1.9-linux-x86_64.AppImage
+chmod +x T4-Code-0.1.9-linux-x86_64.AppImage
+./T4-Code-0.1.9-linux-x86_64.AppImage
 ```
 
 ### macOS (Apple Silicon)
 
 > [!WARNING]
-> **The macOS v0.1.8 build is unsigned and unnotarized.** Apple has not signed or notarized it, so Gatekeeper can report a "damaged" app or an unidentified developer. Only continue if you trust the release from this repository. You can always build from source instead.
+> **The macOS v0.1.9 build is unsigned and unnotarized.** Apple has not signed or notarized it, so Gatekeeper can report a "damaged" app or an unidentified developer. Only continue if you trust the release from this repository. You can always build from source instead.
 
-1. Download [`T4-Code-0.1.8-mac-arm64.dmg`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.8/T4-Code-0.1.8-mac-arm64.dmg) (or [`T4-Code-0.1.8-mac-arm64.zip`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.8/T4-Code-0.1.8-mac-arm64.zip)).
+1. Download [`T4-Code-0.1.9-mac-arm64.dmg`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.9/T4-Code-0.1.9-mac-arm64.dmg) (or [`T4-Code-0.1.9-mac-arm64.zip`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.9/T4-Code-0.1.9-mac-arm64.zip)).
 2. Drag `T4 Code.app` into `/Applications`.
 3. If Gatekeeper blocks the app and you choose to proceed, remove the quarantine attributes from the copied app bundle:
 

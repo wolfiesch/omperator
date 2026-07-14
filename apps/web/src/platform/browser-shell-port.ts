@@ -54,6 +54,11 @@ import type {
 import type { DesktopShellPort } from "@t4-code/client";
 
 import { BrowserWebSocketTransport } from "./browser-transport.ts";
+import {
+  currentNativeMobileBackend,
+  nativeMobilePlatform,
+  persistNativeMobileCredentials,
+} from "./native-mobile.ts";
 
 const TARGET_ID = "remote";
 
@@ -123,6 +128,8 @@ function hasExplicitQueryConfig(params: URLSearchParams): boolean {
 }
 
 export function detectBackend(): BrowserBackendConfig | null {
+  const nativeConfig = currentNativeMobileBackend();
+  if (nativeConfig !== null) return parseBackendPayload(nativeConfig);
   if (typeof document !== "undefined") {
     const script = document.getElementById("t4-backend");
     if (script !== null) {
@@ -166,6 +173,7 @@ export function createBrowserShellPort(options: BrowserShellPortOptions = {}): D
   if (config === null) return null;
   const backendConfig = config;
 
+  const mobilePlatform = nativeMobilePlatform();
   const platform: "linux" | "darwin" = (() => {
     if (typeof navigator !== "undefined" && /mac/i.test(navigator.platform)) return "darwin";
     return "linux";
@@ -215,14 +223,15 @@ export function createBrowserShellPort(options: BrowserShellPortOptions = {}): D
       capabilities: DEVICE_CAPABILITIES,
       requestedFeatures: ADDITIVE_FEATURES,
       authentication: () => authentication,
-      privilegedPairResult: (result) => {
+      privilegedPairResult: async (result) => {
+        await persistNativeMobileCredentials(result);
         authentication = { deviceId: result.deviceId, deviceToken: result.deviceToken };
       },
       client: {
         name: "T4 Code",
-        version: "0.1.8",
-        build: "browser",
-        platform: platform === "darwin" ? "darwin" : "linux",
+        version: "0.1.9",
+        build: mobilePlatform ?? "browser",
+        platform: mobilePlatform ?? (platform === "darwin" ? "darwin" : "linux"),
       },
       reconnect: { attemptCap: 12, baseMs: 250, maxMs: 10_000 },
     });
@@ -379,8 +388,8 @@ export function createBrowserShellPort(options: BrowserShellPortOptions = {}): D
       const result = await client.pairStart({
         code: request.code,
         deviceId: browserDeviceId,
-        deviceName: "T4 Browser",
-        platform,
+        deviceName: mobilePlatform === null ? "T4 Browser" : `T4 ${mobilePlatform === "android" ? "Android" : "iOS"}`,
+        platform: mobilePlatform ?? platform,
         requestedCapabilities: DEVICE_CAPABILITIES,
       });
       return { targetId: request.targetId, paired: result.type === "pair.ok" };

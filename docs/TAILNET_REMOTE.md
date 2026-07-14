@@ -4,16 +4,17 @@ T4 Code can be used from a phone or another computer on the same Tailscale
 network. The remote path is intentionally small:
 
 ```text
-phone browser
-  -> Tailscale Serve HTTPS (tailnet only)
+phone browser or bundled T4 mobile UI
+  -> Tailscale Serve HTTPS/WSS (tailnet only)
   -> T4 gateway on 127.0.0.1:4194
   -> OMP appserver Unix socket
 ```
 
 There is no T4 password in this mode. Tailscale membership and your tailnet
 ACLs or grants are the access boundary. The gateway never listens on a LAN
-interface, accepts WebSocket connections only from the exact configured
-`.ts.net` HTTPS origin, and passes no token or password through the browser.
+interface. It accepts WebSocket connections from the exact configured `.ts.net`
+HTTPS origin and the two fixed Capacitor WebView origins described below. No
+token or password is passed through the browser or mobile UI.
 
 > This is a source-hosted feature in the current release. The downloadable
 > desktop packages do not install or manage the Tailnet gateway. Keep the
@@ -115,6 +116,37 @@ connected to the tailnet, the host gateway must be running, and OMP remains the
 owner of every session. The web app deliberately does not cache transcripts,
 host configuration, or runtime state for offline use.
 
+## Native mobile client origins
+
+The Android APK and the planned iOS build bundle the T4 UI. They connect to the
+same `/v1/ws` endpoint over WSS; they do not load the hosted website into the
+WebView. Capacitor's documented defaults give those bundled pages these
+origins:
+
+- Android: `https://localhost`
+- iOS: `capacitor://localhost`
+
+The service installer writes those exact values to
+`T4_NATIVE_ALLOWED_ORIGINS`. The gateway accepts them in addition to the one
+Tailnet HTTPS origin passed through `--origin`. Empty values, `null`, wildcard
+origins, alternate localhost schemes, and extra origins are rejected at
+startup. These values must stay aligned with the mobile
+`server.hostname`, `server.androidScheme`, and `server.iosScheme` settings. See
+the [Capacitor configuration reference](https://capacitorjs.com/docs/config#schema)
+for the platform defaults.
+
+The hosted web response keeps an exact `connect-src` entry for its configured
+`wss://HOST.ts.net[:PORT]` endpoint. The bundled mobile document can connect to
+user-selected profiles only under `wss://*.ts.net:*`. That subdomain pattern
+restricts outbound destinations; it is never added to the gateway's accepted
+WebSocket Origin list. Do not replace either policy with an unrestricted
+`connect-src *`.
+
+An Origin header identifies the page that opened the WebSocket. It does not
+prove that the caller is the signed T4 APK. Tailscale membership and ACLs remain
+the access boundary, so the gateway must stay behind Tailscale Serve with
+Funnel disabled.
+
 ## Operate and update
 
 The lifecycle commands are the same on Linux and macOS:
@@ -170,8 +202,10 @@ removes all of them.
 
 - The local HTTP gateway is fixed to `127.0.0.1` (or `::1` when explicitly
   configured by code); it cannot be configured to listen on a LAN address.
-- The browser endpoint is an exact HTTPS `.ts.net` origin. Plain HTTP, public
-  domains, URL paths, embedded credentials, and wildcard origins are rejected.
+- The hosted browser endpoint is an exact HTTPS `.ts.net` origin. The native
+  exceptions are exactly `https://localhost` and `capacitor://localhost`.
+  Plain HTTP Tailnet origins, public domains, URL paths, embedded credentials,
+  `null`, wildcard origins, and any other native origin are rejected.
 - Tailscale Serve terminates HTTPS and keeps the route tailnet-only. Do not
   substitute Funnel.
 - Every tailnet identity permitted to reach this node and port can operate the

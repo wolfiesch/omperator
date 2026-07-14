@@ -58,6 +58,8 @@ describe("resolveTopicForHash", () => {
   });
 
   it("resolves a heading id to its owning topic", () => {
+    expect(resolveTopicForHash("#install-android")?.id).toBe("install");
+    expect(resolveTopicForHash("#install-ios")?.id).toBe("install");
     expect(resolveTopicForHash("#install-gatekeeper")?.id).toBe("install");
     expect(resolveTopicForHash("#shortcuts-composer")?.id).toBe("keyboard-shortcuts");
   });

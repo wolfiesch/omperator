@@ -51,6 +51,28 @@ describe("browser platform boundary", () => {
     expect(() => detectBackend()).toThrow(/invalid browser backend wsUrl/u);
   });
 
+  it("prefers a prepared native backend without putting credentials in the URL", () => {
+    Object.defineProperty(globalThis, "document", { configurable: true, value: undefined });
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        __t4MobileBackend: {
+          wsUrl: "wss://host.tailnet.ts.net:8445/v1/ws",
+          label: "T4 on host",
+          deviceId: "android-device",
+          deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        },
+        location: { search: "" },
+      },
+    });
+    expect(detectBackend()).toEqual({
+      wsUrl: "wss://host.tailnet.ts.net:8445/v1/ws",
+      label: "T4 on host",
+      deviceId: "android-device",
+      deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    });
+  });
+
   it("exposes one remote target and no local service lifecycle", async () => {
     setBackendScript(JSON.stringify({ wsUrl: "wss://omp.example/v1/ws", label: "Remote OMP" }));
     const shell = createBrowserShellPort();

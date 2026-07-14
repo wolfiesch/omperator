@@ -45,6 +45,7 @@ const VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
 
 export function expectedReleaseAssetNames(version) {
   return [
+    `T4-Code-${version}-android.apk`,
     `T4-Code-${version}-linux-amd64.deb`,
     `T4-Code-${version}-linux-x86_64.AppImage`,
     `T4-Code-${version}-mac-arm64.dmg`,
@@ -251,7 +252,9 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     requireText(site, `"${filename}"`, "apps/site/src/release.ts", errors);
   }
   const siteAssetVersions = new Set(
-    [...site.matchAll(/T4-Code-(\d+\.\d+\.\d+)-(?:linux|mac)-/gu)].map((match) => match[1]),
+    [...site.matchAll(/T4-Code-(\d+\.\d+\.\d+)-(?:android|linux|mac)(?:\.|-)/gu)].map(
+      (match) => match[1],
+    ),
   );
   for (const assetVersion of siteAssetVersions) {
     if (assetVersion !== version) {
@@ -405,6 +408,15 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "ref: ${{ needs.verify.outputs.source_sha }}",
     "Confirm the release tag still resolves to the verified source",
     'test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "$SOURCE_SHA"',
+    "build-android:",
+    "T4_ANDROID_KEYSTORE_BASE64",
+    "T4_ANDROID_KEYSTORE_PASSWORD",
+    "T4_ANDROID_KEY_ALIAS",
+    "T4_ANDROID_KEY_PASSWORD",
+    "pnpm --filter @t4-code/mobile build:android:release",
+    "apksigner verify --verbose",
+    "T4-Code-${VERSION}-android.apk",
+    "needs: [verify, build-android, build-linux, build-macos]",
   ]) {
     requireText(releaseWorkflow, expected, ".github/workflows/release.yml", errors);
   }

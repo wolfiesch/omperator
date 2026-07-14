@@ -1,4 +1,4 @@
-// Release contract guard: exact v0.1.8 asset names and URLs, and the
+// Release contract guard: exact v0.1.9 asset names and URLs, and the
 // platform-detection rule the hero download button relies on.
 import { describe, expect, it } from "vite-plus/test";
 import {
@@ -19,12 +19,13 @@ import {
 } from "../src/release.ts";
 
 describe("release assets", () => {
-  it("carries the four contracted v0.1.8 filenames", () => {
+  it("carries the five contracted v0.1.9 filenames", () => {
     expect(RELEASE_ASSETS.map((a) => a.filename)).toEqual([
-      "T4-Code-0.1.8-linux-amd64.deb",
-      "T4-Code-0.1.8-linux-x86_64.AppImage",
-      "T4-Code-0.1.8-mac-arm64.dmg",
-      "T4-Code-0.1.8-mac-arm64.zip",
+      "T4-Code-0.1.9-android.apk",
+      "T4-Code-0.1.9-linux-amd64.deb",
+      "T4-Code-0.1.9-linux-x86_64.AppImage",
+      "T4-Code-0.1.9-mac-arm64.dmg",
+      "T4-Code-0.1.9-mac-arm64.zip",
     ]);
   });
 
@@ -36,18 +37,21 @@ describe("release assets", () => {
 
   it("targets the public LycaonLLC repo", () => {
     expect(REPO_URL).toBe("https://github.com/LycaonLLC/t4-code");
-    expect(RELEASE_TAG).toBe("v0.1.8");
-    expect(RELEASE_VERSION).toBe("0.1.8");
+    expect(RELEASE_TAG).toBe("v0.1.9");
+    expect(RELEASE_VERSION).toBe("0.1.9");
   });
 
   it("splits assets by platform with correct architectures", () => {
     expect(assetsFor("linux").every((a) => a.arch === "x86_64")).toBe(true);
     expect(assetsFor("mac").every((a) => a.arch === "arm64")).toBe(true);
+    expect(assetsFor("android").every((a) => a.arch === "universal")).toBe(true);
+    expect(assetsFor("android")).toHaveLength(1);
     expect(assetsFor("linux")).toHaveLength(2);
     expect(assetsFor("mac")).toHaveLength(2);
   });
 
-  it("picks .deb for Linux and .dmg for macOS as the primary download", () => {
+  it("picks the APK, .deb, and .dmg as primary downloads", () => {
+    expect(primaryAsset("android").kind).toBe("apk");
     expect(primaryAsset("linux").kind).toBe("deb");
     expect(primaryAsset("mac").kind).toBe("dmg");
   });

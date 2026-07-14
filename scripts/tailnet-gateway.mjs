@@ -17,6 +17,14 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1"]);
 const OMP_SOCKET_NAME = /^\.appserver-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.sock$/u;
 
+// Capacitor v8 serves bundled assets from these origins when its documented
+// default hostname and platform schemes are used. Keep this list exact: an
+// Origin header identifies a browser context, not a signed mobile binary.
+export const CAPACITOR_NATIVE_ORIGINS = Object.freeze([
+  "https://localhost",
+  "capacitor://localhost",
+]);
+
 const MIME_TYPES = new Map([
   [".css", "text/css; charset=utf-8"],
   [".html", "text/html; charset=utf-8"],
@@ -59,6 +67,23 @@ export function normalizeAllowedOrigin(value) {
     throw new Error("T4_ALLOWED_ORIGIN must be a Tailscale HTTPS origin ending in .ts.net");
   }
   return url.origin;
+}
+
+export function normalizeNativeAllowedOrigins(value = CAPACITOR_NATIVE_ORIGINS) {
+  if (!Array.isArray(value)) {
+    throw new Error("T4_NATIVE_ALLOWED_ORIGINS must be an array");
+  }
+  const origins = value.map((origin) => requiredText(origin, "T4_NATIVE_ALLOWED_ORIGINS", 128));
+  const unique = new Set(origins);
+  if (
+    unique.size !== CAPACITOR_NATIVE_ORIGINS.length ||
+    !CAPACITOR_NATIVE_ORIGINS.every((origin) => unique.has(origin))
+  ) {
+    throw new Error(
+      `T4_NATIVE_ALLOWED_ORIGINS must contain exactly ${CAPACITOR_NATIVE_ORIGINS.join(", ")}`,
+    );
+  }
+  return [...CAPACITOR_NATIVE_ORIGINS];
 }
 
 export function websocketUrlForOrigin(origin) {
@@ -312,6 +337,7 @@ export async function startTailnetGateway(input) {
     listenHost: input.listenHost ?? "127.0.0.1",
     listenPort: input.listenPort ?? DEFAULT_PORT,
     allowedOrigin: normalizeAllowedOrigin(input.allowedOrigin),
+    nativeAllowedOrigins: normalizeNativeAllowedOrigins(input.nativeAllowedOrigins),
     label: input.label ?? "OMP on this Tailnet host",
     heartbeatIntervalMs: input.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS,
   };
@@ -322,6 +348,7 @@ export async function startTailnetGateway(input) {
   if (!Number.isSafeInteger(options.heartbeatIntervalMs) || options.heartbeatIntervalMs < 10) {
     throw new Error("Tailnet gateway heartbeat interval is invalid");
   }
+  const allowedSocketOrigins = new Set([options.allowedOrigin, ...options.nativeAllowedOrigins]);
 
   const activeBrowsers = new Map();
   const webSockets = new WebSocketServer({
@@ -376,7 +403,7 @@ export async function startTailnetGateway(input) {
       rejectUpgrade(socket, "404 Not Found", "Not found");
       return;
     }
-    if (request.headers.origin !== options.allowedOrigin) {
+    if (!allowedSocketOrigins.has(request.headers.origin)) {
       rejectUpgrade(socket, "403 Forbidden", "Origin not allowed");
       return;
     }
@@ -444,6 +471,10 @@ export function optionsFromEnvironment(environment = process.env) {
     listenHost: environment.T4_GATEWAY_HOST ?? "127.0.0.1",
     listenPort: port,
     allowedOrigin: environment.T4_ALLOWED_ORIGIN,
+    nativeAllowedOrigins:
+      environment.T4_NATIVE_ALLOWED_ORIGINS === undefined
+        ? undefined
+        : environment.T4_NATIVE_ALLOWED_ORIGINS.split(","),
     label: environment.T4_HOST_LABEL ?? "OMP on this Tailnet host",
   };
 }

@@ -9,7 +9,7 @@ import {
   RELEASE_VERSION,
   RELEASES_URL,
   REPO_URL,
-  type Platform,
+  type DesktopPlatform,
 } from "../release.ts";
 
 interface Feature {
@@ -45,13 +45,17 @@ const FEATURES: readonly Feature[] = [
   },
 ];
 
-function DownloadButtons({ platform }: { platform: Platform }) {
+function DownloadButtons({ platform }: { platform: DesktopPlatform }) {
+  const android = primaryAsset("android");
   const main = primaryAsset(platform);
-  const other: Platform = platform === "linux" ? "mac" : "linux";
+  const other: DesktopPlatform = platform === "linux" ? "mac" : "linux";
   const otherMain = primaryAsset(other);
   return (
     <div className="hero-actions">
-      <a className="btn btn-primary" href={main.url}>
+      <a className="btn btn-primary" href={android.url}>
+        Download Android APK
+      </a>
+      <a className="btn btn-outline" href={main.url}>
         Download for {platform === "linux" ? "Linux" : "macOS"}
       </a>
       <a className="btn btn-outline" href={otherMain.url}>
@@ -67,7 +71,7 @@ function DownloadButtons({ platform }: { platform: Platform }) {
 export function Landing() {
   // Render Linux first (matches the build host + crawler default), then
   // correct for macOS visitors after mount. Both buttons are always visible.
-  const [platform, setPlatform] = useState<Platform>("linux");
+  const [platform, setPlatform] = useState<DesktopPlatform>("linux");
   useEffect(() => {
     setPlatform(detectPlatform(navigator.userAgent));
   }, []);
@@ -101,15 +105,15 @@ export function Landing() {
             <span className="dot" aria-hidden="true" />
             Free and open source · MIT · Powered by Oh My Pi
           </p>
-          <h1>The open-source desktop app for Oh My Pi</h1>
+          <h1>The open-source client for Oh My Pi</h1>
           <p className="sub">
-            T4 Code puts your OMP sessions, agents, terminals, files, and reviews in one
-            window, on this machine or on a paired remote host. Built for people who live
-            in OMP all day.
+            T4 Code puts your OMP sessions, agents, terminals, files, and reviews in one place, from
+            your workstation or Android phone. Built for people who live in OMP all day.
           </p>
           <DownloadButtons platform={platform} />
           <p className="hero-fineprint">
-            v{RELEASE_VERSION} · Linux x86_64 · macOS Apple Silicon ·{" "}
+            v{RELEASE_VERSION} · Android APK · Linux x86_64 · macOS Apple Silicon · iOS TestFlight
+            coming soon ·{" "}
             <a href={RELEASES_URL} rel="noopener">
               all downloads
             </a>
@@ -129,8 +133,9 @@ export function Landing() {
           <div className="container">
             <h2 id="features-title">What it does</h2>
             <p className="section-lede">
-              A desktop front end for the OMP runtime. There is no cloud service and no
-              account. T4 Code talks straight to your host over its typed protocol.
+              A desktop control surface and Android thin client for the OMP runtime. There is no
+              cloud service and no account. T4 Code talks straight to your host over its typed
+              protocol.
             </p>
             <div className="feature-grid">
               {FEATURES.map((feature) => (
@@ -173,6 +178,25 @@ export function Landing() {
                 `T4 Code needs an [Oh My Pi](${OMP_URL}) build with desktop appserver support on the machine that runs your sessions. The [docs](/docs/) cover first run, pairing, and troubleshooting.`,
               )}
             </p>
+            <div className="mobile-install-grid">
+              <div className="mobile-install-card android-install-card">
+                <p className="platform-label">Available now</p>
+                <h3>Android APK</h3>
+                <p>
+                  Install T4 Code directly on your phone, then connect to the OMP host you already
+                  run.
+                </p>
+                <a className="btn btn-primary" href={primaryAsset("android").url}>
+                  Download Android APK
+                </a>
+              </div>
+              <div className="mobile-install-card ios-install-card">
+                <p className="platform-label">iPhone &amp; iPad</p>
+                <h3>TestFlight coming soon</h3>
+                <p>The TestFlight link will appear here when the iOS build is ready.</p>
+              </div>
+            </div>
+            <h3 className="desktop-install-title">Desktop builds</h3>
             <div className="install-grid">
               <div className="install-card">
                 <h3>Linux</h3>
@@ -193,17 +217,16 @@ export function Landing() {
                   <code>xattr -dr com.apple.quarantine "/Applications/T4 Code.app"</code>
                 </pre>
                 <p>
-                  Drag the app to Applications first. The command clears Gatekeeper's
-                  quarantine flag; right-click → Open works too.
+                  Drag the app to Applications first. The command clears Gatekeeper's quarantine
+                  flag; right-click → Open works too.
                 </p>
               </div>
             </div>
             <div className="notice notice-spaced" role="note">
-              <strong>Heads up:</strong> the v{RELEASE_VERSION} macOS build is unsigned and
-              not notarized, so macOS warns before first launch. If you would rather not
-              run an unsigned binary,{" "}
-              {renderInline(`[build it from source](/docs/#build-from-source)`)}. The
-              whole app is public.
+              <strong>Heads up:</strong> the v{RELEASE_VERSION} macOS build is unsigned and not
+              notarized, so macOS warns before first launch. If you would rather not run an unsigned
+              binary, {renderInline(`[build it from source](/docs/#build-from-source)`)}. The whole
+              app is public.
             </div>
           </div>
         </section>
@@ -211,7 +234,7 @@ export function Landing() {
         <section className="band" id="download" aria-labelledby="download-title">
           <div className="container">
             <h2 id="download-title">Get T4 Code</h2>
-            <p>Free, MIT-licensed, and built in the open.</p>
+            <p>Android and desktop builds are ready now. iOS TestFlight is coming soon.</p>
             <DownloadButtons platform={platform} />
             <ul className="asset-list">
               {RELEASE_ASSETS.map((asset) => (

@@ -1,4 +1,4 @@
-name: Release desktop builds
+name: Release app builds
 
 on:
   push:
@@ -159,6 +159,115 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  build-android:
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out verified release source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.verify.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.10.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.13.1
+          cache: pnpm
+
+      - name: Install Java
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Install Android SDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+
+      - name: Install pinned Android platform and build tools
+        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Restore and validate Android release signing key
+        shell: bash
+        env:
+          T4_ANDROID_KEYSTORE_BASE64: ${{ secrets.T4_ANDROID_KEYSTORE_BASE64 }}
+          T4_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.T4_ANDROID_KEYSTORE_PASSWORD }}
+          T4_ANDROID_KEY_ALIAS: ${{ secrets.T4_ANDROID_KEY_ALIAS }}
+          T4_ANDROID_KEY_PASSWORD: ${{ secrets.T4_ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in \
+            T4_ANDROID_KEYSTORE_BASE64 \
+            T4_ANDROID_KEYSTORE_PASSWORD \
+            T4_ANDROID_KEY_ALIAS \
+            T4_ANDROID_KEY_PASSWORD
+          do
+            if [[ -z "${!name:-}" ]]; then
+              echo "required GitHub Actions secret ${name} is not configured" >&2
+              exit 1
+            fi
+          done
+          keystore_path="$RUNNER_TEMP/t4-code-release.jks"
+          printf '%s' "$T4_ANDROID_KEYSTORE_BASE64" | base64 --decode > "$keystore_path"
+          chmod 600 "$keystore_path"
+          keytool -list \
+            -keystore "$keystore_path" \
+            -storepass "$T4_ANDROID_KEYSTORE_PASSWORD" \
+            -alias "$T4_ANDROID_KEY_ALIAS" >/dev/null
+
+      - name: Build signed Android APK
+        env:
+          T4_ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/t4-code-release.jks
+          T4_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.T4_ANDROID_KEYSTORE_PASSWORD }}
+          T4_ANDROID_KEY_ALIAS: ${{ secrets.T4_ANDROID_KEY_ALIAS }}
+          T4_ANDROID_KEY_PASSWORD: ${{ secrets.T4_ANDROID_KEY_PASSWORD }}
+        run: |
+          pnpm build:web
+          pnpm --filter @t4-code/mobile build:android:release
+
+      - name: Inspect signed Android APK
+        shell: bash
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          apk="apps/mobile/android/app/build/outputs/apk/release/app-release.apk"
+          test -f "$apk"
+          build_tools="${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools/36.0.0"
+          export PATH="$build_tools:$PATH"
+          apksigner verify --verbose "$apk"
+          aapt dump badging "$apk" | grep -F "package: name='com.lycaonsolutions.t4code'"
+          aapt dump badging "$apk" | grep -F "versionName='${VERSION}'"
+
+      - name: Stage Android artifact
+        shell: bash
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          mkdir -p artifacts
+          cp \
+            apps/mobile/android/app/build/outputs/apk/release/app-release.apk \
+            "artifacts/T4-Code-${VERSION}-android.apk"
+          (cd artifacts && sha256sum T4-Code-* > SHA256SUMS-android.txt)
+
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-release
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 7
+
   build-macos:
     needs: verify
     runs-on: macos-15
@@ -208,7 +317,7 @@ jobs:
           retention-days: 7
 
   publish:
-    needs: [verify, build-linux, build-macos]
+    needs: [verify, build-android, build-linux, build-macos]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -239,7 +348,7 @@ jobs:
 
       - name: Assemble checksums
         shell: bash
-        run: cat artifacts/SHA256SUMS-linux.txt artifacts/SHA256SUMS-macos.txt | sort -k2 > artifacts/SHA256SUMS.txt
+        run: cat artifacts/SHA256SUMS-android.txt artifacts/SHA256SUMS-linux.txt artifacts/SHA256SUMS-macos.txt | sort -k2 > artifacts/SHA256SUMS.txt
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
@@ -248,21 +357,23 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           body: |
-            ## Tailnet web app
+            ## Android app
 
-            The source-hosted Tailnet client is now installable from its titlebar on Android and iPhone. It opens in a standalone window with the T4 Code icon; after installation, the same titlebar action reloads the live client. This remains an online thin client and does not cache host configuration, transcripts, or session state for offline use.
+            This release includes a signed Android APK for direct installation. It is a thin client: the T4 Code interface is bundled in the APK, while OMP sessions and runtime state remain on the host. On first run, enter the host's HTTPS Tailscale address and complete the normal T4 pairing flow.
 
-            ## Session controls
+            Android device credentials are encrypted with an app-specific Android Keystore key. The app does not contain an OMP appserver and does not require a public route; the phone and host should use the same tailnet.
 
-            Queue and Steer no longer attach a volatile active-turn revision that OMP can reject as stale. Normal prompts keep their revision guard, and prompt leases remain supported when negotiated. Fast mode copy now accurately describes a request for provider priority processing without implying a change in reasoning effort.
+            ## Browser and iOS
 
-            ## Development guardrails
+            The installable Tailnet web app remains available. iOS TestFlight is coming soon; there is no iOS binary in this release.
 
-            The arbitrary physical-line ceiling has been removed. File boundaries are judged by cohesion and reviewability rather than a hard line count.
+            ## Connection security
+
+            The Tailnet gateway accepts only the configured HTTPS web origin and the exact native app origins. It rejects wildcard, opaque, and untrusted origins. Keep the route on Tailscale Serve and do not enable Funnel.
 
             ## Install notes
 
-            Linux packages are built for x86_64. macOS packages are built for Apple Silicon.
+            The Android APK is signed and supports Android 7.0 or later. Linux packages are built for x86_64. macOS packages are built for Apple Silicon.
 
             ## Runtime compatibility
 
@@ -276,6 +387,7 @@ jobs:
 
             Verify downloads with `SHA256SUMS.txt`.
           files: |
+            artifacts/T4-Code-*.apk
             artifacts/T4-Code-*.deb
             artifacts/T4-Code-*.AppImage
             artifacts/T4-Code-*.dmg

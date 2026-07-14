@@ -1,22 +1,25 @@
-// Web entry. Importing the store instance applies the persisted theme at
-// module scope — before the first render — so there is no theme flash.
 import "./app.css";
-import "./state/store-instance.ts";
 
-import { TooltipProvider } from "@t4-code/ui";
-import { RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
-import { router } from "./router.tsx";
+import { MobileConnectionScreen } from "./components/MobileConnectionScreen.tsx";
+import { prepareNativeMobileBackend } from "./platform/native-mobile.ts";
 
 const rootElement = document.getElementById("root");
 if (rootElement === null) throw new Error("Missing #root element");
 
-createRoot(rootElement).render(
-  <StrictMode>
-    <TooltipProvider>
-      <RouterProvider router={router} />
-    </TooltipProvider>
-  </StrictMode>,
-);
+const root = createRoot(rootElement);
+
+void prepareNativeMobileBackend().then(async (boot) => {
+  if (boot.kind === "setup") {
+    root.render(
+      <StrictMode>
+        <MobileConnectionScreen {...(boot.message === undefined ? {} : { startupMessage: boot.message })} />
+      </StrictMode>,
+    );
+    return;
+  }
+  const { renderApplication } = await import("./application.tsx");
+  renderApplication(root);
+});

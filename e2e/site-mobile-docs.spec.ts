@@ -122,6 +122,31 @@ test.afterAll(async () => {
   await site?.stop();
 });
 
+test("offers the Android APK without hiding desktop downloads", async ({ page }) => {
+  await page.goto(`${site.url}/`, { waitUntil: "networkidle" });
+
+  const androidDownload = page.getByRole("link", { name: "Download Android APK" }).first();
+  await expect(androidDownload).toBeVisible();
+  await expect(androidDownload).toHaveAttribute(
+    "href",
+    "https://github.com/LycaonLLC/t4-code/releases/download/v0.1.9/T4-Code-0.1.9-android.apk",
+  );
+  await expect(page.getByRole("link", { name: "Download for Linux" }).first()).toBeVisible();
+  await expect(page.getByRole("link", { name: "macOS build" }).first()).toBeVisible();
+  await expect(page.getByText("TestFlight coming soon", { exact: true }).first()).toBeVisible();
+
+  const geometry = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    documentScrollWidth: document.documentElement.scrollWidth,
+    bodyScrollWidth: document.body.scrollWidth,
+  }));
+  expect(geometry).toEqual({
+    clientWidth: 320,
+    documentScrollWidth: 320,
+    bodyScrollWidth: 320,
+  });
+});
+
 test("every docs topic stays inside a 320px viewport", async ({ page }) => {
   for (const topic of TOPICS) {
     await page.goto(`${site.url}/docs/#${topic}`, { waitUntil: "networkidle" });

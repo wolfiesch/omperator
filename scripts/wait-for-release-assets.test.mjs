@@ -5,14 +5,15 @@ import { releaseAssetUrls, waitForReleaseAssets } from "./wait-for-release-asset
 
 const quiet = { log() {} };
 
-test("builds the four package URLs and checksum URL for one release tag", () => {
+test("builds the five package URLs and checksum URL for one release tag", () => {
   assert.deepEqual(
-    releaseAssetUrls("0.1.8").map(({ filename }) => filename),
+    releaseAssetUrls("0.1.9").map(({ filename }) => filename),
     [
-      "T4-Code-0.1.8-linux-amd64.deb",
-      "T4-Code-0.1.8-linux-x86_64.AppImage",
-      "T4-Code-0.1.8-mac-arm64.dmg",
-      "T4-Code-0.1.8-mac-arm64.zip",
+      "T4-Code-0.1.9-android.apk",
+      "T4-Code-0.1.9-linux-amd64.deb",
+      "T4-Code-0.1.9-linux-x86_64.AppImage",
+      "T4-Code-0.1.9-mac-arm64.dmg",
+      "T4-Code-0.1.9-mac-arm64.zip",
       "SHA256SUMS.txt",
     ],
   );
@@ -20,19 +21,19 @@ test("builds the four package URLs and checksum URL for one release tag", () => 
 
 test("passes only when every public release file returns HTTP 200", async () => {
   const result = await waitForReleaseAssets({
-    version: "0.1.8",
+    version: "0.1.9",
     fetchImpl: async () => ({ status: 200 }),
     logger: quiet,
   });
   assert.equal(result.attempts, 1);
-  assert.equal(result.assets.length, 5);
+  assert.equal(result.assets.length, 6);
 });
 
 test("retries unavailable files and stays inside the configured timeout", async () => {
   let currentTime = 0;
   let calls = 0;
   const result = await waitForReleaseAssets({
-    version: "0.1.8",
+    version: "0.1.9",
     timeoutMs: 100,
     intervalMs: 20,
     requestTimeoutMs: 5,
@@ -49,7 +50,7 @@ test("fails closed at the timeout and reports filenames without response content
   let currentTime = 0;
   await assert.rejects(
     waitForReleaseAssets({
-      version: "0.1.8",
+      version: "0.1.9",
       timeoutMs: 40,
       intervalMs: 25,
       requestTimeoutMs: 5,

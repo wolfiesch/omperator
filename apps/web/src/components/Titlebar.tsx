@@ -8,6 +8,7 @@ import { Command, Moon, PanelLeft, Settings, Sun } from "lucide-react";
 import { rendererPlatform, useWorkspace, workspaceStore } from "../state/store-instance.ts";
 import { resolveTheme } from "../theme/theme.ts";
 import { HostedAppAction } from "./HostedAppAction.tsx";
+import { MobileConnectionAction } from "./MobileConnectionAction.tsx";
 import type { RailTogglePresentation } from "./rail-toggle.ts";
 
 function ThemeToggle() {
@@ -100,6 +101,7 @@ export function Titlebar({
         </Tooltip>
       )}
       <HostedAppAction />
+      <MobileConnectionAction />
       <Tooltip>
         <TooltipTrigger
           render={

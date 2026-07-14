@@ -1,0 +1,20 @@
+{
+  "name": "@t4-code/mobile",
+  "version": "0.1.9",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prepare:web": "node ./scripts/prepare-web.mjs",
+    "sync:android": "pnpm prepare:web && cap sync android",
+    "build:android:debug": "pnpm sync:android && node ./scripts/run-gradle.mjs assembleDebug",
+    "build:android:release": "pnpm sync:android && node ./scripts/run-gradle.mjs assembleRelease",
+    "test": "node --test ./scripts/*.test.mjs"
+  },
+  "dependencies": {
+    "@capacitor/core": "8.4.1"
+  },
+  "devDependencies": {
+    "@capacitor/android": "8.4.1",
+    "@capacitor/cli": "8.4.1"
+  }
+}
