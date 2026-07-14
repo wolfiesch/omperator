@@ -1,6 +1,6 @@
 {
   "name": "@t4-code/root",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "private": true,
   "type": "module",
   "scripts": {
@@ -21,12 +21,11 @@
     "inspect:package": "node scripts/inspect-package.mjs",
     "inspect:dmg": "node scripts/inspect-macos-dmg.mjs",
     "test:packaging": "node --test scripts/packaging.test.mjs scripts/inspect-macos-dmg.test.mjs",
-    "test:tooling": "node --test scripts/check-release-consistency.test.mjs scripts/check-structure.test.mjs scripts/check-provenance.test.mjs scripts/deploy-site.test.mjs scripts/tailnet-gateway.test.mjs scripts/tailnet-service.test.mjs scripts/wait-for-release-assets.test.mjs",
+    "test:tooling": "node --test scripts/check-release-consistency.test.mjs scripts/check-provenance.test.mjs scripts/deploy-site.test.mjs scripts/tailnet-gateway.test.mjs scripts/tailnet-service.test.mjs scripts/wait-for-release-assets.test.mjs",
     "check:release": "node scripts/check-release-consistency.mjs",
-    "check:structure": "node scripts/check-structure.mjs",
     "check:provenance": "node scripts/check-provenance.mjs",
     "lint": "vp lint --deny-warnings",
-    "check": "pnpm check:release && pnpm check:structure && pnpm check:provenance && pnpm lint && pnpm typecheck",
+    "check": "pnpm check:release && pnpm check:provenance && pnpm lint && pnpm typecheck",
     "typecheck": "vp run -r typecheck",
     "test": "vp run -r test",
     "test:e2e": "pnpm build:web && pnpm build:site && playwright test",

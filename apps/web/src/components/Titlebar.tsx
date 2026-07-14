@@ -7,6 +7,7 @@ import { Command, Moon, PanelLeft, Settings, Sun } from "lucide-react";
 
 import { rendererPlatform, useWorkspace, workspaceStore } from "../state/store-instance.ts";
 import { resolveTheme } from "../theme/theme.ts";
+import { HostedAppAction } from "./HostedAppAction.tsx";
 import type { RailTogglePresentation } from "./rail-toggle.ts";
 
 function ThemeToggle() {
@@ -98,6 +99,7 @@ export function Titlebar({
           <TooltipPopup side="bottom">Built-in sample sessions. Nothing here is live.</TooltipPopup>
         </Tooltip>
       )}
+      <HostedAppAction />
       <Tooltip>
         <TooltipTrigger
           render={

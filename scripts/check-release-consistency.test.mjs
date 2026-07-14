@@ -17,23 +17,23 @@ function changed(path, replace) {
 }
 
 test("current source tree has one consistent release version", () => {
-  assert.deepEqual(collectReleaseConsistencyErrors(files, "v0.1.7"), []);
+  assert.deepEqual(collectReleaseConsistencyErrors(files, "v0.1.8"), []);
 });
 
 test("rejects a tag that differs from the package version", () => {
   assert.ok(
     collectReleaseConsistencyErrors(files, "v9.9.9").some((error) =>
-      error.includes("release tag v9.9.9 does not match v0.1.7"),
+      error.includes("release tag v9.9.9 does not match v0.1.8"),
     ),
   );
 });
 
 test("rejects workspace, site, README, and runtime version drift", () => {
   const cases = [
-    ["apps/web/package.json", (text) => text.replace('"version": "0.1.7"', '"version": "0.1.3"')],
-    ["apps/site/src/release.ts", (text) => text.replace('RELEASE_TAG = "v0.1.7"', 'RELEASE_TAG = "v0.1.3"')],
-    ["README.md", (text) => text.replace("Download v0.1.7", "Download v0.1.3")],
-    ["apps/desktop/src/target-manager.ts", (text) => text.replace('version: "0.1.7"', 'version: "0.1.3"')],
+    ["apps/web/package.json", (text) => text.replace('"version": "0.1.8"', '"version": "0.1.3"')],
+    ["apps/site/src/release.ts", (text) => text.replace('RELEASE_TAG = "v0.1.8"', 'RELEASE_TAG = "v0.1.3"')],
+    ["README.md", (text) => text.replace("Download v0.1.8", "Download v0.1.3")],
+    ["apps/desktop/src/target-manager.ts", (text) => text.replace('version: "0.1.8"', 'version: "0.1.3"')],
     ["apps/site/src/docs/content.ts", (text) => text.replace('id: "troubleshooting-large-session"', 'id: "missing-large-session"')],
   ];
   for (const [path, replace] of cases) {
@@ -123,7 +123,7 @@ test("rejects stale README release URLs while allowing historical prose", () => 
   );
   assert.ok(
     collectReleaseConsistencyErrors(staleLink).some((error) =>
-      error.includes("release URL for v0.1.3; expected v0.1.7"),
+      error.includes("release URL for v0.1.3; expected v0.1.8"),
     ),
   );
   assert.deepEqual(collectReleaseConsistencyErrors(files), []);

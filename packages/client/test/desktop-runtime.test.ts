@@ -422,6 +422,31 @@ describe("desktop runtime projection", () => {
     expect(shell.commands).toHaveLength(1);
     expect(shell.commands[0]?.intent).toEqual(intent);
   });
+  it("can bind a prompt lease without adding a revision to a revision-optional command", async () => {
+    const { shell, runtime } = await leaseRuntime(["prompt.lease"]);
+    const intent = {
+      hostId: hostId("host-remote"),
+      sessionId: sessionId("session-a"),
+      command: "session.steer",
+      args: { message: "redirect the active turn" },
+    };
+    await runtime.commandWithPromptLease("remote", intent, "revision-a");
+    expect(shell.commands.map((command) => command.intent)).toEqual([
+      {
+        hostId: hostId("host-remote"),
+        sessionId: sessionId("session-a"),
+        command: "prompt.lease.acquire",
+        expectedRevision: revision("revision-a"),
+        args: { ownerId: "t4-code-client" },
+      },
+      {
+        hostId: hostId("host-remote"),
+        sessionId: sessionId("session-a"),
+        command: "session.steer",
+        args: { message: "redirect the active turn", leaseId: "prompt-lease-fixture" },
+      },
+    ]);
+  });
   it("coalesces prompt lease acquisition and injects only the lease id", async () => {
     const { shell, runtime } = await leaseRuntime(["prompt.lease"]);
     const intent = leaseIntent({ message: "hello" });

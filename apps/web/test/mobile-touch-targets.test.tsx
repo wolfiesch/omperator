@@ -4,7 +4,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
 import { AttachmentChips, RunOptionsMenu } from "../src/features/composer/ComposerControls.tsx";
-import { RuntimeOptions } from "../src/features/composer/ComposerRuntimeOptions.tsx";
+import {
+  fastModeTooltip,
+  RuntimeOptions,
+} from "../src/features/composer/ComposerRuntimeOptions.tsx";
 import { ContextMeter } from "../src/features/composer/ContextMeter.tsx";
 import type { ComposerControlsSnapshot } from "../src/features/session-runtime/session-controls.ts";
 import { CopyButton } from "../src/features/transcript/Markdown.tsx";
@@ -43,6 +46,15 @@ function buttonTags(markup: string): readonly string[] {
 }
 
 describe("phone touch targets", () => {
+  it("describes fast mode as provider priority without changing reasoning effort", () => {
+    expect(fastModeTooltip(false)).toBe(
+      "Request provider priority processing when supported; reasoning effort is unchanged",
+    );
+    expect(fastModeTooltip(true)).toBe(
+      "Fast mode requests provider priority processing; reasoning effort is unchanged",
+    );
+  });
+
   it("renders every always-visible composer control at 44 CSS pixels", () => {
     const runOptions = renderToStaticMarkup(
       <RunOptionsMenu summary="Fixture model · Medium">
@@ -112,6 +124,11 @@ describe("phone touch targets", () => {
     expect(controls).toContain("flex max-h-[min(24rem,var(--available-height))]");
     expect(controls).toContain("min-h-0 overflow-y-auto overscroll-contain");
     expect(titlebar.match(/className="size-11 sm:size-7"/g)).toHaveLength(4);
+    const hostedAppAction = readFileSync(
+      join(import.meta.dirname, "../src/components/HostedAppAction.tsx"),
+      "utf8",
+    );
+    expect(hostedAppAction).toContain('className="size-11 lg:size-7"');
     expect(session).toContain('aria-label="Session panels"');
     expect(session).toContain("flex size-11 shrink-0 cursor-pointer");
     expect(session).toContain("flex min-h-11 w-full cursor-pointer items-center");

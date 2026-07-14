@@ -69,9 +69,11 @@ export class PromptLeaseStore {
     generation: number,
     featureEnabled: boolean,
     dispatch: (targetId: string, intent: CommandRequest["intent"]) => Promise<CommandResult>,
+    leaseRevision?: string,
   ): Promise<CommandResult> {
-    if (intent.sessionId === undefined || intent.expectedRevision === undefined || !featureEnabled) return dispatch(targetId, intent);
-    const leaseId = await this.acquire(targetId, String(intent.hostId), String(intent.sessionId), String(intent.expectedRevision), generation);
+    const revisionValue = intent.expectedRevision ?? leaseRevision;
+    if (intent.sessionId === undefined || revisionValue === undefined || !featureEnabled) return dispatch(targetId, intent);
+    const leaseId = await this.acquire(targetId, String(intent.hostId), String(intent.sessionId), String(revisionValue), generation);
     return dispatch(targetId, { ...intent, args: { ...intent.args, leaseId } });
   }
 

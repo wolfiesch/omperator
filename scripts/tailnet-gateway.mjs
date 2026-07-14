@@ -26,6 +26,7 @@ const MIME_TYPES = new Map([
   [".map", "application/json; charset=utf-8"],
   [".png", "image/png"],
   [".svg", "image/svg+xml"],
+  [".webmanifest", "application/manifest+json; charset=utf-8"],
   [".woff", "font/woff"],
   [".woff2", "font/woff2"],
 ]);

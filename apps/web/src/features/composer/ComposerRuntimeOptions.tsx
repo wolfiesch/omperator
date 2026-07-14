@@ -21,6 +21,12 @@ const MODE_DETAIL: Record<string, string | null> = {
 };
 const SESSION_MODES = ["build", "plan", "readOnly"] as const;
 
+export function fastModeTooltip(enabled: boolean): string {
+  return enabled
+    ? "Fast mode requests provider priority processing; reasoning effort is unchanged"
+    : "Request provider priority processing when supported; reasoning effort is unchanged";
+}
+
 export function RuntimeOptions({
   controls,
   disabled,
@@ -110,9 +116,7 @@ export function RuntimeOptions({
         <TooltipPopup side="top">
           {!controls.fastSupported
             ? (controls.fastUnsupportedReason ?? "Not offered by this host")
-            : controls.fast
-              ? "Fast mode: shorter, quicker turns"
-              : "Turn on fast mode"}
+            : fastModeTooltip(controls.fast)}
         </TooltipPopup>
       </Tooltip>
       {controls.modeSupported && controls.mode !== null && (

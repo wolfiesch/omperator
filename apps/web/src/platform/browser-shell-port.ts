@@ -220,7 +220,7 @@ export function createBrowserShellPort(options: BrowserShellPortOptions = {}): D
       },
       client: {
         name: "T4 Code",
-        version: "0.1.7",
+        version: "0.1.8",
         build: "browser",
         platform: platform === "darwin" ? "darwin" : "linux",
       },

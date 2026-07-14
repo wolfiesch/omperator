@@ -95,6 +95,26 @@ open durable transcript history, and allow a message to be sent. Loading the
 page alone is not an end-to-end check; connected state plus a real session
 round-trip is.
 
+## Install on a phone
+
+Open the Tailnet URL, then tap the download button in the T4 Code titlebar.
+
+- On Android or another Chromium browser, T4 Code opens the native install
+  prompt when the browser makes it available. If it is not ready yet, the
+  button shows where to find **Install app** or **Add to Home screen** in the
+  browser menu.
+- On iPhone or iPad, tap **Share**, then **Add to Home Screen**. JavaScript
+  cannot open that system sheet directly, so the T4 button shows the steps.
+
+The installed web app opens in a standalone window. Its titlebar download
+button becomes **Reload T4 Code**, which reloads the live gateway UI without
+browser chrome.
+
+This is still a thin client, not an offline copy of T4 Code. The phone must be
+connected to the tailnet, the host gateway must be running, and OMP remains the
+owner of every session. The web app deliberately does not cache transcripts,
+host configuration, or runtime state for offline use.
+
 ## Operate and update
 
 The lifecycle commands are the same on Linux and macOS:

@@ -18,7 +18,7 @@ pnpm dev
 Run the gate locally:
 
 ```sh
-pnpm check   # structure, provenance, lint (warnings denied), typecheck
+pnpm check   # release contract, provenance, lint (warnings denied), typecheck
 pnpm test    # workspace tests
 ```
 

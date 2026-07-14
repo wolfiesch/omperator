@@ -414,7 +414,15 @@ export function applyPublicFrame(
         if (frame.type === "entry") {
           const entryId = String(frame.entry.id);
           const retiredEvents = freezeArray(session.events.filter((event) => String(event.event.entryId ?? "") !== entryId));
-          if (session.entryIds.has(entryId)) return Object.freeze({ ...session, events: retiredEvents, cursor: frame.cursor, epoch: frame.cursor.epoch });
+          if (session.entryIds.has(entryId)) {
+            return Object.freeze({
+              ...session,
+              events: retiredEvents,
+              revision: String(frame.revision),
+              cursor: frame.cursor,
+              epoch: frame.cursor.epoch,
+            });
+          }
           const entryIds = new ImmutableSet([...session.entryIds, entryId].slice(-config.maxEntries));
           return Object.freeze({
             ...session,
@@ -422,6 +430,7 @@ export function applyPublicFrame(
             entryIds,
             events: retiredEvents,
             historyTruncated: session.historyTruncated === true || session.entries.length >= config.maxEntries,
+            revision: String(frame.revision),
             cursor: frame.cursor,
             epoch: frame.cursor.epoch,
             freshness: "fresh",

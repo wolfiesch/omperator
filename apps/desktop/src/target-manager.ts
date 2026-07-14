@@ -324,7 +324,7 @@ export class DesktopTargetManager {
       cursorStore: this.cursorStoreFactory(targetId),
       capabilities: requestedCapabilities,
       requestedFeatures: ADDITIVE_FEATURES,
-      client: { name: "T4 Code", version: "0.1.7", build: "desktop", platform: process.platform },
+      client: { name: "T4 Code", version: "0.1.8", build: "desktop", platform: process.platform },
       reconnect: { attemptCap: 12, baseMs: 250, maxMs: 10_000 },
     };
     const client = createOmpClient(clientOptions);

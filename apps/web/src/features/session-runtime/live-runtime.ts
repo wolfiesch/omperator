@@ -172,6 +172,7 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
     withRevision: boolean,
     usePromptLease = true,
     revisionOverride?: Revision,
+    promptLeaseRevision?: Revision,
   ): Promise<PromptOutcome> => {
     const revisionValue = withRevision ? (revisionOverride ?? expectedRevision()) : undefined;
     if (withRevision && revisionValue === undefined) return { kind: "unknown", reason: UNKNOWN_REASON };
@@ -184,7 +185,11 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
         ...(revisionValue === undefined ? {} : { expectedRevision: revisionValue }),
       };
       const result = usePromptLease
-        ? await controller.commandWithPromptLease(targetId, intentPayload)
+        ? await controller.commandWithPromptLease(
+            targetId,
+            intentPayload,
+            promptLeaseRevision === undefined ? undefined : String(promptLeaseRevision),
+          )
         : await controller.commandWithControllerLease(targetId, intentPayload);
       return result.accepted ? { kind: "accepted" } : { kind: "rejected", reason: REJECTED_REASON };
     } catch {
@@ -319,6 +324,20 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
   ): Promise<PromptOutcome> => {
     await waitForControlCommands();
     return sendCommand(command, args, true);
+  };
+
+  // Active turns advance the session revision while output streams. Steer and
+  // follow-up are revision-optional on the wire, so bind any negotiated prompt
+  // lease to current session truth without putting that volatile revision on
+  // the command itself.
+  const sendActiveTurnMessage = async (
+    command: "session.steer" | "session.followUp",
+    args: Record<string, unknown>,
+  ): Promise<PromptOutcome> => {
+    await waitForControlCommands();
+    const leaseRevision = expectedRevision();
+    if (leaseRevision === undefined) return { kind: "unknown", reason: UNKNOWN_REASON };
+    return sendCommand(command, args, false, true, undefined, leaseRevision);
   };
 
   const applyFrame = (frame: TranscriptFrame) => {
@@ -459,10 +478,10 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
       return sendAfterControlCommands("session.prompt", { message: intent.text });
     }
     if (intent.kind === "steer") {
-      return sendAfterControlCommands("session.steer", { message: intent.text });
+      return sendActiveTurnMessage("session.steer", { message: intent.text });
     }
     if (intent.kind === "followUp") {
-      return sendAfterControlCommands("session.followUp", { message: intent.text });
+      return sendActiveTurnMessage("session.followUp", { message: intent.text });
     }
     if (intent.kind === "setModel") {
       // Session-scoped switch: the host resolves a role or a concrete

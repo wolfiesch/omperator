@@ -248,6 +248,18 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           body: |
+            ## Tailnet web app
+
+            The source-hosted Tailnet client is now installable from its titlebar on Android and iPhone. It opens in a standalone window with the T4 Code icon; after installation, the same titlebar action reloads the live client. This remains an online thin client and does not cache host configuration, transcripts, or session state for offline use.
+
+            ## Session controls
+
+            Queue and Steer no longer attach a volatile active-turn revision that OMP can reject as stale. Normal prompts keep their revision guard, and prompt leases remain supported when negotiated. Fast mode copy now accurately describes a request for provider priority processing without implying a change in reasoning effort.
+
+            ## Development guardrails
+
+            The arbitrary physical-line ceiling has been removed. File boundaries are judged by cohesion and reviewability rather than a hard line count.
+
             ## Install notes
 
             Linux packages are built for x86_64. macOS packages are built for Apple Silicon.

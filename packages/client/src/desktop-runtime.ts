@@ -323,9 +323,9 @@ export class DesktopRuntimeController {
     const args = intent.args === undefined ? { leaseId: acquired.leaseId } : { ...intent.args, leaseId: acquired.leaseId };
     return this.command(targetId, { ...intent, args });
   }
-  async commandWithPromptLease(targetId: string, intent: CommandRequest["intent"]): Promise<CommandResult> {
+  async commandWithPromptLease(targetId: string, intent: CommandRequest["intent"], leaseRevision?: string): Promise<CommandResult> {
     if (this.stopped) throw new DesktopRuntimeError("stopped", "desktop runtime is stopped");
-    return this.promptLeases.command(targetId, intent, this.generationFor(targetId), this.current.targetHosts.get(targetId) === String(intent.hostId) && this.current.hosts.get(String(intent.hostId))?.grantedFeatures.includes("prompt.lease") === true, (nextTargetId, nextIntent) => this.command(nextTargetId, nextIntent));
+    return this.promptLeases.command(targetId, intent, this.generationFor(targetId), this.current.targetHosts.get(targetId) === String(intent.hostId) && this.current.hosts.get(String(intent.hostId))?.grantedFeatures.includes("prompt.lease") === true, (nextTargetId, nextIntent) => this.command(nextTargetId, nextIntent), leaseRevision);
   }
   private generationFor(targetId: string): number {
     return this.connectionGenerations.get(targetId) ?? 0;

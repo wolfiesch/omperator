@@ -268,6 +268,7 @@ describe("client projections", () => {
       },
     });
     const settled = state.sessions.get(sessionKey("session-a"))!;
+    expect(settled.revision).toBe("r2");
     expect(settled.events).toHaveLength(0);
     expect(settled.entries.map((entry) => entry.id)).toEqual(["durable-1"]);
   });

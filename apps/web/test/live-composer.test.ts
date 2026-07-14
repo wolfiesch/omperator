@@ -607,9 +607,9 @@ describe("authoritative live runtime protocol", () => {
     let controllerLeaseCalled = false;
 
     const origPromptLease = controller.commandWithPromptLease;
-    controller.commandWithPromptLease = async function (targetId, intent) {
+    controller.commandWithPromptLease = async function (targetId, intent, leaseRevision) {
       promptLeaseCalled = true;
-      return origPromptLease.call(this, targetId, intent);
+      return origPromptLease.call(this, targetId, intent, leaseRevision);
     };
 
     const origControllerLease = controller.commandWithControllerLease;
@@ -633,6 +633,7 @@ describe("authoritative live runtime protocol", () => {
     const cmd2 = shell.commands.find(c => c.intent.command === "session.steer");
     expect(cmd2).toBeDefined();
     expect(cmd2?.intent.args).toEqual({ message: "steer message", leaseId: "prompt-lease-fixture" });
+    expect(cmd2?.intent.expectedRevision).toBeUndefined();
 
     // 3. followUp -> session.followUp (sent immediately, even during active turn)
     promptLeaseCalled = false;
@@ -641,6 +642,7 @@ describe("authoritative live runtime protocol", () => {
     const cmd3 = shell.commands.find(c => c.intent.command === "session.followUp");
     expect(cmd3).toBeDefined();
     expect(cmd3?.intent.args).toEqual({ message: "followup message", leaseId: "prompt-lease-fixture" });
+    expect(cmd3?.intent.expectedRevision).toBeUndefined();
 
     // 4. cancel -> session.cancel (controller-lease path)
     controllerLeaseCalled = false;
@@ -649,6 +651,21 @@ describe("authoritative live runtime protocol", () => {
     const cmd4 = shell.commands.find(c => c.intent.command === "session.cancel");
     expect(cmd4).toBeDefined();
     expect(cmd4?.intent.expectedRevision).toBeUndefined();
+  });
+
+  it("keeps the revision on prompts but omits it from active-turn steer and follow-up", async () => {
+    const { shell, runtime } = await startedRuntime();
+
+    await runtime.submitPrompt(PROMPT);
+    await runtime.submitPrompt({ kind: "steer", text: "steer message" });
+    await runtime.submitPrompt({ kind: "followUp", text: "followup message" });
+
+    const prompt = shell.commands.find((request) => request.intent.command === "session.prompt");
+    const steer = shell.commands.find((request) => request.intent.command === "session.steer");
+    const followUp = shell.commands.find((request) => request.intent.command === "session.followUp");
+    expect(prompt?.intent.expectedRevision).toBe(revision("rev-1"));
+    expect(steer?.intent.expectedRevision).toBeUndefined();
+    expect(followUp?.intent.expectedRevision).toBeUndefined();
   });
 
   it("projects queuedFollowUps from host liveState and performs no local queue mutation", async () => {

@@ -40,6 +40,10 @@ async function fixture(socketTopology = "symlink", gatewayOptions = {}) {
   await mkdir(webRoot);
   await writeFile(join(webRoot, "index.html"), "<!doctype html><html><head></head><body>T4</body></html>");
   await writeFile(join(webRoot, "app.js"), "console.log('t4')");
+  await writeFile(
+    join(webRoot, "manifest.webmanifest"),
+    JSON.stringify({ name: "T4 Code", display: "standalone" }),
+  );
   await mkdir(join(webRoot, "assets"));
   await writeFile(join(webRoot, "assets", "app-deadbeef.js"), "console.log('hashed')");
 
@@ -140,6 +144,15 @@ test("gateway serves configured app and reports real upstream health", async () 
     assert.equal(assetResponse.status, 200);
     assert.equal(await assetResponse.text(), "console.log('t4')");
     assert.equal(assetResponse.headers.get("cache-control"), "no-cache");
+
+    const manifestResponse = await fetch(`${running.url}/manifest.webmanifest`);
+    assert.equal(manifestResponse.status, 200);
+    assert.equal(
+      manifestResponse.headers.get("content-type"),
+      "application/manifest+json; charset=utf-8",
+    );
+    assert.equal(manifestResponse.headers.get("cache-control"), "no-cache");
+    assert.deepEqual(await manifestResponse.json(), { name: "T4 Code", display: "standalone" });
 
     const fingerprintedResponse = await fetch(`${running.url}/assets/app-deadbeef.js`);
     assert.equal(fingerprintedResponse.status, 200);
