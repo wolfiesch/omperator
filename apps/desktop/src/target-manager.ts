@@ -1,8 +1,7 @@
-import { createOmpClient, isConfirmationDecisionConsumed, OmpClientError, type CommandIntent, type CursorStore, type OmpClient, type PublicServerFrame } from "@t4-code/client";
+import { createOmpClient, isConfirmationDecisionConsumed, OmpClientError, type CommandIntent, type CursorStore, type OmpClient, type OmpPairOk, type PublicOmpServerEvent } from "@t4-code/client";
 import { commandResultError, type CommandResult, type ConnectionStateEvent, type RuntimeErrorEvent } from "@t4-code/protocol/desktop-ipc";
 import type { ConfirmRequest, ConfirmResult, TerminalCloseRequest, TerminalInputRequest, TerminalResizeRequest, TerminalResult } from "@t4-code/protocol/desktop-ipc";
 import { ADDITIVE_FEATURES, DEVICE_CAPABILITIES, type DeviceCapability } from "@t4-code/protocol";
-import type { PairOkFrame, WelcomeFrame } from "@t4-code/protocol";
 import { createLocalTransport, type UnixWebSocketTransport } from "./transport.ts";
 import { createRemoteWebSocketTransport, type RemoteWebSocketTransport } from "./remote-runtime/transport.ts";
 import { validateRemoteTarget, type CredentialStore, type PublicRemoteTarget, type RemoteTargetRecord, type RemoteTargetRegistry } from "./remote-runtime/registry.ts";
@@ -26,7 +25,7 @@ export interface PublicDesktopTarget {
   readonly status?: "unknown" | "online" | "offline" | "revoked";
 }
 export interface TargetManagerEvents {
-  readonly onFrame: (targetId: string, frame: PublicServerFrame) => void;
+  readonly onEvent: (targetId: string, event: PublicOmpServerEvent) => void;
   readonly onState: (event: ConnectionStateEvent) => void;
   readonly onError: (event: RuntimeErrorEvent) => void;
   readonly onTargets?: (targets: readonly PublicDesktopTarget[]) => void;
@@ -78,10 +77,16 @@ function safeError(error: unknown): { readonly code: RuntimeErrorEvent["code"]; 
   return { code: "transport", message: "target operation failed" };
 }
 
-function safePublicFrame(frame: PublicServerFrame): PublicServerFrame {
-  if (frame.type !== "response" || frame.error === undefined) return frame;
-  const error = commandResultError(frame.error) ?? { code: "internal", message: "command failed" };
-  return { ...frame, error };
+function safePublicEvent(event: PublicOmpServerEvent): PublicOmpServerEvent {
+  if (event.kind !== "response" || event.payload.error === undefined) return event;
+  const error = commandResultError(event.payload.error) ?? {
+    code: "internal",
+    message: "command failed",
+  };
+  return Object.freeze({
+    ...event,
+    payload: Object.freeze({ ...event.payload, error }),
+  }) as PublicOmpServerEvent;
 }
 
 export class DesktopTargetManager {
@@ -101,7 +106,10 @@ export class DesktopTargetManager {
   private readonly localStates = new Map<string, DesktopTargetState>();
   private closed = false;
   private readonly generations = new Map<string, number>();
-  private readonly latestWelcomes = new Map<string, WelcomeFrame>();
+  private readonly latestWelcomes = new Map<
+    string,
+    Extract<PublicOmpServerEvent, { kind: "welcome" }>
+  >();
   private readonly registry: RemoteTargetRegistry | undefined;
   private readonly credentials: CredentialStore | undefined;
 
@@ -328,7 +336,7 @@ export class DesktopTargetManager {
     if (existing !== undefined && sameCapabilities(existing.requestedCapabilities, requestedCapabilities)) {
       if (existing.client.state === "ready") {
         const welcome = this.latestWelcomes.get(targetId);
-        if (welcome !== undefined) this.events.onFrame(targetId, welcome);
+        if (welcome !== undefined) this.events.onEvent(targetId, welcome);
         return { result: Promise.resolve("connected") };
       }
       if (existing.client.state === "connecting" || existing.client.state === "handshaking" || existing.client.state === "pairing" || existing.client.state === "reconnect-wait") {
@@ -365,7 +373,7 @@ export class DesktopTargetManager {
             return undefined;
           }
         },
-        privilegedPairResult: async (frame: PairOkFrame) => {
+        privilegedPairResult: async (frame: OmpPairOk) => {
           await this.credentials!.set(targetId, { token: frame.deviceToken, deviceId: frame.deviceId });
           const active = this.runtimes.get(targetId);
           if (active !== undefined && active.generation === generation) active.paired = true;
@@ -381,10 +389,10 @@ export class DesktopTargetManager {
     const client = createOmpClient(clientOptions);
     const runtime: Runtime = { generation, client, requestedCapabilities, paired: local !== undefined || hasCredential };
     this.runtimes.set(targetId, runtime);
-    client.onFrame((frame) => {
+    client.onEvent((event) => {
       if (this.generations.get(targetId) !== generation) return;
-      if (frame.type === "welcome") this.latestWelcomes.set(targetId, frame);
-      this.events.onFrame(targetId, safePublicFrame(frame));
+      if (event.kind === "welcome") this.latestWelcomes.set(targetId, event);
+      this.events.onEvent(targetId, safePublicEvent(event));
     });
     client.onState((snapshot) => {
       if (this.generations.get(targetId) !== generation) return;

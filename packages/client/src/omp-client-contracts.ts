@@ -1,5 +1,7 @@
-import type { ClientFrame, PairOkFrame, RequestId, ResultFrame, Cursor, ServerFrame } from "@t4-code/protocol";
+import type { PairOkFrame, RequestId, Cursor, ServerFrame } from "@t4-code/protocol";
 import type { ProjectionStore } from "./projection.ts";
+import type { OmpClientMessage, OmpPairOk, OmpProtocolProvider, OmpResponse } from "./omp-protocol-provider.ts";
+import type { OmpProtocolProviderRegistry } from "./omp-protocol-provider-registry.ts";
 
 
 export type OmpClientState =
@@ -61,6 +63,11 @@ export interface TimerScheduler { setTimeout(callback: () => void, delayMs: numb
 export interface IdFactory { next(kind: "request" | "command" | "ping"): string; }
 export interface OmpClientOptions {
   transport: OmpTransportFactory;
+  /** Concrete wire implementation. Defaults to the pinned omp-app/1 provider. */
+  protocolProvider?: OmpProtocolProvider;
+  /** Select a provider from a registry without exposing its wire implementation. */
+  protocolProviderId?: string;
+  protocolProviderRegistry?: OmpProtocolProviderRegistry;
   hostId?: string; expectedHostId?: string;
   client?: { name: string; version: string; build: string; platform: string };
   requestedFeatures?: readonly string[];
@@ -73,7 +80,7 @@ export interface OmpClientOptions {
   heartbeat?: { intervalMs?: number; timeoutMs?: number }; handshakeTimeoutMs?: number; commandTimeoutMs?: number;
   /** Maximum inbound-idle time before a foreground wake replaces a possibly stale socket. */
   wakeStaleAfterMs?: number;
-  maxPending?: number; privilegedPairResult?: (result: PairOkFrame) => void | Promise<void>;
+  maxPending?: number; privilegedPairResult?: (result: OmpPairOk) => void | Promise<void>;
 }
 export interface OmpStateSnapshot {
   state: OmpClientState; generation: number; attempt: number; hostId?: string; epoch?: string; cursor?: Cursor;
@@ -132,11 +139,12 @@ export class DefaultIds implements IdFactory {
   }
 }
 
-export type PendingResult = ResultFrame | PairOkFrame;
+export type PendingResult = OmpResponse | OmpPairOk;
+export type PendingMessage = Extract<OmpClientMessage, { kind: "command" | "confirm" | "pair-start" }>;
 export interface Pending {
   requestId: RequestId;
   commandId?: string;
-  frame: ClientFrame;
+  message: PendingMessage;
   resolve: (frame: PendingResult) => void;
   reject: (error: OmpClientError) => void;
   timer?: { active: boolean; handle: unknown };

@@ -189,7 +189,7 @@ export class DesktopLifecycle {
       deviceId: identity.deviceId,
       deviceName: identity.deviceName,
       events: {
-        onFrame: (targetId, frame) => this.ipc?.emitServerFrame(targetId, frame),
+        onEvent: (targetId, event) => this.ipc?.emitServerEvent(targetId, event),
         onState: (state) => this.ipc?.emitConnectionState(state),
         onError: (error) => this.ipc?.emitRuntimeError(error),
       },

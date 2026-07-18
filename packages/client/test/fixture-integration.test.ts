@@ -46,7 +46,7 @@ function waitForCursor(client: OmpClient, epoch: string, minimumSeq: number): Pr
   if (cursor?.epoch === epoch && cursor.seq >= minimumSeq) return Promise.resolve();
   const { promise, resolve } = Promise.withResolvers<void>();
   let dispose: Unsubscribe | undefined;
-  dispose = client.onFrame(() => {
+  dispose = client.onEvent(() => {
     const next = client.snapshot().cursor;
     if (next?.epoch === epoch && next.seq >= minimumSeq) {
       dispose?.();
@@ -208,11 +208,11 @@ describe("OmpClient and FixtureWebSocketServer projection boundary", () => {
     });
     let replaySnapshotsA = 0;
     let replaySnapshotsB = 0;
-    const disposeFramesA = clientA.onFrame((frame) => {
-      if (frame.type === "snapshot" && frame.cursor.epoch === "epoch-two-client-restarted") replaySnapshotsA += 1;
+    const disposeEventsA = clientA.onEvent((event) => {
+      if (event.kind === "snapshot" && event.payload.cursor.epoch === "epoch-two-client-restarted") replaySnapshotsA += 1;
     });
-    const disposeFramesB = clientB.onFrame((frame) => {
-      if (frame.type === "snapshot" && frame.cursor.epoch === "epoch-two-client-restarted") replaySnapshotsB += 1;
+    const disposeEventsB = clientB.onEvent((event) => {
+      if (event.kind === "snapshot" && event.payload.cursor.epoch === "epoch-two-client-restarted") replaySnapshotsB += 1;
     });
     try {
       await Promise.all([clientA.connect(), clientB.connect()]);
@@ -316,8 +316,8 @@ describe("OmpClient and FixtureWebSocketServer projection boundary", () => {
       expect(clientB.snapshot().cursor?.seq).toBeGreaterThan(0);
     } finally {
       releaseAFactory();
-      disposeFramesA();
-      disposeFramesB();
+      disposeEventsA();
+      disposeEventsB();
       await Promise.all([clientA.close(), clientB.close()]);
       await firstServer.stop();
       await replacementServer.stop();

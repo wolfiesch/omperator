@@ -1,4 +1,12 @@
-import { createOmpClient, type OmpClient, type OmpClientOptions, type OmpTransport, type PublicServerFrame } from "@t4-code/client";
+import {
+  createOmpClient,
+  ompAppV1ProtocolProvider,
+  type OmpClient,
+  type OmpClientOptions,
+  type OmpTransport,
+  type PublicOmpServerEvent,
+  type PublicServerFrame,
+} from "@t4-code/client";
 import { commandId, confirmationId, hostId, requestId } from "@t4-code/protocol";
 import { describe, expect, it, afterEach } from "vite-plus/test";
 
@@ -22,6 +30,12 @@ class MemoryStorage {
   getItem(key: string): string | null { return this.values.get(key) ?? null; }
   setItem(key: string, value: string): void { this.values.set(key, value); }
   removeItem(key: string): void { this.values.delete(key); }
+}
+
+function publicEvent(frame: PublicServerFrame): PublicOmpServerEvent {
+  const event = ompAppV1ProtocolProvider.decodeServerEvent(frame);
+  if (event.kind === "pair.ok") throw new Error("pair.ok is not a public event");
+  return event;
 }
 
 class FakeLifecycleTarget {
@@ -146,7 +160,7 @@ describe("browser platform boundary", () => {
       wake: () => {
         wakes += 1;
       },
-      onFrame: () => () => undefined,
+      onEvent: () => () => undefined,
       onState: () => () => undefined,
       onError: () => () => undefined,
     };
@@ -240,7 +254,7 @@ describe("browser platform boundary", () => {
     let capturedOptions: OmpClientOptions | undefined;
     let connectCalls = 0;
     let closed = false;
-    let clientFrameListener: ((frame: PublicServerFrame) => void) | undefined;
+    let clientEventListener: ((event: PublicOmpServerEvent) => void) | undefined;
     let fakeState: "pairing" | "ready" = "pairing";
     let confirmResponse = { requestId: "confirm", ok: true, type: "response", v: "omp-app/1" };
     let commandResponse: unknown = {
@@ -273,10 +287,10 @@ describe("browser platform boundary", () => {
         fakeState = "ready";
         return { type: "pair.ok" };
       },
-      onFrame: (listener: (frame: PublicServerFrame) => void) => {
-        clientFrameListener = listener;
+      onEvent: (listener: (event: PublicOmpServerEvent) => void) => {
+        clientEventListener = listener;
         return () => {
-          clientFrameListener = undefined;
+          clientEventListener = undefined;
         };
       },
       onState: () => () => undefined,
@@ -289,8 +303,10 @@ describe("browser platform boundary", () => {
       },
     });
     if (shell === null) return;
-    const emittedFrames: PublicServerFrame[] = [];
-    const stopFrames = shell.onServerFrame((event) => emittedFrames.push(event.frame));
+    const emittedEvents: PublicOmpServerEvent[] = [];
+    const stopEvents = shell.onServerEvent((event) => {
+      emittedEvents.push(event.event);
+    });
     await shell.bootstrap();
     expect(connectCalls).toBe(0);
     await shell.connect({ targetId: "remote" });
@@ -340,7 +356,7 @@ describe("browser platform boundary", () => {
         details: { expectedRevision: "rev-1", actualRevision: "rev-2" },
       },
     });
-    clientFrameListener?.({
+    clientEventListener?.(publicEvent({
       v: "omp-app/1",
       type: "response",
       requestId: requestId("frame-request"),
@@ -352,23 +368,24 @@ describe("browser platform boundary", () => {
         code: "outcome_unknown",
         message: "reader failed; Bearer live-frame-token",
         details: {
+          recovery: "check the session before retrying",
           diagnostic: "token=live-frame-detail",
           accessToken: "must-not-cross-browser-boundary",
         },
       },
-    });
-    const rejectedFrame = emittedFrames.at(-1);
-    expect(rejectedFrame).toMatchObject({
-      type: "response",
-      error: {
+    }));
+    const rejectedEvent = emittedEvents.at(-1);
+    expect(rejectedEvent).toMatchObject({
+      kind: "response",
+      payload: { error: {
         code: "outcome_unknown",
         message: "reader failed; [redacted]",
         details: { diagnostic: "token=[redacted]" },
-      },
+      } },
     });
-    expect(JSON.stringify(rejectedFrame)).not.toContain("live-frame-token");
-    expect(JSON.stringify(rejectedFrame)).not.toContain("live-frame-detail");
-    expect(JSON.stringify(rejectedFrame)).not.toContain("must-not-cross-browser-boundary");
+    expect(JSON.stringify(rejectedEvent)).not.toContain("live-frame-token");
+    expect(JSON.stringify(rejectedEvent)).not.toContain("live-frame-detail");
+    expect(JSON.stringify(rejectedEvent)).not.toContain("must-not-cross-browser-boundary");
     const confirmationRequest = {
       targetId: "remote",
       confirmationId: confirmationId("confirm"),
@@ -396,7 +413,7 @@ describe("browser platform boundary", () => {
     } as never;
     expect((await shell.confirm(confirmationRequest)).accepted).toBe(false);
     await shell.disconnect({ targetId: "remote" });
-    stopFrames();
+    stopEvents();
     expect(closed).toBe(true);
   });
 
@@ -446,7 +463,7 @@ describe("browser platform boundary", () => {
         } as never);
         return { type: "pair.ok" };
       },
-      onFrame: () => () => undefined,
+      onEvent: () => () => undefined,
       onState: () => () => undefined,
       onError: () => () => undefined,
     };
@@ -540,7 +557,7 @@ describe("browser platform boundary", () => {
           connect: async () => undefined,
           close: async () => undefined,
           wake: () => undefined,
-          onFrame: () => () => undefined,
+          onEvent: () => () => undefined,
           onState: () => () => undefined,
           onError: () => () => undefined,
         } as unknown as OmpClient;
@@ -646,7 +663,7 @@ describe("browser platform boundary", () => {
           connect: async () => undefined,
           close: async () => undefined,
           wake: () => undefined,
-          onFrame: () => () => undefined,
+          onEvent: () => () => undefined,
           onState: () => () => undefined,
           onError: () => () => undefined,
         } as unknown as OmpClient;
@@ -869,7 +886,7 @@ describe("browser platform boundary", () => {
         events.push("client.close");
       },
       wake: () => undefined,
-      onFrame: () => () => undefined,
+      onEvent: () => () => undefined,
       onState: () => () => undefined,
       onError: () => () => undefined,
     } as unknown as OmpClient;
@@ -932,7 +949,7 @@ describe("browser platform boundary", () => {
         events.push("client.close");
       },
       wake: () => undefined,
-      onFrame: () => () => undefined,
+      onEvent: () => () => undefined,
       onState: () => () => undefined,
       onError: () => () => undefined,
     } as unknown as OmpClient;

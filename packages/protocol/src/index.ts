@@ -12,6 +12,7 @@ import {
 export * from "@oh-my-pi/app-wire";
 export * from "./app-update.ts";
 export * from "./pair-link.ts";
+export * from "./server-event.ts";
 
 export type SessionControlCompatibility = "absent" | "known" | "unknown";
 

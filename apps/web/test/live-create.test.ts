@@ -3,6 +3,7 @@ import {
   createLiveSession,
   type LiveCreateController,
 } from "../src/features/session-runtime/live-create.ts";
+import type { RendererServerEventEnvelope } from "@t4-code/protocol/desktop-ipc";
 import {
   requiresProfileChoiceForCreate,
   resolveLiveProject,
@@ -11,7 +12,7 @@ import {
 
 const address = { targetId: "target-1", hostId: "host-1", projectId: "project-1" } as const;
 function controller() {
-  const frames: Array<(event: { frame: unknown }) => void> = [];
+  const events: Array<(event: RendererServerEventEnvelope) => void> = [];
   const snapshot: {
     connections: Map<string, string>;
     targetHosts: Map<string, string>;
@@ -35,8 +36,8 @@ function controller() {
   let next = 1;
   const fake: LiveCreateController = {
     getSnapshot: () => snapshot,
-    subscribeFrames: (_filter, listener) => {
-      frames.push(listener);
+    subscribeEvents: (_filter, listener) => {
+      events.push(listener);
       return () => {
         unsubscribed++;
       };
@@ -52,7 +53,12 @@ function controller() {
     snapshot,
     commands,
     emit(frame: unknown) {
-      for (const listener of frames) listener({ frame });
+      for (const listener of events) {
+        listener({
+          targetId: address.targetId,
+          event: { kind: "response", payload: frame as Record<string, unknown> } as never,
+        });
+      }
     },
     get unsubscribed() {
       return unsubscribed;

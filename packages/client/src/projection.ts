@@ -1,16 +1,7 @@
 import { isCursor } from "@t4-code/protocol";
 import type {
-  AgentFrame,
-  AgentTranscriptFrame,
-  AuditFrame,
-  ConfirmationChallenge,
   Cursor,
   DurableEntry,
-  FileFrame,
-  GapFrame,
-  LiveEventFrame,
-  ResultFrame,
-  ReviewFrame,
   SessionEvent,
   SessionRef,
   ServerFrame,
@@ -43,8 +34,24 @@ import {
   retainDurableEntries,
   sanitizeRetainedRecord,
 } from "./transcript-retention.ts";
+import type { PublicOmpServerEvent } from "./omp-protocol-provider.ts";
 
 export type ProjectionFrame = Exclude<ServerFrame, Extract<ServerFrame, { type: "pair.ok" }>>;
+type ProjectionEventFrameFromEvent<Event extends PublicOmpServerEvent> = Event extends PublicOmpServerEvent
+  ? Readonly<{ type: Event["kind"] } & Event["payload"]>
+  : never;
+export type ProjectionEventFrame = ProjectionEventFrameFromEvent<PublicOmpServerEvent>;
+type ProjectionInputFrame = ProjectionFrame | ProjectionEventFrame;
+type ProjectionInput<Kind extends ProjectionInputFrame["type"]> = Extract<ProjectionInputFrame, { type: Kind }>;
+type ProjectionAgentFrame = ProjectionInput<"agent">;
+type ProjectionAgentTranscriptFrame = ProjectionInput<"agent.transcript">;
+type ProjectionAuditFrame = ProjectionInput<"audit">;
+type ProjectionConfirmationFrame = ProjectionInput<"confirmation">;
+type ProjectionFileFrame = ProjectionInput<"files">;
+type ProjectionGapFrame = ProjectionInput<"gap">;
+type ProjectionLiveEventFrame = ProjectionInput<"event">;
+type ProjectionResultFrame = ProjectionInput<"response">;
+type ProjectionReviewFrame = ProjectionInput<"review">;
 export type ProjectionFreshness = "fresh" | "catching-up" | "cached";
 
 export interface TerminalProjection {
@@ -77,14 +84,14 @@ export interface SessionProjection {
   readonly sessionId: string;
   readonly ref?: SessionRef;
   readonly entries: readonly DurableEntry[];
-  readonly events: readonly LiveEventFrame[];
-  readonly agents: ReadonlyMap<string, AgentFrame>;
+  readonly events: readonly ProjectionLiveEventFrame[];
+  readonly agents: ReadonlyMap<string, ProjectionAgentFrame>;
   readonly agentTranscripts: ReadonlyMap<string, AgentTranscriptProjection>;
   readonly terminals: ReadonlyMap<string, TerminalProjection>;
-  readonly files: ReadonlyMap<string, FileFrame>;
-  readonly reviews: ReadonlyMap<string, ReviewFrame>;
-  readonly audit: readonly AuditFrame[];
-  readonly confirmations: ReadonlyMap<string, ConfirmationChallenge>;
+  readonly files: ReadonlyMap<string, ProjectionFileFrame>;
+  readonly reviews: ReadonlyMap<string, ProjectionReviewFrame>;
+  readonly audit: readonly ProjectionAuditFrame[];
+  readonly confirmations: ReadonlyMap<string, ProjectionConfirmationFrame>;
   readonly results: ReadonlyMap<string, ResultProjection>;
   readonly revision?: string;
   readonly cursor?: Cursor;
@@ -101,7 +108,7 @@ export interface SessionProjection {
    * advance this fence, and cache/recovery deliberately resets it.
    */
   readonly contextMaintenanceEventArrivalOrdinal: number;
-  readonly gap?: GapFrame | undefined;
+  readonly gap?: ProjectionGapFrame | undefined;
   readonly historyTruncated?: boolean;
   readonly entryIds: ReadonlySet<string>;
 }
@@ -159,7 +166,7 @@ export interface ProjectionOptions {
 }
 
 export interface ProjectionSubscription {
-  (snapshot: ProjectionSnapshot, frame?: ProjectionFrame): void;
+  (snapshot: ProjectionSnapshot, input?: ProjectionFrame | PublicOmpServerEvent): void;
 }
 
 export const MAX_INDEXED_SESSION_REFS = 1000;
@@ -194,7 +201,7 @@ const UTF8_ENCODER = new TextEncoder();
 const UTF8_DECODER = new TextDecoder();
 /** Immutable projection values make exact byte totals safe to memoize by identity. */
 const TERMINAL_PROJECTION_BYTES = new WeakMap<TerminalProjection, number>();
-const FILE_PROJECTION_BYTES = new WeakMap<FileFrame, number>();
+const FILE_PROJECTION_BYTES = new WeakMap<ProjectionFileFrame, number>();
 
 function positiveOption(value: number | undefined, fallback: number): number {
   return value !== undefined && Number.isSafeInteger(value) && value > 0 ? value : fallback;
@@ -253,7 +260,7 @@ function boundedUniqueEntries(
 }
 function agentTranscriptProjection(
   previous: AgentTranscriptProjection | undefined,
-  frame: AgentTranscriptFrame,
+  frame: ProjectionAgentTranscriptFrame,
   maxEntries: number,
   maxBytes: number,
   maxEntryBytes: number,
@@ -413,7 +420,7 @@ function retainTerminalProjection(
   return immutableMap(next);
 }
 
-function fileProjectionBytes(file: FileFrame): number {
+function fileProjectionBytes(file: ProjectionFileFrame): number {
   const cached = FILE_PROJECTION_BYTES.get(file);
   if (cached !== undefined) return cached;
   const bytes = utf8Bytes(file.path) + (file.content === undefined ? 0 : utf8Bytes(file.content));
@@ -421,12 +428,12 @@ function fileProjectionBytes(file: FileFrame): number {
   return bytes;
 }
 
-function fileWithoutContent(file: FileFrame): FileFrame {
+function fileWithoutContent(file: ProjectionFileFrame): ProjectionFileFrame {
   const { content: _content, ...metadata } = file;
   return Object.freeze({ ...metadata, truncated: true });
 }
 
-function trimFileProjection(file: FileFrame, maxBytes: number): FileFrame {
+function trimFileProjection(file: ProjectionFileFrame, maxBytes: number): ProjectionFileFrame {
   if (fileProjectionBytes(file) <= maxBytes || file.content === undefined) return file;
   const content = retainedUtf8Head(file.content, Math.max(0, maxBytes - utf8Bytes(file.path)));
   return Object.freeze({ ...file, content, truncated: true });
@@ -434,11 +441,11 @@ function trimFileProjection(file: FileFrame, maxBytes: number): FileFrame {
 
 /** Keep recent content first while retaining older paths as useful tree metadata. */
 function retainFileProjection(
-  files: ReadonlyMap<string, FileFrame>,
+  files: ReadonlyMap<string, ProjectionFileFrame>,
   path: string,
-  file: FileFrame,
+  file: ProjectionFileFrame,
   options: Required<ProjectionOptions>,
-): ReadonlyMap<string, FileFrame> {
+): ReadonlyMap<string, ProjectionFileFrame> {
   const next = new Map(files);
   let totalBytes = 0;
   for (const value of next.values()) totalBytes += fileProjectionBytes(value);
@@ -498,19 +505,19 @@ function retainRestoredSessionResources(
   for (const [terminalId, terminal] of session.terminals) {
     terminals = retainTerminalProjection(terminals, terminalId, terminal, options);
   }
-  let files = immutableMap<string, FileFrame>();
+  let files = immutableMap<string, ProjectionFileFrame>();
   for (const [path, file] of session.files) {
     files = retainFileProjection(files, path, file, options);
   }
   return Object.freeze({ ...session, terminals, files });
 }
 function confirmationsAfterResponse(
-  confirmations: ReadonlyMap<string, ConfirmationChallenge>,
-  frame: ResultFrame,
-): ReadonlyMap<string, ConfirmationChallenge> {
+  confirmations: ReadonlyMap<string, ProjectionConfirmationFrame>,
+  frame: ProjectionResultFrame,
+): ReadonlyMap<string, ProjectionConfirmationFrame> {
   const invalid = frame.error?.code === "confirmation_invalid";
   let changed = false;
-  const next = new Map<string, ConfirmationChallenge>();
+  const next = new Map<string, ProjectionConfirmationFrame>();
   for (const [confirmationKey, challenge] of confirmations) {
     if (String(challenge.commandId) !== String(frame.commandId)) {
       next.set(confirmationKey, challenge);
@@ -658,7 +665,7 @@ function mostRecentSessionKey(sessionIndex: ReadonlyMap<string, SessionRef>): st
   return selected?.key;
 }
 function authoritativeSessionHosts(
-  frame: ProjectionFrame & { readonly type: "sessions" },
+  frame: ProjectionInput<"sessions">,
   refs: readonly SessionRef[],
 ): ReadonlySet<string> {
   const hosts = new Set(refs.map((ref) => String(ref.hostId)));
@@ -668,7 +675,7 @@ function authoritativeSessionHosts(
   return hosts;
 }
 function sessionFrameMetadata(
-  frame: ProjectionFrame & { readonly type: "sessions" },
+  frame: ProjectionInput<"sessions">,
   refs: readonly SessionRef[],
   maxIndexedSessions: number,
   hosts: ReadonlySet<string>,
@@ -701,7 +708,7 @@ function sessionFrameMetadata(
 }
 
 function sessionFrameIsComplete(
-  frame: ProjectionFrame & { readonly type: "sessions" },
+  frame: ProjectionInput<"sessions">,
   refs: readonly SessionRef[],
   maxIndexedSessions: number,
 ): boolean {
@@ -717,7 +724,7 @@ function sessionFrameIsComplete(
   return raw.truncated === false || refs.length < maxIndexedSessions;
 }
 
-function resultProjection(frame: ResultFrame): ResultProjection {
+function resultProjection(frame: ProjectionResultFrame): ResultProjection {
   const output: ResultProjection = {
     requestId: String(frame.requestId),
     ...(frame.commandId === undefined ? {} : { commandId: String(frame.commandId) }),
@@ -730,7 +737,7 @@ function resultProjection(frame: ResultFrame): ResultProjection {
   return Object.freeze(output);
 }
 
-function attachAcknowledgesCurrentCursor(session: SessionProjection, frame: ResultFrame): boolean {
+function attachAcknowledgesCurrentCursor(session: SessionProjection, frame: ProjectionResultFrame): boolean {
   if (
     !frame.ok ||
     frame.command !== "session.attach" ||
@@ -746,9 +753,9 @@ function attachAcknowledgesCurrentCursor(session: SessionProjection, frame: Resu
   return result.cursor.epoch === session.cursor.epoch && result.cursor.seq === session.cursor.seq;
 }
 
-export function applyPublicFrame(
+function applyProjectionInput(
   snapshot: ProjectionSnapshot,
-  frame: ProjectionFrame,
+  frame: ProjectionInputFrame,
   options: ProjectionOptions = {},
 ): ProjectionSnapshot {
   const config = resolveProjectionOptions(options);
@@ -1336,6 +1343,26 @@ export function applyPublicFrame(
   }
 }
 
+export function applyPublicFrame(
+  snapshot: ProjectionSnapshot,
+  frame: ProjectionFrame,
+  options: ProjectionOptions = {},
+): ProjectionSnapshot {
+  return applyProjectionInput(snapshot, frame, options);
+}
+
+export function applyPublicEvent(
+  snapshot: ProjectionSnapshot,
+  event: PublicOmpServerEvent,
+  options: ProjectionOptions = {},
+): ProjectionSnapshot {
+  return applyProjectionInput(
+    snapshot,
+    { ...event.payload, type: event.kind } as ProjectionEventFrame,
+    options,
+  );
+}
+
 export class ProjectionStore {
   private current: ProjectionSnapshot;
   private mutationGeneration = 0;
@@ -1375,6 +1402,23 @@ export class ProjectionStore {
     for (const listener of [...this.listeners]) {
       try {
         listener(next, frame);
+      } catch {
+        /* listener isolation */
+      }
+    }
+    return next;
+  }
+  applyPublicEvent(event: PublicOmpServerEvent): ProjectionSnapshot {
+    if (this.disposed) return this.current;
+    const next = applyPublicEvent(this.current, event, this.options);
+    if (next === this.current) return next;
+    this.mutationGeneration += 1;
+    this.current = next;
+    this.queueCacheSave();
+    // eslint-disable-next-line unicorn/no-useless-spread -- preserve listener snapshot when callbacks may unsubscribe during dispatch.
+    for (const listener of [...this.listeners]) {
+      try {
+        listener(next, event);
       } catch {
         /* listener isolation */
       }

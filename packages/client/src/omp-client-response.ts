@@ -1,26 +1,26 @@
-import type { ResultFrame } from "@t4-code/protocol";
 import type { Pending } from "./omp-client-contracts.ts";
 import type { PendingRequests } from "./omp-client-pending.ts";
+import type { OmpResponse } from "./omp-protocol-provider.ts";
 
 /**
  * A confirmation decision is consumed even when the user denies the command or
  * the approved command itself fails. Only confirmation_invalid means the host
  * did not consume this decision.
  */
-export function isConfirmationDecisionConsumed(frame: ResultFrame): boolean {
+export function isConfirmationDecisionConsumed(frame: OmpResponse): boolean {
   return frame.error?.code !== "confirmation_invalid";
 }
 
 function matchingConfirmRequests(
   entries: ReadonlyMap<string, Pending>,
-  frame: ResultFrame,
+  frame: OmpResponse,
 ): string[] {
   const matches: string[] = [];
   for (const [requestKey, pending] of entries) {
-    if (pending.kind !== "confirm" || pending.frame.type !== "confirm") continue;
-    if (String(pending.frame.commandId) !== String(frame.commandId)) continue;
-    if (pending.frame.hostId !== frame.hostId) continue;
-    if (pending.frame.sessionId !== frame.sessionId) continue;
+    if (pending.kind !== "confirm" || pending.message.kind !== "confirm") continue;
+    if (String(pending.message.commandId) !== String(frame.commandId)) continue;
+    if (pending.message.hostId !== frame.hostId) continue;
+    if (pending.message.sessionId !== frame.sessionId) continue;
     matches.push(requestKey);
   }
   return matches;
@@ -28,11 +28,11 @@ function matchingConfirmRequests(
 
 export function handleResponseFrame(
   pendingRequests: PendingRequests,
-  frame: ResultFrame,
+  frame: OmpResponse,
   callbacks: {
     readonly protocolFailure: (message: string) => void;
-    readonly publish: (frame: ResultFrame) => void;
-    readonly attached: (hostId: string, sessionId: string, frame: ResultFrame) => void;
+    readonly publish: (frame: OmpResponse) => void;
+    readonly attached: (hostId: string, sessionId: string, frame: OmpResponse) => void;
   },
 ): void {
   const requestKey = String(frame.requestId);
@@ -48,11 +48,11 @@ export function handleResponseFrame(
     callbacks.publish(frame);
     return;
   }
-  if (!("hostId" in pending.frame) || frame.hostId !== pending.frame.hostId) {
+  if (pending.message.kind === "pair-start" || frame.hostId !== pending.message.hostId) {
     callbacks.protocolFailure("response host correlation mismatch");
     return;
   }
-  const expectedSession = "sessionId" in pending.frame ? pending.frame.sessionId : undefined;
+  const expectedSession = pending.message.sessionId;
   if (frame.sessionId !== expectedSession) {
     callbacks.protocolFailure("response session correlation mismatch");
     return;

@@ -1,5 +1,5 @@
 import { createServer as createHttpServer } from "node:http";
-import { chmodSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer as createNetServer, type Server, type Socket } from "node:net";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
@@ -117,7 +117,7 @@ describeUnix("Unix socket ownership and resolution", () => {
       for (const target of cases) {
         symlinkSync(target, publicPath);
         expect(() => resolveUnixSocketPath(publicPath)).toThrow();
-        rmSync(publicPath, { force: true });
+        unlinkSync(publicPath);
       }
 
       const actualPath = join(directory, "actual.sock");
@@ -139,7 +139,7 @@ describeUnix("Unix socket ownership and resolution", () => {
       writeFileSync(backingPath, "not a socket", { mode: 0o600 });
       symlinkSync(`.appserver-${UUID}.sock`, publicPath);
       expect(() => resolveUnixSocketPath(publicPath)).toThrow();
-      rmSync(publicPath, { force: true });
+      unlinkSync(publicPath);
       rmSync(backingPath, { force: true });
 
       const server = createNetServer();
@@ -147,7 +147,7 @@ describeUnix("Unix socket ownership and resolution", () => {
       chmodSync(backingPath, 0o620);
       symlinkSync(`.appserver-${UUID}.sock`, publicPath);
       expect(() => resolveUnixSocketPath(publicPath)).toThrow();
-      rmSync(publicPath, { force: true });
+      unlinkSync(publicPath);
       chmodSync(backingPath, 0o600);
       chmodSync(directory, 0o770);
       expect(() => resolveUnixSocketPath(backingPath)).toThrow();

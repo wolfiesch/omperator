@@ -1,4 +1,3 @@
-import type { ClientFrame } from "@t4-code/protocol";
 import { requestId } from "@t4-code/protocol";
 import type { ClientTimer } from "./omp-client-timers.ts";
 import type {
@@ -6,6 +5,7 @@ import type {
   CommandOptions,
   OmpClientError,
   Pending,
+  PendingMessage,
   PendingResult,
 } from "./omp-client-contracts.ts";
 
@@ -36,23 +36,23 @@ export class PendingRequests {
   }
   get size(): number { return this.entries.size; }
   begin(
-    frame: ClientFrame,
+    message: PendingMessage,
     requestText: string,
     options: CommandOptions,
     kind: Pending["kind"],
     intent: CommandIntent | undefined,
-    send: (encoded: string, pending: Pending) => void,
+    send: (message: PendingMessage, pending: Pending) => void,
   ): Promise<PendingResult> {
     if (this.entries.size >= this.max) return Promise.reject(this.makeError("invalid_state", "pending request limit reached"));
     let resolvePromise: (result: PendingResult) => void = () => undefined;
     let rejectPromise: (error: OmpClientError) => void = () => undefined;
     const promise = new Promise<PendingResult>((resolve, reject) => { resolvePromise = resolve; rejectPromise = reject; });
     const id = requestId(requestText);
-    const command = "commandId" in frame ? String(frame.commandId) : undefined;
+    const command = "commandId" in message ? String(message.commandId) : undefined;
     const pending: Pending = {
       requestId: id,
       ...(command === undefined ? {} : { commandId: command }),
-      frame,
+      message,
       resolve: resolvePromise,
       reject: rejectPromise,
       handedToTransport: false,
@@ -71,7 +71,7 @@ export class PendingRequests {
       }
     }
     if (!this.entries.has(requestText)) return promise;
-    try { send(JSON.stringify(frame), pending); }
+    try { send(message, pending); }
     catch (error) {
       if (this.entries.has(requestText)) {
         pending.handedToTransport = false;

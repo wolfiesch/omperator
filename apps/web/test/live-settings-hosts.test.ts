@@ -10,12 +10,14 @@ import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { CatalogFrame, SettingsFrame } from "@t4-code/protocol";
-import type {
-  CommandRequest,
-  CommandResult,
-  ConfirmRequest,
-  ConfirmResult,
-  RendererServerFrameEvent,
+import {
+  rendererServerEventFromFrame,
+  type CommandRequest,
+  type CommandResult,
+  type ConfirmRequest,
+  type ConfirmResult,
+  type RendererServerEventEnvelope,
+  type RendererServerFrame,
 } from "@t4-code/protocol/desktop-ipc";
 
 import {
@@ -106,7 +108,7 @@ class FakeRuntime implements LiveSettingsRuntimePort {
   readonly brokerModes = new Map<string, BrokerMode>();
   readonly heldBroker: { requestId: string; hostId: string; targetId: string }[] = [];
   private listeners = new Set<(snapshot: never) => void>();
-  private frameListeners = new Set<(event: RendererServerFrameEvent) => void>();
+  private eventListeners = new Set<(event: RendererServerEventEnvelope) => void>();
   private requestSeq = 0;
 
   connect(targetId: string, hostId: string, label: string, options: { broker?: boolean; capability?: boolean } = {}): void {
@@ -136,12 +138,12 @@ class FakeRuntime implements LiveSettingsRuntimePort {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
-  subscribeFrames(
+  subscribeEvents(
     _filter: { readonly targetId: string },
-    listener: (event: RendererServerFrameEvent) => void,
+    listener: (event: RendererServerEventEnvelope) => void,
   ): () => void {
-    this.frameListeners.add(listener);
-    return () => this.frameListeners.delete(listener);
+    this.eventListeners.add(listener);
+    return () => this.eventListeners.delete(listener);
   }
   private emitResponse(targetId: string, hostId: string, requestId: string, body: Record<string, unknown>): void {
     const frame = {
@@ -152,8 +154,11 @@ class FakeRuntime implements LiveSettingsRuntimePort {
       command: "broker.status",
       ...body,
     };
-    for (const listener of this.frameListeners) {
-      listener({ targetId, frame: frame as unknown as RendererServerFrameEvent["frame"] });
+    for (const listener of this.eventListeners) {
+      listener({
+        targetId,
+        event: rendererServerEventFromFrame(frame as unknown as RendererServerFrame),
+      });
     }
   }
   releaseHeldBroker(result: unknown): void {

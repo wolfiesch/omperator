@@ -15,23 +15,22 @@ import {
   revision as brandRevision,
   sessionId as brandSessionId,
   type CatalogItem,
-  type ConfirmationChallenge,
   type Revision,
   type SessionEvent,
   type SessionRef,
   type SessionSnapshotFrame,
 } from "@t4-code/protocol";
-import type { RendererServerFrame } from "@t4-code/protocol/desktop-ipc";
 
 import {
   initialProjection,
   reduceTranscript,
+  reduceTranscriptEvent,
   replayRetainedTranscriptEvents,
   retainedTranscriptEventsAreValid,
   settleTranscriptTurn,
   transcriptIsActive,
   type ApprovalRequest,
-  type TranscriptFrame,
+  type TranscriptServerEvent,
   type TranscriptProjection,
 } from "../transcript/projection.ts";
 import { slashCommandsFromCatalog } from "../composer/slash.ts";
@@ -96,11 +95,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Frame types the transcript reducer accepts; mirrors the subscription. */
-const TRANSCRIPT_FRAME_TYPES: ReadonlySet<string> = new Set(["snapshot", "entry", "event", "gap"]);
+/** Event kinds the transcript reducer accepts; mirrors the subscription. */
+const TRANSCRIPT_EVENT_KINDS: ReadonlySet<string> = new Set(["snapshot", "entry", "event", "gap"]);
 
-function isTranscriptFrame(frame: RendererServerFrame): frame is TranscriptFrame {
-  return TRANSCRIPT_FRAME_TYPES.has(frame.type);
+function isTranscriptEvent(event: { readonly kind: string }): event is TranscriptServerEvent {
+  return TRANSCRIPT_EVENT_KINDS.has(event.kind);
 }
 
 /** Follow-ups the host reports as queued, read strictly from the ref. */
@@ -194,7 +193,9 @@ function findCancelCommand(items: readonly CatalogItem[]): CatalogItem | undefin
 
 
 interface PendingChallenge {
-  readonly challenge: ConfirmationChallenge;
+  readonly challenge: SessionProjection["confirmations"] extends ReadonlyMap<string, infer Value>
+    ? Value
+    : never;
   readonly approval: ApprovalRequest;
 }
 
@@ -597,21 +598,21 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
     return sendCommand(command, args, false, true, undefined, leaseRevision);
   };
 
-  const applyFrame = (frame: TranscriptFrame) => {
-    // Renderer frames are sanitized to their global retention budget before
+  const applyServerEvent = (event: TranscriptServerEvent) => {
+    // Renderer events are sanitized to their global retention budget before
     // delivery. Preserve the shared client's smaller/custom retention truth,
-    // which is otherwise not representable on the app-wire snapshot itself.
-    const reduced = reduceTranscript(transcript, frame);
-    // Raw frame subscribers still receive stale/duplicate/gapped events that
+    // which is otherwise not representable on the server snapshot itself.
+    const reduced = reduceTranscriptEvent(transcript, event);
+    // Subscribers still receive stale/duplicate/gapped events that
     // the reducer correctly refuses. Only advance prompt retirement state when
     // the transcript actually accepted this event at its advertised cursor.
     if (
-      frame.type === "event" &&
+      event.kind === "event" &&
       reduced !== transcript &&
-      reduced.cursor?.epoch === frame.cursor.epoch &&
-      reduced.cursor.seq === frame.cursor.seq
+      reduced.cursor?.epoch === event.payload.cursor.epoch &&
+      reduced.cursor.seq === event.payload.cursor.seq
     ) {
-      applyPendingPromptLifecycle(frame.event);
+      applyPendingPromptLifecycle(event.payload.event);
     }
     const next = withWarmHistoryTruncation(reduced, controller.getSnapshot());
     if (next !== transcript) {
@@ -698,7 +699,7 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
         }
       });
   };
-  const unsubscribeFrames = controller.subscribeFrames(
+  const unsubscribeEvents = controller.subscribeEvents(
     {
       targetId,
       hostId: options.hostId,
@@ -706,11 +707,11 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
       // session.delta belongs to the host-wide session-index cursor domain,
       // not this session's transcript cursor domain. The shared desktop
       // projection already consumes it for ref/revision/control truth.
-      types: ["snapshot", "entry", "event", "gap"],
+      kinds: ["snapshot", "entry", "event", "gap"],
     },
     (event) => {
-      if (isTranscriptFrame(event.frame)) {
-        applyFrame(event.frame);
+      if (isTranscriptEvent(event.event)) {
+        applyServerEvent(event.event);
       }
     },
   );
@@ -1102,7 +1103,7 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
     dispose() {
       if (disposed) return;
       disposed = true;
-      unsubscribeFrames();
+      unsubscribeEvents();
       unsubscribeRuntime();
       transcriptImages.dispose();
       listeners.clear();

@@ -1,6 +1,8 @@
 import {
   applyPublicFrame,
   createProjectionSnapshot,
+  ompAppV1ProtocolProvider,
+  type PublicOmpServerEvent,
   type ProjectionFrame,
   type ProjectionSnapshot,
 } from "@t4-code/client";
@@ -80,6 +82,12 @@ function apply(snapshot: ProjectionSnapshot, frame: ProjectionFrame): Projection
   return applyPublicFrame(snapshot, frame);
 }
 
+function publicEvent(frame: ProjectionFrame): PublicOmpServerEvent {
+  const event = ompAppV1ProtocolProvider.decodeServerEvent(frame);
+  if (event.kind === "pair.ok") throw new Error("pair.ok is not a public event");
+  return event;
+}
+
 describe("authoritative composer cleanup", () => {
   it("releases only sessions omitted by a complete authoritative inventory", () => {
     const revoked: string[] = [];
@@ -90,12 +98,12 @@ describe("authoritative composer cleanup", () => {
     const frame = inventory(["kept"], 2);
     const current = apply(previous, frame);
 
-    reconcileAuthoritativeSessionDeletion(previous, current, frame, store);
+    reconcileAuthoritativeSessionDeletion(previous, current, publicEvent(frame), store);
 
     expect(store.getState().attachmentsBySessionId[viewId("deleted")]).toBeUndefined();
     expect(store.getState().attachmentsBySessionId[viewId("kept")]).toHaveLength(1);
     expect(revoked).toEqual(["blob:test/deleted"]);
-    reconcileAuthoritativeSessionDeletion(previous, current, frame, store);
+    reconcileAuthoritativeSessionDeletion(previous, current, publicEvent(frame), store);
     expect(revoked).toEqual(["blob:test/deleted"]);
   });
 
@@ -106,7 +114,7 @@ describe("authoritative composer cleanup", () => {
     let previous = apply(createProjectionSnapshot(), inventory(["survivor", "other"], 1));
     const truncated = inventory(["other"], 2, { totalCount: 2, truncated: true });
     let current = apply(previous, truncated);
-    reconcileAuthoritativeSessionDeletion(previous, current, truncated, store);
+    reconcileAuthoritativeSessionDeletion(previous, current, publicEvent(truncated), store);
     expect(store.getState().attachmentsBySessionId[viewId("survivor")]).toHaveLength(1);
 
     const cursorSeed = {
@@ -121,7 +129,7 @@ describe("authoritative composer cleanup", () => {
     previous = apply(current, cursorSeed);
     const stale = removeDelta("survivor", 4);
     current = apply(previous, stale);
-    reconcileAuthoritativeSessionDeletion(previous, current, stale, store);
+    reconcileAuthoritativeSessionDeletion(previous, current, publicEvent(stale), store);
 
     expect(store.getState().attachmentsBySessionId[viewId("survivor")]).toHaveLength(1);
     expect(revoked).toEqual([]);
@@ -146,7 +154,7 @@ describe("authoritative composer cleanup", () => {
     const frame = removeDelta("deleted", 2);
     const current = apply(previous, frame);
 
-    reconcileAuthoritativeSessionDeletion(previous, current, frame, store);
+    reconcileAuthoritativeSessionDeletion(previous, current, publicEvent(frame), store);
 
     expect(store.getState().attachmentsBySessionId[viewId("deleted")]).toBeUndefined();
     expect(revoked).toEqual(["blob:test/deleted"]);

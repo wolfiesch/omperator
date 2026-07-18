@@ -7,6 +7,7 @@ import type {
   SessionEvent,
   SessionSnapshotFrame,
 } from "@t4-code/protocol";
+import type { RendererServerEvent } from "@t4-code/protocol/desktop-ipc";
 
 /**
  * Retained transcript policy, independent of the wire-frame limit.
@@ -91,6 +92,10 @@ export type RetainedTranscriptFrame =
   | LiveEventFrame
   | AgentTranscriptFrame
   | GapFrame;
+export type RetainedTranscriptEvent = Extract<
+  RendererServerEvent,
+  { kind: "snapshot" | "entry" | "event" | "agent.transcript" | "gap" }
+>;
 
 export function retainedJsonBytes(value: unknown): number {
   if (value !== null && (typeof value === "object" || typeof value === "function")) {
@@ -420,5 +425,71 @@ export function sanitizeRetainedTranscriptFrame(frame: RetainedTranscriptFrame):
     ...frame,
     from: Object.freeze({ ...frame.from }),
     to: Object.freeze({ ...frame.to }),
+  });
+}
+
+/** Version-free event copy safe to retain or deliver to renderer subscribers. */
+export function sanitizeRetainedTranscriptEvent(
+  event: RetainedTranscriptEvent,
+): RetainedTranscriptEvent {
+  if (event.kind === "snapshot") {
+    const retained = retainDurableEntries(event.payload.entries);
+    const entries = Object.freeze([...retained.entries]) as unknown as DurableEntry[];
+    return Object.freeze({
+      kind: event.kind,
+      payload: Object.freeze({
+        ...event.payload,
+        cursor: Object.freeze({ ...event.payload.cursor }),
+        entries,
+      }),
+    });
+  }
+  if (event.kind === "entry") {
+    return Object.freeze({
+      kind: event.kind,
+      payload: Object.freeze({
+        ...event.payload,
+        cursor: Object.freeze({ ...event.payload.cursor }),
+        entry: sanitizeRetainedDurableEntry(event.payload.entry),
+      }),
+    });
+  }
+  if (event.kind === "event") {
+    const value = sanitizeRetainedRecord(
+      event.payload.event,
+      MAX_RETAINED_SESSION_EVENT_BYTES,
+    ) as SessionEvent;
+    return Object.freeze({
+      kind: event.kind,
+      payload: Object.freeze({
+        ...event.payload,
+        cursor: Object.freeze({ ...event.payload.cursor }),
+        event: Object.freeze(value),
+      }),
+    });
+  }
+  if (event.kind === "agent.transcript") {
+    const retained = retainDurableEntries(event.payload.entries, {
+      maxEntries: MAX_RETAINED_AGENT_TRANSCRIPT_ENTRIES,
+      maxBytes: MAX_RETAINED_AGENT_TRANSCRIPT_BYTES,
+      maxEntryBytes: MAX_RETAINED_TRANSCRIPT_ENTRY_BYTES,
+    });
+    const entries = Object.freeze([...retained.entries]) as unknown as DurableEntry[];
+    return Object.freeze({
+      kind: event.kind,
+      payload: Object.freeze({
+        ...event.payload,
+        cursor: Object.freeze({ ...event.payload.cursor }),
+        entries,
+      }),
+    });
+  }
+  return Object.freeze({
+    kind: event.kind,
+    payload: Object.freeze({
+      ...event.payload,
+      from: Object.freeze({ ...event.payload.from }),
+      to: Object.freeze({ ...event.payload.to }),
+    }),
   });
 }

@@ -1,13 +1,12 @@
 import type {
   DesktopRuntimeController,
+  PublicOmpServerEvent,
   ProjectionSnapshot,
 } from "@t4-code/client";
 import {
   decodeSessionListResult,
-  decodeSessions,
   type SessionRef,
 } from "@t4-code/protocol";
-import type { RendererServerFrame } from "@t4-code/protocol/desktop-ipc";
 
 import { composerStore, type ComposerStoreApi } from "./composer-store.ts";
 import { sessionViewId } from "../../platform/live-workspace.ts";
@@ -26,24 +25,25 @@ function knownSession(snapshot: ProjectionSnapshot, hostId: string, sessionId: s
   return snapshot.sessionIndex.has(key) || snapshot.sessions.has(key);
 }
 
-function completeInventory(frame: RendererServerFrame): CompleteInventory | null {
+function completeInventory(event: PublicOmpServerEvent): CompleteInventory | null {
   let refs: readonly SessionRef[];
   let explicitHostId: string | undefined;
   let truncated: boolean;
   try {
-    if (frame.type === "sessions") {
-      const decoded = decodeSessions(frame);
-      refs = decoded.sessions;
-      explicitHostId = decoded.hostId === undefined ? undefined : String(decoded.hostId);
-      truncated = decoded.truncated === true;
+    if (event.kind === "sessions") {
+      refs = event.payload.sessions;
+      explicitHostId = event.payload.hostId === undefined
+        ? undefined
+        : String(event.payload.hostId);
+      truncated = event.payload.truncated === true;
     } else if (
-      frame.type === "response" &&
-      frame.ok &&
-      (frame.command === "session.list" || frame.command === "host.list")
+      event.kind === "response" &&
+      event.payload.ok &&
+      (event.payload.command === "session.list" || event.payload.command === "host.list")
     ) {
-      const decoded = decodeSessionListResult(frame.result);
+      const decoded = decodeSessionListResult(event.payload.result);
       refs = decoded.sessions;
-      explicitHostId = String(frame.hostId);
+      explicitHostId = String(event.payload.hostId);
       truncated = decoded.truncated;
     } else {
       return null;
@@ -72,18 +72,18 @@ function completeInventory(frame: RendererServerFrame): CompleteInventory | null
 export function reconcileAuthoritativeSessionDeletion(
   previous: ProjectionSnapshot,
   current: ProjectionSnapshot,
-  frame: RendererServerFrame,
+  event: PublicOmpServerEvent,
   store: ComposerStoreApi = composerStore,
 ): void {
-  if (frame.type === "session.delta" && frame.remove !== undefined) {
-    const hostId = String(frame.hostId);
-    const sessionId = String(frame.remove);
-    const ownerKey = sessionKey(hostId, String(frame.sessionId));
+  if (event.kind === "session.delta" && event.payload.remove !== undefined) {
+    const hostId = String(event.payload.hostId);
+    const sessionId = String(event.payload.remove);
+    const ownerKey = sessionKey(hostId, String(event.payload.sessionId));
     const appliedCursor = current.sessionDeltaCursors.get(ownerKey);
     const applied =
       appliedCursor !== undefined &&
-      appliedCursor.epoch === frame.cursor.epoch &&
-      appliedCursor.seq === frame.cursor.seq;
+      appliedCursor.epoch === event.payload.cursor.epoch &&
+      appliedCursor.seq === event.payload.cursor.seq;
     if (
       applied &&
       knownSession(previous, hostId, sessionId) &&
@@ -95,7 +95,7 @@ export function reconcileAuthoritativeSessionDeletion(
     return;
   }
 
-  const inventory = completeInventory(frame);
+  const inventory = completeInventory(event);
   if (inventory === null) return;
   for (const [hostId, incomingSessionIds] of inventory.sessionIdsByHost) {
     const previousSessionIds = new Set<string>();
@@ -123,9 +123,9 @@ export function bindAuthoritativeComposerCleanup(
   store: ComposerStoreApi = composerStore,
 ): () => void {
   let previous = controller.getSnapshot().projection;
-  return controller.subscribeFrames((event) => {
+  return controller.subscribeEvents((event) => {
     const current = controller.getSnapshot().projection;
-    reconcileAuthoritativeSessionDeletion(previous, current, event.frame, store);
+    reconcileAuthoritativeSessionDeletion(previous, current, event.event, store);
     previous = current;
   });
 }

@@ -1,4 +1,21 @@
 export { OmpClient, createOmpClient } from "./omp-client-runtime.ts";
+export {
+  ompAppV1ProtocolProvider,
+} from "./omp-app-v1-protocol-provider.ts";
+export {
+  defaultOmpProtocolProviderRegistry,
+  OmpProtocolProviderRegistry,
+} from "./omp-protocol-provider-registry.ts";
+export type {
+  OmpClientMessage,
+  OmpPairOk,
+  OmpProtocolProvider,
+  OmpResponse,
+  OmpServerEventOf,
+  OmpServerPayload,
+  OmpServerEvent,
+  PublicOmpServerEvent,
+} from "./omp-protocol-provider.ts";
 export { isConfirmationDecisionConsumed } from "./omp-client-response.ts";
 export {
   OmpClientError,
@@ -45,6 +62,7 @@ export {
 export type { ProjectionCacheStore, ProjectionCacheEnvelope } from "./projection-cache.ts";
 export {
   createProjectionSnapshot,
+  applyPublicEvent,
   applyPublicFrame,
   ProjectionStore,
   createProjectionStore,
@@ -57,6 +75,7 @@ export {
 } from "./projection.ts";
 export type {
   ProjectionFrame,
+  ProjectionEventFrame,
   ProjectionFreshness,
   TerminalProjection,
   ResultProjection,
@@ -120,8 +139,8 @@ export type {
   DesktopRuntimeStartState,
   DesktopHostMetadata,
   DesktopRuntimeErrorEntry,
-  DesktopFrameFilter,
-  DesktopFrameSubscription,
+  DesktopServerEventFilter,
+  DesktopServerEventSubscription,
   DesktopRuntimeSnapshot,
   DesktopRuntimeSnapshotListener,
   DesktopRuntimeOptions,

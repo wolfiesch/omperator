@@ -1,4 +1,3 @@
-import type { WelcomeFrame } from "@t4-code/protocol";
 import type { DesktopTarget } from "@t4-code/protocol/desktop-ipc";
 
 import {
@@ -7,6 +6,7 @@ import {
   targetCopy,
   type DesktopHostMetadata,
   type DesktopRuntimeSnapshot,
+  type DesktopWelcomePayload,
 } from "./desktop-runtime-contracts.ts";
 
 type HostSnapshot = Pick<
@@ -41,7 +41,7 @@ export class DesktopRuntimeHostState {
 
   acceptWelcome(
     targetId: string,
-    frame: WelcomeFrame,
+    frame: DesktopWelcomePayload,
     targetHosts: ReadonlyMap<string, string>,
     hosts: ReadonlyMap<string, DesktopHostMetadata>,
     connections: ReadonlyMap<string, DesktopTarget["state"]> = new Map(),

@@ -1,66 +1,63 @@
-import { AppWireError, type PairOkFrame, type ResultFrame, type ServerFrame, type WelcomeFrame } from "@t4-code/protocol";
+import { AppWireError } from "@t4-code/protocol";
+import type { OmpServerEvent } from "./omp-protocol-provider.ts";
 
-type DurableFrame = Extract<ServerFrame, { type: "entry" | "event" | "session.delta" }>;
+type ServerEvent<Kind extends OmpServerEvent["kind"]> = Extract<OmpServerEvent, { kind: Kind }>;
+type DurableEvent = ServerEvent<"entry" | "event" | "session.delta">;
 export function safeFrameDecodeFailure(error: unknown): string {
   if (!(error instanceof AppWireError)) return "invalid server frame";
   const safePath = error.path !== undefined && /^[A-Za-z0-9.[\]_-]{1,128}$/u.test(error.path) ? ` at ${error.path}` : "";
   return `invalid server frame (${error.code}${safePath})`;
 }
 export interface FrameDispatchHandlers {
-  welcome(frame: WelcomeFrame): void;
+  welcome(message: ServerEvent<"welcome">): void;
   pong(nonce: string): void;
-  bye(frame: Extract<ServerFrame, { type: "bye" }>): void;
-  response(frame: ResultFrame): void;
-  pairOk(frame: PairOkFrame, generation: number): void | Promise<void>;
-  pairError(frame: Extract<ServerFrame, { type: "pair.error" }>): void;
-  gap(frame: Extract<ServerFrame, { type: "gap" }>): void;
-  snapshot(frame: Extract<ServerFrame, { type: "snapshot" }>): void;
-  durable(frame: DurableFrame): void;
-  other(frame: Exclude<ServerFrame, WelcomeFrame | ResultFrame | PairOkFrame | Extract<ServerFrame, { type: "bye" | "pong" | "pair.error" | "gap" | "snapshot" | "entry" | "event" | "session.delta" }>>): void;
+  bye(message: ServerEvent<"bye">): void;
+  response(message: ServerEvent<"response">): void;
+  pairOk(message: ServerEvent<"pair.ok">, generation: number): void | Promise<void>;
+  pairError(message: ServerEvent<"pair.error">): void;
+  gap(message: ServerEvent<"gap">): void;
+  snapshot(message: ServerEvent<"snapshot">): void;
+  durable(message: DurableEvent): void;
+  other(message: Exclude<OmpServerEvent, ServerEvent<"welcome" | "response" | "pair.ok" | "bye" | "pong" | "pair.error" | "gap" | "snapshot" | "entry" | "event" | "session.delta">>): void;
 }
 
-/** Stable server-frame dispatch boundary; callbacks are constructed once per client. */
-export class OmpClientFrameDispatcher {
+/** Stable server-event dispatch boundary; callbacks are constructed once per client. */
+export class OmpClientEventDispatcher {
   private readonly handlers: FrameDispatchHandlers;
   constructor(handlers: FrameDispatchHandlers) {
     this.handlers = handlers;
   }
-  dispatch(frame: ServerFrame, generation: number): void | Promise<void> {
-    switch (frame.type) {
-      case "welcome": return this.handlers.welcome(frame);
-      case "pong": return this.handlers.pong(frame.nonce);
-      case "bye": return this.handlers.bye(frame);
-      case "response": return this.handlers.response(frame);
-      case "pair.ok": return this.handlers.pairOk(frame, generation);
-      case "pair.error": return this.handlers.pairError(frame);
-      case "gap": return this.handlers.gap(frame);
-      case "snapshot": return this.handlers.snapshot(frame);
+  dispatch(message: OmpServerEvent, generation: number): void | Promise<void> {
+    switch (message.kind) {
+      case "welcome": return this.handlers.welcome(message);
+      case "pong": return this.handlers.pong(message.payload.nonce);
+      case "bye": return this.handlers.bye(message);
+      case "response": return this.handlers.response(message);
+      case "pair.ok": return this.handlers.pairOk(message, generation);
+      case "pair.error": return this.handlers.pairError(message);
+      case "gap": return this.handlers.gap(message);
+      case "snapshot": return this.handlers.snapshot(message);
       case "entry":
       case "event":
-      case "session.delta": return this.handlers.durable(frame);
-      default: return this.handlers.other(frame);
+      case "session.delta": return this.handlers.durable(message);
+      default: return this.handlers.other(message);
     }
   }
 }
-import { PROTOCOL_VERSION, decodeClientFrame, hostId, sessionId, type ClientFrame, type SavedCursor } from "@t4-code/protocol";
 import type { CursorRecord, OmpClientOptions } from "./omp-client-contracts.ts";
+import { encodeOutgoingMessage } from "./omp-client-outbound.ts";
+import type { OmpProtocolProvider } from "./omp-protocol-provider.ts";
 
 export function sendClientHello(
+  provider: OmpProtocolProvider,
   options: OmpClientOptions,
   records: readonly CursorRecord[],
   send: (encoded: string) => void,
-  decodeOutgoing: (input: Record<string, unknown>) => ClientFrame | undefined,
   fatal: () => void,
   protocolFailure: () => void,
   transportFailure: (error: unknown) => void,
 ): void {
-  let savedCursors: SavedCursor[];
-  try {
-    savedCursors = records.slice(0, 128).map((record) => ({ hostId: hostId(record.hostId), sessionId: sessionId(record.sessionId), cursor: record.cursor }));
-  } catch {
-    protocolFailure();
-    return;
-  }
+  const savedCursors = records.slice(0, 128).map((record) => ({ ...record }));
   let authentication: { deviceId: string; deviceToken: string } | undefined;
   try {
     const provided = options.authentication?.();
@@ -69,31 +66,15 @@ export function sendClientHello(
       authentication = { deviceId: provided.deviceId, deviceToken: provided.deviceToken };
     }
   } catch { fatal(); return; }
-  let hello: ClientFrame | undefined;
-  try {
-    hello = decodeOutgoing({
-      v: PROTOCOL_VERSION,
-      type: "hello",
-      protocol: { min: PROTOCOL_VERSION, max: PROTOCOL_VERSION },
-      client: options.client ?? { name: "t4-code", version: "0.1.22", build: "client", platform: "electron" },
-      requestedFeatures: [...(options.requestedFeatures ?? ["resume"])],
-      savedCursors,
-      ...(options.capabilities === undefined ? {} : { capabilities: { client: [...options.capabilities] } }),
-      ...(authentication === undefined ? {} : { authentication }),
-    });
-  } catch {
-    protocolFailure();
-    return;
-  }
-  if (hello === undefined || hello.type !== "hello") { protocolFailure(); return; }
-  let encoded: string;
-  try {
-    encoded = JSON.stringify(hello);
-    decodeClientFrame(encoded);
-  } catch {
-    protocolFailure();
-    return;
-  }
+  const encoded = encodeOutgoingMessage(provider, {
+    kind: "hello",
+    client: options.client ?? { name: "t4-code", version: "0.1.22", build: "client", platform: "electron" },
+    requestedFeatures: [...(options.requestedFeatures ?? ["resume"])],
+    savedCursors,
+    ...(options.capabilities === undefined ? {} : { capabilities: options.capabilities }),
+    ...(authentication === undefined ? {} : { authentication }),
+  });
+  if (encoded === undefined) { protocolFailure(); return; }
   try {
     send(encoded);
   } catch (error) {

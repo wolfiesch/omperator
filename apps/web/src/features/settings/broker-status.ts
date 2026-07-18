@@ -10,6 +10,8 @@ import { hostId as brandHostId, type ResultFrame } from "@t4-code/protocol";
 
 import type { LiveSettingsRuntimePort } from "./live-controller.ts";
 
+type ResultPayload = Omit<ResultFrame, "v" | "type">;
+
 export const BROKER_STATUS_COMMAND = "broker.status";
 export const BROKER_READ_CAPABILITY = "broker.read";
 
@@ -213,13 +215,13 @@ export function createBrokerStatusModel(
   async function runQuery(ref: BrokerHostRef): Promise<BrokerStatus | "error" | "unsupported"> {
     // Collect the response before sending: the frame can beat the invoke
     // round-trip back to the renderer, and correlation is by requestId.
-    const responses = new Map<string, ResultFrame>();
+    const responses = new Map<string, ResultPayload>();
     let notifyResponse: (() => void) | null = null;
-    const unsubscribe = runtime.subscribeFrames(
-      { targetId: ref.targetId, hostId: ref.hostId, types: ["response"] },
+    const unsubscribe = runtime.subscribeEvents(
+      { targetId: ref.targetId, hostId: ref.hostId, kinds: ["response"] },
       (event) => {
-        if (event.frame.type !== "response") return;
-        const frame: ResultFrame = event.frame;
+        if (event.event.kind !== "response") return;
+        const frame = event.event.payload as ResultPayload;
         if (frame.command === BROKER_STATUS_COMMAND || frame.command === undefined) {
           responses.set(String(frame.requestId), frame);
           notifyResponse?.();

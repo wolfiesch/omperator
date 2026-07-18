@@ -196,10 +196,6 @@ class FakeUsageRuntime implements UsageRuntimePort {
     return () => this.listeners.delete(listener);
   }
 
-  subscribeFrames(): () => void {
-    return () => undefined;
-  }
-
   async command(targetId: string, intent: CommandRequest["intent"]): Promise<CommandResult> {
     this.calls.push({ targetId, intent });
     if (this.error !== null) throw this.error;

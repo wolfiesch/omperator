@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { DESKTOP_IPC_CHANNELS, decodeDesktopInvokeRequest } from "@t4-code/protocol/desktop-ipc";
-import type { CursorRecord, CursorStore, OmpTransport, PublicServerFrame } from "@t4-code/client";
+import {
+  type CursorRecord,
+  type CursorStore,
+  type OmpTransport,
+  type PublicOmpServerEvent,
+} from "@t4-code/client";
 import {
   commandId,
   confirmationId,
@@ -183,7 +188,7 @@ const target = (targetId: string): RemoteTargetRecord => ({
 function manager(
   transports: Transport[],
   registry = new Registry(),
-  onFrame: (frame: PublicServerFrame) => void = () => undefined,
+  onEvent: (event: PublicOmpServerEvent) => void = () => undefined,
 ): DesktopTargetManager {
   return new DesktopTargetManager({
     cursorStore: new Store(),
@@ -199,7 +204,7 @@ function manager(
       return next as never;
     },
     capabilities: ["sessions.read"],
-    events: { onFrame: (_targetId, frame) => onFrame(frame), onState: () => {}, onError: () => {} },
+    events: { onEvent: (_targetId, event) => onEvent(event), onState: () => {}, onError: () => {} },
   });
 }
 async function settlesBeforeTurnLimit<T>(promise: Promise<T>): Promise<T> {
@@ -234,7 +239,7 @@ describe("desktop target manager boundaries", () => {
         transports.push(next);
         return next as never;
       },
-      events: { onFrame: () => {}, onState: () => {}, onError: () => {} },
+      events: { onEvent: () => {}, onState: () => {}, onError: () => {} },
     });
 
     expect(await runtime.listTargets()).toEqual([
@@ -278,7 +283,7 @@ describe("desktop target manager boundaries", () => {
         transports.set(profileId, transport);
         return transport as never;
       },
-      events: { onFrame: () => {}, onState: () => {}, onError: () => {} },
+      events: { onEvent: () => {}, onState: () => {}, onError: () => {} },
     });
 
     await Promise.all([runtime.connect("local"), runtime.connect("local:fable-swarm")]);
@@ -377,12 +382,12 @@ describe("desktop target manager boundaries", () => {
     const transports = [first, second];
     const registry = new Registry();
     await registry.put(target("switch"));
-    const frames: PublicServerFrame[] = [];
+    const events: PublicOmpServerEvent[] = [];
     const runtime = new DesktopTargetManager({
       cursorStore: new Store(),
       registry,
       remoteTransportFactory: () => transports.shift() as never,
-      events: { onFrame: (_targetId, frame) => frames.push(frame), onState: () => {}, onError: () => {} },
+      events: { onEvent: (_targetId, event) => events.push(event), onState: () => {}, onError: () => {} },
     });
 
     await runtime.connect("switch");
@@ -429,7 +434,7 @@ describe("desktop target manager boundaries", () => {
       accepted: true,
       result: { sessions: [] },
     });
-    expect(frames.some((frame) => frame.type === "response" && String(frame.requestId) === staleFrame.requestId)).toBe(false);
+    expect(events.some((event) => event.kind === "response" && String(event.payload.requestId) === staleFrame.requestId)).toBe(false);
     await runtime.close();
   });
 
@@ -445,7 +450,7 @@ describe("desktop target manager boundaries", () => {
         transports.push(next);
         return next as never;
       },
-      events: { onFrame: () => {}, onState: () => {}, onError: () => {} },
+      events: { onEvent: () => {}, onState: () => {}, onError: () => {} },
     });
 
     await runtime.connect();
@@ -469,7 +474,7 @@ describe("desktop target manager boundaries", () => {
     const runtime = new DesktopTargetManager({
       cursorStore: new Store(),
       localTransportFactory: () => transport as never,
-      events: { onFrame: () => {}, onState: () => {}, onError: () => {} },
+      events: { onEvent: () => {}, onState: () => {}, onError: () => {} },
     });
     const connecting = runtime.connect();
 
@@ -489,7 +494,7 @@ describe("desktop target manager boundaries", () => {
       cursorStore: new Store(),
       registry,
       remoteTransportFactory: () => transport as never,
-      events: { onFrame: () => {}, onState: () => {}, onError: () => {} },
+      events: { onEvent: () => {}, onState: () => {}, onError: () => {} },
     });
     const connecting = runtime.connect("pending-remove");
 
@@ -513,7 +518,7 @@ describe("desktop target manager boundaries", () => {
         transports.push(transport);
         return transport as never;
       },
-      events: { onFrame: () => {}, onState: () => {}, onError: () => {} },
+      events: { onEvent: () => {}, onState: () => {}, onError: () => {} },
     });
     const connecting = runtime.connect("outage");
     for (let index = 0; index < 20; index += 1) await Promise.resolve();
@@ -539,7 +544,7 @@ describe("desktop target manager boundaries", () => {
         return storeCalls === 1 ? pendingStore : new Store();
       },
       localTransportFactory: () => new Transport() as never,
-      events: { onFrame: () => {}, onState: () => {}, onError: (event) => errors.push(event.message) },
+      events: { onEvent: () => {}, onState: () => {}, onError: (event) => errors.push(event.message) },
     });
     const firstConnect = runtime.connect();
 
@@ -575,7 +580,7 @@ describe("desktop target manager boundaries", () => {
         localTransports.push(next);
         return next as never;
       },
-      events: { onFrame: () => {}, onState: () => {}, onError: () => {} },
+      events: { onEvent: () => {}, onState: () => {}, onError: () => {} },
     });
     await local.connect();
     const localHello = JSON.parse(localTransports[0]?.sent[0] ?? "{}") as Record<string, unknown>;
@@ -665,7 +670,7 @@ describe("desktop target manager boundaries", () => {
         transports.push(next);
         return next as never;
       },
-      events: { onFrame: () => {}, onState: () => {}, onError: () => {} },
+      events: { onEvent: () => {}, onState: () => {}, onError: () => {} },
     });
     await runtime.connect("observe-pair");
     expect(await runtime.connect("observe-pair")).toBe("connecting");
@@ -731,8 +736,8 @@ describe("desktop target manager boundaries", () => {
   });
   it("forwards decoded command payloads needed by lease consumers", async () => {
     const transports: Transport[] = [];
-    const frames: PublicServerFrame[] = [];
-    const runtime = manager(transports, new Registry(), (frame) => frames.push(frame));
+    const events: PublicOmpServerEvent[] = [];
+    const runtime = manager(transports, new Registry(), (event) => events.push(event));
     await runtime.connect();
     const pending = runtime.command({
       hostId: "host-fixture",
@@ -790,17 +795,17 @@ describe("desktop target manager boundaries", () => {
         details: { recovery: "inspect transcript", diagnostic: "token=[redacted]" },
       },
     });
-    const responseFrame = frames.find((frame) => frame.type === "response" && !frame.ok);
-    expect(responseFrame).toMatchObject({
-      error: {
+    const responseEvent = events.find((event) => event.kind === "response" && !event.payload.ok);
+    expect(responseEvent).toMatchObject({
+      payload: { error: {
         code: "outcome_unknown",
         message: "command failed; [redacted]",
         details: { recovery: "inspect transcript", diagnostic: "token=[redacted]" },
-      },
+      } },
     });
-    expect(JSON.stringify(responseFrame)).not.toContain("live-message-token");
-    expect(JSON.stringify(responseFrame)).not.toContain("live-detail-token");
-    expect(JSON.stringify(responseFrame)).not.toContain("must-not-cross-renderer-ipc");
+    expect(JSON.stringify(responseEvent)).not.toContain("live-message-token");
+    expect(JSON.stringify(responseEvent)).not.toContain("live-detail-token");
+    expect(JSON.stringify(responseEvent)).not.toContain("must-not-cross-renderer-ipc");
     await runtime.close();
   });
   it("treats a host-acknowledged denial as a consumed confirmation decision", async () => {
@@ -812,7 +817,7 @@ describe("desktop target manager boundaries", () => {
         transports.push(next);
         return next as never;
       },
-      events: { onFrame: () => {}, onState: () => {}, onError: () => {} },
+      events: { onEvent: () => {}, onState: () => {}, onError: () => {} },
     });
     await runtime.connect();
     const transport = transports[0];
@@ -889,7 +894,7 @@ describe("desktop target manager boundaries", () => {
         transports.push(next);
         return next as never;
       },
-      events: { onFrame: () => {}, onState: () => {}, onError: () => {} },
+      events: { onEvent: () => {}, onState: () => {}, onError: () => {} },
       capabilities: ["sessions.read"],
     });
     await runtime.connect("auth");
@@ -923,7 +928,7 @@ describe("desktop target manager boundaries", () => {
     const custom = new DesktopTargetManager({
       cursorStore: new Store(),
       capabilities: supplied,
-      events: { onFrame: () => {}, onState: () => {}, onError: () => {} },
+      events: { onEvent: () => {}, onState: () => {}, onError: () => {} },
     });
     const values = custom as unknown as { capabilities: readonly string[] };
     expect(values.capabilities).toEqual(["sessions.read"]);

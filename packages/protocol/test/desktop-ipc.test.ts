@@ -247,24 +247,30 @@ describe("desktop IPC boundary", () => {
     });
     expect(
       decodeDesktopEvent({
-        channel: "omp:server-frame",
+        channel: "omp:server-event",
         payload: {
           targetId: "remote-1",
-          frame: {
-            v: "omp-app/1",
-            type: "response",
-            requestId: "request-1",
-            commandId: "command-1",
-            command: "session.archive",
-            hostId: "host-1",
-            sessionId: "session-1",
-            ok: true,
-            result: { archived: true },
+          event: {
+            kind: "response",
+            payload: {
+              requestId: "request-1",
+              commandId: "command-1",
+              command: "session.archive",
+              hostId: "host-1",
+              sessionId: "session-1",
+              ok: true,
+              result: { archived: true },
+            },
           },
         },
       }),
     ).toMatchObject({
-      payload: { frame: { command: "session.archive", ok: true, result: { archived: true } } },
+      payload: {
+        event: {
+          kind: "response",
+          payload: { command: "session.archive", ok: true, result: { archived: true } },
+        },
+      },
     });
   });
   it("decodes events and rejects hostile shapes", () => {
@@ -282,47 +288,66 @@ describe("desktop IPC boundary", () => {
     ).toBeTruthy();
     expect(
       decodeDesktopEvent({
-        channel: "omp:server-frame",
+        channel: "omp:server-event",
         payload: {
           targetId: "target-1",
-          frame: {
-            v: "omp-app/1",
-            type: "welcome",
-            selectedProtocol: "omp-app/1",
-            hostId: "host-1",
-            ompVersion: "16.4.3",
-            ompBuild: "test",
-            appserverVersion: "0.1.0",
-            appserverBuild: "test",
-            epoch: "epoch-1",
-            grantedCapabilities: [],
-            grantedFeatures: [],
-            negotiatedLimits: {},
-            authentication: "local",
-            resumed: false,
+          event: {
+            kind: "welcome",
+            payload: {
+              selectedProtocol: "omp-app/2",
+              hostId: "host-1",
+              ompVersion: "16.4.3",
+              ompBuild: "test",
+              appserverVersion: "0.1.0",
+              appserverBuild: "test",
+              epoch: "epoch-1",
+              grantedCapabilities: [],
+              grantedFeatures: [],
+              negotiatedLimits: {},
+              authentication: "local",
+              resumed: false,
+            },
           },
         },
       }),
     ).toMatchObject({
-      payload: { targetId: "target-1", frame: { type: "welcome", hostId: "host-1" } },
+      payload: {
+        targetId: "target-1",
+        event: { kind: "welcome", payload: { selectedProtocol: "omp-app/2", hostId: "host-1" } },
+      },
     });
+    for (const wireField of ["v", "type"] as const) {
+      expect(() =>
+        decodeDesktopEvent({
+          channel: "omp:server-event",
+          payload: {
+            targetId: "target-1",
+            event: {
+              kind: "welcome",
+              payload: { [wireField]: "welcome" },
+            },
+          },
+        }),
+      ).toThrow("wire envelope fields cannot cross renderer IPC");
+    }
     expect(() =>
       decodeDesktopEvent({
-        channel: "omp:server-frame",
+        channel: "omp:server-event",
         payload: {
           targetId: "target-1",
-          frame: {
-            v: "omp-app/1",
-            type: "pair.ok",
-            requestId: "request-1",
-            pairingId: "pairing-1",
-            deviceId: "device-1",
-            deviceName: "Workstation",
-            platform: "linux",
-            requestedCapabilities: ["sessions.read"],
-            grantedCapabilities: ["sessions.read"],
-            deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-            expiresAt: "2026-07-11T12:00:00.000Z",
+          event: {
+            kind: "pair.ok",
+            payload: {
+              requestId: "request-1",
+              pairingId: "pairing-1",
+              deviceId: "device-1",
+              deviceName: "Workstation",
+              platform: "linux",
+              requestedCapabilities: ["sessions.read"],
+              grantedCapabilities: ["sessions.read"],
+              deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+              expiresAt: "2026-07-11T12:00:00.000Z",
+            },
           },
         },
       }),

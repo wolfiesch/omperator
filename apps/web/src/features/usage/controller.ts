@@ -4,11 +4,7 @@
 // an account pool.
 import type { DesktopRuntimeSnapshot } from "@t4-code/client";
 import { hostId as brandHostId } from "@t4-code/protocol";
-import type {
-  CommandRequest,
-  CommandResult,
-  RendererServerFrameEvent,
-} from "@t4-code/protocol/desktop-ipc";
+import type { CommandRequest, CommandResult } from "@t4-code/protocol/desktop-ipc";
 
 import { commandSupport } from "../session-runtime/session-controls.ts";
 import { decodeUsageSnapshot, type UsageSnapshot } from "./model.ts";
@@ -18,14 +14,6 @@ export const USAGE_READ_COMMAND = "usage.read";
 export interface UsageRuntimePort {
   getSnapshot(): DesktopRuntimeSnapshot;
   subscribe(listener: (snapshot: DesktopRuntimeSnapshot) => void): () => void;
-  subscribeFrames(
-    filter: {
-      readonly targetId: string;
-      readonly hostId?: string;
-      readonly types?: readonly string[];
-    },
-    listener: (event: RendererServerFrameEvent) => void,
-  ): () => void;
   command(targetId: string, intent: CommandRequest["intent"]): Promise<CommandResult>;
 }
 

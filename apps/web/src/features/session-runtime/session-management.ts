@@ -379,16 +379,17 @@ export async function restoreLiveSession(
   await runUnchallengedManagementCommand(controller, address, "session.restore");
 }
 
+type ConfirmationPayload = Omit<ConfirmationChallenge, "v" | "type">;
+
 function matchingManagementChallenge(
-  frame: unknown,
+  payload: unknown,
   address: LiveSessionAddress,
   expectedRevision: string,
   command: "session.close" | "session.delete",
-): frame is ConfirmationChallenge {
-  if (frame === null || typeof frame !== "object") return false;
-  const challenge = frame as Partial<ConfirmationChallenge>;
+): payload is ConfirmationPayload {
+  if (payload === null || typeof payload !== "object") return false;
+  const challenge = payload as Partial<ConfirmationPayload>;
   return (
-    challenge.type === "confirmation" &&
     String(challenge.hostId) === address.hostId &&
     String(challenge.sessionId) === address.sessionId &&
     challenge.summary === command &&
@@ -459,7 +460,7 @@ async function runChallengedManagementCommandNow(
   }
 
   let stopChallengeWait = () => undefined;
-  const challenge = new Promise<ConfirmationChallenge>((resolve, reject) => {
+  const challenge = new Promise<ConfirmationPayload>((resolve, reject) => {
     const timeout = setTimeout(() => {
       stopChallengeWait();
       reject(
@@ -469,19 +470,22 @@ async function runChallengedManagementCommandNow(
       );
     }, CONVERGENCE_TIMEOUT_MS);
     let unsubscribe: () => void = () => undefined;
-    unsubscribe = controller.subscribeFrames(
+    unsubscribe = controller.subscribeEvents(
       {
         targetId: address.targetId,
         hostId: address.hostId,
         sessionId: address.sessionId,
-        types: ["confirmation"],
+        kinds: ["confirmation"],
       },
       (event) => {
-        if (!matchingManagementChallenge(event.frame, address, expectedRevision, commandName))
+        if (
+          event.event.kind !== "confirmation" ||
+          !matchingManagementChallenge(event.event.payload, address, expectedRevision, commandName)
+        )
           return;
         clearTimeout(timeout);
         unsubscribe();
-        resolve(event.frame);
+        resolve(event.event.payload);
       },
     );
     stopChallengeWait = () => {

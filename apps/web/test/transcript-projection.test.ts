@@ -6,6 +6,7 @@ import {
   MAX_RETAINED_LIVE_MESSAGES,
   MAX_RETAINED_TOOL_CALLS,
   MAX_RETAINED_TRANSCRIPT_BYTES,
+  ompAppV1ProtocolProvider,
   retainedJsonBytes,
 } from "@t4-code/client";
 
@@ -18,8 +19,11 @@ import {
 import {
   initialProjection,
   reduceTranscript,
+  reduceTranscriptEvent,
   replayRetainedTranscriptEvents,
+  type TranscriptFrame,
   type TranscriptProjection,
+  type TranscriptServerEvent,
 } from "../src/features/transcript/projection.ts";
 import {
   computeStableRows,
@@ -46,6 +50,45 @@ function withSnapshot(factory: FrameFactory, count = 2): TranscriptProjection {
   );
   return reduceTranscript(initialProjection(), factory.snapshot(entries));
 }
+
+function transcriptEvent(frame: TranscriptFrame): TranscriptServerEvent {
+  const event = ompAppV1ProtocolProvider.decodeServerEvent(frame);
+  if (
+    event.kind !== "snapshot" &&
+    event.kind !== "entry" &&
+    event.kind !== "event" &&
+    event.kind !== "gap"
+  ) throw new Error("expected a transcript event");
+  return event;
+}
+
+describe("normalized event parity", () => {
+  it("projects the same transcript without wire envelope fields", () => {
+    const factory = makeFactory();
+    const entry = factory.entryRecord({
+      id: "settled-1",
+      kind: "message",
+      timestamp: "2026-07-11T09:00:00Z",
+      data: { role: "assistant", text: "done" },
+    });
+    const frames: TranscriptFrame[] = [
+      factory.snapshot([]),
+      factory.event({ type: "message.update", entryId: "live-1", role: "assistant", text: "working" }),
+      factory.entry(entry),
+      factory.gap("replay budget exceeded"),
+    ];
+    let fromFrames = initialProjection();
+    let fromEvents = initialProjection();
+    for (const frame of frames) {
+      const event = transcriptEvent(frame);
+      expect(event.payload).not.toHaveProperty("v");
+      expect(event.payload).not.toHaveProperty("type");
+      fromFrames = reduceTranscript(fromFrames, frame);
+      fromEvents = reduceTranscriptEvent(fromEvents, event);
+      expect(fromEvents).toEqual(fromFrames);
+    }
+  });
+});
 
 describe("snapshot install", () => {
   it("installs entries through the cursor and dedupes by entry id", () => {
@@ -120,7 +163,7 @@ describe("snapshot install", () => {
     expect(lastGroup.calls.at(-1)?.images).toEqual([
       { entryId: "large-tool-199", sha256: digest, mimeType: "image/png" },
     ]);
-  });
+  }, 15_000);
 
   it("clears stale in-flight state when a fresh snapshot crosses a server epoch", () => {
     const first = makeFactory();

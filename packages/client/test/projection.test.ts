@@ -4,17 +4,25 @@ import { MAX_INDEXED_SESSION_REFS } from "../src/projection.ts";
 import {
   MAX_PROJECTION_CACHE_BYTES,
   ProjectionStore,
+  applyPublicEvent,
   applyPublicFrame,
   createProjectionSnapshot,
   decodeProjectionCacheValue,
   encodeProjectionCache,
+  ompAppV1ProtocolProvider,
   type ProjectionCacheStore,
   type ProjectionFrame,
+  type PublicOmpServerEvent,
 } from "../src/index.ts";
 const V = "omp-app/1" as const;
 const HOST = hostId("projection-host");
 function sessionKey(session: string): string {
   return `${String(HOST)}\u0000${session}`;
+}
+function publicEvent(input: ProjectionFrame): PublicOmpServerEvent {
+  const event = ompAppV1ProtocolProvider.decodeServerEvent(input);
+  if (event.kind === "pair.ok") throw new Error("pair.ok is not a public projection event");
+  return event;
 }
 function frame(type: "snapshot", session?: string): Extract<ProjectionFrame, { type: "snapshot" }>;
 function frame(type: "event", session?: string): Extract<ProjectionFrame, { type: "event" }>;
@@ -143,6 +151,50 @@ function projectionFileBytes(session: {
 }
 
 describe("client projections", () => {
+  it("projects normalized provider events with the same state changes as raw frames", () => {
+    const inputs = [frame("welcome"), frame("snapshot"), frame("event")];
+    let rawState = createProjectionSnapshot();
+    let eventState = createProjectionSnapshot();
+
+    for (const input of inputs) {
+      rawState = applyPublicFrame(rawState, input);
+      eventState = applyPublicEvent(eventState, publicEvent(input));
+    }
+
+    const rawSession = rawState.sessions.get(sessionKey("session-a"))!;
+    const eventSession = eventState.sessions.get(sessionKey("session-a"))!;
+    expect(eventState.cursor).toEqual(rawState.cursor);
+    expect(eventState.epoch).toBe(rawState.epoch);
+    expect(eventState.activeSessionKey).toBe(rawState.activeSessionKey);
+    expect(eventSession).toEqual({ ...rawSession, events: eventSession.events });
+    expect(eventSession.events).toEqual([
+      {
+        type: "event",
+        cursor: { epoch: "e1", seq: 2 },
+        hostId: HOST,
+        sessionId: sessionId("session-a"),
+        event: { type: "message.delta", text: "x" },
+      },
+    ]);
+    expect(eventSession.events[0]).not.toHaveProperty("v");
+    const restored = decodeProjectionCacheValue(encodeProjectionCache(eventState));
+    expect(restored?.sessions.get(sessionKey("session-a"))?.events).toEqual(eventSession.events);
+  });
+
+  it("lets ProjectionStore subscribers receive normalized events", () => {
+    const store = new ProjectionStore();
+    const event = publicEvent(frame("snapshot"));
+    let observed: unknown;
+    store.subscribe((_snapshot, input) => {
+      observed = input;
+    });
+
+    store.applyPublicEvent(event);
+
+    expect(observed).toBe(event);
+    expect(store.snapshot.sessions.has(sessionKey("session-a"))).toBe(true);
+  });
+
   it("records bounded inventory metadata from explicit and legacy session lists", () => {
     const refs = Array.from({ length: 1000 }, (_, index) => ref(String(HOST), `listed-${index}`));
     const explicit = {

@@ -34,6 +34,7 @@ import {
   type ProjectionCacheLoadResult,
   type ProjectionCacheSaveRequest,
   type ProjectionCacheSaveResult,
+  type RendererServerEvent,
   type RuntimeErrorEvent,
   type ServiceActionResult,
   type ServiceAvailabilityIssue,
@@ -49,7 +50,6 @@ import {
   type SpeechResult,
   type TerminalResult,
 } from "@t4-code/protocol/desktop-ipc";
-import type { RendererServerFrame } from "@t4-code/protocol/desktop-ipc";
 import type { ServiceManager } from "@t4-code/service-manager";
 import { redactedMessage } from "@t4-code/client";
 import { trustedSender, type TrustedRenderer } from "./security.ts";
@@ -314,8 +314,8 @@ export class DesktopIpcRegistry {
     ] as const) this.ipc.removeHandler(channel);
     this.installed = false;
   }
-  emitServerFrame(targetId: string, frame: RendererServerFrame): void {
-    this.emit("omp:server-frame", { targetId, frame });
+  emitServerEvent(targetId: string, event: RendererServerEvent): void {
+    this.emit("omp:server-event", { targetId, event });
   }
   emitConnectionState(event: ConnectionStateEvent): void {
     this.emit("omp:connection-state", event);

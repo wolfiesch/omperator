@@ -1,4 +1,5 @@
 import { hostId as brandHostId } from "@t4-code/protocol";
+import type { RendererServerEventEnvelope } from "@t4-code/protocol/desktop-ipc";
 import { sessionViewId } from "../../platform/live-workspace.ts";
 import { hostSessionInventoryIsComplete } from "./session-inventory.ts";
 
@@ -13,7 +14,10 @@ export interface LiveCreateController {
       sessionIndexMetadata: ReadonlyMap<string, { truncated: boolean; totalCount: number }>;
     };
   };
-  subscribeFrames(filter: { targetId: string; hostId: string; types: readonly string[] }, listener: (event: { frame: unknown }) => void): () => void;
+  subscribeEvents(
+    filter: { targetId: string; hostId: string; kinds: readonly string[] },
+    listener: (event: RendererServerEventEnvelope) => void,
+  ): () => void;
   command(targetId: string, request: { hostId: string; command: string; args: Record<string, unknown> }): Promise<{ accepted: boolean; requestId: string }>;
 }
 
@@ -55,8 +59,9 @@ export async function createLiveSession(
   let timedOut = false;
   let unsubscribe: () => void = () => undefined;
   const failAll = (error: Error) => { timedOut = true; for (const waiter of pending.values()) waiter.reject(error); pending.clear(); };
-  unsubscribe = controller.subscribeFrames({ targetId: address.targetId, hostId: address.hostId, types: ["response"] }, (event) => {
-    const frame = event.frame as Record<string, unknown>;
+  unsubscribe = controller.subscribeEvents({ targetId: address.targetId, hostId: address.hostId, kinds: ["response"] }, (event) => {
+    if (event.event.kind !== "response") return;
+    const frame = event.event.payload as Record<string, unknown>;
     const requestId = typeof frame.requestId === "string" ? frame.requestId : undefined;
     if (requestId === undefined) return;
     const waiter = pending.get(requestId);

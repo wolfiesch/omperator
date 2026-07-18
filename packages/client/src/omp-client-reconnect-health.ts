@@ -1,4 +1,5 @@
-import { isCursor, type Cursor, type ResultFrame } from "@t4-code/protocol";
+import { isCursor, type Cursor } from "@t4-code/protocol";
+import type { OmpResponse } from "./omp-protocol-provider.ts";
 
 interface ReplayProbe {
   readonly generation: number;
@@ -38,7 +39,7 @@ export class OmpClientReconnectHealth {
     this.maybeReset(generation);
   }
 
-  acceptAttachResponse(generation: number, key: string, frame: ResultFrame, current: Cursor | undefined): void {
+  acceptAttachResponse(generation: number, key: string, frame: OmpResponse, current: Cursor | undefined): void {
     const probe = this.currentProbe(generation, key);
     if (probe === undefined) return;
     probe.responseReceived = true;

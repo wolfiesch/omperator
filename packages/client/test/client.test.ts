@@ -20,7 +20,7 @@ import {
   type CursorRecord,
   type CursorStore,
   type OmpTransport,
-  type PublicServerFrame,
+  type PublicOmpServerEvent,
   type TimerScheduler,
 } from "../src/index.ts";
 
@@ -361,7 +361,10 @@ describe("OmpClient protocol state machine", () => {
     expect(await commandOutcome).toEqual({ code: "timeout" });
     expect(client.resources().pending).toBe(1);
     transport.emit(responseFor(command, { cancelled: true }));
-    expect((await confirmResult).requestId).toBe(command.requestId);
+    const confirmed = await confirmResult;
+    expect(confirmed.requestId).toBe(command.requestId);
+    expect(confirmed).not.toHaveProperty("v");
+    expect(confirmed).not.toHaveProperty("type");
     expect(client.resources().pending).toBe(0);
     await client.close();
   });
@@ -651,9 +654,9 @@ describe("OmpClient protocol state machine", () => {
   it("keeps session-index cursors independent from transcript contiguity", async () => {
     const transport = new FakeTransport({ welcome: welcome() });
     const client = await readyClient(transport);
-    const frames: PublicServerFrame[] = [];
+    const events: PublicOmpServerEvent[] = [];
     const errors: string[] = [];
-    client.onFrame((frame) => frames.push(frame));
+    client.onEvent((event) => events.push(event));
     client.onError((error) => errors.push(error.code));
     transport.emit(snapshot());
     transport.emit(sessionDelta(1));
@@ -662,7 +665,7 @@ describe("OmpClient protocol state machine", () => {
     // transcript cursor, so its next seq=1 event remains contiguous.
     transport.emit(sessionDelta(9));
     transport.emit(event(1));
-    expect(frames.map((frame) => frame.type)).toEqual([
+    expect(events.map((event) => event.kind)).toEqual([
       "snapshot",
       "session.delta",
       "session.delta",
@@ -676,9 +679,9 @@ describe("OmpClient protocol state machine", () => {
   it("deduplicates, detects skips and epochs, then recovers from snapshot", async () => {
     const transport = new FakeTransport({ welcome: welcome() });
     const client = await readyClient(transport);
-    const frames: PublicServerFrame[] = [];
+    const events: PublicOmpServerEvent[] = [];
     const errors: string[] = [];
-    client.onFrame((frame) => frames.push(frame));
+    client.onEvent((event) => events.push(event));
     client.onError((error) => errors.push(error.code));
     transport.emit(snapshot());
     transport.emit(event(1));
@@ -687,7 +690,7 @@ describe("OmpClient protocol state machine", () => {
     transport.emit(event(4, "epoch-b"));
     transport.emit(snapshot(4, "epoch-b"));
     transport.emit(event(5, "epoch-b"));
-    expect(frames.filter((frame) => frame.type === "event")).toHaveLength(2);
+    expect(events.filter((event) => event.kind === "event")).toHaveLength(2);
     expect(errors).toContain("desync");
     expect(client.snapshot().desynced).toBe(false);
     await client.close();
@@ -745,19 +748,21 @@ describe("OmpClient protocol state machine", () => {
   it("keeps pair.ok privileged and isolates listener throws/unsubscribe", async () => {
     const transport = new FakeTransport({ welcome: welcome({ authentication: "pairing-required", grantedCapabilities: [] }) });
     let token = "";
-    const publicFrames: PublicServerFrame[] = [];
+    const publicEvents: PublicOmpServerEvent[] = [];
     const client = await readyClient(transport, { privilegedPairResult: (frame) => { token = frame.deviceToken; } });
-    const unsubscribe = client.onFrame(() => { throw new Error("listener"); });
-    client.onFrame((frame) => publicFrames.push(frame));
+    const unsubscribeEvent = client.onEvent(() => { throw new Error("listener"); });
+    client.onEvent((event) => publicEvents.push(event));
     const pairing = client.pairStart({ code: "123456", deviceId: "device", deviceName: "test", platform: "linux", requestedCapabilities: [] });
     const request = transport.lastClientFrame();
     if (request.type !== "pair.start") throw new Error("expected pair start");
     transport.emit({ v: V, type: "pair.ok", requestId: request.requestId, pairingId: "pair-1", deviceId: "device", deviceName: "test", platform: "linux", requestedCapabilities: [], grantedCapabilities: [], deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", expiresAt: "2030-01-01T00:00:00Z" });
-    await pairing;
-    unsubscribe();
+    const paired = await pairing;
+    unsubscribeEvent();
     expect(token).toBe("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-    expect(publicFrames).toHaveLength(0);
-    expect(JSON.stringify(publicFrames)).not.toContain("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+    expect(paired).not.toHaveProperty("v");
+    expect(paired).not.toHaveProperty("type");
+    expect(publicEvents).toHaveLength(0);
+    expect(JSON.stringify(publicEvents)).not.toContain("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     await client.close();
   });
 
@@ -911,15 +916,15 @@ describe("OmpClient live fixture websocket", () => {
       heartbeat: { intervalMs: 100_000, timeoutMs: 100 },
       reconnect: { baseMs: 0, maxMs: 0 },
     });
-    const frames: PublicServerFrame[] = [];
-    client.onFrame((frame) => frames.push(frame));
+    const events: PublicOmpServerEvent[] = [];
+    client.onEvent((event) => events.push(event));
     await client.connect();
     await client.attach("host-stream", "session-stream");
     const prompt = client.command({ hostId: "host-stream", sessionId: "session-stream", command: "session.prompt", args: { message: "hello" } });
     await prompt;
     const entry = new Promise<void>((resolve) => {
-      const unsubscribe = client.onFrame((frame) => {
-        if (frame.type === "entry") {
+      const unsubscribe = client.onEvent((event) => {
+        if (event.kind === "entry") {
           unsubscribe();
           resolve();
         }
@@ -927,8 +932,8 @@ describe("OmpClient live fixture websocket", () => {
     });
     server.advanceBy(30);
     await entry;
-    expect(frames.some((frame) => frame.type === "snapshot")).toBe(true);
-    expect(frames.some((frame) => frame.type === "entry")).toBe(true);
+    expect(events.some((event) => event.kind === "snapshot")).toBe(true);
+    expect(events.some((event) => event.kind === "entry")).toBe(true);
     expect(store.saved.length).toBeGreaterThan(0);
     const reconnected = new Promise<void>((resolve) => {
       const unsubscribe = client.onState((state) => {
@@ -976,13 +981,13 @@ describe("OmpClient live fixture websocket", () => {
   it("injects authenticated hello without exposing credentials", async () => {
     const transport = new FakeTransport({ welcome: welcome({ authentication: "paired" }) });
     const client = new OmpClient({ transport: () => transport, hostId: HOST, authentication: () => ({ deviceId: "device", deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" }) });
-    const publicFrames: PublicServerFrame[] = [];
-    client.onFrame((frame) => publicFrames.push(frame));
+    const publicEvents: PublicOmpServerEvent[] = [];
+    client.onEvent((event) => publicEvents.push(event));
     await client.connect();
     const hello = decodeClientFrame(transport.sent[0]!);
     expect(hello.type === "hello" ? hello.authentication?.deviceId : undefined).toBe("device");
     expect(JSON.stringify(client.snapshot())).not.toContain("SECRET_TOKEN");
-    expect(JSON.stringify(publicFrames)).not.toContain("SECRET_TOKEN");
+    expect(JSON.stringify(publicEvents)).not.toContain("SECRET_TOKEN");
     await client.close();
   });
   it("enters pairing and denies commands until pairing completes", async () => {

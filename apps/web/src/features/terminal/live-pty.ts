@@ -12,6 +12,7 @@ import {
   DesktopRuntimeError,
   type DesktopRuntimeController,
   type DesktopRuntimeSnapshot,
+  type PublicOmpServerEvent,
   type ResultProjection,
 } from "@t4-code/client";
 import {
@@ -515,9 +516,9 @@ class LivePtySession implements PtySession {
   }
 }
 
-interface BufferedFrame {
+interface BufferedTerminalEvent {
   readonly terminalId: string;
-  readonly frame: unknown;
+  readonly event: PublicOmpServerEvent;
   readonly chars: number;
 }
 
@@ -549,7 +550,7 @@ export function createLivePtySessionFactory(
   const live = new Set<LivePtySession>();
   let pendingOpens = 0;
   let bufferedChars = 0;
-  const buffered: BufferedFrame[] = [];
+  const buffered: BufferedTerminalEvent[] = [];
   const bufferDropped = new Set<string>();
   let disposed = false;
 
@@ -559,23 +560,12 @@ export function createLivePtySessionFactory(
     bufferDropped.clear();
   };
 
-  const bufferFrame = (frame: unknown): void => {
-    if (
-      frame === null ||
-      typeof frame !== "object" ||
-      !("terminalId" in frame) ||
-      !("type" in frame)
-    ) {
-      return;
-    }
-    const terminalIdRaw: unknown = frame.terminalId;
-    if (typeof terminalIdRaw !== "string") return;
+  const bufferEvent = (event: PublicOmpServerEvent): void => {
+    if (event.kind !== "terminal.output" && event.kind !== "terminal.exit") return;
+    const terminalIdRaw = String(event.payload.terminalId);
     let chars = 32;
-    if ("data" in frame) {
-      const data: unknown = frame.data;
-      if (typeof data === "string") chars += data.length;
-    }
-    buffered.push({ terminalId: terminalIdRaw, frame, chars });
+    if (event.kind === "terminal.output") chars += event.payload.data.length;
+    buffered.push({ terminalId: terminalIdRaw, event, chars });
     bufferedChars += chars;
     while (bufferedChars > maxBufferedFrameChars && buffered.length > 0) {
       const oldest = buffered.shift();
@@ -585,12 +575,12 @@ export function createLivePtySessionFactory(
     }
   };
 
-  const routeFrame = (frame: unknown): void => {
-    const event = router.route(frame);
+  const routeServerEvent = (serverEvent: PublicOmpServerEvent): void => {
+    const event = router.routeEvent(serverEvent);
     if (event.kind === "ignored") {
       // Output can beat the result correlation: hold it (bounded) until the
       // open settles, then replay through the same deduplicating router.
-      if (event.reason === "unowned-terminal" && pendingOpens > 0) bufferFrame(frame);
+      if (event.reason === "unowned-terminal" && pendingOpens > 0) bufferEvent(serverEvent);
       return;
     }
     const session = owned.get(event.terminalId);
@@ -607,14 +597,14 @@ export function createLivePtySessionFactory(
     session.emitExit({ code: event.exitCode, signal: event.signal });
   };
 
-  const offFrames = controller.subscribeFrames(
+  const offEvents = controller.subscribeEvents(
     {
       targetId: sessionRef.targetId,
       hostId: sessionRef.hostId,
       sessionId: sessionRef.sessionId,
-      types: ["terminal.output", "terminal.exit"],
+      kinds: ["terminal.output", "terminal.exit"],
     },
-    (event) => routeFrame(event.frame),
+    (event) => routeServerEvent(event.event),
   );
 
   let lastConnected =
@@ -652,7 +642,7 @@ export function createLivePtySessionFactory(
         owned.set(key, session);
         if (bufferDropped.has(key)) session.emitNotice("output-skipped");
         const replay = buffered.filter((entry) => entry.terminalId === key);
-        for (const entry of replay) routeFrame(entry.frame);
+        for (const entry of replay) routeServerEvent(entry.event);
       }
       pendingOpens = Math.max(0, pendingOpens - 1);
       if (pendingOpens === 0) clearBuffer();
@@ -688,7 +678,7 @@ export function createLivePtySessionFactory(
     dispose(): void {
       if (disposed) return;
       disposed = true;
-      offFrames();
+      offEvents();
       offRuntime();
       for (const session of live) session.markLost();
       live.clear();

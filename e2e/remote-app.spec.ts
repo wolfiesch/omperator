@@ -537,7 +537,7 @@ test("settles a typed incompatible desktop inspection and recovers without a sta
           }
           return inspection;
         },
-        onServerFrame: () => () => undefined,
+        onServerEvent: () => () => undefined,
         onConnectionState: () => () => undefined,
         onRuntimeError: () => () => undefined,
       },
@@ -633,7 +633,7 @@ test("caps generic desktop inspection retries and clears timers on manual work a
           }
           throw new Error("temporary IPC failure");
         },
-        onServerFrame: () => () => undefined,
+        onServerEvent: () => () => undefined,
         onConnectionState: (
           listener: (event: { targetId: string; state: "connected" }) => void,
         ) => {

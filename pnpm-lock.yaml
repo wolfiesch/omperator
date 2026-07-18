@@ -30,6 +30,9 @@ catalogs:
     react-dom:
       specifier: 19.2.6
       version: 19.2.6
+    typescript:
+      specifier: ~6.0.3
+      version: 6.0.3
     vite-plus:
       specifier: 0.2.2
       version: 0.2.2
@@ -300,6 +303,9 @@ importers:
       '@types/node':
         specifier: 'catalog:'
         version: 24.12.4
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
       vite-plus:
         specifier: 'catalog:'
         version: 0.2.2(@types/node@24.12.4)(jiti@2.7.0)(typescript@6.0.3)
@@ -6330,8 +6336,7 @@ snapshots:
 
   type-fest@2.19.0: {}
 
-  typescript@6.0.3:
-    optional: true
+  typescript@6.0.3: {}
 
   undici-types@7.16.0: {}
 

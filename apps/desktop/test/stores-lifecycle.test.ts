@@ -49,7 +49,7 @@ function pairingManager(transport: PairTransport, credentials?: { withCredential
     cursorStore: new Cursor(), registry,
     remoteTransportFactory: () => transport as never,
     capabilities: ["sessions.read"] as const,
-    events: { onFrame: () => {}, onState: () => {}, onError: () => {} },
+    events: { onEvent: () => {}, onState: () => {}, onError: () => {} },
     ...(credentials === undefined ? {} : { credentials }),
   };
   return new DesktopTargetManager(options);

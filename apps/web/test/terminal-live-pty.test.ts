@@ -30,7 +30,8 @@ import type {
   DisconnectResult,
   PairRequest,
   PairResult,
-  RendererServerFrameEvent,
+  RendererServerEventEnvelope,
+  RendererServerFrame,
   RuntimeErrorEvent,
   TargetAddRequest,
   TargetAddResult,
@@ -42,6 +43,7 @@ import type {
   TerminalResizeRequest,
   TerminalResult,
 } from "@t4-code/protocol/desktop-ipc";
+import { rendererServerEventFromFrame } from "@t4-code/protocol/desktop-ipc";
 import {
   createDesktopRuntimeController,
   type DesktopRuntimeController,
@@ -228,7 +230,7 @@ interface HeldCall<Request> {
 class FakeShell implements DesktopShellPort {
   readonly kind = "desktop" as const;
   readonly platform = "linux" as const;
-  private readonly frames = new Set<(event: RendererServerFrameEvent) => void>();
+  private readonly serverEvents = new Set<(event: RendererServerEventEnvelope) => void>();
   private readonly states = new Set<(event: ConnectionStateEvent) => void>();
   private readonly errors = new Set<(event: RuntimeErrorEvent) => void>();
   readonly commands: CommandRequest[] = [];
@@ -368,9 +370,9 @@ class FakeShell implements DesktopShellPort {
   async removeTarget(request: TargetRequest): Promise<TargetRemoveResult> {
     return { targetId: request.targetId, removed: true };
   }
-  onServerFrame(listener: (event: RendererServerFrameEvent) => void): () => void {
-    this.frames.add(listener);
-    return () => this.frames.delete(listener);
+  onServerEvent(listener: (event: RendererServerEventEnvelope) => void): () => void {
+    this.serverEvents.add(listener);
+    return () => this.serverEvents.delete(listener);
   }
   onConnectionState(listener: (event: ConnectionStateEvent) => void): () => void {
     this.states.add(listener);
@@ -383,8 +385,12 @@ class FakeShell implements DesktopShellPort {
   emitFrame(event: { targetId: string; frame: unknown }): void {
     // decodeDesktopEvent revalidates every frame field on delivery; this
     // cast only satisfies the listener signature at the fake IPC seam.
-    const typed = event as RendererServerFrameEvent;
-    for (const listener of this.frames) listener(typed);
+    const typed = event as { targetId: string; frame: RendererServerFrame };
+    const envelope = {
+      targetId: typed.targetId,
+      event: rendererServerEventFromFrame(typed.frame),
+    };
+    for (const listener of this.serverEvents) listener(envelope);
   }
   emitState(event: ConnectionStateEvent): void {
     for (const listener of this.states) listener(event);

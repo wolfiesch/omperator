@@ -18,6 +18,7 @@ import {
   type TerminalInputFrame,
   type TerminalResizeFrame,
 } from "@t4-code/protocol";
+import type { PublicOmpServerEvent } from "@t4-code/client";
 
 import type {
   PtyError,
@@ -125,7 +126,13 @@ export interface TerminalFrameRouter {
   own(terminalId: string): void;
   release(terminalId: string): void;
   route(frame: unknown): TerminalWireEvent;
+  routeEvent(event: PublicOmpServerEvent): TerminalWireEvent;
 }
+
+type TerminalEvent = Extract<
+  PublicOmpServerEvent,
+  { kind: "terminal.output" | "terminal.exit" }
+>;
 
 function decodeFrameData(data: string, encoding: "utf8" | "base64" | undefined): string {
   if (encoding !== "base64") return data;
@@ -144,6 +151,51 @@ function decodeFrameData(data: string, encoding: "utf8" | "base64" | undefined):
 export function createTerminalFrameRouter(identity: TerminalWireIdentity): TerminalFrameRouter {
   const owned = new Set<string>();
   const cursors = new Map<string, Cursor>();
+
+  const routeTerminalEvent = (event: TerminalEvent): TerminalWireEvent => {
+    const { payload } = event;
+    if (String(payload.hostId) !== identity.hostId) {
+      return { kind: "ignored", reason: "foreign-host" };
+    }
+    if (String(payload.sessionId) !== identity.sessionId) {
+      return { kind: "ignored", reason: "foreign-session" };
+    }
+    const terminalId = String(payload.terminalId);
+    if (!owned.has(terminalId)) return { kind: "ignored", reason: "unowned-terminal" };
+
+    const cursor = payload.cursor;
+    const last = cursors.get(terminalId);
+    let resumed = false;
+    let gap = false;
+    if (last !== undefined) {
+      if (cursor.epoch === last.epoch) {
+        if (cursor.seq <= last.seq) return { kind: "ignored", reason: "duplicate" };
+        gap = cursor.seq > last.seq + 1;
+      } else {
+        resumed = true;
+      }
+    }
+    cursors.set(terminalId, { epoch: cursor.epoch, seq: cursor.seq });
+
+    if (event.kind === "terminal.exit") {
+      return {
+        kind: "exit",
+        terminalId,
+        exitCode: event.payload.exitCode,
+        signal: event.payload.signal ?? null,
+        resumed,
+        gap,
+      };
+    }
+    return {
+      kind: "output",
+      terminalId,
+      stream: event.payload.stream,
+      data: decodeFrameData(event.payload.data, event.payload.encoding),
+      resumed,
+      gap,
+    };
+  };
 
   return {
     own(terminalId) {
@@ -167,47 +219,18 @@ export function createTerminalFrameRouter(identity: TerminalWireIdentity): Termi
       if (decoded.type !== "terminal.output" && decoded.type !== "terminal.exit") {
         return { kind: "ignored", reason: "unrelated" };
       }
-      if (String(decoded.hostId) !== identity.hostId) {
-        return { kind: "ignored", reason: "foreign-host" };
+      return decoded.type === "terminal.exit"
+        ? routeTerminalEvent({ kind: "terminal.exit", payload: decoded })
+        : routeTerminalEvent({ kind: "terminal.output", payload: decoded });
+    },
+    routeEvent(event) {
+      if (event.kind === "terminal") {
+        return { kind: "ignored", reason: "agent-terminal" };
       }
-      if (String(decoded.sessionId) !== identity.sessionId) {
-        return { kind: "ignored", reason: "foreign-session" };
+      if (event.kind !== "terminal.output" && event.kind !== "terminal.exit") {
+        return { kind: "ignored", reason: "unrelated" };
       }
-      const terminalId = String(decoded.terminalId);
-      if (!owned.has(terminalId)) return { kind: "ignored", reason: "unowned-terminal" };
-
-      const cursor = decoded.cursor;
-      const last = cursors.get(terminalId);
-      let resumed = false;
-      let gap = false;
-      if (last !== undefined) {
-        if (cursor.epoch === last.epoch) {
-          if (cursor.seq <= last.seq) return { kind: "ignored", reason: "duplicate" };
-          gap = cursor.seq > last.seq + 1;
-        } else {
-          resumed = true;
-        }
-      }
-      cursors.set(terminalId, { epoch: cursor.epoch, seq: cursor.seq });
-
-      if (decoded.type === "terminal.exit") {
-        return {
-          kind: "exit",
-          terminalId,
-          exitCode: decoded.exitCode,
-          signal: decoded.signal ?? null,
-          resumed,
-          gap,
-        };
-      }
-      return {
-        kind: "output",
-        terminalId,
-        stream: decoded.stream,
-        data: decodeFrameData(decoded.data, decoded.encoding),
-        resumed,
-        gap,
-      };
+      return routeTerminalEvent(event);
     },
   };
 }

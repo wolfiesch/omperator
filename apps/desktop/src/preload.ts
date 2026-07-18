@@ -26,7 +26,7 @@ import {
   type PairLinksDrainResult,
   type PairRequest,
   type PairResult,
-  type RendererServerFrameEvent,
+  type RendererServerEventEnvelope,
   type RuntimeErrorEvent,
   type ServiceActionResult,
   type ServiceInspection,
@@ -87,7 +87,7 @@ export interface OmpShellBridge {
   readonly profileStart: (request: LocalProfileRequest) => Promise<LocalProfileResult>;
   readonly profileStop: (request: LocalProfileRequest) => Promise<LocalProfileResult>;
   readonly profileRestart: (request: LocalProfileRequest) => Promise<LocalProfileResult>;
-  readonly onServerFrame: (listener: (event: RendererServerFrameEvent) => void) => () => void;
+  readonly onServerEvent: (listener: (event: RendererServerEventEnvelope) => void) => () => void;
   readonly onConnectionState: (listener: (event: ConnectionStateEvent) => void) => () => void;
   readonly onRuntimeError: (listener: (event: RuntimeErrorEvent) => void) => () => void;
   readonly onPairLink: (listener: (event: PairLinkEvent) => void) => () => void;
@@ -107,8 +107,8 @@ function invokeProjectionCache<R>(
   return ipcRenderer.invoke(channel, { channel, payload }) as Promise<R>;
 }
 
-type SubscriptionPayload<C> = C extends "omp:server-frame"
-  ? RendererServerFrameEvent
+type SubscriptionPayload<C> = C extends "omp:server-event"
+  ? RendererServerEventEnvelope
   : C extends "omp:connection-state"
     ? ConnectionStateEvent
     : C extends "omp:runtime-error"
@@ -119,7 +119,7 @@ type SubscriptionPayload<C> = C extends "omp:server-frame"
           ? DesktopUpdateState
           : DesktopUpdateOpenEvent;
 
-function subscribe<C extends "omp:server-frame" | "omp:connection-state" | "omp:runtime-error" | "omp:pair-link" | "app:update:state" | "app:update:open">(
+function subscribe<C extends "omp:server-event" | "omp:connection-state" | "omp:runtime-error" | "omp:pair-link" | "app:update:state" | "app:update:open">(
   channel: C,
   listener: (payload: SubscriptionPayload<C>) => void,
 ): () => void {
@@ -178,7 +178,7 @@ const bridge: OmpShellBridge = {
   profileStart: (request) => invoke("omp:profiles:start", request),
   profileStop: (request) => invoke("omp:profiles:stop", request),
   profileRestart: (request) => invoke("omp:profiles:restart", request),
-  onServerFrame: (listener) => subscribe("omp:server-frame", listener),
+  onServerEvent: (listener) => subscribe("omp:server-event", listener),
   onConnectionState: (listener) => subscribe("omp:connection-state", listener),
   onRuntimeError: (listener) => subscribe("omp:runtime-error", listener),
   onPairLink: (listener) => subscribe("omp:pair-link", listener),

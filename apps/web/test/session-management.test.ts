@@ -10,12 +10,14 @@ import {
   type CatalogFrame,
   type SessionRef,
 } from "@t4-code/protocol";
-import type {
-  CommandRequest,
-  CommandResult,
-  ConfirmRequest,
-  ConfirmResult,
-  RendererServerFrameEvent,
+import {
+  rendererServerEventFromFrame,
+  type CommandRequest,
+  type CommandResult,
+  type ConfirmRequest,
+  type ConfirmResult,
+  type RendererServerEventEnvelope,
+  type RendererServerFrame,
 } from "@t4-code/protocol/desktop-ipc";
 
 import {
@@ -86,7 +88,7 @@ class FakeManagementController {
   readonly confirms: ConfirmRequest[] = [];
   maxConcurrentChallengedCommands = 0;
   private readonly snapshotListeners = new Set<(snapshot: DesktopRuntimeSnapshot) => void>();
-  private readonly frameListeners = new Set<(event: RendererServerFrameEvent) => void>();
+  private readonly eventListeners = new Set<(event: RendererServerEventEnvelope) => void>();
   private readonly sessionIndex = new Map<string, SessionRef>();
   closeRejection: NonNullable<CommandResult["error"]> | null = null;
   emitStaleCloseChallengeDuringLease = false;
@@ -184,12 +186,12 @@ class FakeManagementController {
     return () => this.snapshotListeners.delete(listener);
   }
 
-  subscribeFrames(
+  subscribeEvents(
     _filter: unknown,
-    listener: (event: RendererServerFrameEvent) => void,
+    listener: (event: RendererServerEventEnvelope) => void,
   ): () => void {
-    this.frameListeners.add(listener);
-    return () => this.frameListeners.delete(listener);
+    this.eventListeners.add(listener);
+    return () => this.eventListeners.delete(listener);
   }
 
   async command(_targetId: string, intent: CommandRequest["intent"]): Promise<CommandResult> {
@@ -329,9 +331,12 @@ class FakeManagementController {
     };
   }
 
-  private emitFrame(frame: RendererServerFrameEvent["frame"]): void {
-    const event = { targetId: ADDRESS.targetId, frame };
-    for (const listener of this.frameListeners) listener(event);
+  private emitFrame(frame: RendererServerFrame): void {
+    const event = {
+      targetId: ADDRESS.targetId,
+      event: rendererServerEventFromFrame(frame),
+    };
+    for (const listener of this.eventListeners) listener(event);
   }
 
   private emitSnapshot(): void {

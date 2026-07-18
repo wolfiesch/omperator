@@ -9,7 +9,7 @@ import {
   type ServerFrame,
   type WelcomeFrame,
 } from "@t4-code/protocol";
-import { OmpClient, type Clock, type OmpTransport, type TimerScheduler } from "../src/index.ts";
+import { OmpClient, type Clock, type OmpTransport, type PublicOmpServerEvent, type TimerScheduler } from "../src/index.ts";
 
 const HOST = "host-fixture";
 const SESSION = "session-fixture";
@@ -685,8 +685,8 @@ describe("OmpClient reconnect stability", () => {
       reconnect: { baseMs: 0, maxMs: 0 },
     });
     const visible: number[] = [];
-    client.onFrame((frame) => {
-      if (frame.type === "event" && String(frame.sessionId) === SESSION) visible.push(frame.cursor.seq);
+    client.onEvent((event) => {
+      if (event.kind === "event" && String(event.payload.sessionId) === SESSION) visible.push(event.payload.cursor.seq);
     });
 
     await client.connect();
@@ -839,8 +839,8 @@ describe("OmpClient reconnect stability", () => {
       },
     });
     const client = new OmpClient({ transport: () => transport, hostId: HOST });
-    const frames: ServerFrame[] = [];
-    client.onFrame((frame) => frames.push(frame));
+    const events: PublicOmpServerEvent[] = [];
+    client.onEvent((event) => events.push(event));
 
     await client.connect();
     await client.command({ hostId: HOST, sessionId: SESSION, command: "session.attach", args: {} });
@@ -857,7 +857,7 @@ describe("OmpClient reconnect stability", () => {
       reason: "reconnect",
     });
     transport.emit(event(1, SESSION_TWO));
-    expect(frames.some((frame) => frame.type === "event" && String(frame.sessionId) === SESSION_TWO)).toBe(true);
+    expect(events.some((event) => event.kind === "event" && String(event.payload.sessionId) === SESSION_TWO)).toBe(true);
     expect(client.snapshot().desynced).toBe(true);
     transport.emit(snapshot(2, SESSION));
     expect(client.snapshot().desynced).toBe(false);

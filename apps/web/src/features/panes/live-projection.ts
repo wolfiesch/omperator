@@ -3,7 +3,6 @@
 // view models. Every function here is derivation only: unknown fields stay
 // null, unsafe paths disappear, and nothing is invented to fill a gap.
 import type { AgentTranscriptProjection, ResultProjection, SessionProjection } from "@t4-code/client";
-import type { AgentFrame, FileFrame, LiveEventFrame, ReviewFrame } from "@t4-code/protocol";
 
 import { classifySessionEvent } from "./activity-log.ts";
 import { displayStateFromWire } from "./model.ts";
@@ -17,6 +16,13 @@ import type {
   ReviewFileStatus,
 } from "./model.ts";
 import { countPatchChanges } from "./review-model.ts";
+
+type SessionMapValue<Key extends keyof SessionProjection> =
+  SessionProjection[Key] extends ReadonlyMap<string, infer Value> ? Value : never;
+type ProjectionAgentFrame = SessionMapValue<"agents">;
+type ProjectionFileFrame = SessionMapValue<"files">;
+type ProjectionReviewFrame = SessionMapValue<"reviews">;
+type ProjectionLiveEventFrame = SessionProjection["events"][number];
 
 // ---------------------------------------------------------------------------
 // Path safety. Mirrors app-wire's safeRelativePath rules: relative POSIX
@@ -76,8 +82,8 @@ function transcriptEntryFrom(
  * agent's real id — never a made-up label.
  */
 export function agentNodeFromFrame(
-  frame: AgentFrame,
-  events: readonly LiveEventFrame[],
+  frame: ProjectionAgentFrame,
+  events: readonly ProjectionLiveEventFrame[],
   durableTranscript?: AgentTranscriptProjection,
 ): AgentNode {
   const id = String(frame.agentId);
@@ -259,7 +265,7 @@ const REVIEW_FILE_STATUSES: Readonly<Record<ReviewFileStatus, true>> = {
 };
 
 function reviewFileFrom(
-  frame: ReviewFrame,
+  frame: ProjectionReviewFrame,
   path: string,
   source: Readonly<Record<string, unknown>>,
 ): ReviewFile {
@@ -411,7 +417,7 @@ export function sameListing(a: readonly FileTreeNode[], b: readonly FileTreeNode
 }
 
 /** Preview straight from a pushed file frame; no content, honest message. */
-export function previewFromFileFrame(frame: FileFrame): FilePreview {
+export function previewFromFileFrame(frame: ProjectionFileFrame): FilePreview {
   if (frame.content === undefined) {
     return {
       kind: "diagnostic",

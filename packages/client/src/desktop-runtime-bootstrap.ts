@@ -1,6 +1,7 @@
-import { decodeSessionListResult, type WelcomeFrame } from "@t4-code/protocol";
+import { decodeSessionListResult } from "@t4-code/protocol";
 import type { CommandRequest, CommandResult } from "@t4-code/protocol/desktop-ipc";
 import { DesktopRuntimeError } from "./desktop-runtime-contracts.ts";
+import type { DesktopWelcomePayload } from "./desktop-runtime-contracts.ts";
 
 export type DesktopBootstrapCommand = (
   intent: CommandRequest["intent"],
@@ -10,7 +11,7 @@ export type DesktopBootstrapErrorReporter = (error: unknown, code: DesktopBootst
 
 export interface DesktopHostBootstrapOptions {
   readonly targetId: string;
-  readonly frame: WelcomeFrame;
+  readonly frame: DesktopWelcomePayload;
   readonly issue: DesktopBootstrapCommand;
   readonly onError?: DesktopBootstrapErrorReporter;
   readonly onSessionList?: (result: CommandResult) => void;

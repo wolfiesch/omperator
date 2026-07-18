@@ -5,6 +5,7 @@
 // paths with no mocking framework and no invented frames.
 import type { DesktopRuntimeController, DesktopShellPort } from "@t4-code/client";
 import { hostId, type WelcomeFrame } from "@t4-code/protocol";
+import { rendererServerEventFromFrame } from "@t4-code/protocol/desktop-ipc";
 import type {
   BootstrapResult,
   CommandRequest,
@@ -18,7 +19,8 @@ import type {
   DisconnectResult,
   PairRequest,
   PairResult,
-  RendererServerFrameEvent,
+  RendererServerEventEnvelope,
+  RendererServerFrame,
   RuntimeErrorEvent,
   ServiceActionResult,
   ServiceInspection,
@@ -32,6 +34,11 @@ import type {
   TerminalResizeRequest,
   TerminalResult,
 } from "@t4-code/protocol/desktop-ipc";
+
+interface TestServerFrameEnvelope {
+  readonly targetId: string;
+  readonly frame: RendererServerFrame;
+}
 
 export interface Deferred<T> {
   readonly promise: Promise<T>;
@@ -108,7 +115,7 @@ export class FakeShell implements DesktopShellPort {
   inspectionError: Error | null = null;
   serviceStartError: Error | null = null;
 
-  private readonly frames = new Set<(event: RendererServerFrameEvent) => void>();
+  private readonly serverEvents = new Set<(event: RendererServerEventEnvelope) => void>();
   private readonly states = new Set<(event: ConnectionStateEvent) => void>();
   private readonly errors = new Set<(event: RuntimeErrorEvent) => void>();
 
@@ -198,9 +205,9 @@ export class FakeShell implements DesktopShellPort {
     return { completed: true };
   };
 
-  onServerFrame(listener: (event: RendererServerFrameEvent) => void): () => void {
-    this.frames.add(listener);
-    return () => this.frames.delete(listener);
+  onServerEvent(listener: (event: RendererServerEventEnvelope) => void): () => void {
+    this.serverEvents.add(listener);
+    return () => this.serverEvents.delete(listener);
   }
   onConnectionState(listener: (event: ConnectionStateEvent) => void): () => void {
     this.states.add(listener);
@@ -211,8 +218,12 @@ export class FakeShell implements DesktopShellPort {
     return () => this.errors.delete(listener);
   }
 
-  emitFrame(event: RendererServerFrameEvent): void {
-    for (const listener of this.frames) listener(event);
+  emitFrame(event: TestServerFrameEnvelope): void {
+    const envelope = {
+      targetId: event.targetId,
+      event: rendererServerEventFromFrame(event.frame),
+    };
+    for (const listener of this.serverEvents) listener(envelope);
   }
   emitState(event: ConnectionStateEvent): void {
     for (const listener of this.states) listener(event);

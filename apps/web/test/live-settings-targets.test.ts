@@ -8,15 +8,17 @@ import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { CatalogFrame, SettingsFrame } from "@t4-code/protocol";
-import type {
-  CommandRequest,
-  CommandResult,
-  ConfirmRequest,
-  ConfirmResult,
-  DesktopTarget,
-  LocalProfile,
-  RendererServerFrameEvent,
-  TargetAddRequest,
+import {
+  rendererServerEventFromFrame,
+  type CommandRequest,
+  type CommandResult,
+  type ConfirmRequest,
+  type ConfirmResult,
+  type DesktopTarget,
+  type LocalProfile,
+  type RendererServerEventEnvelope,
+  type RendererServerFrame,
+  type TargetAddRequest,
 } from "@t4-code/protocol/desktop-ipc";
 
 import { buildLiveSettingsCatalog } from "../src/features/settings/live-catalog.ts";
@@ -324,7 +326,7 @@ class FakeRuntime implements LiveSettingsRuntimePort {
   readonly commands: CommandRequest["intent"][] = [];
   readonly confirms: ConfirmRequest[] = [];
   private snapshotListeners = new Set<(snapshot: never) => void>();
-  private frameListeners = new Set<(event: RendererServerFrameEvent) => void>();
+  private eventListeners = new Set<(event: RendererServerEventEnvelope) => void>();
   private revision = "rev-1";
   private requestSeq = 0;
 
@@ -351,16 +353,19 @@ class FakeRuntime implements LiveSettingsRuntimePort {
     this.snapshotListeners.add(listener);
     return () => this.snapshotListeners.delete(listener);
   }
-  subscribeFrames(
+  subscribeEvents(
     _filter: { readonly targetId: string },
-    listener: (event: RendererServerFrameEvent) => void,
+    listener: (event: RendererServerEventEnvelope) => void,
   ): () => void {
-    this.frameListeners.add(listener);
-    return () => this.frameListeners.delete(listener);
+    this.eventListeners.add(listener);
+    return () => this.eventListeners.delete(listener);
   }
   private emitFrame(frame: Record<string, unknown>): void {
-    for (const listener of this.frameListeners) {
-      listener({ targetId: "local", frame: frame as unknown as RendererServerFrameEvent["frame"] });
+    for (const listener of this.eventListeners) {
+      listener({
+        targetId: "local",
+        event: rendererServerEventFromFrame(frame as unknown as RendererServerFrame),
+      });
     }
   }
   private respond(requestId: string, ok: boolean, error?: { code: string; message: string }): void {

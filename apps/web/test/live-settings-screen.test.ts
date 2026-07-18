@@ -15,7 +15,7 @@ import type {
   CommandResult,
   ConfirmRequest,
   ConfirmResult,
-  RendererServerFrameEvent,
+  RendererServerEventEnvelope,
 } from "@t4-code/protocol/desktop-ipc";
 
 import type { LiveSettingsRuntimePort } from "../src/features/settings/live-controller.ts";
@@ -109,9 +109,9 @@ class FakeRuntime implements LiveSettingsRuntimePort {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
-  subscribeFrames(
+  subscribeEvents(
     _filter: { readonly targetId: string },
-    _listener: (event: RendererServerFrameEvent) => void,
+    _listener: (event: RendererServerEventEnvelope) => void,
   ): () => void {
     return () => {};
   }

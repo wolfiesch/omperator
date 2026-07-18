@@ -1,11 +1,6 @@
 import type {
-  AgentFrame,
-  AuditFrame,
-  ConfirmationChallenge,
   Cursor,
   DurableEntry,
-  FileFrame,
-  ReviewFrame,
   SessionRef,
 } from "@t4-code/protocol";
 import { MAX_PROJECTION_CACHE_BYTES } from "@t4-code/protocol/desktop-ipc";
@@ -55,19 +50,26 @@ interface ProjectionCacheData {
   readonly epoch?: string;
   readonly freshness: ProjectionFreshness;
 }
+type SessionMapValue<Key extends keyof SessionProjection> =
+  SessionProjection[Key] extends ReadonlyMap<string, infer Value> ? Value : never;
+type ProjectionAgentFrame = SessionMapValue<"agents">;
+type ProjectionFileFrame = SessionMapValue<"files">;
+type ProjectionReviewFrame = SessionMapValue<"reviews">;
+type ProjectionConfirmationFrame = SessionMapValue<"confirmations">;
+type ProjectionAuditFrame = SessionProjection["audit"][number];
 interface SessionProjectionData {
   readonly hostId: string;
   readonly sessionId: string;
   readonly ref?: SessionRef;
   readonly entries: readonly DurableEntry[];
   readonly events: readonly unknown[];
-  readonly agents: Array<[string, AgentFrame]>;
+  readonly agents: Array<[string, ProjectionAgentFrame]>;
   readonly agentTranscripts?: Array<[string, AgentTranscriptProjectionData]>;
   readonly terminals: Array<[string, TerminalProjection]>;
-  readonly files: Array<[string, FileFrame]>;
-  readonly reviews: Array<[string, ReviewFrame]>;
-  readonly audit: readonly AuditFrame[];
-  readonly confirmations: Array<[string, ConfirmationChallenge]>;
+  readonly files: Array<[string, ProjectionFileFrame]>;
+  readonly reviews: Array<[string, ProjectionReviewFrame]>;
+  readonly audit: readonly ProjectionAuditFrame[];
+  readonly confirmations: Array<[string, ProjectionConfirmationFrame]>;
   readonly results: Array<[string, ResultProjection]>;
   readonly revision?: string;
   readonly cursor?: Cursor;
@@ -182,7 +184,7 @@ export function encodeProjectionCache(snapshot: ProjectionSnapshot, savedAt = Da
           terminals: arrayFromMap(value.terminals),
           files: arrayFromMap(value.files),
           reviews: arrayFromMap(value.reviews),
-          audit: value.audit.slice(-256).map((item) => safeJson(item) as AuditFrame),
+          audit: value.audit.slice(-256).map((item) => safeJson(item) as ProjectionAuditFrame),
           // Confirmation challenges are bound to one live connection on the
           // appserver. Persisting them makes a restarted client offer an approval
           // that the new connection can never consume.
@@ -286,23 +288,23 @@ function resultValue(value: Record<string, unknown>): ResultProjection {
     throw new Error("invalid result cache");
   return identity(value) as unknown as ResultProjection;
 }
-function fileValue(value: Record<string, unknown>): FileFrame {
+function fileValue(value: Record<string, unknown>): ProjectionFileFrame {
   if (typeof value.path !== "string") throw new Error("invalid file cache");
-  return identity(value) as unknown as FileFrame;
+  return identity(value) as unknown as ProjectionFileFrame;
 }
-function reviewValue(value: Record<string, unknown>): ReviewFrame {
+function reviewValue(value: Record<string, unknown>): ProjectionReviewFrame {
   if (
     typeof value.reviewId !== "string" ||
     typeof value.status !== "string" ||
     !Array.isArray(value.findings)
   )
     throw new Error("invalid review cache");
-  return identity(value) as unknown as ReviewFrame;
+  return identity(value) as unknown as ProjectionReviewFrame;
 }
-function agentValue(value: Record<string, unknown>): AgentFrame {
+function agentValue(value: Record<string, unknown>): ProjectionAgentFrame {
   if (typeof value.agentId !== "string" || typeof value.state !== "string")
     throw new Error("invalid agent cache");
-  return identity(value) as unknown as AgentFrame;
+  return identity(value) as unknown as ProjectionAgentFrame;
 }
 function transcriptValue(value: Record<string, unknown>): AgentTranscriptProjection {
   if (
@@ -376,7 +378,7 @@ function restoreSession(value: unknown): SessionProjection | undefined {
         .map((event) => safeJson(event) as SessionProjection["events"][number])
     : [];
   const audit = Array.isArray(value.audit)
-    ? value.audit.slice(-256).map((item) => safeJson(item) as AuditFrame)
+    ? value.audit.slice(-256).map((item) => safeJson(item) as ProjectionAuditFrame)
     : [];
   const ref = isRecord(value.ref) ? restoredSessionRef(value.ref) : undefined;
   return Object.freeze({
@@ -385,18 +387,18 @@ function restoreSession(value: unknown): SessionProjection | undefined {
     ...(ref === undefined ? {} : { ref }),
     entries: Object.freeze(entries),
     events: Object.freeze(events),
-    agents: asMap<AgentFrame>(value.agents, agentValue),
+    agents: asMap<ProjectionAgentFrame>(value.agents, agentValue),
     agentTranscripts:
       value.agentTranscripts === undefined
         ? new ImmutableMap<string, AgentTranscriptProjection>()
         : asMap<AgentTranscriptProjection>(value.agentTranscripts, transcriptValue),
     terminals: asMap<TerminalProjection>(value.terminals, terminalValue),
-    files: asMap<FileFrame>(value.files, fileValue),
-    reviews: asMap<ReviewFrame>(value.reviews, reviewValue),
+    files: asMap<ProjectionFileFrame>(value.files, fileValue),
+    reviews: asMap<ProjectionReviewFrame>(value.reviews, reviewValue),
     audit: Object.freeze(audit),
     // Never revive a connection-bound challenge, including from an older cache
     // written before challenges were excluded from persistence.
-    confirmations: new ImmutableMap<string, ConfirmationChallenge>(),
+    confirmations: new ImmutableMap<string, ProjectionConfirmationFrame>(),
     results: asMap<ResultProjection>(value.results, resultValue),
     entryIds: new ImmutableSet(entries.map((entry) => String(entry.id))),
     ...(typeof value.revision === "string" &&

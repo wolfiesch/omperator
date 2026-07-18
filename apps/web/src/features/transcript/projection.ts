@@ -39,6 +39,8 @@ import {
   retainDurableEntries,
   retainedText,
   sanitizeRetainedRecord,
+  type PublicOmpServerEvent,
+  type SessionProjection,
 } from "@t4-code/client";
 
 import {
@@ -47,6 +49,20 @@ import {
 } from "../session-runtime/session-event-vocabulary.ts";
 
 export type { Cursor, DurableEntry } from "@t4-code/protocol";
+
+type ProjectionLiveEventFrame = SessionProjection["events"][number];
+type TranscriptEventFrame = LiveEventFrame | ProjectionLiveEventFrame;
+type SnapshotPayload = Omit<SessionSnapshotFrame, "v" | "type">;
+type EntryPayload = Omit<DurableEntryFrame, "v" | "type">;
+type LiveEventPayload =
+  | Omit<LiveEventFrame, "v" | "type">
+  | Omit<ProjectionLiveEventFrame, "type">;
+type GapPayload = Omit<GapFrame, "v" | "type">;
+type TranscriptReducerInput =
+  | { readonly kind: "snapshot"; readonly payload: SnapshotPayload }
+  | { readonly kind: "entry"; readonly payload: EntryPayload }
+  | { readonly kind: "event"; readonly payload: LiveEventPayload }
+  | { readonly kind: "gap"; readonly payload: GapPayload };
 
 export const MAX_ACCEPTED_PROMPT_ATTACHMENTS = 8;
 export const MAX_ACCEPTED_PENDING_PROMPTS = 16;
@@ -242,6 +258,10 @@ export function transcriptIsActive(projection: TranscriptProjection): boolean {
 // ---------------------------------------------------------------------------
 // Frame application
 export type TranscriptFrame = SessionSnapshotFrame | DurableEntryFrame | LiveEventFrame | GapFrame;
+export type TranscriptServerEvent = Extract<
+  PublicOmpServerEvent,
+  { kind: "snapshot" | "entry" | "event" | "gap" }
+>;
 
 // app-wire exports DurableEntryFrame from its envelope module; mirror the
 // import here so callers can hand us the decoded union directly.
@@ -294,7 +314,7 @@ function classifySequence(
 
 function installSnapshot(
   projection: TranscriptProjection,
-  frame: SessionSnapshotFrame,
+  frame: SnapshotPayload,
 ): TranscriptProjection {
   const epochChanged = projection.cursor !== null && projection.cursor.epoch !== frame.cursor.epoch;
   const recovering = projection.phase === "paused" || projection.phase === "resyncing";
@@ -381,7 +401,7 @@ export function settleTranscriptTurn(
 
 function applyEntry(
   projection: TranscriptProjection,
-  frame: DurableEntryFrame,
+  frame: EntryPayload,
 ): TranscriptProjection {
   const entry = frame.entry;
   const already = projection.entries.some((existing) => existing.id === entry.id);
@@ -610,7 +630,7 @@ function noticeId(prefix: string): string {
   return `${prefix}-${noticeCounter}`;
 }
 
-function applyEvent(projection: TranscriptProjection, frame: LiveEventFrame): TranscriptProjection {
+function applyEvent(projection: TranscriptProjection, frame: LiveEventPayload): TranscriptProjection {
   const event = frame.event;
   const base: TranscriptProjection = { ...projection, cursor: frame.cursor };
   const projectionKind: SessionEventProjectionKind | undefined = sessionEventSpec(
@@ -821,7 +841,7 @@ export interface RetainedTranscriptEventBaseline {
 
 export function retainedTranscriptEventsAreValid(
   projection: TranscriptProjection,
-  frames: readonly LiveEventFrame[],
+  frames: readonly TranscriptEventFrame[],
   baseline: RetainedTranscriptEventBaseline,
 ): boolean {
   const cursor = projection.cursor;
@@ -874,7 +894,7 @@ export function retainedTranscriptEventsAreValid(
 
 export function replayRetainedTranscriptEvents(
   projection: TranscriptProjection,
-  frames: readonly LiveEventFrame[],
+  frames: readonly TranscriptEventFrame[],
   baseline: RetainedTranscriptEventBaseline,
 ): TranscriptProjection {
   if (!retainedTranscriptEventsAreValid(projection, frames, baseline)) return projection;
@@ -885,7 +905,7 @@ export function replayRetainedTranscriptEvents(
   return { ...replayed, cursor: baseline.cursor };
 }
 
-function applyGap(projection: TranscriptProjection, frame: GapFrame): TranscriptProjection {
+function applyGap(projection: TranscriptProjection, frame: GapPayload): TranscriptProjection {
   // Multiple gap frames can arrive while the client is already awaiting the
   // same recovery snapshot. Keep one row (and therefore one stable React key)
   // for that episode instead of stacking replay-budget notices at the tail.
@@ -908,6 +928,48 @@ function applyGap(projection: TranscriptProjection, frame: GapFrame): Transcript
   };
 }
 
+function reduceTranscriptInput(
+  projection: TranscriptProjection,
+  input: TranscriptReducerInput,
+): TranscriptProjection {
+  switch (input.kind) {
+    case "snapshot":
+      return installSnapshot(projection, input.payload);
+    case "gap":
+      return applyGap(projection, input.payload);
+    case "entry":
+    case "event": {
+      // A paused stream applies nothing until a snapshot arrives — applying
+      // past a gap would reorder history.
+      if (projection.phase === "paused" || projection.phase === "resyncing") {
+        return projection;
+      }
+      const verdict = classifySequence(projection.cursor, input.payload.cursor);
+      if (verdict === "duplicate") return projection;
+      if (verdict === "gap") {
+        const from = projection.cursor;
+        return {
+          ...projection,
+          phase: "paused",
+          notices: pushNotice(withoutRecoveryNotices(projection.notices), {
+            kind: "gap",
+            id: `gap-${from?.epoch ?? "initial"}-${from?.seq ?? 0}-${input.payload.cursor.epoch}-${input.payload.cursor.seq}`,
+            reason: "sequence discontinuity",
+            missing:
+              from !== null && input.payload.cursor.epoch === from.epoch
+                ? input.payload.cursor.seq - from.seq - 1
+                : 0,
+            at: new Date(0).toISOString(),
+          }),
+        };
+      }
+      return input.kind === "entry"
+        ? applyEntry(projection, input.payload)
+        : applyEvent(projection, input.payload);
+    }
+  }
+}
+
 /**
  * Fold one server frame into the projection. Pure: same inputs, same output;
  * unchanged branches keep their object identity so memoized rows survive.
@@ -918,37 +980,20 @@ export function reduceTranscript(
 ): TranscriptProjection {
   switch (frame.type) {
     case "snapshot":
-      return installSnapshot(projection, frame);
-    case "gap":
-      return applyGap(projection, frame);
+      return reduceTranscriptInput(projection, { kind: frame.type, payload: frame });
     case "entry":
-    case "event": {
-      // A paused stream applies nothing until a snapshot arrives — applying
-      // past a gap would reorder history.
-      if (projection.phase === "paused" || projection.phase === "resyncing") {
-        return projection;
-      }
-      const verdict = classifySequence(projection.cursor, frame.cursor);
-      if (verdict === "duplicate") return projection;
-      if (verdict === "gap") {
-        const from = projection.cursor;
-        return {
-          ...projection,
-          phase: "paused",
-          notices: pushNotice(withoutRecoveryNotices(projection.notices), {
-            kind: "gap",
-            id: `gap-${from?.epoch ?? "initial"}-${from?.seq ?? 0}-${frame.cursor.epoch}-${frame.cursor.seq}`,
-            reason: "sequence discontinuity",
-            missing:
-              from !== null && frame.cursor.epoch === from.epoch
-                ? frame.cursor.seq - from.seq - 1
-                : 0,
-            at: new Date(0).toISOString(),
-          }),
-        };
-      }
-      if (frame.type === "entry") return applyEntry(projection, frame);
-      return applyEvent(projection, frame);
-    }
+      return reduceTranscriptInput(projection, { kind: frame.type, payload: frame });
+    case "event":
+      return reduceTranscriptInput(projection, { kind: frame.type, payload: frame });
+    case "gap":
+      return reduceTranscriptInput(projection, { kind: frame.type, payload: frame });
   }
+}
+
+/** Fold one validated, version-free server event into the transcript projection. */
+export function reduceTranscriptEvent(
+  projection: TranscriptProjection,
+  event: TranscriptServerEvent,
+): TranscriptProjection {
+  return reduceTranscriptInput(projection, event);
 }

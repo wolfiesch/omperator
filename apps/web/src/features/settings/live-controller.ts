@@ -17,7 +17,7 @@ import type {
   CommandResult,
   ConfirmRequest,
   ConfirmResult,
-  RendererServerFrameEvent,
+  RendererServerEventEnvelope,
 } from "@t4-code/protocol/desktop-ipc";
 
 import { buildLiveSettingsCatalog, type LiveSettingsCatalog } from "./live-catalog.ts";
@@ -31,9 +31,9 @@ import type {
 export interface LiveSettingsRuntimePort {
   getSnapshot(): DesktopRuntimeSnapshot;
   subscribe(listener: (snapshot: DesktopRuntimeSnapshot) => void): () => void;
-  subscribeFrames(
-    filter: { readonly targetId: string; readonly hostId?: string; readonly types?: readonly string[] },
-    listener: (event: RendererServerFrameEvent) => void,
+  subscribeEvents(
+    filter: { readonly targetId: string; readonly hostId?: string; readonly kinds?: readonly string[] },
+    listener: (event: RendererServerEventEnvelope) => void,
   ): () => void;
   command(targetId: string, intent: CommandRequest["intent"]): Promise<CommandResult>;
   confirm(request: ConfirmRequest): Promise<ConfirmResult>;
@@ -61,6 +61,8 @@ export interface LiveSettingsControllerOptions {
 }
 
 const DEFAULT_TIMEOUT_MS = 15_000;
+type ResultPayload = Omit<ResultFrame, "v" | "type">;
+type ConfirmationPayload = Omit<ConfirmationChallenge, "v" | "type">;
 
 const UNKNOWN_OUTCOME_MESSAGE =
   "The connection dropped before the host confirmed this save. Your changes are still staged — check the host before saving again.";
@@ -130,24 +132,24 @@ export function createLiveSettingsController(options: LiveSettingsControllerOpti
 
     // Collect the response before sending: the frame can beat the invoke
     // round-trip back to the renderer, and correlation is by requestId.
-    const responses = new Map<string, ResultFrame>();
+    const responses = new Map<string, ResultPayload>();
     let notifyResponse: (() => void) | null = null;
     let challenged = false;
-    const unsubscribe = runtime.subscribeFrames(
-      { targetId, hostId, types: ["response", "confirmation"] },
+    const unsubscribe = runtime.subscribeEvents(
+      { targetId, hostId, kinds: ["response", "confirmation"] },
       (event) => {
-        if (event.frame.type === "response") {
-          const frame: ResultFrame = event.frame;
+        if (event.event.kind === "response") {
+          const frame = event.event.payload as ResultPayload;
           if (frame.command === "settings.write" || frame.command === undefined) {
             responses.set(String(frame.requestId), frame);
             notifyResponse?.();
           }
           return;
         }
-        if (event.frame.type !== "confirmation") return;
+        if (event.event.kind !== "confirmation") return;
         // A host-scoped challenge while our write is pending is this save's
         // confirmation; the host holds the response until it is decided.
-        const challenge: ConfirmationChallenge = event.frame;
+        const challenge = event.event.payload as ConfirmationPayload;
         if (challenge.sessionId !== undefined || challenged) return;
         challenged = true;
         void options
