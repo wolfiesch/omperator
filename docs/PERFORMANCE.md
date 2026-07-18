@@ -22,10 +22,12 @@ p95.
 
 The UI report keeps the whole-test duration and also separates the browser work into navigation,
 connection after page load, transcript-shell visibility, tail alignment, real-list reveal, and tail
-paint. The timeline requires four consecutive ready frames after its content geometry and tail
-alignment settle before replacing the warm loading copy. The tail paint sample is taken after the
-real list replaces that copy and two more browser animation frames have elapsed. These numbers show
-where a slowdown occurs; they are not a claim about a physical display's pixel response time.
+paint. On a cold mount, the timeline commits its warm tail copy first and mounts the hidden virtual
+list on the next animation frame, so work that cannot paint does not delay the first useful shell.
+It then requires four consecutive ready frames after the list's content geometry and tail alignment
+settle before replacing the warm copy. The tail paint sample is taken after the real list replaces
+that copy and two more browser animation frames have elapsed. These numbers show where a slowdown
+occurs; they are not a claim about a physical display's pixel response time.
 
 `ui.mount-bounded-10k` stops after the original mount assertions, before the paint-only wait and
 phase-file write. `ui.playwright-scenario-instrumented` records the full instrumented test duration
