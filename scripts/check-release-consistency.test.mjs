@@ -19,6 +19,14 @@ function changed(path, replace) {
   return copy;
 }
 
+function changedRuntime(name, mutate) {
+  return changed("compat/omp-app-matrix.json", (text) => {
+    const matrix = JSON.parse(text);
+    mutate(matrix[name]);
+    return JSON.stringify(matrix);
+  });
+}
+
 function requiredWorkflowJob(workflow, name) {
   const parsed = parseYaml(workflow);
   assert.ok(parsed && typeof parsed === "object" && !Array.isArray(parsed));
@@ -46,6 +54,12 @@ test("current source tree has one consistent release version", () => {
   assert.deepEqual(collectReleaseConsistencyErrors(files), []);
 });
 
+test("keeps verified and published runtime records aligned after promotion", () => {
+  const matrix = JSON.parse(files.get("compat/omp-app-matrix.json"));
+  assert.equal(matrix.verifiedRuntime.sourceTag, "t4code-17.0.4-appserver-4");
+  assert.deepEqual(matrix.publishedRuntime, matrix.verifiedRuntime);
+});
+
 test("rejects a tag that differs from the package version", () => {
   assert.ok(
     collectReleaseConsistencyErrors(files, "v9.9.9").some((error) =>
@@ -54,17 +68,67 @@ test("rejects a tag that differs from the package version", () => {
   );
 });
 
-test("tagged releases require published app-wire provenance to match the vendored contract", () => {
-  const errors = collectReleaseConsistencyErrors(files, "v0.1.22");
-  for (const field of ["version", "commit", "source tree"]) {
+test("tagged releases reject published provenance drift", () => {
+  const appWireCases = [
+    ["version", (record) => {
+      record.version = "0.5.8";
+    }],
+    ["commit", (record) => {
+      record.sourceCommit = "0".repeat(40);
+    }],
+    ["source tree", (record) => {
+      record.sourceTreeHash = "0".repeat(40);
+    }],
+  ];
+  for (const [field, mutate] of appWireCases) {
+    const drifted = changedRuntime("publishedAppWire", mutate);
     assert.ok(
-      errors.some((error) =>
+      collectReleaseConsistencyErrors(drifted, "v0.1.23").some((error) =>
         error.includes(
           `published app-wire ${field} must match current app-wire for tagged releases`,
         ),
       ),
     );
   }
+
+  const runtimeCases = [
+    ["version", (runtime) => {
+      runtime.version = "17.0.0";
+    }],
+    ["commit", (runtime) => {
+      runtime.sourceCommit = "0".repeat(40);
+    }],
+    ["tag", (runtime) => {
+      runtime.sourceTag = "t4code-17.0.4-appserver-3";
+    }],
+    ["upstream commit", (runtime) => {
+      runtime.upstreamCommit = "0".repeat(40);
+    }],
+    ["integration patches", (runtime) => {
+      runtime.integrationPatches = runtime.integrationPatches.slice(0, -1);
+    }],
+  ];
+  for (const [field, mutate] of runtimeCases) {
+    const drifted = changedRuntime("publishedRuntime", mutate);
+    assert.ok(
+      collectReleaseConsistencyErrors(drifted, "v0.1.23").some((error) =>
+        error.includes(
+          `published runtime ${field} must match current verified runtime for tagged releases`,
+        ),
+      ),
+    );
+  }
+
+  const extended = changedRuntime("publishedRuntime", (runtime) => {
+    runtime.artifactSha256 = "0".repeat(64);
+  });
+  assert.ok(
+    collectReleaseConsistencyErrors(extended, "v0.1.23").some((error) =>
+      error.includes(
+        "published runtime must exactly match current verified runtime for tagged releases",
+      ),
+    ),
+  );
 });
 
 test("rejects workspace, site, README, and runtime version drift", () => {
@@ -210,12 +274,9 @@ test("historical repair runs CI authority from trusted control while querying ol
 });
 
 test("rejects published app-wire version drift until release surfaces agree", () => {
-  const drifted = changed("compat/omp-app-matrix.json", (text) =>
-    text.replace(
-      '"publishedAppWire": {\n    "package": "@oh-my-pi/app-wire",\n    "version": "0.5.8"',
-      '"publishedAppWire": {\n    "package": "@oh-my-pi/app-wire",\n    "version": "0.5.1"',
-    ),
-  );
+  const drifted = changedRuntime("publishedAppWire", (record) => {
+    record.version = "0.5.1";
+  });
   assert.ok(
     collectReleaseConsistencyErrors(drifted).some(
       (error) => error.startsWith("README.md") || error.startsWith("apps/site/src/release.ts"),
@@ -224,12 +285,9 @@ test("rejects published app-wire version drift until release surfaces agree", ()
 });
 
 test("rejects published app-wire provenance drift until release surfaces agree", () => {
-  const drifted = changed("compat/omp-app-matrix.json", (text) =>
-    text.replace(
-      '"sourceCommit": "33615123ff986fc9cadf645463b4fed17e8b9f35"',
-      '"sourceCommit": "0000000000000000000000000000000000000000"',
-    ),
-  );
+  const drifted = changedRuntime("publishedAppWire", (record) => {
+    record.sourceCommit = "0".repeat(40);
+  });
   assert.ok(
     collectReleaseConsistencyErrors(drifted).some(
       (error) => error.startsWith("README.md") || error.startsWith("docs/CURRENT_RELEASE_NOTES.md"),
@@ -264,26 +322,41 @@ test("rejects a stale app-wire third-party notice", () => {
 
 test("rejects drift in verified OMP runtime provenance", () => {
   const cases = [
-    (text) =>
-      text.replace(
-        "469bf579dca26c86ffe760a4a4e102d026279ed8",
-        "0000000000000000000000000000000000000000",
-      ),
-    (text) => text.replace('"sourceTag": "t4code-17.0.4-appserver-2"', '"sourceTag": "wrong-tag"'),
-    (text) =>
-      text.replace(
-        '"upstreamCommit": "3fdd85ab6c6bab6c0cdee80abbbec0981740a5c0"',
-        '"upstreamCommit": "0000000000000000000000000000000000000000"',
-      ),
-    (text) => text.replace('"complete-session-event-projection"', '"Wrong integration patch"'),
-    (text) =>
-      text.replace(
-        '"upstreamTagContainsIntegrationPatches": false',
-        '"upstreamTagContainsIntegrationPatches": true',
-      ),
+    (runtime) => {
+      runtime.sourceCommit = "0000000000000000000000000000000000000000";
+    },
+    (runtime) => {
+      runtime.sourceTag = "wrong-tag";
+    },
+    (runtime) => {
+      runtime.upstreamCommit = "invalid";
+    },
+    (runtime) => {
+      runtime.integrationPatches = runtime.integrationPatches.map((patch) =>
+        patch === "versioned-agent-view-lifecycle-corpus" ? "Wrong integration patch" : patch,
+      );
+    },
   ];
-  for (const replace of cases) {
-    const drifted = changed("compat/omp-app-matrix.json", replace);
+  for (const [index, mutate] of cases.entries()) {
+    const drifted = changedRuntime("verifiedRuntime", mutate);
+    assert.ok(collectReleaseConsistencyErrors(drifted).length > 0, `runtime drift case ${index}`);
+  }
+});
+
+test("rejects drift in published OMP runtime provenance", () => {
+  const cases = [
+    (runtime) => {
+      runtime.sourceCommit = "0000000000000000000000000000000000000000";
+    },
+    (runtime) => {
+      runtime.sourceTag = "wrong-tag";
+    },
+    (runtime) => {
+      runtime.upstreamCommit = "0000000000000000000000000000000000000000";
+    },
+  ];
+  for (const mutate of cases) {
+    const drifted = changedRuntime("publishedRuntime", mutate);
     assert.ok(collectReleaseConsistencyErrors(drifted).length > 0);
   }
 });

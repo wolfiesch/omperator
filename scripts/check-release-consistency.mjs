@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
 
 export const RELEASE_CONTRACT_PATHS = [
@@ -85,6 +86,79 @@ function parseJson(files, path, errors) {
 
 function requireText(text, expected, path, errors) {
   if (!text.includes(expected)) errors.push(`${path} is missing ${JSON.stringify(expected)}`);
+}
+
+function validateRuntimeMetadata(value, label, matrixPath, errors) {
+  const version = value?.version;
+  const sourceCommit = value?.sourceCommit;
+  const sourceTag = value?.sourceTag;
+  const upstreamTag = value?.upstreamTag;
+  const upstreamCommit = value?.upstreamCommit;
+  const sourceCommitUrl = `${OMP_RUNTIME_REPOSITORY}/commit/${sourceCommit ?? ""}`;
+  const sourceTagUrl = `${OMP_RUNTIME_REPOSITORY}/tree/${sourceTag ?? ""}`;
+  const upstreamTagUrl = `${OMP_UPSTREAM_REPOSITORY}/tree/${upstreamTag ?? ""}`;
+  const upstreamCommitUrl = `${OMP_UPSTREAM_REPOSITORY}/commit/${upstreamCommit ?? ""}`;
+  const prefix = `${matrixPath} ${label}`;
+
+  if (value?.package !== "omp") {
+    errors.push(`${prefix} package must be omp`);
+  }
+  if (typeof version !== "string" || !VERSION_PATTERN.test(version)) {
+    errors.push(`${prefix} version must be a stable x.y.z version`);
+  }
+  if (value?.sourceRepository !== OMP_RUNTIME_REPOSITORY) {
+    errors.push(`${prefix} repository must be ${OMP_RUNTIME_REPOSITORY}`);
+  }
+  if (typeof sourceCommit !== "string" || !SHA_PATTERN.test(sourceCommit)) {
+    errors.push(`${prefix} commit must be a lowercase 40-character Git SHA`);
+  }
+  if (value?.sourceUrl !== sourceCommitUrl) {
+    errors.push(`${prefix} URL must be ${sourceCommitUrl}`);
+  }
+  if (
+    typeof version === "string" &&
+    (typeof sourceTag !== "string" ||
+      !new RegExp(`^t4code-${version.replaceAll(".", "\\.")}-appserver-[1-9]\\d*$`, "u").test(
+        sourceTag,
+      ))
+  ) {
+    errors.push(`${prefix} tag must identify the OMP version and appserver revision`);
+  }
+  if (value?.upstreamRepository !== OMP_UPSTREAM_REPOSITORY) {
+    errors.push(`${prefix} upstream repository must be ${OMP_UPSTREAM_REPOSITORY}`);
+  }
+  if (typeof version === "string" && upstreamTag !== `v${version}`) {
+    errors.push(`${prefix} upstream tag must be v${version}`);
+  }
+  if (typeof upstreamCommit !== "string" || !SHA_PATTERN.test(upstreamCommit)) {
+    errors.push(`${prefix} upstream commit must be a lowercase 40-character Git SHA`);
+  }
+  const integrationPatches = value?.integrationPatches;
+  if (
+    !Array.isArray(integrationPatches) ||
+    integrationPatches.length === 0 ||
+    integrationPatches.some(
+      (patch) => typeof patch !== "string" || !PATCH_NAME_PATTERN.test(patch),
+    ) ||
+    new Set(integrationPatches).size !== integrationPatches.length
+  ) {
+    errors.push(`${prefix} integration patches must be unique kebab-case names`);
+  }
+  if (value?.upstreamTagContainsIntegrationPatches !== false) {
+    errors.push(`${prefix} must record that stock upstream lacks the integration patches`);
+  }
+
+  return Object.freeze({
+    version,
+    sourceCommit,
+    sourceTag,
+    upstreamTag,
+    upstreamCommit,
+    sourceCommitUrl,
+    sourceTagUrl,
+    upstreamTagUrl,
+    upstreamCommitUrl,
+  });
 }
 
 export function collectReleaseConsistencyErrors(files, releaseTag) {
@@ -273,69 +347,71 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     errors,
   );
 
-  const verifiedRuntime = matrix?.verifiedRuntime;
-  const ompRuntimeVersion = verifiedRuntime?.version;
-  const ompRuntimeCommit = verifiedRuntime?.sourceCommit;
-  const ompRuntimeSourceTag = verifiedRuntime?.sourceTag;
-  const ompUpstreamTag = verifiedRuntime?.upstreamTag;
-  const ompUpstreamCommit = verifiedRuntime?.upstreamCommit;
-  const ompRuntimeCommitUrl = `${OMP_RUNTIME_REPOSITORY}/commit/${ompRuntimeCommit ?? ""}`;
-  const ompRuntimeSourceUrl = `${OMP_RUNTIME_REPOSITORY}/tree/${ompRuntimeSourceTag ?? ""}`;
-  const ompUpstreamTagUrl = `${OMP_UPSTREAM_REPOSITORY}/tree/${ompUpstreamTag ?? ""}`;
-  const ompUpstreamCommitUrl = `${OMP_UPSTREAM_REPOSITORY}/commit/${ompUpstreamCommit ?? ""}`;
-
-  if (verifiedRuntime?.package !== "omp") {
-    errors.push(`${matrixPath} verified runtime package must be omp`);
-  }
-  if (typeof ompRuntimeVersion !== "string" || !VERSION_PATTERN.test(ompRuntimeVersion)) {
-    errors.push(`${matrixPath} verified runtime version must be a stable x.y.z version`);
-  }
-  if (verifiedRuntime?.sourceRepository !== OMP_RUNTIME_REPOSITORY) {
-    errors.push(`${matrixPath} verified runtime repository must be ${OMP_RUNTIME_REPOSITORY}`);
-  }
-  if (typeof ompRuntimeCommit !== "string" || !SHA_PATTERN.test(ompRuntimeCommit)) {
-    errors.push(`${matrixPath} verified runtime commit must be a lowercase 40-character Git SHA`);
-  }
-  if (verifiedRuntime?.sourceUrl !== ompRuntimeCommitUrl) {
-    errors.push(`${matrixPath} verified runtime URL must be ${ompRuntimeCommitUrl}`);
-  }
+  validateRuntimeMetadata(matrix?.verifiedRuntime, "verified runtime", matrixPath, errors);
+  const publishedRuntime = validateRuntimeMetadata(
+    matrix?.publishedRuntime,
+    "published runtime",
+    matrixPath,
+    errors,
+  );
   if (
-    typeof ompRuntimeVersion === "string" &&
-    (typeof ompRuntimeSourceTag !== "string" ||
-      !new RegExp(
-        `^t4code-${ompRuntimeVersion.replaceAll(".", "\\.")}-appserver-[1-9]\\d*$`,
-        "u",
-      ).test(ompRuntimeSourceTag))
+    releaseTag !== undefined &&
+    !isDeepStrictEqual(matrix?.publishedRuntime, matrix?.verifiedRuntime)
   ) {
     errors.push(
-      `${matrixPath} verified runtime tag must identify the OMP version and appserver revision`,
+      `${matrixPath} published runtime must exactly match current verified runtime for tagged releases`,
     );
   }
-  if (verifiedRuntime?.upstreamRepository !== OMP_UPSTREAM_REPOSITORY) {
-    errors.push(`${matrixPath} upstream repository must be ${OMP_UPSTREAM_REPOSITORY}`);
+  if (releaseTag !== undefined) {
+    for (const [field, currentValue, publishedValue] of [
+      ["package", matrix?.verifiedRuntime?.package, matrix?.publishedRuntime?.package],
+      ["version", matrix?.verifiedRuntime?.version, matrix?.publishedRuntime?.version],
+      [
+        "repository",
+        matrix?.verifiedRuntime?.sourceRepository,
+        matrix?.publishedRuntime?.sourceRepository,
+      ],
+      ["commit", matrix?.verifiedRuntime?.sourceCommit, matrix?.publishedRuntime?.sourceCommit],
+      ["URL", matrix?.verifiedRuntime?.sourceUrl, matrix?.publishedRuntime?.sourceUrl],
+      ["tag", matrix?.verifiedRuntime?.sourceTag, matrix?.publishedRuntime?.sourceTag],
+      [
+        "upstream repository",
+        matrix?.verifiedRuntime?.upstreamRepository,
+        matrix?.publishedRuntime?.upstreamRepository,
+      ],
+      ["upstream tag", matrix?.verifiedRuntime?.upstreamTag, matrix?.publishedRuntime?.upstreamTag],
+      [
+        "upstream commit",
+        matrix?.verifiedRuntime?.upstreamCommit,
+        matrix?.publishedRuntime?.upstreamCommit,
+      ],
+      [
+        "integration patches",
+        JSON.stringify(matrix?.verifiedRuntime?.integrationPatches),
+        JSON.stringify(matrix?.publishedRuntime?.integrationPatches),
+      ],
+      [
+        "upstream patch status",
+        matrix?.verifiedRuntime?.upstreamTagContainsIntegrationPatches,
+        matrix?.publishedRuntime?.upstreamTagContainsIntegrationPatches,
+      ],
+    ]) {
+      if (publishedValue !== currentValue) {
+        errors.push(
+          `${matrixPath} published runtime ${field} must match current verified runtime for tagged releases`,
+        );
+      }
+    }
   }
-  if (typeof ompRuntimeVersion === "string" && ompUpstreamTag !== `v${ompRuntimeVersion}`) {
-    errors.push(`${matrixPath} upstream tag must be v${ompRuntimeVersion}`);
-  }
-  if (typeof ompUpstreamCommit !== "string" || !SHA_PATTERN.test(ompUpstreamCommit)) {
-    errors.push(`${matrixPath} upstream commit must be a lowercase 40-character Git SHA`);
-  }
-  const integrationPatches = verifiedRuntime?.integrationPatches;
-  if (
-    !Array.isArray(integrationPatches) ||
-    integrationPatches.length === 0 ||
-    integrationPatches.some(
-      (patch) => typeof patch !== "string" || !PATCH_NAME_PATTERN.test(patch),
-    ) ||
-    new Set(integrationPatches).size !== integrationPatches.length
-  ) {
-    errors.push(
-      `${matrixPath} verified runtime integration patches must be unique kebab-case names`,
-    );
-  }
-  if (verifiedRuntime?.upstreamTagContainsIntegrationPatches !== false) {
-    errors.push(`${matrixPath} must record that stock upstream lacks the integration patches`);
-  }
+  const ompRuntimeVersion = publishedRuntime.version;
+  const ompRuntimeCommit = publishedRuntime.sourceCommit;
+  const ompRuntimeSourceTag = publishedRuntime.sourceTag;
+  const ompUpstreamTag = publishedRuntime.upstreamTag;
+  const ompUpstreamCommit = publishedRuntime.upstreamCommit;
+  const ompRuntimeCommitUrl = publishedRuntime.sourceCommitUrl;
+  const ompRuntimeSourceUrl = publishedRuntime.sourceTagUrl;
+  const ompUpstreamTagUrl = publishedRuntime.upstreamTagUrl;
+  const ompUpstreamCommitUrl = publishedRuntime.upstreamCommitUrl;
 
   const site = files.get("apps/site/src/release.ts") ?? "";
   requireText(
