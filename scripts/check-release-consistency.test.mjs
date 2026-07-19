@@ -82,7 +82,7 @@ test("rejects duplicate keys in JSON release contracts", () => {
 
 test("keeps verified and published runtime records aligned after promotion", () => {
   const matrix = JSON.parse(files.get("compat/omp-app-matrix.json"));
-  assert.equal(matrix.verifiedRuntime.sourceTag, "t4code-17.0.5-appserver-3");
+  assert.equal(matrix.verifiedRuntime.sourceTag, "t4code-17.0.5-appserver-5");
   assert.deepEqual(matrix.publishedRuntime, matrix.verifiedRuntime);
 });
 

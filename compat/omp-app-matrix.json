@@ -21,14 +21,14 @@
     "package": "omp",
     "version": "17.0.5",
     "sourceRepository": "https://github.com/lyc-aon/oh-my-pi",
-    "sourceCommit": "3393ae0f7fc5b2ea9919d8bdb3a2d5719b1cbc2f",
-    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/3393ae0f7fc5b2ea9919d8bdb3a2d5719b1cbc2f",
-    "sourceTag": "t4code-17.0.5-appserver-3",
+    "sourceCommit": "772e5e41eb1537177349247add96a851721c5bfa",
+    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/772e5e41eb1537177349247add96a851721c5bfa",
+    "sourceTag": "t4code-17.0.5-appserver-5",
     "artifacts": {
       "darwin-arm64": {
         "name": "omp-darwin-arm64",
-        "size": 120760912,
-        "sha256": "e289e04cb6dde192b9a521e3586fc74e549dedd8044b96f56b7241a90d19c034"
+        "size": 120777424,
+        "sha256": "12dce7a582466ab7068fd5ba9bab9c4697e603dada1519f5a0097ad3eb09466b"
       }
     },
     "upstreamRepository": "https://github.com/can1357/oh-my-pi",
@@ -91,7 +91,10 @@
       "codex-provider-transport-diagnostics",
       "cross-session-attention-contract",
       "cross-session-transcript-search",
-      "fast-appserver-startup"
+      "fast-appserver-startup",
+      "browser-preview-contract",
+      "hardened-preview-frame-decoding",
+      "complete-preview-command-surface"
     ],
     "upstreamTagContainsIntegrationPatches": false
   },
@@ -99,14 +102,14 @@
     "package": "omp",
     "version": "17.0.5",
     "sourceRepository": "https://github.com/lyc-aon/oh-my-pi",
-    "sourceCommit": "3393ae0f7fc5b2ea9919d8bdb3a2d5719b1cbc2f",
-    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/3393ae0f7fc5b2ea9919d8bdb3a2d5719b1cbc2f",
-    "sourceTag": "t4code-17.0.5-appserver-3",
+    "sourceCommit": "772e5e41eb1537177349247add96a851721c5bfa",
+    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/772e5e41eb1537177349247add96a851721c5bfa",
+    "sourceTag": "t4code-17.0.5-appserver-5",
     "artifacts": {
       "darwin-arm64": {
         "name": "omp-darwin-arm64",
-        "size": 120760912,
-        "sha256": "e289e04cb6dde192b9a521e3586fc74e549dedd8044b96f56b7241a90d19c034"
+        "size": 120777424,
+        "sha256": "12dce7a582466ab7068fd5ba9bab9c4697e603dada1519f5a0097ad3eb09466b"
       }
     },
     "upstreamRepository": "https://github.com/can1357/oh-my-pi",
@@ -169,7 +172,10 @@
       "codex-provider-transport-diagnostics",
       "cross-session-attention-contract",
       "cross-session-transcript-search",
-      "fast-appserver-startup"
+      "fast-appserver-startup",
+      "browser-preview-contract",
+      "hardened-preview-frame-decoding",
+      "complete-preview-command-surface"
     ],
     "upstreamTagContainsIntegrationPatches": false
   },

@@ -16,7 +16,7 @@ describe("bundled OMP runtime", () => {
     const sha256 = createHash("sha256").update(bytes).digest("hex");
     await writeFile(join(runtimeRoot, "omp"), bytes);
     await writeFile(join(runtimeRoot, "manifest.json"), JSON.stringify({
-      version: 1, tag: "t4code-17.0.5-appserver-3", platform: "darwin", arch: "arm64",
+      version: 1, tag: "t4code-17.0.5-appserver-5", platform: "darwin", arch: "arm64",
       executable: "omp", size: bytes.length, sha256,
     }));
 
@@ -35,7 +35,7 @@ describe("bundled OMP runtime", () => {
     await mkdir(runtimeRoot, { recursive: true });
     await writeFile(join(runtimeRoot, "omp"), "wrong");
     await writeFile(join(runtimeRoot, "manifest.json"), JSON.stringify({
-      version: 1, tag: "t4code-17.0.5-appserver-3", platform: "darwin", arch: "arm64",
+      version: 1, tag: "t4code-17.0.5-appserver-5", platform: "darwin", arch: "arm64",
       executable: "omp", size: 5, sha256: "0".repeat(64),
     }));
 
