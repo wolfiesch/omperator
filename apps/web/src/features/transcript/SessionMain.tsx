@@ -6,14 +6,23 @@
 // container stays inert — this surface owns its own virtualized scroller.
 import { useNavigate } from "@tanstack/react-router";
 import { Badge, cn, Tooltip, TooltipPopup, TooltipTrigger, useReducedMotion } from "@t4-code/ui";
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type RefObject,
+} from "react";
 
 import type { WorkspaceProject, WorkspaceSession } from "../../lib/workspace-data.ts";
 import { workspaceStore } from "../../state/store-instance.ts";
 import { useDesktopRuntimeSnapshot } from "../../platform/desktop-runtime.ts";
 import { resolveLiveSession } from "../../platform/live-workspace.ts";
 import { Composer } from "../composer/Composer.tsx";
-import { getInspectorStore } from "../panes/inspector-store.ts";
+import { flattenFileIndex } from "../composer/file-refs.ts";
+import { getInspectorStore, type FileChildren } from "../panes/inspector-store.ts";
 import {
   ApprovalPanel,
   AskPanel,
@@ -61,6 +70,8 @@ export interface SessionMainProps {
 export function sessionPreviewDestination(sessionId: string) {
   return { params: { sessionId }, to: "/sessions/$sessionId/preview" as const };
 }
+
+const NO_FILE_CHILDREN: Readonly<Record<string, FileChildren>> = {};
 
 export function FreshnessBadge({ session }: { readonly session: WorkspaceSession }) {
   if (session.freshness === "cached") {
@@ -356,6 +367,24 @@ export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: Sessio
   const { snapshot, runtime } = useSessionRuntime(session.id, session.freshness);
   const projection = snapshot.projection;
   const desktopSnapshot = useDesktopRuntimeSnapshot();
+  // The composer "@" picker rides the session's lazy file index; no
+  // inspector store (fixture hosts without a factory) means no entries.
+  const inspectorApi = getInspectorStore(session.id);
+  const fileChildren = useSyncExternalStore(
+    useCallback(
+      (onStoreChange: () => void) => inspectorApi?.subscribe(onStoreChange) ?? (() => {}),
+      [inspectorApi],
+    ),
+    useCallback(
+      () => inspectorApi?.getState().files.childrenByPath ?? NO_FILE_CHILDREN,
+      [inspectorApi],
+    ),
+  );
+  const fileEntries = useMemo(() => flattenFileIndex(fileChildren), [fileChildren]);
+  const ensureFileDir = useCallback(
+    (dir: string) => getInspectorStore(session.id)?.getState().requestDir(dir),
+    [session.id],
+  );
   const liveAddress = useMemo(
     () => (desktopSnapshot === null ? null : resolveLiveSession(desktopSnapshot, session.id)),
     [desktopSnapshot, session.id],
@@ -584,7 +613,9 @@ export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: Sessio
               contextUsedTokens={snapshot.contextUsedTokens}
               contextWindowTokens={snapshot.contextWindowTokens}
               controls={snapshot.controls}
+              fileEntries={fileEntries}
               link={snapshot.link}
+              onEnsureFileDir={ensureFileDir}
               onCancelRevise={() => setRevisingPlanId(null)}
               onIntent={onIntent}
               queuedFollowUps={snapshot.queuedFollowUps}

@@ -60,6 +60,14 @@ describe("lazy file tree", () => {
     expect(api.getState().files.childrenByPath.src).toBe("error");
   });
 
+  it("does not send parent-directory requests to the controller", () => {
+    const { api, dirCalls } = storeWithDirs();
+    api.getState().requestDir("../secret");
+    api.getState().setFileExpanded("src/../../secret", true);
+    expect(dirCalls).toEqual([]);
+    expect(api.getState().files.childrenByPath["../secret"]).toBeUndefined();
+  });
+
   it("preview resolution is ignored once selection moved on", () => {
     const { api, previewCalls } = storeWithDirs();
     api.getState().selectFile("a.ts");

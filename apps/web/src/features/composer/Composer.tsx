@@ -8,7 +8,7 @@
 // outcome — the draft clears only on acceptance; the rest exits via
 // `onIntent`.
 import { Button, cn, IconButton, Tooltip, TooltipPopup, TooltipTrigger } from "@t4-code/ui";
-import { ArrowUp, ListTodo, Paperclip, Square } from "lucide-react";
+import { ArrowUp, FileText, Folder, ListTodo, Paperclip, Square, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { PromptOutcome } from "../session-runtime/controller.ts";
@@ -35,6 +35,13 @@ import {
 import { composerStore, useComposer } from "./composer-store.ts";
 import { ContextMeter } from "./ContextMeter.tsx";
 import { AttachmentChips, RunOptionsMenu } from "./ComposerControls.tsx";
+import {
+  activeFileRefQuery,
+  buildFileRefInsert,
+  fileRefTokensInDraft,
+  rankFileRefs,
+  type FileRefEntry,
+} from "./file-refs.ts";
 import { RuntimeOptions } from "./ComposerRuntimeOptions.tsx";
 import { MobileComposerActions } from "./MobileComposerActions.tsx";
 import { resolveComposerKey, resolveMenuKey } from "./keys.ts";
@@ -54,6 +61,7 @@ import {
 
 const MAX_TEXTAREA_HEIGHT = 220;
 const EMPTY_ATTACHMENTS: readonly StagedAttachment[] = [];
+const EMPTY_FILE_ENTRIES: readonly FileRefEntry[] = [];
 const EMPTY_REJECTIONS: readonly string[] = [];
 const IMAGE_REVISION_REASON = "Images cannot be added to a plan revision. Remove them or finish the revision first.";
 const IMAGE_ACTIVE_TURN_REASON =
@@ -83,6 +91,10 @@ export interface ComposerProps {
    * no catalog of its own and the built-in browser catalog applies.
    */
   readonly slashCommands: readonly SlashCommand[] | null;
+  /** Flattened file index for the "@" reference picker; empty when unknown. */
+  readonly fileEntries?: readonly FileRefEntry[];
+  /** Lazy-load a directory listing for the picker (root included). */
+  readonly onEnsureFileDir?: (dir: string) => void;
   readonly contextUsedTokens: number;
   readonly contextWindowTokens: number;
   readonly queuedFollowUps: readonly string[];
@@ -105,6 +117,8 @@ export function Composer({
   canCancel,
   cancelDisabledReason,
   slashCommands,
+  fileEntries = EMPTY_FILE_ENTRIES,
+  onEnsureFileDir,
   contextUsedTokens,
   contextWindowTokens,
   queuedFollowUps,
@@ -153,12 +167,39 @@ export function Composer({
     () => (slashQuery === null ? [] : searchSlashCommands(catalog, slashQuery)),
     [catalog, slashQuery],
   );
-  const menuOpen = slashQuery !== null && slashItems.length > 0 && !menuDismissed;
+  const slashMenuOpen = slashQuery !== null && slashItems.length > 0 && !menuDismissed;
+
+  // File-reference menu state derives from the same draft + caret; slash
+  // wins when both could match (a leading '/' token never contains '@').
+  const fileRefQuery = disabled || slashQuery !== null ? null : activeFileRefQuery(draft, caret);
+  const fileRefActive = fileRefQuery !== null;
+  const fileItems =
+    fileRefQuery === null ? EMPTY_FILE_ENTRIES : rankFileRefs(fileEntries, fileRefQuery.query);
+  const fileMenuOpen = fileRefActive && fileItems.length > 0 && !menuDismissed;
+  const menuOpen = slashMenuOpen || fileMenuOpen;
+
+  // Chips are a view over the draft: a token only renders while its path
+  // is in the index, and removal edits the text, never hidden state.
+  const fileEntriesByPath = useMemo(
+    () => new Map(fileEntries.map((entry) => [entry.path, entry])),
+    [fileEntries],
+  );
+  const fileRefTokens = fileRefTokensInDraft(draft, fileEntriesByPath);
 
   useEffect(() => setMenuIndex(0), [slashQuery]);
+  useEffect(() => setMenuIndex(0), [fileRefQuery?.query]);
   useEffect(() => {
-    if (slashQuery === null) setMenuDismissed(false);
-  }, [slashQuery]);
+    if (slashQuery === null && !fileRefActive) setMenuDismissed(false);
+  }, [slashQuery, fileRefActive]);
+  // The root listing lazy-loads the first time the picker opens, and the
+  // current drill directory loads as the query crosses its "/".
+  const fileRefQueryText = fileRefQuery?.query ?? null;
+  useEffect(() => {
+    if (fileRefQueryText === null) return;
+    onEnsureFileDir?.("");
+    const slash = fileRefQueryText.lastIndexOf("/");
+    if (slash > 0) onEnsureFileDir?.(fileRefQueryText.slice(0, slash));
+  }, [fileRefQueryText, onEnsureFileDir]);
 
   const resizeTextarea = useCallback(() => {
     const element = textareaRef.current;
@@ -202,6 +243,43 @@ export function Composer({
       });
     },
     [slashItems, setDraft],
+  );
+
+  const acceptFileRef = useCallback(
+    (index: number) => {
+      const item = fileItems[index];
+      if (item === undefined || fileRefQuery === null) return;
+      const { nextText, nextCaret } = buildFileRefInsert(draft, caret, fileRefQuery.start, item);
+      setDraft(nextText);
+      setMenuDismissed(false);
+      // A directory accept keeps the menu open on its children.
+      if (item.isDir) onEnsureFileDir?.(item.path);
+      requestAnimationFrame(() => {
+        const element = textareaRef.current;
+        if (element !== null) {
+          element.focus();
+          element.setSelectionRange(nextCaret, nextCaret);
+          setCaret(nextCaret);
+        }
+      });
+    },
+    [fileItems, fileRefQuery, draft, caret, setDraft, onEnsureFileDir],
+  );
+
+  const removeFileRef = useCallback(
+    (start: number, end: number) => {
+      const nextText = draft.slice(0, start) + draft.slice(end);
+      setDraft(nextText);
+      requestAnimationFrame(() => {
+        const element = textareaRef.current;
+        if (element !== null) {
+          element.focus();
+          element.setSelectionRange(start, start);
+          setCaret(start);
+        }
+      });
+    },
+    [draft, setDraft],
   );
 
   // The latch lives in the session-keyed composer store, so switching away
@@ -349,9 +427,10 @@ export function Composer({
     };
     if (menuOpen) {
       const menuAction = resolveMenuKey(keyInput);
+      const menuItemCount = fileMenuOpen ? fileItems.length : slashItems.length;
       if (menuAction === "next") {
         event.preventDefault();
-        setMenuIndex((index) => Math.min(index + 1, slashItems.length - 1));
+        setMenuIndex((index) => Math.min(index + 1, menuItemCount - 1));
         return;
       }
       if (menuAction === "previous") {
@@ -360,11 +439,19 @@ export function Composer({
         return;
       }
       if (menuAction === "accept") {
-        const item = slashItems[menuIndex];
-        if (item !== undefined && item.disabledReason === null) {
-          event.preventDefault();
-          acceptSlash(menuIndex);
-          return;
+        if (fileMenuOpen) {
+          if (fileItems[menuIndex] !== undefined) {
+            event.preventDefault();
+            acceptFileRef(menuIndex);
+            return;
+          }
+        } else {
+          const item = slashItems[menuIndex];
+          if (item !== undefined && item.disabledReason === null) {
+            event.preventDefault();
+            acceptSlash(menuIndex);
+            return;
+          }
         }
       }
       if (menuAction === "dismiss") {
@@ -408,7 +495,7 @@ export function Composer({
         </ul>
       )}
       <div className="relative">
-        {menuOpen && (
+        {slashMenuOpen && (
           <div className="absolute inset-x-0 bottom-full mb-2 overflow-hidden rounded-lg border border-border bg-popover shadow-(--overlay-shadow)">
             <ul aria-label="Commands" className="max-h-64 overflow-y-auto p-1" role="listbox">
               {slashItems.map((item, index) => {
@@ -447,6 +534,35 @@ export function Composer({
             </ul>
           </div>
         )}
+        {fileMenuOpen && (
+          <div className="absolute inset-x-0 bottom-full mb-2 overflow-hidden rounded-lg border border-border bg-popover shadow-(--overlay-shadow)">
+            <ul aria-label="File references" className="max-h-64 overflow-y-auto p-1" role="listbox">
+              {fileItems.map((item, index) => (
+                <li
+                  aria-selected={index === menuIndex}
+                  className={cn(
+                    "flex min-h-11 cursor-pointer items-baseline gap-2 rounded-md px-2 py-1.5 sm:min-h-0",
+                    index === menuIndex && "bg-secondary",
+                  )}
+                  key={item.path}
+                  onClick={() => acceptFileRef(index)}
+                  onMouseMove={() => setMenuIndex(index)}
+                  role="option"
+                >
+                  {item.isDir ? (
+                    <Folder aria-hidden="true" className="size-3.5 shrink-0 self-center text-muted-foreground" />
+                  ) : (
+                    <FileText aria-hidden="true" className="size-3.5 shrink-0 self-center text-muted-foreground" />
+                  )}
+                  <span className="font-mono text-sm">{item.name}</span>
+                  <span className="min-w-0 flex-1 truncate text-right font-mono text-muted-foreground text-xs">
+                    {item.path}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         <div
           className="min-w-0 max-w-full rounded-xl border border-input bg-(--composer-background) shadow-(--composer-shadow) backdrop-blur-(--composer-blur)"
           onDragOver={(event) => {
@@ -472,6 +588,39 @@ export function Composer({
                 Cancel
               </button>
             </div>
+          )}
+          {fileRefTokens.length > 0 && (
+            <ul
+              aria-label="Referenced files"
+              className="flex touch-pan-x flex-nowrap gap-1.5 overflow-x-auto overflow-y-hidden overscroll-x-contain px-3 py-1.5 sm:flex-wrap sm:overflow-visible sm:pt-2.5 sm:pb-0"
+            >
+              {fileRefTokens.map((token) => {
+                const entry = fileEntriesByPath.get(token.path);
+                return (
+                  <li
+                    className="flex h-11 shrink-0 items-center gap-1.5 rounded-md border border-input bg-background pr-0.5 pl-1.5 text-xs sm:h-6"
+                    key={`${token.start}:${token.path}`}
+                  >
+                    {entry?.isDir === true ? (
+                      <Folder aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+                    ) : (
+                      <FileText aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+                    )}
+                    <span className="max-w-32 truncate font-mono sm:max-w-40" title={token.path}>
+                      {token.path.split("/").pop()}
+                    </span>
+                    <IconButton
+                      aria-label={`Remove reference ${token.path}`}
+                      className="size-11 sm:size-5"
+                      onClick={() => removeFileRef(token.start, token.end)}
+                      size="icon-xs"
+                    >
+                      <X className="size-3 sm:size-3" />
+                    </IconButton>
+                  </li>
+                );
+              })}
+            </ul>
           )}
           <AttachmentChips
             attachments={attachments}

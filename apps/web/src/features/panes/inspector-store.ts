@@ -15,6 +15,7 @@ import {
   upsertAgent,
 } from "./agent-tree.ts";
 import { appendActivity } from "./activity-log.ts";
+import { isSafeRelativePath } from "./live-projection.ts";
 import {
   ALL_ACTIONS_AVAILABLE,
   type ActivityEntry,
@@ -112,6 +113,8 @@ export interface InspectorActions {
   discardReviewFile(path: string): void;
   setFilesQuery(query: string): void;
   setFileExpanded(path: string, expanded: boolean): void;
+  /** Lazy-load a directory listing without touching tree expansion. */
+  requestDir(path: string): void;
   selectFile(path: string | null): void;
   startFileEdit(path: string): void;
   updateFileDraft(path: string, text: string): void;
@@ -161,6 +164,10 @@ const INITIAL_FILES: FilesViewState = {
   query: "",
   offline: false,
 };
+
+function isLoadableDirectoryPath(path: string): boolean {
+  return path === "" || isSafeRelativePath(path);
+}
 
 export interface CreateInspectorStoreOptions {
   readonly sampleMode: boolean;
@@ -272,6 +279,7 @@ export function createInspectorStore(options: CreateInspectorStoreOptions): Insp
     discardReviewFile: (path) => controller?.performReview("discard", path),
     setFilesQuery: (query) => set((state) => ({ files: { ...state.files, query } })),
     setFileExpanded: (path, expanded) => {
+      if (!isLoadableDirectoryPath(path)) return;
       set((state) => ({
         files: {
           ...state.files,
@@ -288,6 +296,17 @@ export function createInspectorStore(options: CreateInspectorStoreOptions): Insp
         }));
         controller?.loadDir(path);
       }
+    },
+    requestDir: (path) => {
+      if (!isLoadableDirectoryPath(path)) return;
+      if (get().files.childrenByPath[path] !== undefined) return;
+      set((state) => ({
+        files: {
+          ...state.files,
+          childrenByPath: { ...state.files.childrenByPath, [path]: "loading" },
+        },
+      }));
+      controller?.loadDir(path);
     },
     selectFile: (path) => {
       set((state) => ({
