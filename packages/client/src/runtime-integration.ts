@@ -17,7 +17,7 @@ export const DEFAULT_CLUSTER_OPERATOR_ENABLED = false as const;
  */
 export function clusterOperatorRequestedFeatures(
   features: readonly string[],
-  enabled = DEFAULT_CLUSTER_OPERATOR_ENABLED,
+  enabled: boolean = DEFAULT_CLUSTER_OPERATOR_ENABLED,
 ): readonly string[] {
   const contains = features.includes(CLUSTER_OPERATOR_FEATURE);
   if (enabled || !contains) return features;
@@ -26,7 +26,7 @@ export function clusterOperatorRequestedFeatures(
 
 export function clusterOperatorRequestedCapabilities(
   capabilities: readonly string[],
-  enabled = DEFAULT_CLUSTER_OPERATOR_ENABLED,
+  enabled: boolean = DEFAULT_CLUSTER_OPERATOR_ENABLED,
 ): readonly string[] {
   const contains = capabilities.includes(CI_TRIGGER_CAPABILITY);
   if (enabled || !contains) return capabilities;

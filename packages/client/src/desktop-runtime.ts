@@ -823,7 +823,7 @@ export class DesktopRuntimeController {
       if (catalog.type !== "catalog") throw new DesktopRuntimeError("protocol", "catalog response decoded as settings");
       this.replace({ catalogs: mapValue(new Map(this.current.catalogs).set(hostValue, catalog)) });
     } else if (command === "workspace.list") {
-      const decoded = decodeCommandResult(command, result) as WorkspaceListResult;
+      const decoded = decodeCommandResult(command, result) as unknown as WorkspaceListResult;
       const workspaces: WorkspaceInfrastructureProjection[] = [];
       for (const item of decoded.workspaces) {
         try {

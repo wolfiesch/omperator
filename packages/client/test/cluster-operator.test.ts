@@ -7,7 +7,7 @@ import {
 } from "@t4-code/protocol";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { bootstrapDesktopHost } from "../src/desktop-runtime-bootstrap.ts";
+import { bootstrapDesktopHost, type DesktopBootstrapCommand } from "../src/desktop-runtime-bootstrap.ts";
 import {
   DEFAULT_CLUSTER_OPERATOR_ENABLED,
   applyPublicFrame,
@@ -61,10 +61,10 @@ describe("cluster operator client contract", () => {
   });
 
   it("does not issue cluster bootstrap commands while the local option is off", async () => {
-    const issue = vi.fn(async () => ({
-      accepted: true,
+    const issue = vi.fn(async (_intent: Parameters<DesktopBootstrapCommand>[0]) => ({
+      accepted: true as const,
       result: { cursor: { epoch: "session-epoch", seq: 1 }, sessions: [] },
-    })) as never;
+    }));
 
     await bootstrapDesktopHost({ targetId: "cluster", frame: welcome, issue });
 

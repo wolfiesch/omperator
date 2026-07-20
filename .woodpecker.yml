@@ -179,9 +179,9 @@ steps:
     image: mirror.gcr.io/oven/bun:1.3.14@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4
     environment:
       T4_PROOF_OUTPUT_DIR: artifacts/cluster-proof/scenarios
-      SSL_CERT_FILE: /woodpecker/src/.ci/ca-certificates.crt
-      NODE_EXTRA_CA_CERTS: /woodpecker/src/.ci/ca-certificates.crt
     commands:
+      - export SSL_CERT_FILE="$PWD/.ci/ca-certificates.crt"
+      - export NODE_EXTRA_CA_CERTS="$SSL_CERT_FILE"
       - (cd packages/cluster-server && bun --bun run test)
       - (cd packages/cluster-server && bun --bun run typecheck)
     backend_options:
@@ -200,10 +200,9 @@ steps:
   cluster-wire-tests:
     depends_on: [cluster-server-tests]
     image: mirror.gcr.io/oven/bun:1.3.14@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4
-    environment:
-      SSL_CERT_FILE: /woodpecker/src/.ci/ca-certificates.crt
-      NODE_EXTRA_CA_CERTS: /woodpecker/src/.ci/ca-certificates.crt
     commands:
+      - export SSL_CERT_FILE="$PWD/.ci/ca-certificates.crt"
+      - export NODE_EXTRA_CA_CERTS="$SSL_CERT_FILE"
       - (cd packages/host-wire && bun --bun run test)
       - (cd packages/host-service && bun --bun run test)
     backend_options:
