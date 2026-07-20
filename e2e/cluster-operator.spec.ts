@@ -130,6 +130,20 @@ function sessionRef(ciStatus: "queued" | "running" | "success" = "running") {
   };
 }
 
+function requestedPreviewId(frame: Record<string, unknown>): string {
+  const args = frame.args;
+  if (
+    args === null ||
+    typeof args !== "object" ||
+    Array.isArray(args) ||
+    !("previewId" in args) ||
+    typeof args.previewId !== "string"
+  ) {
+    throw new Error("preview command requires a preview id");
+  }
+  return args.previewId;
+}
+
 class OperatorWireFixture {
   readonly commands: Array<Record<string, unknown>> = [];
   readonly hellos: Array<Record<string, unknown>> = [];
@@ -307,19 +321,27 @@ class OperatorWireFixture {
         return;
       case "preview.lease.acquire":
         this.response(socket, frame, {
-          previewId: "preview-a",
+          previewId: requestedPreviewId(frame),
           leaseId: "preview-lease-a",
           expiresAt: Date.now() + 30_000,
         });
         return;
       case "preview.lease.release":
-        this.response(socket, frame, { previewId: "preview-a", released: true });
+        this.response(socket, frame, {
+          previewId: requestedPreviewId(frame),
+          released: true,
+        });
         return;
       case "preview.type":
       case "preview.fill":
       case "preview.press":
       case "preview.scroll":
-        this.response(socket, frame, { preview: GUI_PREVIEW });
+        this.response(socket, frame, {
+          preview:
+            requestedPreviewId(frame) === DECOY_PREVIEW.previewId
+              ? DECOY_PREVIEW
+              : GUI_PREVIEW,
+        });
         return;
       case "ci.run":
         this.ciStatus = "queued";
