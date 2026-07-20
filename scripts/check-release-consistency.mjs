@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -69,7 +69,10 @@ export function discoverReleasePackagePaths(repoRoot) {
   for (const parent of ["apps", "packages"]) {
     const entries = readdirSync(resolve(repoRoot, parent), { withFileTypes: true });
     for (const entry of entries) {
-      if (entry.isDirectory()) paths.push(`${parent}/${entry.name}/package.json`);
+      if (entry.isDirectory()) {
+        const manifestPath = `${parent}/${entry.name}/package.json`;
+        if (existsSync(resolve(repoRoot, manifestPath))) paths.push(manifestPath);
+      }
     }
   }
   return paths.sort((a, b) => a.localeCompare(b));

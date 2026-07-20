@@ -7,6 +7,7 @@ import { load as parseYaml } from "js-yaml";
 
 import {
   collectReleaseConsistencyErrors,
+  discoverReleasePackagePaths,
   loadReleaseContractFiles,
 } from "./check-release-consistency.mjs";
 
@@ -63,6 +64,10 @@ function resolveWorkflowExpression(expression, context) {
 
 test("current source tree has one consistent release version", () => {
   assert.deepEqual(collectReleaseConsistencyErrors(files), []);
+});
+
+test("release package discovery ignores non-Node package directories", () => {
+  assert.equal(discoverReleasePackagePaths(repoRoot).includes("packages/cluster-operator/package.json"), false);
 });
 
 test("rejects duplicate keys in JSON release contracts", () => {

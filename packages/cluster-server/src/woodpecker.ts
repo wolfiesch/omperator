@@ -199,6 +199,12 @@ export class WoodpeckerProvider implements CiProvider {
 		};
 	}
 
+	#repository(repositoryId: string): WoodpeckerRepositoryConfig {
+		const repository = this.#repositories[repositoryId];
+		if (!repository) throw new Error("Woodpecker repository is not allowlisted");
+		return repository;
+	}
+
 	#validateCorrelation(value: CiCorrelation): void {
 		bounded(value.sessionId, "CI session id", 256);
 		bounded(value.repositoryId, "CI repository id", 256);

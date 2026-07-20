@@ -175,13 +175,12 @@ steps:
 
   cluster-server-tests:
     depends_on: [cluster-ci-contracts]
-    image: mirror.gcr.io/library/node:24.13.1-bookworm@sha256:00e9195ebd49985a6da8921f419978d85dfe354589755192dc090425ce4da2f7
+    image: mirror.gcr.io/oven/bun:1.3.14@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4
     environment:
       T4_PROOF_OUTPUT_DIR: artifacts/cluster-proof/scenarios
     commands:
-      - corepack enable
-      - pnpm --filter @t4-code/cluster-server test
-      - pnpm --filter @t4-code/cluster-server typecheck
+      - bun --bun run --filter @t4-code/cluster-server test
+      - bun --bun run --filter @t4-code/cluster-server typecheck
     backend_options:
       kubernetes:
         serviceAccountName: woodpecker-ci-untrusted
@@ -197,11 +196,10 @@ steps:
 
   cluster-wire-tests:
     depends_on: [cluster-server-tests]
-    image: mirror.gcr.io/library/node:24.13.1-bookworm@sha256:00e9195ebd49985a6da8921f419978d85dfe354589755192dc090425ce4da2f7
+    image: mirror.gcr.io/oven/bun:1.3.14@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4
     commands:
-      - corepack enable
-      - pnpm --filter @t4-code/host-wire test
-      - pnpm --filter @t4-code/host-service test
+      - bun --bun run --filter @t4-code/host-wire test
+      - bun --bun run --filter @t4-code/host-service test
     backend_options:
       kubernetes:
         serviceAccountName: woodpecker-ci-untrusted

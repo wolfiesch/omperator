@@ -80,6 +80,10 @@ describe("one-session pod host authority", () => {
 		expect(await remotePolicy.authorize(connection, {
 			v: "omp-app/1", type: "command", requestId: "r2", commandId: "c2", hostId: "pod-host",
 			sessionId: "private-session", command: "session.prompt", args: { message: "hello" },
+		}, { connectionId: "connection-one", peer: connection.peer })).toBe(true);
+		expect(await remotePolicy.authorize(connection, {
+			v: "omp-app/1", type: "command", requestId: "r3", commandId: "c3", hostId: "pod-host",
+			sessionId: "private-session", command: "preview.click", args: { previewId: "preview-one", x: 10, y: 20 },
 		}, { connectionId: "connection-one", peer: connection.peer })).toBe(false);
 	});
 
