@@ -21,14 +21,14 @@
     "package": "omp",
     "version": "17.0.5",
     "sourceRepository": "https://github.com/lyc-aon/oh-my-pi",
-    "sourceCommit": "04229b1f46547ac7c0617e55a993496ec9725f46",
-    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/04229b1f46547ac7c0617e55a993496ec9725f46",
-    "sourceTag": "t4code-17.0.5-appserver-7",
+    "sourceCommit": "09835b929cd028e7e3f800b3e4203e3d1f37931c",
+    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/09835b929cd028e7e3f800b3e4203e3d1f37931c",
+    "sourceTag": "t4code-17.0.5-appserver-8",
     "artifacts": {
       "darwin-arm64": {
         "name": "omp-darwin-arm64",
         "size": 120777424,
-        "sha256": "b57dd2c77bc7727a66df5bce8419e071300643d2a04fcba878e1b41cb0298fc0"
+        "sha256": "3ecb5f40be627f7f0f15035822017f8e2c8afaa4a46978f0874a6be8acb3f2fa"
       }
     },
     "upstreamRepository": "https://github.com/can1357/oh-my-pi",
@@ -96,7 +96,8 @@
       "browser-preview-contract",
       "hardened-preview-frame-decoding",
       "complete-preview-command-surface",
-      "privacy-safe-local-project-reveal"
+      "privacy-safe-local-project-reveal",
+      "stale-appserver-owner-recovery"
     ],
     "upstreamTagContainsIntegrationPatches": false
   },
@@ -104,14 +105,14 @@
     "package": "omp",
     "version": "17.0.5",
     "sourceRepository": "https://github.com/lyc-aon/oh-my-pi",
-    "sourceCommit": "04229b1f46547ac7c0617e55a993496ec9725f46",
-    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/04229b1f46547ac7c0617e55a993496ec9725f46",
-    "sourceTag": "t4code-17.0.5-appserver-7",
+    "sourceCommit": "09835b929cd028e7e3f800b3e4203e3d1f37931c",
+    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/09835b929cd028e7e3f800b3e4203e3d1f37931c",
+    "sourceTag": "t4code-17.0.5-appserver-8",
     "artifacts": {
       "darwin-arm64": {
         "name": "omp-darwin-arm64",
         "size": 120777424,
-        "sha256": "b57dd2c77bc7727a66df5bce8419e071300643d2a04fcba878e1b41cb0298fc0"
+        "sha256": "3ecb5f40be627f7f0f15035822017f8e2c8afaa4a46978f0874a6be8acb3f2fa"
       }
     },
     "upstreamRepository": "https://github.com/can1357/oh-my-pi",
@@ -179,12 +180,13 @@
       "browser-preview-contract",
       "hardened-preview-frame-decoding",
       "complete-preview-command-surface",
-      "privacy-safe-local-project-reveal"
+      "privacy-safe-local-project-reveal",
+      "stale-appserver-owner-recovery"
     ],
     "upstreamTagContainsIntegrationPatches": false
   },
   "desktop": {
     "package": "@t4-code/protocol",
-    "version": "0.1.29"
+    "version": "0.1.30"
   }
 }

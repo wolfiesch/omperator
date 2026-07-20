@@ -4,13 +4,13 @@ T4 Code is a free, open-source (MIT) desktop app for [Oh My Pi](https://github.c
 
 ![T4 Code main window](docs/assets/t4-code-main.png)
 
-[**Download v0.1.29**](https://github.com/LycaonLLC/t4-code/releases/tag/v0.1.29) · [**Docs**](https://t4code.net/docs) · [**Get the source**](#build-from-source)
+[**Download v0.1.30**](https://github.com/LycaonLLC/t4-code/releases/tag/v0.1.30) · [**Docs**](https://t4code.net/docs) · [**Get the source**](#build-from-source)
 
 ## Requirements
 
-T4 Code needs an OMP build with desktop appserver support. For v0.1.29, use the public integration build below.
+T4 Code needs an OMP build with desktop appserver support. For v0.1.30, use the public integration build below.
 
-T4 Code v0.1.29 was verified with OMP 17.0.5 built from [`04229b1f`](https://github.com/lyc-aon/oh-my-pi/commit/04229b1f46547ac7c0617e55a993496ec9725f46), tagged [`t4code-17.0.5-appserver-7`](https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.5-appserver-7). That public integration is based on the official upstream [`v17.0.5`](https://github.com/can1357/oh-my-pi/tree/v17.0.5) tag at [`9fd6e971`](https://github.com/can1357/oh-my-pi/commit/9fd6e97113f5ed3a847e66d346970efdf8afcad9). It adds a privacy-safe command that lets the desktop app reveal a known local project folder without exposing arbitrary paths. It also includes fast lazy session indexing, cross-session attention and transcript search, the negotiated browser-preview command surface, redacted Codex transport diagnostics, the versioned Agent View lifecycle contract, session-owned cancellation, lock-aware session observation, complete transcript reconciliation, the cooperative `/continue-in-t4` handoff, and deterministic session ordering. Fork CI verifies the exact upstream base, ancestry, release gates, and published binaries. The official upstream v17.0.5 tag has no `appserver` command, so it cannot host T4 Code. The verified runtime is a normal build from the public `lyc-aon/oh-my-pi` source. T4 Code vendors `@oh-my-pi/app-wire` 0.6.2 from integration commit [`04229b1f`](https://github.com/lyc-aon/oh-my-pi/commit/04229b1f46547ac7c0617e55a993496ec9725f46), source tree `8400a3af618e8af11cccf6b20aadcf3a22baf9a1`.
+T4 Code v0.1.30 was verified with OMP 17.0.5 built from [`09835b92`](https://github.com/lyc-aon/oh-my-pi/commit/09835b929cd028e7e3f800b3e4203e3d1f37931c), tagged [`t4code-17.0.5-appserver-8`](https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.5-appserver-8). That public integration is based on the official upstream [`v17.0.5`](https://github.com/can1357/oh-my-pi/tree/v17.0.5) tag at [`9fd6e971`](https://github.com/can1357/oh-my-pi/commit/9fd6e97113f5ed3a847e66d346970efdf8afcad9). It recovers safely from a crashed backend whose old process ID still appears alive, while preserving a responsive owner. It also includes privacy-safe project reveal, fast lazy session indexing, cross-session attention and transcript search, the negotiated browser-preview command surface, redacted Codex transport diagnostics, the versioned Agent View lifecycle contract, session-owned cancellation, lock-aware session observation, complete transcript reconciliation, the cooperative `/continue-in-t4` handoff, and deterministic session ordering. Fork CI verifies the exact upstream base, ancestry, release gates, and published binaries. The official upstream v17.0.5 tag has no `appserver` command, so it cannot host T4 Code. The verified runtime is a normal build from the public `lyc-aon/oh-my-pi` source. T4 Code vendors `@oh-my-pi/app-wire` 0.6.2 from integration commit [`04229b1f`](https://github.com/lyc-aon/oh-my-pi/commit/04229b1f46547ac7c0617e55a993496ec9725f46), source tree `8400a3af618e8af11cccf6b20aadcf3a22baf9a1`.
 
 The current source tree uses the same published `@oh-my-pi/app-wire` 0.6.2 contract. It supplies privacy-safe local project reveal, bounded cross-session transcript search, historical context, and the browser-preview wire contract.
 
@@ -20,14 +20,15 @@ The current source tree uses the same published `@oh-my-pi/app-wire` 0.6.2 contr
 | Linux    | x86_64                | `.deb`, AppImage                          |
 | macOS    | Apple Silicon (arm64) | `.dmg`, `.zip` (**signed and notarized**) |
 
-No Windows build and no Intel Mac build in v0.1.29. The iOS TestFlight build is coming soon.
+No Windows build and no Intel Mac build in v0.1.30. The iOS TestFlight build is coming soon.
 
-## What changed in v0.1.29
+## What changed in v0.1.30
 
 - The session rail now matches the Codex desktop organization model: search, activity filters, sort controls, collapsible projects, flat and grouped views, and persistent preferences.
 - Project menus can create sessions, open folders in the system file manager, collapse a group, or hide it from the rail. Hidden projects remain recoverable through the filter menu.
 - The whole workspace received a visual polish pass, with denser information hierarchy, clearer transcript rows, and empty panes that keep their header and close control visible.
 - macOS upgrades retry temporary service-stop failures instead of leaving the bundled backend half-updated.
+- A crashed backend can no longer trap launchd in a restart loop when its stale process ID still appears alive.
 - OMP app-wire 0.6.2 adds the narrow host command used to reveal only a project path already known to the session catalog.
 
 ![An OMP TUI session followed in T4 Code: the transcript fills in read-only under an "Active in another app" banner, /continue-in-t4 runs in the terminal, T4 takes over, and the composer accepts input again.](docs/assets/t4-code-tui-handoff.gif)
@@ -46,7 +47,7 @@ No Windows build and no Intel Mac build in v0.1.29. The iOS TestFlight build is 
 ### Android
 
 1. On the Android phone, sign in to Tailscale with an account that can reach the T4 Code host.
-2. Download [`T4-Code-0.1.29-android.apk`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.29/T4-Code-0.1.29-android.apk).
+2. Download [`T4-Code-0.1.30-android.apk`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.30/T4-Code-0.1.30-android.apk).
 3. If Android asks, allow your browser or file manager to install unknown apps, then install the APK.
 4. Open T4 Code and enter the host's HTTPS Tailscale address, including its port. The app saves the address; you can add more hosts later and switch between them.
 
@@ -55,8 +56,8 @@ The APK does not contain an appserver or expose one to the public internet. It c
 ### Linux (Debian/Ubuntu)
 
 ```sh
-wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.29/T4-Code-0.1.29-linux-amd64.deb
-sudo apt install ./T4-Code-0.1.29-linux-amd64.deb
+wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.30/T4-Code-0.1.30-linux-amd64.deb
+sudo apt install ./T4-Code-0.1.30-linux-amd64.deb
 ```
 
 Use `apt install` rather than `dpkg -i` so system dependencies resolve automatically.
@@ -64,14 +65,14 @@ Use `apt install` rather than `dpkg -i` so system dependencies resolve automatic
 ### Linux (AppImage)
 
 ```sh
-wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.29/T4-Code-0.1.29-linux-x86_64.AppImage
-chmod +x T4-Code-0.1.29-linux-x86_64.AppImage
-./T4-Code-0.1.29-linux-x86_64.AppImage
+wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.30/T4-Code-0.1.30-linux-x86_64.AppImage
+chmod +x T4-Code-0.1.30-linux-x86_64.AppImage
+./T4-Code-0.1.30-linux-x86_64.AppImage
 ```
 
 ### macOS (Apple Silicon)
 
-1. Download [`T4-Code-0.1.29-mac-arm64.dmg`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.29/T4-Code-0.1.29-mac-arm64.dmg) (or [`T4-Code-0.1.29-mac-arm64.zip`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.29/T4-Code-0.1.29-mac-arm64.zip)).
+1. Download [`T4-Code-0.1.30-mac-arm64.dmg`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.30/T4-Code-0.1.30-mac-arm64.dmg) (or [`T4-Code-0.1.30-mac-arm64.zip`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.30/T4-Code-0.1.30-mac-arm64.zip)).
 2. Drag `T4 Code.app` into `/Applications`.
 3. Open T4 Code normally. The release workflow verifies the pinned publisher, hardened runtime, secure timestamp, Apple notarization, stapled ticket, and Gatekeeper acceptance before publication.
 

@@ -41,9 +41,9 @@ describe("T4 setup doctor", () => {
     const source = await readSourceContract();
 
     expect(source.ompVersion).toBe("17.0.5");
-    expect(source.ompTag).toBe("t4code-17.0.5-appserver-7");
+    expect(source.ompTag).toBe("t4code-17.0.5-appserver-8");
     expect(source.ompUrl).toBe(
-      "https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.5-appserver-7",
+      "https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.5-appserver-8",
     );
   });
 
