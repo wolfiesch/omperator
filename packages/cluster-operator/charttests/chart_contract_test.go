@@ -104,6 +104,7 @@ func TestValuesSchemaRejectsUnsafeNamesProfilesCIDRsAndHalfSelectors(t *testing.
 		"OMP credential Secret name":                      {"--set-string", "session.omp.credentialSecret=Bad_Name"},
 		"OMP credential environment name":                 {"--set-string", "session.omp.credentialKey=bad-key"},
 		"OMP runtime-owned credential environment":        {"--set-string", "session.omp.credentialKey=OMP_PROFILE"},
+		"OMP PI runtime-owned credential environment":     {"--set-string", "session.omp.credentialKey=PI_PROFILE"},
 		"identical OMP projection keys":                   {"--set-string", "session.omp.settingsKey=provider-models"},
 		"model route port zero":                           {"--set", "networkPolicy.modelRoutePorts[0]=0"},
 		"model route port above TCP range":                {"--set", "networkPolicy.modelRoutePorts[0]=65536"},
@@ -168,7 +169,7 @@ func TestSessionOMPReferencesArePassedWithoutCreatingConfigurationObjects(t *tes
 		"name: T4_SESSION_OMP_MODELS_KEY\n              value: \"provider-models\"",
 		"name: T4_SESSION_OMP_SETTINGS_KEY\n              value: \"agent-settings\"",
 		"name: T4_SESSION_OMP_CREDENTIAL_SECRET\n              value: \"omp-runtime-credential\"",
-		"name: T4_SESSION_OMP_CREDENTIAL_KEY\n              value: \"PI_TEST_API_KEY\"",
+		"name: T4_SESSION_OMP_CREDENTIAL_KEY\n              value: \"MODEL_API_KEY\"",
 		"name: T4_SESSION_OMP_ALLOW_UNAUTHENTICATED\n              value: \"false\"",
 	)
 	assertCount(t, output, "kind: ConfigMap", 0)
@@ -464,7 +465,7 @@ func TestImageContractsArePinnedAndAuthorityCompatible(t *testing.T) {
 		`if [[ "${T4_OMP_ALLOW_UNAUTHENTICATED}" == "false" ]]`,
 		`export HOME="${T4_SESSION_STATE_ROOT}/home"`,
 		`export PI_CODING_AGENT_DIR="${HOME}/.omp/profiles/${T4_SESSION_NAME}/agent"`,
-		`T4_*|OMP_*|XDG_*|LD_*`,
+		`T4_*|OMP_*|PI_*|XDG_*|LD_*`,
 		`install -m 0600 "${models_source}"`,
 		`install -m 0600 "${settings_source}"`,
 		`"${PI_CODING_AGENT_DIR}/models.yml"`,
@@ -518,7 +519,7 @@ func TestSessionEntrypointFailsClosedBeforeGUIWithoutPrivateOMPInputs(t *testing
 			if err := os.WriteFile(filepath.Join(bin, "Xvfb"), []byte(fakeXvfb), 0o700); err != nil {
 				t.Fatal(err)
 			}
-			command := exec.Command("bash", entrypoint, "PI_TEST_API_KEY")
+			command := exec.Command("bash", entrypoint, "MODEL_API_KEY")
 			command.Env = append(os.Environ(),
 				"PATH="+bin+":"+os.Getenv("PATH"),
 				"T4_SESSION_STATE_ROOT=/workspace/.t4/sessions/session-a",
@@ -530,9 +531,9 @@ func TestSessionEntrypointFailsClosedBeforeGUIWithoutPrivateOMPInputs(t *testing
 				"T4_KUBERNETES_CA_PATH="+filepath.Join(projection, "ca.crt"),
 				"T4_KUBERNETES_NAMESPACE_PATH="+filepath.Join(projection, "namespace"),
 				"T4_OMP_CONFIG_SOURCE_DIR="+source,
-				"T4_OMP_CREDENTIAL_KEY=PI_TEST_API_KEY",
+				"T4_OMP_CREDENTIAL_KEY=MODEL_API_KEY",
 				"T4_TEST_XVFB_MARKER="+marker,
-				"PI_TEST_API_KEY="+test.credential,
+				"MODEL_API_KEY="+test.credential,
 			)
 			output, err := command.CombinedOutput()
 			exitError, ok := err.(*exec.ExitError)
@@ -585,7 +586,7 @@ func enabledValues() []string {
 		"--set", "session.omp.modelsKey=provider-models",
 		"--set", "session.omp.settingsKey=agent-settings",
 		"--set", "session.omp.credentialSecret=omp-runtime-credential",
-		"--set", "session.omp.credentialKey=PI_TEST_API_KEY",
+		"--set", "session.omp.credentialKey=MODEL_API_KEY",
 		"--set", "session.omp.allowUnauthenticated=false",
 	}
 }

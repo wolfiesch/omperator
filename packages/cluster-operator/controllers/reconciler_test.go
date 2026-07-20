@@ -238,6 +238,7 @@ func TestSessionRejectsInvalidOMPAuthenticationAndProjectionReferences(t *testin
 		{name: "unauthenticated plus credentials", mutate: func(config *controllers.SessionOMPConfig) { config.AllowUnauthenticated = true }},
 		{name: "invalid credential environment name", mutate: func(config *controllers.SessionOMPConfig) { config.CredentialKey = "bad-key" }},
 		{name: "runtime-owned credential environment", mutate: func(config *controllers.SessionOMPConfig) { config.CredentialKey = "OMP_PROFILE" }},
+		{name: "PI runtime-owned credential environment", mutate: func(config *controllers.SessionOMPConfig) { config.CredentialKey = "PI_PROFILE" }},
 		{name: "identical projected keys", mutate: func(config *controllers.SessionOMPConfig) { config.SettingsKey = config.ModelsKey }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -535,7 +536,7 @@ func TestSessionPodHashIncludesEveryOMPReference(t *testing.T) {
 		{name: "models key", mutate: func(config *controllers.SessionOMPConfig) { config.ModelsKey = "other-models" }},
 		{name: "settings key", mutate: func(config *controllers.SessionOMPConfig) { config.SettingsKey = "other-settings" }},
 		{name: "credential Secret", mutate: func(config *controllers.SessionOMPConfig) { config.CredentialSecretName = "other-credential" }},
-		{name: "credential key", mutate: func(config *controllers.SessionOMPConfig) { config.CredentialKey = "PI_OTHER_API_KEY" }},
+		{name: "credential key", mutate: func(config *controllers.SessionOMPConfig) { config.CredentialKey = "OTHER_MODEL_API_KEY" }},
 		{name: "authentication mode", mutate: func(config *controllers.SessionOMPConfig) {
 			config.AllowUnauthenticated = true
 			config.CredentialSecretName = ""
@@ -592,7 +593,7 @@ func TestSessionRecreatesPodWhenOMPResourceVersionChanges(t *testing.T) {
 			if err := c.Get(ctx, key, &secret); err != nil {
 				return err
 			}
-			secret.Data["PI_TEST_API_KEY"] = []byte("rotated credential")
+			secret.Data["MODEL_API_KEY"] = []byte("rotated credential")
 			return c.Update(ctx, &secret)
 		}},
 	} {
@@ -629,6 +630,73 @@ func TestSessionRecreatesPodWhenOMPResourceVersionChanges(t *testing.T) {
 		})
 	}
 }
+func TestSessionRuntimeReferenceRevocationStopsAuthority(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		revoke     func(context.Context, client.Client) error
+		wantReason string
+	}{
+		{name: "ConfigMap deletion", wantReason: "OMPConfigMapNotFound", revoke: func(ctx context.Context, c client.Client) error {
+			return c.Delete(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "omp-runtime-config", Namespace: "team"}})
+		}},
+		{name: "credential removal", wantReason: "OMPCredentialSecretInvalid", revoke: func(ctx context.Context, c client.Client) error {
+			var secret corev1.Secret
+			key := types.NamespacedName{Namespace: "team", Name: "omp-runtime-credential"}
+			if err := c.Get(ctx, key, &secret); err != nil {
+				return err
+			}
+			delete(secret.Data, "MODEL_API_KEY")
+			return c.Update(ctx, &secret)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			scheme := testScheme(t)
+			workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
+			workspace.Status.PVCName = "workspace-a-data"
+			pvc := &corev1.PersistentVolumeClaim{
+				ObjectMeta: metav1.ObjectMeta{Name: workspace.Status.PVCName, Namespace: "team"},
+				Spec:       corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
+				Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
+			}
+			session := testSession()
+			session.UID = "session-uid"
+			c := fake.NewClientBuilder().WithScheme(scheme).
+				WithStatusSubresource(&clusterv1alpha1.T4Session{}, &corev1.PersistentVolumeClaim{}, &corev1.Pod{}).
+				WithObjects(testHost(), workspace, pvc, session).Build()
+			r := configuredSessionReconciler(c, scheme)
+			reconcileMany(t, 2, func() error {
+				_, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)})
+				return err
+			})
+			var running clusterv1alpha1.T4Session
+			if err := c.Get(ctx, client.ObjectKeyFromObject(session), &running); err != nil {
+				t.Fatal(err)
+			}
+			if running.Status.PodName == "" || running.Status.ServiceName == "" {
+				t.Fatalf("running route was not published: %#v", running.Status)
+			}
+			if err := test.revoke(ctx, c); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
+				t.Fatal(err)
+			}
+			var pod corev1.Pod
+			if err := c.Get(ctx, types.NamespacedName{Namespace: session.Namespace, Name: controllers.SessionPodName(session)}, &pod); !apierrors.IsNotFound(err) {
+				t.Fatalf("revoked runtime retained authority pod: %v", err)
+			}
+			var failed clusterv1alpha1.T4Session
+			if err := c.Get(ctx, client.ObjectKeyFromObject(session), &failed); err != nil {
+				t.Fatal(err)
+			}
+			condition := findCondition(failed.Status.Conditions, "RuntimeConfigured")
+			if failed.Status.PodName != "" || failed.Status.ServiceName != "" || failed.Status.Phase != clusterv1alpha1.InfrastructureFailed || condition == nil || condition.Reason != test.wantReason {
+				t.Fatalf("revoked runtime remained routable: status=%#v condition=%#v", failed.Status, condition)
+			}
+		})
+	}
+}
 
 func TestSessionFailsClosedWhenOMPObjectsAreMissing(t *testing.T) {
 	for _, test := range []struct {
@@ -650,7 +718,7 @@ func TestSessionFailsClosedWhenOMPObjectsAreMissing(t *testing.T) {
 				objects = append(objects, test.configMap)
 			}
 			c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&clusterv1alpha1.T4Session{}, &corev1.PersistentVolumeClaim{}, &corev1.Pod{}).WithObjects(objects...).Build()
-			r := &controllers.SessionReconciler{Client: c, APIReader: c, Scheme: scheme, RuntimeImage: "registry.example/session@sha256:deadbeef", OMPConfig: controllers.SessionOMPConfig{ConfigMapName: "omp-runtime-config", ModelsKey: "provider-models", SettingsKey: "agent-settings", CredentialSecretName: "omp-runtime-credential", CredentialKey: "PI_TEST_API_KEY"}}
+			r := &controllers.SessionReconciler{Client: c, APIReader: c, Scheme: scheme, RuntimeImage: "registry.example/session@sha256:deadbeef", OMPConfig: controllers.SessionOMPConfig{ConfigMapName: "omp-runtime-config", ModelsKey: "provider-models", SettingsKey: "agent-settings", CredentialSecretName: "omp-runtime-credential", CredentialKey: "MODEL_API_KEY"}}
 			if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
 				t.Fatal(err)
 			}
@@ -884,10 +952,10 @@ func configuredSessionReconciler(c client.Client, scheme *runtime.Scheme) *contr
 			"provider-models": "models", "agent-settings": "settings", "other-models": "other models", "other-settings": "other settings",
 		}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "omp-runtime-credential", Namespace: "team"}, Data: map[string][]byte{
-			"PI_TEST_API_KEY": []byte("credential"), "PI_OTHER_API_KEY": []byte("other credential"),
+			"MODEL_API_KEY": []byte("credential"), "OTHER_MODEL_API_KEY": []byte("other credential"),
 		}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "other-credential", Namespace: "team"}, Data: map[string][]byte{
-			"PI_TEST_API_KEY": []byte("credential"), "PI_OTHER_API_KEY": []byte("other credential"),
+			"MODEL_API_KEY": []byte("credential"), "OTHER_MODEL_API_KEY": []byte("other credential"),
 		}},
 	} {
 		if err := c.Create(context.Background(), object); err != nil && !apierrors.IsAlreadyExists(err) {
@@ -904,7 +972,7 @@ func configuredSessionReconciler(c client.Client, scheme *runtime.Scheme) *contr
 			ModelsKey:            "provider-models",
 			SettingsKey:          "agent-settings",
 			CredentialSecretName: "omp-runtime-credential",
-			CredentialKey:        "PI_TEST_API_KEY",
+			CredentialKey:        "MODEL_API_KEY",
 		},
 	}
 }

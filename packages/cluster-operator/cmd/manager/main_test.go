@@ -46,7 +46,7 @@ func TestManagerReadsSessionOMPReferencesWithoutSecretValues(t *testing.T) {
 	t.Setenv("T4_SESSION_OMP_MODELS_KEY", "provider-models")
 	t.Setenv("T4_SESSION_OMP_SETTINGS_KEY", "agent-settings")
 	t.Setenv("T4_SESSION_OMP_CREDENTIAL_SECRET", "omp-runtime-credential")
-	t.Setenv("T4_SESSION_OMP_CREDENTIAL_KEY", "PI_TEST_API_KEY")
+	t.Setenv("T4_SESSION_OMP_CREDENTIAL_KEY", "MODEL_API_KEY")
 	t.Setenv("T4_SESSION_OMP_ALLOW_UNAUTHENTICATED", "false")
 
 	got := sessionOMPConfigFromEnv()
@@ -55,7 +55,7 @@ func TestManagerReadsSessionOMPReferencesWithoutSecretValues(t *testing.T) {
 		ModelsKey:            "provider-models",
 		SettingsKey:          "agent-settings",
 		CredentialSecretName: "omp-runtime-credential",
-		CredentialKey:        "PI_TEST_API_KEY",
+		CredentialKey:        "MODEL_API_KEY",
 	}
 	if got != want {
 		t.Fatalf("session OMP references = %#v, want %#v", got, want)

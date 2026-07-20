@@ -39,11 +39,11 @@ var (
 )
 
 func reservedCredentialEnvironment(name string) bool {
-	if strings.HasPrefix(name, "T4_") || strings.HasPrefix(name, "OMP_") || strings.HasPrefix(name, "XDG_") || strings.HasPrefix(name, "LD_") {
+	if strings.HasPrefix(name, "T4_") || strings.HasPrefix(name, "OMP_") || strings.HasPrefix(name, "PI_") || strings.HasPrefix(name, "XDG_") || strings.HasPrefix(name, "LD_") {
 		return true
 	}
 	switch name {
-	case "HOME", "DISPLAY", "PATH", "BASH_ENV", "ENV", "SHELLOPTS", "NODE_OPTIONS", "BUN_OPTIONS", "PI_CODING_AGENT_DIR", "PI_CONFIG_DIR":
+	case "HOME", "DISPLAY", "PATH", "BASH_ENV", "ENV", "SHELLOPTS", "NODE_OPTIONS", "BUN_OPTIONS":
 		return true
 	default:
 		return false
@@ -201,6 +201,9 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 		return ctrl.Result{}, err
 	}
 	if reason != "" {
+		if err := r.deleteOwnedSessionPod(ctx, &session); err != nil {
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, "RuntimeConfigured", reason, message)
 	}
 
@@ -531,12 +534,26 @@ func (r *SessionReconciler) reconcileDelete(ctx context.Context, session *cluste
 	return ctrl.Result{}, r.Update(ctx, session)
 }
 
+func (r *SessionReconciler) deleteOwnedSessionPod(ctx context.Context, session *clusterv1alpha1.T4Session) error {
+	var pod corev1.Pod
+	key := types.NamespacedName{Namespace: session.Namespace, Name: SessionPodName(session)}
+	if err := r.Get(ctx, key, &pod); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	if !metav1.IsControlledBy(&pod, session) {
+		return nil
+	}
+	return client.IgnoreNotFound(r.Delete(ctx, &pod))
+}
+
 func (r *SessionReconciler) updateSessionFailure(ctx context.Context, session *clusterv1alpha1.T4Session, conditionType, reason, message string) error {
 	original := session.Status
 	if session.Status.Conditions != nil {
 		original.Conditions = append([]metav1.Condition(nil), session.Status.Conditions...)
 	}
 	session.Status.ObservedGeneration = session.Generation
+	session.Status.PodName = ""
+	session.Status.ServiceName = ""
 	session.Status.Phase = clusterv1alpha1.InfrastructureFailed
 	meta.SetStatusCondition(&session.Status.Conditions, condition(conditionType, metav1.ConditionFalse, reason, message, session.Generation))
 	if reflect.DeepEqual(original, session.Status) {

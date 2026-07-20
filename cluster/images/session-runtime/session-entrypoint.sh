@@ -39,7 +39,7 @@ if [[ "${T4_OMP_ALLOW_UNAUTHENTICATED}" == "false" ]]; then
   [[ -n "${T4_OMP_CREDENTIAL_KEY}" ]] || { echo '{"component":"session-runtime","result":"invalid_config","condition":"omp_credential_key"}' >&2; exit 64; }
   [[ "${T4_OMP_CREDENTIAL_KEY}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo '{"component":"session-runtime","result":"invalid_config","condition":"omp_credential_key"}' >&2; exit 64; }
   case "${T4_OMP_CREDENTIAL_KEY}" in
-    T4_*|OMP_*|XDG_*|LD_*|HOME|DISPLAY|PATH|BASH_ENV|ENV|SHELLOPTS|NODE_OPTIONS|BUN_OPTIONS|PI_CODING_AGENT_DIR|PI_CONFIG_DIR)
+    T4_*|OMP_*|PI_*|XDG_*|LD_*|HOME|DISPLAY|PATH|BASH_ENV|ENV|SHELLOPTS|NODE_OPTIONS|BUN_OPTIONS)
       echo '{"component":"session-runtime","result":"invalid_config","condition":"omp_credential_key"}' >&2
       exit 64
       ;;

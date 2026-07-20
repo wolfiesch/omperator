@@ -284,6 +284,7 @@
             "anyOf": [
               { "pattern": "^T4_" },
               { "pattern": "^OMP_" },
+              { "pattern": "^PI_" },
               { "pattern": "^XDG_" },
               { "pattern": "^LD_" },
               { "enum": ["HOME", "DISPLAY", "PATH", "BASH_ENV", "ENV", "SHELLOPTS", "NODE_OPTIONS", "BUN_OPTIONS", "PI_CODING_AGENT_DIR", "PI_CONFIG_DIR"] }
