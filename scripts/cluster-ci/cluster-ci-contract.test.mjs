@@ -270,7 +270,9 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
   assert.ok(
     steps["cluster-server-tests"].commands.includes("(cd packages/cluster-server && bun --bun run test)"),
   );
-  assert.match(steps["cluster-wire-tests"].image, /oven\/bun:[^@]+@sha256:[0-9a-f]{64}$/u);
+  assert.match(steps["cluster-wire-tests"].image, /library\/node:[^@]+@sha256:[0-9a-f]{64}$/u);
+  assert.deepEqual(steps["cluster-wire-tests"].depends_on, ["cluster-server-tests", "bun-runtime"]);
+  assert.ok(steps["cluster-wire-tests"].commands.includes('export PATH="$PWD/.ci:$PATH"'));
   assert.ok(steps["cluster-wire-tests"].commands.includes("(cd packages/host-wire && bun --bun run test)"));
   assert.equal(JSON.stringify(pipeline).includes("from_secret"), false);
   assert.deepEqual(steps["harbor-auth"].depends_on, ["cluster-chart-tests", "android-debug"]);
