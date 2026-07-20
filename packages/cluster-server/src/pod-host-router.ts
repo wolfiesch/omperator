@@ -27,6 +27,7 @@ export interface PodHostConnector {
 export interface WebSocketPodHostConnectorOptions {
 	readonly identityTokenFile: string;
 	readonly openTimeoutMs?: number;
+	readonly keepAliveMs?: number;
 	readonly webSocketFactory?: (url: string) => WebSocket;
 }
 
@@ -34,9 +35,13 @@ export class WebSocketPodHostConnector implements PodHostConnector {
 	readonly #identityTokenFile: string;
 	readonly #timeoutMs: number;
 	readonly #factory: (url: string) => WebSocket;
+	readonly #keepAliveMs: number;
 	constructor(options: WebSocketPodHostConnectorOptions) {
 		this.#identityTokenFile = options.identityTokenFile;
 		this.#timeoutMs = options.openTimeoutMs ?? 10_000;
+		this.#keepAliveMs = options.keepAliveMs ?? 30_000;
+		if (!Number.isSafeInteger(this.#keepAliveMs) || this.#keepAliveMs < 10 || this.#keepAliveMs > 60_000)
+			throw new Error("pod host keepalive interval is invalid");
 		this.#factory = options.webSocketFactory ?? (url => new WebSocket(url));
 	}
 	connect(endpoint: PodHostEndpoint, onFrame: (frame: ServerFrame) => void, onClose?: () => void): Promise<PodHostConnection> {
@@ -45,6 +50,8 @@ export class WebSocketPodHostConnector implements PodHostConnector {
 		return new Promise((resolve, reject) => {
 			let settled = false;
 			let upstreamHostId: string | undefined;
+			let heartbeat: ReturnType<typeof setInterval> | undefined;
+			let heartbeatNonce: string | undefined;
 			const timer = setTimeout(() => {
 				if (!settled) { settled = true; socket.close(1013, "upstream timeout"); reject(new Error("pod host handshake timed out")); }
 			}, this.#timeoutMs);
@@ -77,27 +84,42 @@ export class WebSocketPodHostConnector implements PodHostConnector {
 						upstreamHostId = frame.hostId;
 						settled = true;
 						clearTimeout(timer);
+						heartbeat = setInterval(() => {
+							if (socket.readyState !== WebSocket.OPEN) return;
+							heartbeatNonce = `cluster-${Date.now().toString(36)}`;
+							try { socket.send(JSON.stringify({ v: "omp-app/1", type: "ping", nonce: heartbeatNonce, timestamp: new Date().toISOString() })); }
+							catch { socket.close(1011, "upstream keepalive failed"); }
+						}, this.#keepAliveMs);
 						resolve({
 							get hostId() { return upstreamHostId; },
 							send: value => {
 								if (socket.readyState !== WebSocket.OPEN) throw new Error("pod host connection is closed");
 								socket.send(JSON.stringify(value));
 							},
-							close: (code, reason) => socket.close(code, reason),
+							close: (code, reason) => {
+								clearInterval(heartbeat);
+								socket.close(code, reason);
+							},
 						});
 						return;
 					}
 					if (!settled) throw new Error("pod host frame arrived before welcome");
+					if (frame.type === "pong" && frame.nonce === heartbeatNonce) return;
 					onFrame(frame);
 				} catch (error) {
-					if (!settled) { settled = true; clearTimeout(timer); reject(error); }
-					else socket.close(1002, "invalid upstream frame");
+					if (!settled) {
+						settled = true;
+						clearTimeout(timer);
+						socket.close(1002, "invalid upstream frame");
+						reject(error);
+					} else socket.close(1002, "invalid upstream frame");
 				}
 			});
 			socket.addEventListener("error", () => {
 				if (!settled) { settled = true; clearTimeout(timer); reject(new Error("pod host connection failed")); }
 			});
 			socket.addEventListener("close", () => {
+				clearInterval(heartbeat);
 				if (!settled) { settled = true; clearTimeout(timer); reject(new Error("pod host connection closed")); }
 				else onClose?.();
 			});

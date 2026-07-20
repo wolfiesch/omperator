@@ -77,8 +77,7 @@ describe("namespaced Kubernetes client", () => {
 			displayName: "Created workspace",
 			retentionPolicy: "Retain" as const,
 			capacity: "20Gi",
-			storageClass: "t4-workspaces-rwx",
-			repository: { repositoryId: "t4-code", ref: "refs/heads/main", commit: "abc" },
+			repository: { repositoryId: "t4-code", ref: "refs/heads/main", commit: "abcdef0" },
 		};
 		await backend.createWorkspace("command-create-workspace", workspaceArgs, PRINCIPAL);
 		const workspaceBody = JSON.parse(String(values.requests[0]?.init?.body));
@@ -103,7 +102,7 @@ describe("namespaced Kubernetes client", () => {
 				displayName: "Created workspace",
 				retentionPolicy: "Retain",
 				size: "20Gi",
-				repository: { repositoryId: "t4-code", ref: "refs/heads/main", commit: "abc" },
+				repository: { repositoryId: "t4-code", ref: "refs/heads/main", commit: "abcdef0" },
 			},
 		});
 		expect(JSON.stringify(workspaceBody)).not.toContain("token");
@@ -114,7 +113,7 @@ describe("namespaced Kubernetes client", () => {
 			title: "Task",
 			runtimeProfile: "omp-17.0.5",
 			guiEnabled: true,
-			ci: { provider: "woodpecker", repositoryId: "t4-code", ref: "refs/heads/main", commit: "abc" },
+			ci: { provider: "woodpecker", repositoryId: "t4-code", ref: "refs/heads/main", commit: "abcdef0" },
 		}, PRINCIPAL);
 		const sessionBody = JSON.parse(String(values.requests[2]?.init?.body));
 		expect(sessionBody).toMatchObject({
@@ -150,6 +149,15 @@ describe("namespaced Kubernetes client", () => {
 			hostRef: "primary",
 		});
 		await expect(conflictingBackend.createWorkspace("command-one", args, PRINCIPAL)).rejects.toThrow("idempotency conflict");
+	});
+
+	it("treats an already absent session as a successful idempotent delete", async () => {
+		const fetch = (async () => Response.json({ reason: "NotFound" }, { status: 404 })) as typeof globalThis.fetch;
+		const backend = new KubernetesGatewayMutationBackend({
+			client: new KubernetesApiClient({ baseUrl: "https://kubernetes.default.svc", namespace: "development", token: "token", fetch }),
+			hostRef: "primary",
+		});
+		expect(await backend.deleteSession("command-delete", "session-gone", PRINCIPAL)).toEqual({ deleted: true });
 	});
 });
 

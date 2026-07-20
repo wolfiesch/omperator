@@ -26,6 +26,7 @@ import {
 	type PodHostRoute,
 } from "./pod-host-router.ts";
 import type { CiProvider } from "./woodpecker.ts";
+import { KubernetesApiError } from "./kubernetes-client.ts";
 
 const GATEWAY_CAPABILITIES = [
 	"sessions.read", "sessions.prompt", "sessions.control", "sessions.manage", "agents.control",
@@ -164,7 +165,11 @@ export class ClusterGateway {
 			}
 			let output: ServerFrame;
 			try { output = await operation(); }
-			catch { output = errorResult(command, "UPSTREAM_UNAVAILABLE", "cluster operation failed"); }
+			catch (error) {
+				output = error instanceof KubernetesApiError && error.status === 422
+					? errorResult(command, "INVALID_FRAME", "cluster request did not satisfy the Kubernetes API contract")
+					: errorResult(command, "UPSTREAM_UNAVAILABLE", "cluster operation failed");
+			}
 			const outcome: CommandOutcome = { frame: output };
 			this.#idempotency.complete(scopedId, command, outcome);
 			client.send(output);
@@ -221,7 +226,10 @@ export class ClusterGateway {
 			}
 			await idempotent(command, async () => {
 				const session = command.sessionId!;
-				if (!this.#projection.ownsSession(session, principal)) return errorResult(command, "NOT_AUTHORIZED", "session is unavailable for this identity");
+				if (!this.#projection.ownsSession(session, principal))
+					return this.#projection.sessionExists(session)
+						? errorResult(command, "NOT_AUTHORIZED", "session is unavailable for this identity")
+						: successResult(command, { deleted: true });
 				if (this.#projection.sessionRevision(session, principal) !== command.expectedRevision)
 					return errorResult(command, "stale_revision", "session revision changed before deletion");
 				return successResult(command, await this.#mutations.deleteSession(command.commandId, session, principal));
@@ -303,7 +311,13 @@ export class ClusterGateway {
 				return;
 			}
 			if (frame.command === "session.delete") {
-				if (!frame.sessionId || !this.#projection.ownsSession(frame.sessionId, principal)) { client.send(errorResult(frame, "NOT_AUTHORIZED", "session is unavailable for this identity")); return; }
+				if (!frame.sessionId) { client.send(errorResult(frame, "INVALID_FRAME", "session route is required")); return; }
+				if (!this.#projection.ownsSession(frame.sessionId, principal)) {
+					client.send(this.#projection.sessionExists(frame.sessionId)
+						? errorResult(frame, "NOT_AUTHORIZED", "session is unavailable for this identity")
+						: successResult(frame, { deleted: true }));
+					return;
+				}
 				if (this.#projection.sessionRevision(frame.sessionId, principal) !== frame.expectedRevision) { client.send(errorResult(frame, "stale_revision", "session revision changed before confirmation")); return; }
 				if (frame.confirmationId !== undefined) { client.send(errorResult(frame, "confirmation_invalid", "command confirmation must use a confirm frame")); return; }
 				for (const [id, pending] of challenges) if (pending.expiresAt < Date.now()) challenges.delete(id);
@@ -329,13 +343,20 @@ export class ClusterGateway {
 					const allowed = this.#projection.sessionCiSelection(frame.sessionId, principal);
 					if (!allowed || allowed.repositoryId !== args.repositoryId || allowed.ref !== args.ref || allowed.commit !== args.commit)
 						return errorResult(frame, "NOT_AUTHORIZED", "CI correlation is not declared by this session");
-					return successResult(frame, await this.#ci.run({ sessionId: frame.sessionId, repositoryId: args.repositoryId, ref: args.ref, commit: args.commit }));
+					return successResult(frame, await this.#ci.run({ commandId: frame.commandId, sessionId: frame.sessionId, repositoryId: args.repositoryId, ref: args.ref, commit: args.commit }));
 				});
 				return;
 			}
 			const feature = commandFeature(frame.command);
 			if (feature && !grantedFeatures.has(feature)) { client.send(errorResult(frame, "UNSUPPORTED_FEATURE", "command feature was not negotiated")); return; }
 			if (frame.command.startsWith("preview.")) {
+				if (!frame.sessionId) { client.send(errorResult(frame, "INVALID_FRAME", "session route is required")); return; }
+				const guiState = this.#projection.sessionGuiState(frame.sessionId, principal);
+				if (guiState === undefined) { client.send(errorResult(frame, "NOT_AUTHORIZED", "session is unavailable for this identity")); return; }
+				if (guiState !== "Ready") {
+					client.send(errorResult(frame, guiState === "Unavailable" ? "UNSUPPORTED_FEATURE" : "UPSTREAM_UNAVAILABLE", guiState === "Unavailable" ? "GUI is disabled for this session" : "session GUI is not ready"));
+					return;
+				}
 				const preview = typeof frame.args.previewId === "string" ? frame.args.previewId : undefined;
 				if (preview && previewOwners.has(preview) && previewOwners.get(preview) !== frame.sessionId) {
 					client.send(errorResult(frame, "NOT_AUTHORIZED", "preview belongs to another session"));

@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { CiProjectionRunner } from "./ci-projection-runner.ts";
 import { clusterServerConfigFromEnv, loadKubernetesCredentials } from "./config.ts";
 import { ClusterGateway } from "./gateway.ts";
 import { KubernetesApiClient, KubernetesGatewayMutationBackend } from "./kubernetes-client.ts";
@@ -37,6 +38,7 @@ export async function runClusterServer(env: Readonly<Record<string, string | und
 	const stopped = Promise.withResolvers<void>();
 	const stop = (): void => stopped.resolve();
 	let authority: SessionAuthorityRunner | undefined;
+	let ciProjection: CiProjectionRunner | undefined;
 	let servers: ClusterHttpServers | undefined;
 	let signalsInstalled = false;
 	try {
@@ -49,6 +51,14 @@ export async function runClusterServer(env: Readonly<Record<string, string | und
 		});
 		authority.start();
 		const ciProvider = config.woodpecker ? new WoodpeckerProvider(config.woodpecker) : undefined;
+		if (ciProvider) {
+			ciProjection = new CiProjectionRunner({
+				projection,
+				provider: ciProvider,
+				onError: error => logger.warn("CI projection refresh failed", { condition: error instanceof Error ? error.name : "unknown", result: "failure" }),
+			});
+			ciProjection.start();
+		}
 		const gateway = new ClusterGateway({
 			projection,
 			connector,
@@ -79,12 +89,16 @@ export async function runClusterServer(env: Readonly<Record<string, string | und
 			await servers?.drain();
 		} finally {
 			try {
-				await authority?.stop();
+				await ciProjection?.stop();
 			} finally {
 				try {
-					await runner.stop();
+					await authority?.stop();
 				} finally {
-					await servers?.stop();
+					try {
+						await runner.stop();
+					} finally {
+						await servers?.stop();
+					}
 				}
 			}
 		}

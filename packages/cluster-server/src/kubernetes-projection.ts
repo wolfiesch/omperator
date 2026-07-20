@@ -1,6 +1,7 @@
 import {
 	CLUSTER_MAX_WORKSPACES as WIRE_MAX_WORKSPACES,
 	decodeClusterCondition,
+	decodeSessionCiState,
 	decodeSessionRef,
 	decodeWorkspaceInfrastructureProjection,
 	hostId,
@@ -9,6 +10,7 @@ import {
 	type Cursor,
 	type HostId,
 	type SessionRef,
+	type SessionCiState,
 	type WorkspaceInfrastructureProjection,
 	type WorkspaceListResult,
 	type WorkspaceStateFrame,
@@ -55,6 +57,12 @@ export interface ClusterInfrastructureProjectionOptions {
 type SessionListener = () => void;
 interface WorkspaceReplayItem { readonly frame: WorkspaceStateFrame; readonly owner?: string; }
 interface WorkspaceSubscription { readonly listener: (frame: WorkspaceStateFrame) => void; readonly principal?: string; }
+export interface SessionCiCorrelation {
+	readonly sessionId: string;
+	readonly repositoryId: string;
+	readonly ref: string;
+	readonly commit: string;
+}
 
 interface SessionAuthorityWaiter { readonly resolve: (value: SessionRef) => void; readonly reject: (reason: Error) => void; readonly timer: ReturnType<typeof setTimeout>; }
 function record(value: unknown): Record<string, unknown> {
@@ -96,6 +104,11 @@ function workspaceOwner(resource: KubernetesResource): string | undefined {
 	if (typeof owner !== "string" || owner.length === 0 || new TextEncoder().encode(owner).byteLength > 256 || /[\u0000-\u001f\u007f]/u.test(owner)) return undefined;
 	return owner;
 }
+function ciSelection(resource: KubernetesResource): { readonly repositoryId: string; readonly ref: string; readonly commit: string } | undefined {
+	const ci = record(record(resource.spec).ci);
+	if (typeof ci.repositoryId !== "string" || typeof ci.ref !== "string" || typeof ci.commit !== "string") return undefined;
+	return { repositoryId: ci.repositoryId, ref: ci.ref, commit: ci.commit };
+}
 
 export function clusterHostIdFromUid(uid: string): HostId {
 	if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,127}$/u.test(uid)) throw new Error("T4ClusterHost UID is invalid");
@@ -112,6 +125,7 @@ export class ClusterInfrastructureProjection {
 	#workspaces = new Map<string, KubernetesResource>();
 	#sessions = new Map<string, KubernetesResource>();
 	#authoritativeSessions = new Map<string, SessionRef>();
+	#ciStates = new Map<string, SessionCiState>();
 	#authorityWaiters = new Map<string, Set<SessionAuthorityWaiter>>();
 	#versions = new Map<string, string>();
 	#workspaceSequence = 0;
@@ -163,6 +177,11 @@ export class ClusterInfrastructureProjection {
 		this.#workspaces = nextWorkspaces;
 		this.#sessions = nextSessions;
 		for (const name of this.#authoritativeSessions.keys()) if (!nextSessions.has(name)) this.#authoritativeSessions.delete(name);
+		for (const [name, state] of this.#ciStates) {
+			const selected = nextSessions.get(name);
+			const ci = selected ? ciSelection(selected) : undefined;
+			if (!ci || ci.repositoryId !== state.repositoryId || ci.ref !== state.ref || ci.commit !== state.commit) this.#ciStates.delete(name);
+		}
 		this.#versions.clear();
 		for (const resource of [input.host, ...input.workspaces, ...input.sessions])
 			this.#versions.set(`${resource.kind ?? "unknown"}/${resource.metadata.name}`, text(resource.metadata.resourceVersion));
@@ -232,7 +251,7 @@ export class ClusterInfrastructureProjection {
 			if (typeof value !== "string") continue;
 			try {
 				const url = new URL(value);
-				if ((url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password && url.pathname === "/" && !url.search && !url.hash)
+				if (url.protocol === "https:" && !url.username && !url.password && url.pathname === "/" && !url.search && !url.hash)
 					origins.push(url.origin);
 			} catch {}
 		}
@@ -246,6 +265,18 @@ export class ClusterInfrastructureProjection {
 	ownsSession(session: string, principal: string): boolean {
 		const resource = this.#sessions.get(session);
 		return resource !== undefined && this.#ownsSessionResource(resource, principal);
+	}
+	sessionExists(session: string): boolean {
+		return this.#sessions.has(session);
+	}
+	sessionGuiState(session: string, principal?: string): "Unavailable" | "Starting" | "Ready" | "Failed" | undefined {
+		const resource = this.#sessions.get(session);
+		if (!resource || principal !== undefined && !this.#ownsSessionResource(resource, principal)) return undefined;
+		if (record(resource.spec).guiEnabled !== true) return "Unavailable";
+		const phase = record(resource.status).phase;
+		if (phase === "Running") return "Ready";
+		if (phase === "Failed" || phase === "Terminating") return "Failed";
+		return "Starting";
 	}
 	sessionEndpoints(): PodHostEndpoint[] {
 		return [...this.#sessions.values()].flatMap(resource => {
@@ -314,9 +345,26 @@ export class ClusterInfrastructureProjection {
 	sessionCiSelection(session: string, principal?: string): { repositoryId: string; ref: string; commit: string } | undefined {
 		const resource = this.#sessions.get(session);
 		if (!resource || principal !== undefined && !this.#ownsSessionResource(resource, principal)) return undefined;
-		const ci = record(record(resource.spec).ci);
-		if (typeof ci.repositoryId !== "string" || typeof ci.ref !== "string" || typeof ci.commit !== "string") return undefined;
-		return { repositoryId: ci.repositoryId, ref: ci.ref, commit: ci.commit };
+		return ciSelection(resource);
+	}
+	sessionCiCorrelations(): SessionCiCorrelation[] {
+		return [...this.#sessions.values()].flatMap(resource => {
+			const selected = ciSelection(resource);
+			return selected ? [{ sessionId: resource.metadata.name, ...selected }] : [];
+		});
+	}
+	setSessionCiState(session: string, value: SessionCiState): void {
+		const resource = this.#sessions.get(session);
+		const selected = resource ? ciSelection(resource) : undefined;
+		if (!selected) return;
+		const state = decodeSessionCiState(value, `ci.${session}`);
+		if (state.repositoryId !== selected.repositoryId || state.ref !== selected.ref || state.commit !== selected.commit)
+			throw new Error("CI provider state does not match the declared session correlation");
+		const previous = this.#ciStates.get(session);
+		if (previous && JSON.stringify(previous) === JSON.stringify(state)) return;
+		this.#ciStates.set(session, state);
+		this.#sessionSequence++;
+		for (const listener of this.#sessionListeners) listener();
 	}
 
 	applyWatch(event: KubernetesWatchEvent): void {
@@ -327,7 +375,24 @@ export class ClusterInfrastructureProjection {
 			if (event.type === "DELETED") throw new Error("selected T4ClusterHost was deleted");
 			if (!resource.metadata.uid || clusterHostIdFromUid(resource.metadata.uid) !== this.hostId) throw new Error("selected T4ClusterHost identity changed");
 		} else if (resource.kind === "T4Workspace" || resource.kind === "T4Session") {
-			if (!this.#host || record(resource.spec).hostRef !== this.#host.metadata.name) return;
+			if (!this.#host) return;
+			if (record(resource.spec).hostRef !== this.#host.metadata.name) {
+				if (resource.kind === "T4Session") {
+					if (!this.#sessions.delete(name)) return;
+					this.#authoritativeSessions.delete(name);
+					this.#ciStates.delete(name);
+					this.#sessionSequence++;
+					for (const listener of this.#sessionListeners) listener();
+					return;
+				}
+				const existing = this.#workspaces.get(name);
+				if (!existing) return;
+				this.#workspaces.delete(name);
+				this.#publishWorkspace(existing, true, workspaceOwner(existing));
+				this.#sessionSequence++;
+				for (const listener of this.#sessionListeners) listener();
+				return;
+			}
 		} else return;
 		const key = `${resource.kind}/${name}`;
 		const version = text(resource.metadata.resourceVersion);
@@ -343,9 +408,14 @@ export class ClusterInfrastructureProjection {
 			if (event.type === "DELETED") {
 				if (!this.#sessions.delete(name)) return;
 				this.#authoritativeSessions.delete(name);
+				this.#ciStates.delete(name);
 			} else {
 				if (!this.#sessions.has(name) && this.#sessions.size >= this.maxSessions) throw new Error("session projection limit exceeded");
 				this.#sessions.set(name, resource);
+				const state = this.#ciStates.get(name);
+				const selected = ciSelection(resource);
+				if (state && (!selected || state.repositoryId !== selected.repositoryId || state.ref !== selected.ref || state.commit !== selected.commit))
+					this.#ciStates.delete(name);
 			}
 			this.#sessionSequence++;
 			for (const listener of this.#sessionListeners) listener();
@@ -405,7 +475,12 @@ export class ClusterInfrastructureProjection {
 		const spec = record(resource.spec);
 		const status = record(resource.status);
 		const workspaceId = text(spec.workspaceRef, "unknown-workspace");
-		const ci = record(spec.ci);
+		const selectedCi = ciSelection(resource);
+		const projectedCi = this.#ciStates.get(resource.metadata.name) ?? (selectedCi ? {
+			provider: "woodpecker" as const,
+			correlation: "unknown" as const,
+			...selectedCi,
+		} : undefined);
 		const condition = firstCondition(status);
 		const guiEnabled = spec.guiEnabled === true;
 		const infrastructurePhase = categorical(status.phase, ["Pending", "Running", "Failed", "Terminating", "Unknown"] as const, "Unknown");
@@ -429,10 +504,7 @@ export class ClusterInfrastructureProjection {
 					...(condition ? { condition } : {}),
 					gui: { state: guiState },
 				},
-				...(ci.repositoryId && ci.ref && ci.commit ? { ci: {
-					provider: "woodpecker", correlation: "unknown", repositoryId: ci.repositoryId,
-					ref: ci.ref, commit: ci.commit,
-				} } : {}),
+				...(projectedCi ? { ci: projectedCi } : {}),
 			},
 		}, `session.${resource.metadata.name}`);
 	}

@@ -320,14 +320,22 @@ export class KubernetesGatewayMutationBackend {
 
 	async deleteSession(_commandId: string, sessionId: string, principal: string): Promise<{ deleted: true }> {
 		this.#validatePrincipal(principal);
-		const session = await this.#client.get("t4sessions", sessionId);
+		let session: KubernetesResource;
+		try { session = await this.#client.get("t4sessions", sessionId); }
+		catch (error) {
+			if (error instanceof KubernetesApiError && error.status === 404) return { deleted: true };
+			throw error;
+		}
 		if (object(session.spec).hostRef !== this.#hostRef) throw new Error("session belongs to another cluster host");
 		const workspaceRef = object(session.spec).workspaceRef;
 		if (typeof workspaceRef !== "string") throw new Error("session workspace reference is invalid");
 		const workspace = await this.#client.get("t4workspaces", workspaceRef);
 		this.#assertWorkspaceOwner(workspace, principal);
 		if (!session.metadata.uid || !session.metadata.resourceVersion) throw new Error("session delete precondition is unavailable");
-		await this.#client.delete("t4sessions", sessionId, { uid: session.metadata.uid, resourceVersion: session.metadata.resourceVersion });
+		try { await this.#client.delete("t4sessions", sessionId, { uid: session.metadata.uid, resourceVersion: session.metadata.resourceVersion }); }
+		catch (error) {
+			if (!(error instanceof KubernetesApiError) || error.status !== 404) throw error;
+		}
 		return { deleted: true };
 	}
 

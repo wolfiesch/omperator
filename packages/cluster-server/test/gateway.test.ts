@@ -10,6 +10,7 @@ import {
 } from "@t4-code/host-wire";
 import { ClusterGateway, type GatewayClient, type GatewayMutationBackend } from "../src/gateway.ts";
 import { ClusterInfrastructureProjection } from "../src/kubernetes-projection.ts";
+import { KubernetesApiError } from "../src/kubernetes-client.ts";
 import type { PodHostConnection, PodHostConnector, PodHostRoute } from "../src/pod-host-router.ts";
 
 const PRINCIPAL = "owner@example.com";
@@ -204,7 +205,7 @@ describe("stateless omp-app cluster gateway", () => {
 		await value.connection.receive(hello);
 		await value.connection.receive({
 			v: "omp-app/1", type: "command", requestId: "request-owner", commandId: "command-owner",
-			hostId: "cluster:host-uid", sessionId: "session-one", command: "preview.state", args: { previewId: "preview-one" },
+			hostId: "cluster:host-uid", sessionId: "session-one", command: "preview.state", args: {},
 		});
 		value.connector.onFrame?.({
 			v: "omp-app/1", type: "preview.state", hostId: "upstream" as never, sessionId: "omp-private-one" as never,
@@ -213,7 +214,7 @@ describe("stateless omp-app cluster gateway", () => {
 		});
 		await value.connection.receive({
 			v: "omp-app/1", type: "command", requestId: "request-preview", commandId: "command-preview",
-			hostId: "cluster:host-uid", sessionId: "session-two", command: "preview.state", args: { previewId: "preview-one" },
+			hostId: "cluster:host-uid", sessionId: "session-two", command: "preview.activate", args: { previewId: "preview-one" },
 		});
 		expect(value.connector.routes).toHaveLength(1);
 		expect(value.client.frames.at(-1)).toMatchObject({ type: "response", commandId: "command-preview", ok: false, error: { code: "NOT_AUTHORIZED" } });
@@ -234,5 +235,44 @@ describe("stateless omp-app cluster gateway", () => {
 			expect.objectContaining({ type: "response", commandId: "command-create", ok: true }),
 			expect.objectContaining({ type: "response", commandId: "command-create", requestId: "request-create-retry", ok: true }),
 		]);
+	});
+
+	it("fails closed when the session infrastructure does not authorize GUI access", async () => {
+		const value = setup();
+		value.projection.applyWatch({
+			type: "MODIFIED",
+			object: { ...session("session-one", "omp-private-one"), metadata: { ...session("session-one", "omp-private-one").metadata, resourceVersion: "30" }, spec: { ...session("session-one", "omp-private-one").spec, guiEnabled: false } },
+		});
+		await value.connection.receive(hello);
+		await value.connection.receive({
+			v: "omp-app/1", type: "command", requestId: "request-disabled-gui", commandId: "command-disabled-gui",
+			hostId: "cluster:host-uid", sessionId: "session-one", command: "preview.state", args: {},
+		});
+		expect(value.connector.routes).toHaveLength(0);
+		expect(value.client.frames.at(-1)).toMatchObject({ type: "response", ok: false, error: { code: "UNSUPPORTED_FEATURE", message: "GUI is disabled for this session" } });
+	});
+
+	it("treats an already absent session delete as an idempotent success", async () => {
+		const value = setup();
+		value.projection.applyWatch({ type: "DELETED", object: session("session-one", "omp-private-one") });
+		await value.connection.receive(hello);
+		await value.connection.receive({
+			v: "omp-app/1", type: "command", requestId: "request-delete-replay", commandId: "command-delete-replay",
+			hostId: "cluster:host-uid", sessionId: "session-one", command: "session.delete", expectedRevision: "authority-r1", args: {},
+		});
+		expect(value.client.frames.at(-1)).toMatchObject({ type: "response", ok: true, result: { deleted: true } });
+		expect(value.mutations.sessionDeletes).toBe(0);
+	});
+
+	it("reports Kubernetes schema rejection as a client contract error", async () => {
+		const value = setup();
+		value.mutations.createWorkspace = async () => { throw new KubernetesApiError(422, "invalid"); };
+		await value.connection.receive(hello);
+		await value.connection.receive({
+			v: "omp-app/1", type: "command", requestId: "request-invalid", commandId: "command-invalid",
+			hostId: "cluster:host-uid", command: "workspace.create",
+			args: { displayName: "Created", retentionPolicy: "Retain", capacity: "20Gi" },
+		});
+		expect(value.client.frames.at(-1)).toMatchObject({ type: "response", ok: false, error: { code: "INVALID_FRAME" } });
 	});
 });

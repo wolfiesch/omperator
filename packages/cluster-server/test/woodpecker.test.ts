@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +11,8 @@ const correlation = {
 	ref: "refs/heads/agent/t4-cluster-operator",
 	commit: "0123456789abcdef0123456789abcdef01234567",
 };
+const runCorrelation = { ...correlation, commandId: "command-one" };
+const runKey = createHash("sha256").update(correlation.sessionId).update("\u0000").update(runCorrelation.commandId).digest("base64url");
 const pipeline = {
 	number: 42,
 	status: "running",
@@ -19,7 +22,7 @@ const pipeline = {
 	created: 1_773_964_800,
 	started: 1_773_964_810,
 	finished: 0,
-	variables: { T4_SESSION_ID: correlation.sessionId },
+	variables: { T4_SESSION_ID: correlation.sessionId, T4_IDEMPOTENCY_KEY: runKey },
 	stages: [
 		{ name: "clone", status: "success" },
 		{ name: "test", status: "running" },
@@ -62,7 +65,7 @@ describe("bounded Woodpecker provider", () => {
 			requests.push({ url: String(input), init });
 			return Response.json([pipeline]);
 		}) as typeof globalThis.fetch;
-		const result = await provider(fetch).run(correlation);
+		const result = await provider(fetch).run(runCorrelation);
 		expect(result).toMatchObject({ triggered: false, pipelineNumber: 42, status: "running" });
 		expect(requests).toHaveLength(1);
 		expect(requests[0]?.url).toBe("https://ci.example.test/api/repos/owner%2Ft4-code/pipelines?ref=refs%2Fheads%2Fagent%2Ft4-cluster-operator&commit=0123456789abcdef0123456789abcdef01234567&limit=100");
@@ -79,22 +82,51 @@ describe("bounded Woodpecker provider", () => {
 				query++;
 				return Response.json(query === 1 ? [{ ...pipeline, variables: { T4_SESSION_ID: "another-session" } }] : [pipeline]);
 			}
-			return Response.json(pipeline, { status: 201 });
+			return Response.json({ ...pipeline, idempotencyKey: runKey }, { status: 201 });
 		}) as typeof globalThis.fetch;
 		const woodpecker = provider(fetch);
-		const first = await woodpecker.run(correlation);
+		const first = await woodpecker.run(runCorrelation);
 		expect(first.triggered).toBe(true);
 		const post = requests.find(request => request.init?.method === "POST");
 		expect(post?.url).toBe("https://ci.example.test/api/repos/owner%2Ft4-code/pipelines");
-		expect(JSON.parse(String(post?.init?.body))).toEqual({
+		const posted = JSON.parse(String(post?.init?.body));
+		expect(posted).toMatchObject({
 			ref: correlation.ref,
 			commit: correlation.commit,
 			event: "manual",
 			variables: { T4_SESSION_ID: correlation.sessionId },
 		});
-		const second = await woodpecker.run(correlation);
+		expect(posted.variables.T4_IDEMPOTENCY_KEY).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+		expect(new Headers(post?.init?.headers).get("idempotency-key")).toBe(`t4-${posted.variables.T4_IDEMPOTENCY_KEY}`);
+		const second = await woodpecker.run(runCorrelation);
 		expect(second).toMatchObject({ triggered: false, pipelineNumber: 42 });
 		expect(requests.filter(request => request.init?.method === "POST")).toHaveLength(1);
+	});
+
+	it("requires an adapter idempotency receipt before reporting a trigger", async () => {
+		let posts = 0;
+		const fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+			if (!init?.method || init.method === "GET") return Response.json([]);
+			posts++;
+			return Response.json(pipeline, { status: 201 });
+		}) as typeof globalThis.fetch;
+		await expect(provider(fetch).run(runCorrelation)).rejects.toThrow("provider-side idempotency");
+		expect(posts).toBe(1);
+	});
+
+	it("uses a distinct provider idempotency key for each intentional command", async () => {
+		const keys: string[] = [];
+		const fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+			if (!init?.method || init.method === "GET") return Response.json([]);
+			const body = JSON.parse(String(init.body)) as { variables: { T4_IDEMPOTENCY_KEY: string } };
+			keys.push(body.variables.T4_IDEMPOTENCY_KEY);
+			return Response.json({ ...pipeline, idempotencyKey: body.variables.T4_IDEMPOTENCY_KEY }, { status: 201 });
+		}) as typeof globalThis.fetch;
+		const woodpecker = provider(fetch);
+		await woodpecker.run(runCorrelation);
+		await woodpecker.run({ ...runCorrelation, commandId: "command-two" });
+		expect(keys).toHaveLength(2);
+		expect(new Set(keys).size).toBe(2);
 	});
 
 	it("re-reads a bounded projected credential for every provider request", async () => {

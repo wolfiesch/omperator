@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { readBoundedRegularFile } from "./config.ts";
 import type { CiRunResult, SessionCiState } from "@t4-code/host-wire";
@@ -13,10 +14,11 @@ export interface CiCorrelation {
 	readonly ref: string;
 	readonly commit: string;
 }
+export interface CiRunCorrelation extends CiCorrelation { readonly commandId: string; }
 export interface CiProvider {
 	readonly name: "woodpecker";
 	query(correlation: CiCorrelation, signal?: AbortSignal): Promise<SessionCiState>;
-	run(correlation: CiCorrelation, signal?: AbortSignal): Promise<CiRunResult>;
+	run(correlation: CiRunCorrelation, signal?: AbortSignal): Promise<CiRunResult>;
 }
 export interface WoodpeckerRepositoryConfig { readonly slug: string; }
 export interface WoodpeckerProviderOptions {
@@ -81,9 +83,11 @@ function timestamp(value: unknown): string | undefined {
 function object(value: unknown): Record<string, unknown> {
 	return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
-function exactPipeline(pipeline: WoodpeckerPipeline, correlation: CiCorrelation): boolean {
+function exactPipeline(pipeline: WoodpeckerPipeline, correlation: CiCorrelation, idempotencyKey?: string): boolean {
 	const variables = object(pipeline.variables);
-	return pipeline.ref === correlation.ref && pipeline.commit === correlation.commit && variables.T4_SESSION_ID === correlation.sessionId;
+	return pipeline.ref === correlation.ref && pipeline.commit === correlation.commit &&
+		variables.T4_SESSION_ID === correlation.sessionId &&
+		(idempotencyKey === undefined || variables.T4_IDEMPOTENCY_KEY === idempotencyKey);
 }
 
 export function mapWoodpeckerPipeline(
@@ -142,15 +146,18 @@ export class WoodpeckerProvider implements CiProvider {
 		this.#repositories = Object.freeze(repositories);
 		this.#fetch = options.fetch ?? globalThis.fetch;
 	}
-
 	async query(correlation: CiCorrelation, signal?: AbortSignal): Promise<SessionCiState> {
+		return await this.#queryExact(correlation, signal);
+	}
+
+	async #queryExact(correlation: CiCorrelation, signal?: AbortSignal, idempotencyKey?: string): Promise<SessionCiState> {
 		const repository = this.#repository(correlation.repositoryId);
 		this.#validateCorrelation(correlation);
 		const query = new URLSearchParams({ ref: correlation.ref, commit: correlation.commit, limit: String(WOODPECKER_MAX_PIPELINES) });
 		const pipelines = await this.#json(`/api/repos/${encodeURIComponent(repository.slug)}/pipelines?${query}`, { signal });
 		if (!Array.isArray(pipelines)) throw new Error("Woodpecker pipeline response is invalid");
 		if (pipelines.length > WOODPECKER_MAX_PIPELINES) throw new Error("Woodpecker pipeline response limit exceeded");
-		const exact = (pipelines as WoodpeckerPipeline[]).find(value => exactPipeline(value, correlation));
+		const exact = (pipelines as WoodpeckerPipeline[]).find(value => exactPipeline(value, correlation, idempotencyKey));
 		if (!exact) return {
 			provider: "woodpecker", correlation: "unknown", repositoryId: correlation.repositoryId,
 			ref: correlation.ref, commit: correlation.commit,
@@ -158,9 +165,8 @@ export class WoodpeckerProvider implements CiProvider {
 		const number = positiveInteger(exact.number);
 		return mapWoodpeckerPipeline(exact, correlation, number ? `${this.#webBaseUrl}/repos/${repository.slug}/pipeline/${number}` : undefined);
 	}
-
-	async run(correlation: CiCorrelation, signal?: AbortSignal): Promise<CiRunResult> {
-		const key = `${correlation.repositoryId}\u0000${correlation.ref}\u0000${correlation.commit}\u0000${correlation.sessionId}`;
+	async run(correlation: CiRunCorrelation, signal?: AbortSignal): Promise<CiRunResult> {
+		const key = `${correlation.repositoryId}\u0000${correlation.ref}\u0000${correlation.commit}\u0000${correlation.sessionId}\u0000${correlation.commandId}`;
 		const pending = this.#inflight.get(key);
 		if (pending) return await pending;
 		if (this.#inflight.size >= WOODPECKER_MAX_INFLIGHT_TRIGGERS) throw new Error("Woodpecker trigger concurrency limit exceeded");
@@ -169,18 +175,22 @@ export class WoodpeckerProvider implements CiProvider {
 		try { return await operation; }
 		finally { if (this.#inflight.get(key) === operation) this.#inflight.delete(key); }
 	}
-
-	async #runExact(correlation: CiCorrelation, signal?: AbortSignal): Promise<CiRunResult> {
-		const existing = await this.query(correlation, signal);
+	async #runExact(correlation: CiRunCorrelation, signal?: AbortSignal): Promise<CiRunResult> {
+		const idempotencyKey = createHash("sha256")
+			.update(correlation.sessionId).update("\u0000").update(correlation.commandId)
+			.digest("base64url");
+		const existing = await this.#queryExact(correlation, signal, idempotencyKey);
 		if (existing.correlation === "exact" && existing.pipelineNumber !== undefined)
 			return { triggered: false, pipelineNumber: existing.pipelineNumber, ...(existing.status ? { status: existing.status } : {}) };
 		const repository = this.#repository(correlation.repositoryId);
 		const created = object(await this.#json(`/api/repos/${encodeURIComponent(repository.slug)}/pipelines`, {
 			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ ref: correlation.ref, commit: correlation.commit, event: "manual", variables: { T4_SESSION_ID: correlation.sessionId } }),
+			headers: { "content-type": "application/json", "idempotency-key": `t4-${idempotencyKey}` },
+			body: JSON.stringify({ ref: correlation.ref, commit: correlation.commit, event: "manual", variables: { T4_SESSION_ID: correlation.sessionId, T4_IDEMPOTENCY_KEY: idempotencyKey } }),
 			signal,
 		}));
+		if (created.idempotencyKey !== idempotencyKey)
+			throw new Error("Woodpecker adapter did not confirm provider-side idempotency");
 		const mapped = mapWoodpeckerPipeline(created, correlation);
 		return {
 			triggered: true,
@@ -189,16 +199,12 @@ export class WoodpeckerProvider implements CiProvider {
 		};
 	}
 
-	#repository(id: string): WoodpeckerRepositoryConfig {
-		const repository = this.#repositories[id];
-		if (!repository) throw new Error("Woodpecker repository is not allowlisted");
-		return repository;
-	}
 	#validateCorrelation(value: CiCorrelation): void {
 		bounded(value.sessionId, "CI session id", 256);
 		bounded(value.repositoryId, "CI repository id", 256);
 		bounded(value.ref, "CI ref", 512);
 		bounded(value.commit, "CI commit", 512);
+		if ("commandId" in value) bounded(value.commandId, "CI command id", 256);
 	}
 	async #credential(): Promise<string> {
 		if (this.#token) return this.#token;

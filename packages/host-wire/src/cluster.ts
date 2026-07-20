@@ -8,8 +8,8 @@ export const CLUSTER_OPERATOR_FEATURE = "cluster.operator" as const;
 export const CI_TRIGGER_CAPABILITY = "ci.trigger" as const;
 export const CLUSTER_MAX_WORKSPACES = 256;
 export const CLUSTER_MAX_CONDITION_MESSAGE_BYTES = 2_048;
-export const CLUSTER_MAX_REFERENCE_BYTES = 512;
-export const CLUSTER_MAX_REPOSITORY_ID_BYTES = 256;
+export const CLUSTER_MAX_REFERENCE_BYTES = 256;
+export const CLUSTER_MAX_REPOSITORY_ID_BYTES = 128;
 
 export const CLUSTER_CONDITION_STATUSES = ["True", "False", "Unknown"] as const;
 export type ClusterConditionStatus = (typeof CLUSTER_CONDITION_STATUSES)[number];
@@ -115,7 +115,6 @@ export interface ClusterWorkspaceCreateArguments {
 	readonly displayName: string;
 	readonly retentionPolicy: WorkspaceRetentionPolicy;
 	readonly capacity: string;
-	readonly storageClass?: string;
 	readonly repository?: ClusterRepositorySelection;
 }
 export interface ClusterSessionCiSelection {
@@ -160,18 +159,38 @@ function identifier(value: unknown, path: string, max = 256): string {
 	if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(result)) fail("INVALID_FRAME", "invalid cluster identifier", path);
 	return result;
 }
+function kubernetesName(value: unknown, path: string, max = 253): string {
+	const result = controlFree(value, path, max);
+	if (!/^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?$/u.test(result)) fail("INVALID_FRAME", "invalid Kubernetes resource name", path);
+	return result;
+}
+function runtimeProfile(value: unknown, path: string): string {
+	const result = controlFree(value, path, 64);
+	if (!/^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/u.test(result)) fail("INVALID_FRAME", "invalid runtime profile", path);
+	return result;
+}
+function nonEmptyText(value: unknown, path: string, max: number): string {
+	const result = controlFree(value, path, max);
+	if (result.length === 0) fail("INVALID_FRAME", "value must not be empty", path);
+	return result;
+}
 function repositoryId(value: unknown, path: string): string {
-	const result = controlFree(value, path, CLUSTER_MAX_REPOSITORY_ID_BYTES);
-	if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$/u.test(result) || result.includes("..") || result.includes("://"))
+	const result = nonEmptyText(value, path, CLUSTER_MAX_REPOSITORY_ID_BYTES);
+	if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/u.test(result) || result.includes("..") || result.includes("://"))
 		fail("INVALID_FRAME", "invalid repository identifier", path);
 	return result;
 }
 function reference(value: unknown, path: string): string {
-	return controlFree(value, path, CLUSTER_MAX_REFERENCE_BYTES);
+	return nonEmptyText(value, path, CLUSTER_MAX_REFERENCE_BYTES);
+}
+function commit(value: unknown, path: string): string {
+	const result = nonEmptyText(value, path, 64);
+	if (!/^[0-9a-fA-F]{7,64}$/u.test(result)) fail("INVALID_FRAME", "commit must be 7 to 64 hexadecimal characters", path);
+	return result;
 }
 function quantity(value: unknown, path: string): string {
-	const result = controlFree(value, path, 64);
-	if (!/^(?:0|[1-9][0-9]*)(?:[EPTGMK]i?|m)?$/u.test(result)) fail("INVALID_FRAME", "invalid Kubernetes quantity", path);
+	const result = nonEmptyText(value, path, 32);
+	if (!/^[1-9][0-9]*(?:Ei|Pi|Ti|Gi|Mi|Ki|E|P|T|G|M|K)$/u.test(result)) fail("INVALID_FRAME", "invalid positive Kubernetes storage quantity", path);
 	return result;
 }
 function canonicalTimestamp(value: unknown, path: string): string {
@@ -215,11 +234,11 @@ export function decodeWorkspaceInfrastructureProjection(
 	const currentRevision = revision(input.revision, `${path}.revision`);
 	if (input.accessMode !== "ReadWriteMany") fail("INVALID_FRAME", "workspace access mode must be ReadWriteMany", `${path}.accessMode`);
 	return {
-		id: identifier(input.id, `${path}.id`),
-		displayName: controlFree(input.displayName, `${path}.displayName`, 256),
+		id: kubernetesName(input.id, `${path}.id`),
+		displayName: nonEmptyText(input.displayName, `${path}.displayName`, 128),
 		phase: oneOf(input.phase, `${path}.phase`, WORKSPACE_PHASES),
 		retentionPolicy: oneOf(input.retentionPolicy, `${path}.retentionPolicy`, WORKSPACE_RETENTION_POLICIES),
-		...(input.storageClass === undefined ? {} : { storageClass: identifier(input.storageClass, `${path}.storageClass`, 128) }),
+		...(input.storageClass === undefined ? {} : { storageClass: kubernetesName(input.storageClass, `${path}.storageClass`, 63) }),
 		...(input.capacity === undefined ? {} : { capacity: quantity(input.capacity, `${path}.capacity`) }),
 		accessMode: "ReadWriteMany",
 		revision: currentRevision,
@@ -300,20 +319,21 @@ function decodeRepository(value: unknown, path: string, requireRefCommit: boolea
 	const input = exact(value, path, ["repositoryId", "ref", "commit"]);
 	if (requireRefCommit && (input.ref === undefined || input.commit === undefined))
 		fail("INVALID_FRAME", "CI repository requires ref and commit", path);
+	if (input.commit !== undefined && input.ref === undefined)
+		fail("INVALID_FRAME", "repository commit requires an explicit ref", path);
 	return {
 		repositoryId: repositoryId(input.repositoryId, `${path}.repositoryId`),
 		...(input.ref === undefined ? {} : { ref: reference(input.ref, `${path}.ref`) }),
-		...(input.commit === undefined ? {} : { commit: reference(input.commit, `${path}.commit`) }),
+		...(input.commit === undefined ? {} : { commit: commit(input.commit, `${path}.commit`) }),
 	};
 }
 
 export function decodeClusterWorkspaceCreateArguments(value: unknown): ClusterWorkspaceCreateArguments {
-	const input = exact(value, "args", ["displayName", "retentionPolicy", "capacity", "storageClass", "repository"]);
+	const input = exact(value, "args", ["displayName", "retentionPolicy", "capacity", "repository"]);
 	return {
-		displayName: controlFree(input.displayName, "args.displayName", 256),
+		displayName: nonEmptyText(input.displayName, "args.displayName", 128),
 		retentionPolicy: oneOf(input.retentionPolicy, "args.retentionPolicy", WORKSPACE_RETENTION_POLICIES),
 		capacity: quantity(input.capacity, "args.capacity"),
-		...(input.storageClass === undefined ? {} : { storageClass: identifier(input.storageClass, "args.storageClass", 128) }),
 		...(input.repository === undefined ? {} : { repository: decodeRepository(input.repository, "args.repository", false) }),
 	};
 }
@@ -329,9 +349,9 @@ export function decodeClusterSessionCreateArguments(value: unknown): ClusterSess
 	}
 	if (typeof input.guiEnabled !== "boolean") fail("INVALID_FRAME", "guiEnabled must be boolean", "args.guiEnabled");
 	return {
-		workspaceId: identifier(input.workspaceId, "args.workspaceId"),
-		...(input.title === undefined ? {} : { title: controlFree(input.title, "args.title", 512) }),
-		runtimeProfile: identifier(input.runtimeProfile, "args.runtimeProfile", 64),
+		workspaceId: kubernetesName(input.workspaceId, "args.workspaceId"),
+		...(input.title === undefined ? {} : { title: nonEmptyText(input.title, "args.title", 128) }),
+		runtimeProfile: runtimeProfile(input.runtimeProfile, "args.runtimeProfile"),
 		guiEnabled: input.guiEnabled,
 		...(ci === undefined ? {} : { ci }),
 	};
@@ -346,7 +366,7 @@ export function decodeCiRunArguments(value: unknown): CiRunArguments {
 		action: "run",
 		repositoryId: repositoryId(input.repositoryId, "args.repositoryId"),
 		ref: reference(input.ref, "args.ref"),
-		commit: reference(input.commit, "args.commit"),
+		commit: commit(input.commit, "args.commit"),
 	};
 }
 

@@ -61,7 +61,7 @@ export function startClusterHttpServers(options: ClusterHttpServersOptions): Clu
 		port: options.gatewayPort,
 		fetch(request, server) {
 			const url = new URL(request.url);
-			if (url.pathname !== "/omp-app/v1") return new Response("not found", { status: 404 });
+			if (url.pathname !== "/v1/ws") return new Response("not found", { status: 404 });
 			if (request.method !== "GET") return new Response("method not allowed", { status: 405 });
 			if (draining) return new Response("draining", { status: 503 });
 			const remoteAddress = server.requestIP(request)?.address;

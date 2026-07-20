@@ -37,7 +37,7 @@ const workspace = {
 		displayName: "T4 code",
 		retentionPolicy: "Retain",
 		size: "20Gi",
-		repository: { repositoryId: "t4-code", ref: "refs/heads/main", commit: "abc" },
+		repository: { repositoryId: "t4-code", ref: "refs/heads/main", commit: "abcdef0" },
 	},
 	status: {
 		observedGeneration: 3,
@@ -57,7 +57,7 @@ const session = {
 		title: "Cluster task",
 		runtimeProfile: "omp-17.0.5",
 		guiEnabled: true,
-		ci: { repositoryId: "t4-code", ref: "refs/heads/main", commit: "abc" },
+		ci: { repositoryId: "t4-code", ref: "refs/heads/main", commit: "abcdef0" },
 	},
 	status: {
 		observedGeneration: 5,
@@ -135,6 +135,40 @@ describe("Kubernetes infrastructure projection", () => {
 		projection.applyWatch({ type: "DELETED", object: session });
 		expect(projection.sessionRoute("session-one")).toBeUndefined();
 		expect(projection.sessionRefs()).toEqual([]);
+	});
+
+	it("accepts only HTTPS browser origins and exposes GUI infrastructure authorization", () => {
+		const projection = new ClusterInfrastructureProjection({ epoch: "replica-uid-1", namespace: "development" });
+		projection.replace({
+			host: { ...host, spec: { allowedOrigins: ["https://t4.tailnet.example", "http://insecure.example", "https://user:secret@t4.example"] } },
+			workspaces: [workspace],
+			sessions: [session],
+			resourceVersion: "102",
+		});
+		expect(projection.allowedOrigins()).toEqual(["https://t4.tailnet.example"]);
+		expect(projection.sessionGuiState("session-one", PRINCIPAL)).toBe("Ready");
+		projection.applyWatch({
+			type: "MODIFIED",
+			object: { ...session, metadata: { ...session.metadata, resourceVersion: "105" }, spec: { ...session.spec, guiEnabled: false } },
+		});
+		expect(projection.sessionGuiState("session-one", PRINCIPAL)).toBe("Unavailable");
+		expect(projection.sessionGuiState("session-one", "other@example.com")).toBeUndefined();
+	});
+
+	it("removes cached resources immediately if a legacy watch migrates them to another host", () => {
+		const projection = new ClusterInfrastructureProjection({ epoch: "replica-uid-1", namespace: "development" });
+		projection.replace({ host, workspaces: [workspace], sessions: [session], resourceVersion: "102" });
+		projection.setSessionAuthority("session-one", authority("omp-session-private"));
+		projection.applyWatch({
+			type: "MODIFIED",
+			object: { ...session, metadata: { ...session.metadata, resourceVersion: "106" }, spec: { ...session.spec, hostRef: "another-host" } },
+		});
+		expect(projection.sessionRoute("session-one")).toBeUndefined();
+		projection.applyWatch({
+			type: "MODIFIED",
+			object: { ...workspace, metadata: { ...workspace.metadata, resourceVersion: "107" }, spec: { ...workspace.spec, hostRef: "another-host" } },
+		});
+		expect(projection.workspaceList(PRINCIPAL).workspaces).toEqual([]);
 	});
 
 	it("fails closed at explicit projection limits", () => {

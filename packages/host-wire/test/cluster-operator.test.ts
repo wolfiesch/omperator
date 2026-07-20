@@ -220,8 +220,7 @@ describe("cluster operator wire contract", () => {
 				displayName: "T4 code",
 				retentionPolicy: "Retain",
 				capacity: "20Gi",
-				storageClass: "t4-workspaces-rwx",
-				repository: { repositoryId: "t4-code", ref: "refs/heads/main", commit: "abc" },
+				repository: { repositoryId: "t4-code", ref: "refs/heads/main", commit: "abcdef0" },
 			}),
 		).toMatchObject({ displayName: "T4 code", capacity: "20Gi" });
 		expect(
@@ -230,8 +229,21 @@ describe("cluster operator wire contract", () => {
 				title: "Agent task",
 				runtimeProfile: "omp-17.0.5",
 				guiEnabled: true,
-				ci: { provider: "woodpecker", repositoryId: "t4-code", ref: "refs/heads/main", commit: "abc" },
+				ci: { provider: "woodpecker", repositoryId: "t4-code", ref: "refs/heads/main", commit: "abcdef0" },
 			}),
 		).toMatchObject({ workspaceId: "workspace-one", runtimeProfile: "omp-17.0.5" });
+		for (const malformed of [
+			{ displayName: "x".repeat(129), retentionPolicy: "Retain", capacity: "20Gi" },
+			{ displayName: "T4 code", retentionPolicy: "Retain", capacity: "0Gi" },
+			{ displayName: "T4 code", retentionPolicy: "Retain", capacity: "20Gi", storageClass: "client-owned" },
+			{ displayName: "T4 code", retentionPolicy: "Retain", capacity: "20Gi", repository: { repositoryId: "t4-code", commit: "abcdef0" } },
+			{ displayName: "T4 code", retentionPolicy: "Retain", capacity: "20Gi", repository: { repositoryId: "t4-code", ref: "main", commit: "abc" } },
+		]) expect(() => decodeClusterWorkspaceCreateArguments(malformed)).toThrow(AppWireError);
+		for (const malformed of [
+			{ workspaceId: "Workspace:one", title: "Agent", runtimeProfile: "default", guiEnabled: true },
+			{ workspaceId: "workspace-one", title: "x".repeat(129), runtimeProfile: "default", guiEnabled: true },
+			{ workspaceId: "workspace-one", title: "Agent", runtimeProfile: "Default:unsafe", guiEnabled: true },
+			{ workspaceId: "workspace-one", title: "Agent", runtimeProfile: "default", guiEnabled: true, ci: { provider: "woodpecker", repositoryId: "t4-code", ref: "main", commit: "abc" } },
+		]) expect(() => decodeClusterSessionCreateArguments(malformed)).toThrow(AppWireError);
 	});
 });
