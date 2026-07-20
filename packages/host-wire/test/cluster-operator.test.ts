@@ -93,9 +93,9 @@ describe("cluster operator wire contract", () => {
 			workspaceId: "workspace-one",
 			cursor: { epoch: "replica-pod-uid-1", seq: 20 },
 			revision: "workspace-r4",
-			remove: true,
+			remove: "workspace-one",
 		});
-		expect(remove).toMatchObject({ workspaceId: "workspace-one", remove: true });
+		expect(remove).toMatchObject({ workspaceId: "workspace-one", remove: "workspace-one" });
 
 		for (const malformed of [
 			{ ...upsert, remove: true },
