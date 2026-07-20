@@ -17,6 +17,20 @@ pnpm --version
 pnpm install --frozen-lockfile
 ```
 
+If you use [Task](https://taskfile.dev/) as a Make alternative, install it first (`brew install
+go-task` on macOS), then use the repository shortcuts:
+
+```sh
+task setup
+task doctor
+task dev:web
+task verify
+```
+
+Run `task` to see every available shortcut and a short explanation. These commands wrap the same
+`pnpm` scripts documented below; Task is optional and does not replace the pinned Node or pnpm
+versions.
+
 If Node reports a different major version, select a compatible Node 24 release with your normal
 version manager and reinstall dependencies. Do not ignore the engine warning: using another Node
 major can change Electron, WebSocket, and test behavior.

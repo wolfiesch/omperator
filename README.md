@@ -126,6 +126,10 @@ pnpm package:mac:unsigned  # unsigned macOS build (on a Mac)
 pnpm package:mac      # maintainer-only signed and notarized macOS build
 ```
 
+Prefer Task as a Make alternative? Install [Task](https://taskfile.dev/), then run `task setup`,
+`task dev`, or `task verify`. Run `task` to list all shortcuts. The underlying `pnpm` commands remain
+available, and Task does not replace the required Node or pnpm versions.
+
 The soak command needs no phone, Android emulator, or macOS simulator. It checks the shared data
 path and phone-sized browser UI, but it does not certify Android Keystore behavior, WebView
 background/foreground lifecycle, APK installation, or networking on a physical device. Those remain

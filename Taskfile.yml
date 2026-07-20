@@ -1,0 +1,74 @@
+version: "3"
+
+tasks:
+  default:
+    desc: Show the available project commands
+    cmds:
+      - task --list
+
+  setup:
+    desc: Install the pinned workspace dependencies
+    aliases: [install]
+    cmds:
+      - pnpm install --frozen-lockfile
+
+  doctor:
+    desc: Check the local development environment
+    cmds:
+      - node scripts/t4-doctor.mjs
+
+  dev:
+    desc: Start the web and desktop apps in development mode
+    cmds:
+      - pnpm dev
+
+  dev:web:
+    desc: Start the web app with sample data
+    cmds:
+      - pnpm dev:web
+
+  dev:desktop:
+    desc: Start the desktop app in development mode
+    cmds:
+      - pnpm dev:desktop
+
+  dev:site:
+    desc: Start the project site in development mode
+    cmds:
+      - pnpm dev:site
+
+  check:
+    desc: Run release, provenance, lint, and type checks
+    cmds:
+      - pnpm check
+
+  test:
+    desc: Run the workspace test suite
+    cmds:
+      - pnpm test
+
+  verify:
+    desc: Run the checks and tests expected before a pull request
+    cmds:
+      - task: check
+      - task: test
+
+  build:
+    desc: Build every workspace package
+    cmds:
+      - pnpm build
+
+  test:e2e:
+    desc: Build the web apps and run the end-to-end browser tests
+    cmds:
+      - pnpm test:e2e
+
+  test:tooling:
+    desc: Run tests for repository scripts and maintainer tooling
+    cmds:
+      - pnpm test:tooling
+
+  test:packaging:
+    desc: Run tests for app packaging changes
+    cmds:
+      - pnpm test:packaging
