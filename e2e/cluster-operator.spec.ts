@@ -515,7 +515,9 @@ test.describe("OMP/T4 cluster GUI boundaries", () => {
 
     await openGui.click();
     await expect(page.getByRole("heading", { name: "Browser preview" })).toBeVisible();
-    await expect(page.getByLabel("Preview")).toHaveValue("preview-a");
+    await expect(
+      page.getByRole("combobox", { name: "Preview", exact: true }),
+    ).toHaveValue("preview-a");
     await expect(page.getByRole("textbox", { name: "URL" })).toHaveValue(GUI_PREVIEW.url);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     expect(
