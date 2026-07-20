@@ -10,7 +10,8 @@
   "scripts": {
     "build": "tsgo -p tsconfig.json --noEmit",
     "check": "tsgo -p tsconfig.json --noEmit",
-    "test": "vp test run",
+    "test": "bun --bun run test:vp",
+    "test:vp": "vp test run",
     "typecheck": "tsgo -p tsconfig.json --noEmit"
   },
   "dependencies": {
