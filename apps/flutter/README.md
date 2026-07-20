@@ -46,6 +46,13 @@ Transcript search uses the bounded `transcript.search` and
 `transcript.context` commands. Results expose display-safe snippets and inline
 historical context without projecting transcript paths or full session files.
 
+Opening a session fetches the newest bounded `transcript.page` before the live
+stream attaches. The app keeps a small encrypted, display-only copy of recent
+messages, so a previously opened conversation can paint immediately while the
+host refreshes it. Each session is stored separately, earlier pages load on
+demand, and paging cursors are never stored. Hosts without `transcript.page`
+keep the original snapshot-and-stream behavior.
+
 Usage and account status use the bounded `usage.read` and `broker.status`
 commands. The client renders provider limits and sanitized broker endpoints;
 credentials and unrecognized metadata are rejected at the wire boundary.

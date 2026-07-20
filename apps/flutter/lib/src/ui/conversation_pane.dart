@@ -400,43 +400,76 @@ final class _TranscriptViewState extends State<_TranscriptView> {
         widget.state.transcriptHistoryError != null;
     final messageOffset = showHistoryControl ? 1 : 0;
 
-    return NotificationListener<ScrollMetricsNotification>(
-      onNotification: _trackScrollMetrics,
-      child: NotificationListener<ScrollNotification>(
-        onNotification: _trackScroll,
-        child: Scrollbar(
-          controller: _scrollController,
-          child: ListView.separated(
-            controller: _scrollController,
-            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-            padding: const EdgeInsets.fromLTRB(
-              _T4Space.md,
-              _T4Space.lg,
-              _T4Space.md,
-              _T4Space.xl,
+    return Column(
+      children: [
+        if (widget.state.transcriptTailFromCache)
+          const _CachedTranscriptNotice(),
+        Expanded(
+          child: NotificationListener<ScrollMetricsNotification>(
+            onNotification: _trackScrollMetrics,
+            child: NotificationListener<ScrollNotification>(
+              onNotification: _trackScroll,
+              child: Scrollbar(
+                controller: _scrollController,
+                child: ListView.separated(
+                  controller: _scrollController,
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  padding: const EdgeInsets.fromLTRB(
+                    _T4Space.md,
+                    _T4Space.lg,
+                    _T4Space.md,
+                    _T4Space.xl,
+                  ),
+                  itemCount: widget.state.messages.length + messageOffset,
+                  separatorBuilder: (context, index) =>
+                      const SizedBox(height: _T4Space.lg),
+                  itemBuilder: (context, index) {
+                    if (showHistoryControl && index == 0) {
+                      return _TranscriptHistoryControl(
+                        loading: widget.state.transcriptHistoryLoading,
+                        hasMore: widget.state.transcriptHistoryHasMore,
+                        error: widget.state.transcriptHistoryError,
+                        onLoad: widget.actions.loadEarlierTranscript,
+                      );
+                    }
+                    return _TranscriptMessageView(
+                      message: widget.state.messages[index - messageOffset],
+                      actions: widget.actions,
+                    );
+                  },
+                ),
+              ),
             ),
-            itemCount: widget.state.messages.length + messageOffset,
-            separatorBuilder: (context, index) =>
-                const SizedBox(height: _T4Space.lg),
-            itemBuilder: (context, index) {
-              if (showHistoryControl && index == 0) {
-                return _TranscriptHistoryControl(
-                  loading: widget.state.transcriptHistoryLoading,
-                  hasMore: widget.state.transcriptHistoryHasMore,
-                  error: widget.state.transcriptHistoryError,
-                  onLoad: widget.actions.loadEarlierTranscript,
-                );
-              }
-              return _TranscriptMessageView(
-                message: widget.state.messages[index - messageOffset],
-                actions: widget.actions,
-              );
-            },
           ),
         ),
-      ),
+      ],
     );
   }
+}
+
+final class _CachedTranscriptNotice extends StatelessWidget {
+  const _CachedTranscriptNotice();
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    liveRegion: true,
+    child: Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(
+        horizontal: _T4Space.md,
+        vertical: _T4Space.xs,
+      ),
+      color: Theme.of(context).colorScheme.surfaceContainerLow,
+      child: Text(
+        'Showing encrypted saved messages while the live transcript connects.',
+        textAlign: TextAlign.center,
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
+      ),
+    ),
+  );
 }
 
 final class _TranscriptHistoryControl extends StatelessWidget {

@@ -38,6 +38,7 @@ void main() {
     bool transcriptHistoryHasMore = false,
     bool transcriptHistoryLoading = false,
     String? transcriptHistoryError,
+    bool transcriptTailFromCache = false,
   }) {
     final profile = HostProfile.parseTailnetAddress(
       'https://alpha.tailnet-name.ts.net',
@@ -62,6 +63,7 @@ void main() {
       transcriptHistoryHasMore: transcriptHistoryHasMore,
       transcriptHistoryLoading: transcriptHistoryLoading,
       transcriptHistoryError: transcriptHistoryError,
+      transcriptTailFromCache: transcriptTailFromCache,
       messages:
           messages ??
           List<TranscriptMessage>.generate(
@@ -975,6 +977,25 @@ void main() {
     await tester.pump();
     expect(actions.loadEarlierCalls, 1);
   });
+
+  testWidgets('labels a cached transcript until the live refresh arrives', (
+    tester,
+  ) async {
+    await pumpApp(
+      tester,
+      state: keyboardTranscriptState(transcriptTailFromCache: true),
+      actions: _FakeActions(),
+      size: compactPhone,
+    );
+
+    expect(
+      find.text(
+        'Showing encrypted saved messages while the live transcript connects.',
+      ),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('attention inbox exposes decisions and agent updates', (
     tester,
   ) async {

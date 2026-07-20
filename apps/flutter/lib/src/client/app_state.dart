@@ -553,6 +553,7 @@ final class T4ViewState {
     this.transcriptHistoryLoading = false,
     this.transcriptHistoryHasMore = false,
     this.transcriptHistoryError,
+    this.transcriptTailFromCache = false,
     this.errorMessage,
     this.hostDirectory = const HostDirectory.empty(),
     this.authenticationPhase = AuthenticationPhase.unknown,
@@ -591,6 +592,7 @@ final class T4ViewState {
   final bool transcriptHistoryLoading;
   final bool transcriptHistoryHasMore;
   final String? transcriptHistoryError;
+  final bool transcriptTailFromCache;
   final String? errorMessage;
   final HostDirectory hostDirectory;
   final AuthenticationPhase authenticationPhase;

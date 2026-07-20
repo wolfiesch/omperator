@@ -6,9 +6,11 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:t4code/src/client/app_state.dart';
 import 'package:t4code/src/client/t4_client_controller.dart';
+import 'package:t4code/src/client/transcript_tail_store.dart';
 import 'package:t4code/src/client/web_socket_connector.dart';
 import 'package:t4code/src/host/host_profile.dart';
 import 'package:t4code/src/host/app_preferences.dart';
+import 'package:t4code/src/protocol/protocol.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 void main() {
@@ -120,7 +122,9 @@ void main() {
       );
       await _flush();
 
-      final watch = channel.sentJson.last;
+      final watch = channel.sentJson.lastWhere(
+        (frame) => frame['command'] == 'host.watch',
+      );
       expect(watch, containsPair('command', 'host.watch'));
       expect(watch['args'], <String, Object?>{
         'cursor': <String, Object?>{'epoch': 'index-epoch', 'seq': 7},
@@ -137,10 +141,25 @@ void main() {
         directory: const HostDirectory.empty().upsert(profile),
       );
       final connector = _FakeConnector();
+      final cache = InMemoryTranscriptTailStore();
+      await cache.save(
+        hostId: 'host-alpha',
+        sessionId: 'session-alpha',
+        generation: 'cached-generation',
+        entries: <DurableEntry>[
+          _durableMessage(
+            'cached-entry',
+            hostId: 'host-alpha',
+            sessionId: 'session-alpha',
+            text: 'saved recent answer',
+          ),
+        ],
+      );
       final controller = _controller(
         directory,
         _MemoryCredentialStore(),
         connector,
+        transcriptTailStore: cache,
       );
       addTearDown(controller.dispose);
       await controller.initialize();
@@ -167,11 +186,25 @@ void main() {
           result: _sessionListResult('host-alpha'),
         ),
       );
-      await _flush();
-
-      final page = channel.sentJson.last;
       channel.emit(_sessions('host-alpha'));
-      await _flush();
+      await _until(
+        () => channel.sentJson.any(
+          (frame) => frame['command'] == 'transcript.page',
+        ),
+      );
+
+      expect(controller.state.messages.single.id, 'cached-entry');
+      expect(controller.state.transcriptTailFromCache, isTrue);
+      expect(
+        channel.sentJson.where(
+          (frame) => frame['command'] == 'transcript.page',
+        ),
+        hasLength(1),
+      );
+
+      final page = channel.sentJson.lastWhere(
+        (frame) => frame['command'] == 'transcript.page',
+      );
       expect(
         channel.sentJson.where(
           (frame) => frame['command'] == 'transcript.page',
@@ -215,6 +248,7 @@ void main() {
         'page-2',
       ]);
       expect(controller.state.transcriptHistoryHasMore, isTrue);
+      expect(controller.state.transcriptTailFromCache, isFalse);
 
       channel.emit(<String, Object?>{
         ..._snapshot(
@@ -2545,12 +2579,41 @@ Map<String, Object?> _settingsValues({
 T4ClientController _controller(
   HostDirectoryStore directory,
   HostCredentialStore credentials,
-  _FakeConnector connector,
-) => T4ClientController(
+  _FakeConnector connector, {
+  TranscriptTailStore? transcriptTailStore,
+}) => T4ClientController(
   hostDirectoryStore: directory,
   hostCredentialStore: credentials,
+  transcriptTailStore: transcriptTailStore,
   webSocketConnector: connector.call,
 );
+
+DurableEntry _durableMessage(
+  String id, {
+  required String hostId,
+  required String sessionId,
+  required String text,
+}) {
+  final raw = <String, Object?>{
+    'id': id,
+    'parentId': null,
+    'hostId': hostId,
+    'sessionId': sessionId,
+    'kind': 'message',
+    'timestamp': '2026-07-20T08:00:00.000Z',
+    'data': <String, Object?>{'role': 'assistant', 'text': text},
+  };
+  return DurableEntry(
+    id: id,
+    parentId: null,
+    hostId: hostId,
+    sessionId: sessionId,
+    kind: 'message',
+    timestamp: raw['timestamp']! as String,
+    data: raw['data']! as Map<String, Object?>,
+    raw: raw,
+  );
+}
 
 HostProfile _profile(String name) =>
     HostProfile.parseTailnetAddress('$name.example.ts.net');

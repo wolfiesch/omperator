@@ -884,6 +884,16 @@ void main() {
         () => WireDecoder.decode(jsonEncode(malformed)),
         throwsA(isA<WireFormatException>()),
       );
+
+      final inconsistent = _cloneMap(responseWire);
+      inconsistent['result'] = <String, Object?>{
+        ..._cloneMap(inconsistent['result']),
+        'hasMore': false,
+      };
+      expect(
+        () => WireDecoder.decode(jsonEncode(inconsistent)),
+        throwsA(isA<WireFormatException>()),
+      );
     });
   });
 }

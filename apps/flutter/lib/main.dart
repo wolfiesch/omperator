@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import 'src/client/app_state.dart';
 import 'src/client/t4_client_controller.dart';
+import 'src/client/transcript_tail_store.dart';
 import 'src/host/app_preferences.dart';
 import 'src/host/persistent_host_stores.dart';
 import 'src/platform/platform_lifecycle_controller.dart';
@@ -52,6 +53,7 @@ final class _T4BootstrapState extends State<T4Bootstrap>
           ? VolatileHostCredentialStore()
           : SecureHostCredentialStore(),
       appPreferenceStore: PersistentAppPreferenceStore(),
+      transcriptTailStore: PersistentTranscriptTailStore(),
       developmentEndpoint: widget.developmentEndpoint,
     );
     _platformController = PlatformLifecycleController();

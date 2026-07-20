@@ -97,6 +97,12 @@ abstract final class WireDecoder {
     final frozen = _freezeJsonCopy(value, _JsonBudget(), 0);
     return _sessionRef(frozen, 'session');
   }
+
+  /// Strictly decodes a bounded transcript.page result payload.
+  static TranscriptPageResult decodeTranscriptPageResult(Object? value) {
+    final frozen = _freezeJsonCopy(value, _JsonBudget(), 0);
+    return _decodeTranscriptPageResult(_map(frozen, 'result'));
+  }
 }
 
 WelcomeFrame _decodeWelcome(Map<String, Object?> raw) {
@@ -1385,17 +1391,44 @@ TranscriptSearchResult _decodeTranscriptSearchResult(Map<String, Object?> raw) {
 }
 
 TranscriptPageResult _decodeTranscriptPageResult(Map<String, Object?> raw) {
+  _onlyKeys(raw, 'result', const {
+    'entries',
+    'nextCursor',
+    'hasMore',
+    'generation',
+  });
   final values = _list(raw['entries'], 'result.entries', 128);
   final entries = <DurableEntry>[];
   for (var index = 0; index < values.length; index++) {
-    entries.add(_durableEntry(values[index], 'result.entries[$index]'));
+    final entry = _durableEntry(values[index], 'result.entries[$index]');
+    if (DateTime.tryParse(entry.timestamp) == null) {
+      throw WireFormatException(
+        'entry timestamp must be ISO-compatible',
+        'result.entries[$index].timestamp',
+      );
+    }
+    entries.add(entry);
+  }
+  final hasMore = _bool(raw['hasMore'], 'result.hasMore');
+  final nextCursor = raw.containsKey('nextCursor')
+      ? _string(raw['nextCursor'], 'result.nextCursor', 2048)
+      : null;
+  if (hasMore != (nextCursor != null)) {
+    throw const WireFormatException(
+      'nextCursor must be present exactly when hasMore is true',
+      'result.nextCursor',
+    );
+  }
+  if (!_utf8LengthAtMost(jsonEncode(raw), 512 * 1024)) {
+    throw const WireFormatException(
+      'transcript page result exceeds its wire budget',
+      'result',
+    );
   }
   return TranscriptPageResult(
     entries: List<DurableEntry>.unmodifiable(entries),
-    nextCursor: raw.containsKey('nextCursor')
-        ? _string(raw['nextCursor'], 'result.nextCursor', 2048)
-        : null,
-    hasMore: _bool(raw['hasMore'], 'result.hasMore'),
+    nextCursor: nextCursor,
+    hasMore: hasMore,
     generation: _string(raw['generation'], 'result.generation', 128),
   );
 }

@@ -13,6 +13,7 @@ import '../host/host_profile.dart';
 import '../protocol/protocol.dart';
 import 'app_state.dart';
 import 'model_labels.dart';
+import 'transcript_tail_store.dart';
 import 'web_socket_connector.dart';
 
 String _secureToken(int byteLength) {
@@ -21,19 +22,25 @@ String _secureToken(int byteLength) {
   return base64Url.encode(bytes).replaceAll('=', '');
 }
 
+const int _maxPagedTranscriptEntries = 4096;
+
 final class T4ClientController extends ChangeNotifier implements T4Actions {
   T4ClientController({
     required this.hostDirectoryStore,
     required this.hostCredentialStore,
     AppPreferenceStore? appPreferenceStore,
+    TranscriptTailStore? transcriptTailStore,
     WebSocketConnector? webSocketConnector,
     this.developmentEndpoint,
   }) : appPreferenceStore = appPreferenceStore ?? InMemoryAppPreferenceStore(),
+       transcriptTailStore =
+           transcriptTailStore ?? InMemoryTranscriptTailStore(),
        _webSocketConnector = webSocketConnector ?? connectPlatformWebSocket;
 
   final HostDirectoryStore hostDirectoryStore;
   final HostCredentialStore hostCredentialStore;
   final AppPreferenceStore appPreferenceStore;
+  final TranscriptTailStore transcriptTailStore;
   final WebSocketConnector _webSocketConnector;
   final Uri? developmentEndpoint;
 
@@ -47,6 +54,9 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   bool _transcriptPageHasMore = false;
   String? _transcriptPageError;
   String? _transcriptRecoverySessionId;
+  bool _transcriptTailFromCache = false;
+  int _transcriptOpenGeneration = 0;
+  int? _transcriptPrimeGeneration;
   final Map<String, _PendingCommand> _pendingCommands =
       <String, _PendingCommand>{};
   final Map<String, _PendingCommand> _pendingSessionOperations =
@@ -124,6 +134,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     transcriptHistoryLoading: _transcriptPageLoading,
     transcriptHistoryHasMore: _transcriptPageHasMore,
     transcriptHistoryError: _transcriptPageError,
+    transcriptTailFromCache: _transcriptTailFromCache,
     errorMessage: _errorMessage,
     hostDirectory: _hostDirectory,
     authenticationPhase: _authenticationPhase,
@@ -1224,7 +1235,17 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
         before == null) {
       return;
     }
+    final remaining =
+        _maxPagedTranscriptEntries - _pagedTranscriptEntries.length;
+    if (remaining <= 0) {
+      _transcriptPageCursor = null;
+      _transcriptPageHasMore = false;
+      _transcriptPageError = 'This view reached its history limit.';
+      _publish();
+      return;
+    }
     final connectionGeneration = _connectionGeneration;
+    final openGeneration = _transcriptOpenGeneration;
     final pageGeneration = _transcriptPageGeneration;
     _transcriptPageLoading = true;
     _transcriptPageError = null;
@@ -1236,11 +1257,12 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
         sessionId: sessionId,
         args: <String, Object?>{
           'before': before,
-          'limit': 128,
+          'limit': min(128, remaining),
           'maxBytes': 512 * 1024,
         },
       );
       if (connectionGeneration != _connectionGeneration ||
+          openGeneration != _transcriptOpenGeneration ||
           sessionId != _selectedSessionId) {
         return;
       }
@@ -1251,6 +1273,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
           'result',
         );
       }
+      _validateTranscriptPage(page, sessionId);
       if (pageGeneration != null && page.generation != pageGeneration) {
         throw StateError(
           'The transcript changed while older history was loading.',
@@ -1261,6 +1284,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
           .toSet();
       final added = page.entries
           .where((entry) => existingIds.add(entry.id))
+          .take(remaining)
           .toList(growable: false);
       _pagedTranscriptEntries = <DurableEntry>[
         ...added,
@@ -1269,6 +1293,13 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       _transcriptPageGeneration = page.generation;
       _transcriptPageCursor = page.nextCursor;
       _transcriptPageHasMore = page.hasMore && page.nextCursor != null;
+      if (_pagedTranscriptEntries.length >= _maxPagedTranscriptEntries) {
+        _transcriptPageCursor = null;
+        _transcriptPageHasMore = false;
+        if (page.hasMore) {
+          _transcriptPageError = 'This view reached its history limit.';
+        }
+      }
       final visible = _messages.values.toList(growable: false);
       _messages.clear();
       for (final entry in added) {
@@ -1279,6 +1310,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       }
     } on Object catch (error) {
       if (connectionGeneration == _connectionGeneration &&
+          openGeneration == _transcriptOpenGeneration &&
           sessionId == _selectedSessionId) {
         _transcriptPageError = error is StateError
             ? error.message
@@ -1286,6 +1318,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       }
     } finally {
       if (connectionGeneration == _connectionGeneration &&
+          openGeneration == _transcriptOpenGeneration &&
           sessionId == _selectedSessionId) {
         _transcriptPageLoading = false;
         _publish();
@@ -3445,12 +3478,26 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     final pagedPrefix = firstOverlap < 0
         ? _pagedTranscriptEntries
         : _pagedTranscriptEntries.take(firstOverlap);
+    final cachedEntries = <DurableEntry>[...pagedPrefix, ...frame.entries];
+    _pagedTranscriptEntries = cachedEntries;
+    _transcriptTailFromCache = false;
     _messages.clear();
-    for (final entry in pagedPrefix) {
+    for (final entry in cachedEntries) {
       _upsertEntry(entry);
     }
-    for (final entry in frame.entries) {
-      _upsertEntry(entry);
+    final hostId = _hostId;
+    final pageGeneration = _transcriptPageGeneration;
+    if (hostId != null && pageGeneration != null) {
+      unawaited(
+        transcriptTailStore
+            .save(
+              hostId: hostId,
+              sessionId: frame.sessionId,
+              generation: pageGeneration,
+              entries: cachedEntries,
+            )
+            .then<void>((_) {}, onError: (_, _) {}),
+      );
     }
     _savedCursors[frame.sessionId] = frame.cursor;
     _sessions = _sessions
@@ -3914,6 +3961,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   }
 
   void _resetTranscriptPage() {
+    _transcriptOpenGeneration += 1;
     _pagedTranscriptEntries = const <DurableEntry>[];
     _transcriptPageGeneration = null;
     _transcriptPageCursor = null;
@@ -3921,6 +3969,8 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     _transcriptPageHasMore = false;
     _transcriptPageError = null;
     _transcriptRecoverySessionId = null;
+    _transcriptTailFromCache = false;
+    _transcriptPrimeGeneration = null;
   }
 
   bool get _transcriptPageSupported =>
@@ -3939,11 +3989,27 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       _sendAttach(sessionId);
       return;
     }
-    final generation = _connectionGeneration;
+    final connectionGeneration = _connectionGeneration;
+    final openGeneration = _transcriptOpenGeneration;
+    if (_transcriptPrimeGeneration == openGeneration) return;
+    final hostId = _hostId;
+    if (hostId == null) {
+      _sendAttach(sessionId);
+      return;
+    }
+    _transcriptPrimeGeneration = openGeneration;
     unawaited(
-      _loadInitialTranscriptPage(sessionId).whenComplete(() {
+      _loadCachedThenInitialTranscriptPage(
+        hostId: hostId,
+        sessionId: sessionId,
+        openGeneration: openGeneration,
+      ).whenComplete(() {
+        if (_transcriptPrimeGeneration == openGeneration) {
+          _transcriptPrimeGeneration = null;
+        }
         if (_disposed ||
-            generation != _connectionGeneration ||
+            connectionGeneration != _connectionGeneration ||
+            openGeneration != _transcriptOpenGeneration ||
             sessionId != _selectedSessionId ||
             _channel == null) {
           return;
@@ -3953,7 +4019,44 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     );
   }
 
-  Future<void> _loadInitialTranscriptPage(String sessionId) async {
+  Future<void> _loadCachedThenInitialTranscriptPage({
+    required String hostId,
+    required String sessionId,
+    required int openGeneration,
+  }) async {
+    try {
+      final cached = await transcriptTailStore.load(
+        hostId: hostId,
+        sessionId: sessionId,
+      );
+      if (!_transcriptOpenIsCurrent(sessionId, openGeneration)) return;
+      if (cached != null) {
+        _pagedTranscriptEntries = cached.entries;
+        _transcriptPageGeneration = cached.generation;
+        _transcriptTailFromCache = true;
+        _messages.clear();
+        for (final entry in cached.entries) {
+          _upsertEntry(entry);
+        }
+        _publish();
+      }
+    } on Object {
+      // A damaged or unavailable display cache never blocks the live session.
+    }
+    if (_transcriptOpenIsCurrent(sessionId, openGeneration)) {
+      await _loadInitialTranscriptPage(sessionId, openGeneration);
+    }
+  }
+
+  bool _transcriptOpenIsCurrent(String sessionId, int openGeneration) =>
+      !_disposed &&
+      _selectedSessionId == sessionId &&
+      _transcriptOpenGeneration == openGeneration;
+
+  Future<void> _loadInitialTranscriptPage(
+    String sessionId,
+    int openGeneration,
+  ) async {
     try {
       final frame = await _runSessionReadCommand(
         prefix: 'transcript-page',
@@ -3961,7 +4064,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
         sessionId: sessionId,
         args: const <String, Object?>{'limit': 64, 'maxBytes': 256 * 1024},
       );
-      if (sessionId != _selectedSessionId) return;
+      if (!_transcriptOpenIsCurrent(sessionId, openGeneration)) return;
       final page = frame.transcriptPageResult;
       if (page == null) {
         throw const WireFormatException(
@@ -3969,19 +4072,47 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
           'result',
         );
       }
+      _validateTranscriptPage(page, sessionId);
       _pagedTranscriptEntries = page.entries;
       _transcriptPageGeneration = page.generation;
       _transcriptPageCursor = page.nextCursor;
       _transcriptPageHasMore = page.hasMore && page.nextCursor != null;
       _transcriptPageError = null;
+      _transcriptTailFromCache = false;
       _messages.clear();
       for (final entry in page.entries) {
         _upsertEntry(entry);
       }
       _publish();
+      final hostId = _hostId;
+      if (hostId != null) {
+        unawaited(
+          transcriptTailStore
+              .save(
+                hostId: hostId,
+                sessionId: sessionId,
+                generation: page.generation,
+                entries: page.entries,
+              )
+              .then<void>((_) {}, onError: (_, _) {}),
+        );
+      }
     } on Object {
       // Bounded history is an optional read lane. Live attach remains the
       // authority and must proceed when paging is unavailable or stale.
+    }
+  }
+
+  void _validateTranscriptPage(TranscriptPageResult page, String sessionId) {
+    final hostId = _hostId;
+    if (hostId == null ||
+        page.entries.any(
+          (entry) => entry.hostId != hostId || entry.sessionId != sessionId,
+        )) {
+      throw const WireFormatException(
+        'transcript.page returned entries for another session',
+        'result.entries',
+      );
     }
   }
 
