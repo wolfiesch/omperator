@@ -288,7 +288,6 @@ export class KubernetesGatewayMutationBackend {
 				displayName: args.displayName,
 				retentionPolicy: args.retentionPolicy,
 				size: args.capacity,
-				...(args.storageClass ? { storageClassName: args.storageClass } : {}),
 				...(args.repository ? { repository: { repositoryId: args.repository.repositoryId, ...(args.repository.ref ? { ref: args.repository.ref } : {}), ...(args.repository.commit ? { commit: args.repository.commit } : {}) } } : {}),
 			},
 		};

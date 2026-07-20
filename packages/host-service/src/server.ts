@@ -4403,6 +4403,7 @@ export class LocalAppserver implements AppserverHandle {
 		const sends: Array<Promise<boolean>> = [];
 		for (const client of this.#clients) {
 			if (!this.#hello.has(client) || !this.#clientCapabilities.get(client)?.has("sessions.read")) continue;
+			if (frame.type === "session.delta" && !this.#clientFeatures.get(client)?.has("session.delta")) continue;
 			sends.push(this.#sendFrame(client, frame));
 		}
 		await Promise.all(sends);

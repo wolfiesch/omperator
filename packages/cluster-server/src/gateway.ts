@@ -16,7 +16,7 @@ import {
 	type ServerFrame,
 } from "@t4-code/host-wire";
 import type { Revision } from "@t4-code/host-wire";
-import { IdempotencyStore, type CommandOutcome } from "@t4-code/host-service";
+import { commandFeature, IdempotencyStore, type CommandOutcome } from "@t4-code/host-service";
 import { ClusterInfrastructureProjection } from "./kubernetes-projection.ts";
 import {
 	rewriteClientAddress,
@@ -272,6 +272,11 @@ export class ClusterGateway {
 			if (frame.hostId !== this.#projection.hostId) { client.send(errorResult(frame, "NOT_FOUND", "cluster host was not found")); return; }
 			const capability = requiredCapability(frame.command);
 			if (!capability || !grantedCapabilities.has(capability)) { client.send(errorResult(frame, "NOT_AUTHORIZED", "command capability was not granted")); return; }
+			if (frame.command === "session.list") {
+				const sessions = this.#projection.sessionRefs(principal);
+				client.send(successResult(frame, { cursor: this.#projection.sessionCursor, sessions, totalCount: sessions.length, truncated: false }));
+				return;
+			}
 			if (frame.command === "workspace.list") { client.send(successResult(frame, this.#projection.workspaceList(principal))); return; }
 			if (frame.command === "workspace.create") {
 				await idempotent(frame, async () => {
@@ -279,7 +284,7 @@ export class ClusterGateway {
 					const created = await this.#mutations.createWorkspace(frame.commandId, args, principal);
 					return successResult(frame, { workspace: {
 						id: created.id, displayName: args.displayName, phase: "Pending", retentionPolicy: args.retentionPolicy,
-						...(args.storageClass ? { storageClass: args.storageClass } : {}), capacity: args.capacity,
+						capacity: args.capacity,
 						accessMode: "ReadWriteMany", revision: created.revision,
 					} });
 				});
@@ -328,6 +333,8 @@ export class ClusterGateway {
 				});
 				return;
 			}
+			const feature = commandFeature(frame.command);
+			if (feature && !grantedFeatures.has(feature)) { client.send(errorResult(frame, "UNSUPPORTED_FEATURE", "command feature was not negotiated")); return; }
 			if (frame.command.startsWith("preview.")) {
 				const preview = typeof frame.args.previewId === "string" ? frame.args.previewId : undefined;
 				if (preview && previewOwners.has(preview) && previewOwners.get(preview) !== frame.sessionId) {

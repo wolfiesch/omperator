@@ -123,8 +123,9 @@ export function sessionHostConfigFromEnv(env: Readonly<Record<string, string | u
 	const sessionName = dns(required(env, "T4_SESSION_NAME"), "T4_SESSION_NAME");
 	const ompExecutable = env.T4_OMP_EXECUTABLE ?? "/opt/t4/bin/omp";
 	if (!isAbsolute(ompExecutable)) throw new Error("T4_OMP_EXECUTABLE must be absolute");
-	const stateRoot = env.T4_SESSION_STATE_ROOT ?? `/workspace/.t4/sessions/${sessionName}`;
-	if (stateRoot !== `/workspace/.t4/sessions/${sessionName}`) throw new Error("T4_SESSION_STATE_ROOT must select the isolated session directory");
+	const stateRoot = absolutePath(required(env, "T4_SESSION_STATE_ROOT"), "T4_SESSION_STATE_ROOT");
+	if (!/^\/workspace\/\.t4\/sessions\/[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$/u.test(stateRoot))
+		throw new Error("T4_SESSION_STATE_ROOT must select one isolated session directory");
 	const port = Number(env.T4_SESSION_HOST_PORT ?? "8787");
 	if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) throw new Error("T4_SESSION_HOST_PORT is invalid");
 	return {

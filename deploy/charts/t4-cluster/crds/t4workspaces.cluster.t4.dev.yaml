@@ -41,8 +41,6 @@ spec:
               x-kubernetes-validations:
                 - rule: "!has(self.repository) || !has(self.repository.commit) || (has(self.repository.ref) && self.repository.ref != '')"
                   message: repository commit requires an explicit ref
-                - rule: "!has(self.storageClassName) || self.storageClassName != ''"
-                  message: storageClassName must be omitted rather than empty
               properties:
                 hostRef:
                   type: string
@@ -76,11 +74,6 @@ spec:
                       minLength: 7
                       maxLength: 64
                       pattern: '^[0-9a-fA-F]+$'
-                storageClassName:
-                  type: string
-                  minLength: 1
-                  maxLength: 63
-                  pattern: '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'
                 size:
                   type: string
                   minLength: 2

@@ -231,6 +231,7 @@ func (r *SessionReconciler) desiredPod(session *clusterv1alpha1.T4Session, pvcNa
 			{Name: "T4_KUBERNETES_NAMESPACE_PATH", Value: "/var/run/secrets/kubernetes.io/serviceaccount/namespace"},
 			{Name: "T4_SESSION_NAME", Value: session.Name},
 			{Name: "T4_WORKSPACE_ROOT", Value: "/workspace"},
+			{Name: "T4_SESSION_STATE_ROOT", Value: "/workspace/.t4/sessions/" + stateID},
 			{Name: "T4_AUTHORITY_STATE_DIR", Value: "/workspace/.t4/sessions/" + stateID + "/authority"},
 			{Name: "T4_BROWSER_STATE_DIR", Value: "/workspace/.t4/sessions/" + stateID + "/browser"},
 			{Name: "T4_GUI_ENABLED", Value: fmt.Sprintf("%t", session.Spec.GUIEnabled)},

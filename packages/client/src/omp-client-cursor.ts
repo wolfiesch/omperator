@@ -50,7 +50,11 @@ export class CursorJournal {
     this.bySession.set(key, cursor);
     if (this.records.size > MAX_SAVED) {
       const oldest = this.records.keys().next().value;
-      if (typeof oldest === "string") this.records.delete(oldest);
+      if (typeof oldest === "string") {
+        this.records.delete(oldest);
+        this.bySession.delete(oldest);
+        this.saved.delete(oldest);
+      }
     }
     if (this.store === undefined) return;
     const queue = this.queues.get(key) ?? { latest: undefined, running: false };

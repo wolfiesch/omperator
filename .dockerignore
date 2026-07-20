@@ -1,0 +1,14 @@
+.git
+.gitignore
+.cluster-ci
+artifacts
+**/artifacts
+node_modules
+**/node_modules
+.env
+.env.*
+*.log
+coverage
+**/coverage
+test-results
+playwright-report

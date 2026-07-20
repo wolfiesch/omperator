@@ -90,7 +90,7 @@ describe("one-session pod host authority", () => {
 			T4_CLUSTER_SERVER_SERVICE_ACCOUNT: "release-t4-cluster-server",
 			T4_SESSION_NAME: "session-one",
 			T4_OMP_EXECUTABLE: "/opt/t4/bin/omp",
-			T4_SESSION_STATE_ROOT: "/workspace/.t4/sessions/session-one",
+			T4_SESSION_STATE_ROOT: "/workspace/.t4/sessions/a1b2c3d4",
 			T4_SESSION_HOST_PORT: "8787",
 		})).toEqual({
 			kubernetesBaseUrl: "https://10.96.0.1:443",
@@ -100,7 +100,7 @@ describe("one-session pod host authority", () => {
 			serverServiceAccountName: "release-t4-cluster-server",
 			sessionName: "session-one",
 			ompExecutable: "/opt/t4/bin/omp",
-			stateRoot: "/workspace/.t4/sessions/session-one",
+			stateRoot: "/workspace/.t4/sessions/a1b2c3d4",
 			port: 8787,
 		});
 		expect(() => sessionHostConfigFromEnv({ KUBERNETES_SERVICE_HOST: "10.96.0.1", T4_CLUSTER_SERVER_SERVICE_ACCOUNT: "server", T4_SESSION_NAME: "bad/name" })).toThrow("T4_SESSION_NAME");

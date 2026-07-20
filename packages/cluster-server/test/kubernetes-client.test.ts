@@ -103,7 +103,6 @@ describe("namespaced Kubernetes client", () => {
 				displayName: "Created workspace",
 				retentionPolicy: "Retain",
 				size: "20Gi",
-				storageClassName: "t4-workspaces-rwx",
 				repository: { repositoryId: "t4-code", ref: "refs/heads/main", commit: "abc" },
 			},
 		});

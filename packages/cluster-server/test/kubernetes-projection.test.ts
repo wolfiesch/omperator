@@ -36,7 +36,6 @@ const workspace = {
 		owner: PRINCIPAL,
 		displayName: "T4 code",
 		retentionPolicy: "Retain",
-		storageClassName: "t4-workspaces-rwx",
 		size: "20Gi",
 		repository: { repositoryId: "t4-code", ref: "refs/heads/main", commit: "abc" },
 	},

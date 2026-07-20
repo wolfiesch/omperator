@@ -134,6 +134,19 @@ describe("stateless omp-app cluster gateway", () => {
 		expect((second.client.frames[1] as { sessions: unknown[] }).sessions).toHaveLength(2);
 	});
 
+	it("answers the host-scoped session.list bootstrap from the Kubernetes projection", async () => {
+		const value = setup();
+		await value.connection.receive(hello);
+		await value.connection.receive({
+			v: "omp-app/1", type: "command", requestId: "r-sessions", commandId: "c-sessions", hostId: "cluster:host-uid",
+			command: "session.list", args: {},
+		});
+		expect(value.client.frames.at(-1)).toMatchObject({
+			type: "response", commandId: "c-sessions", ok: true, command: "session.list",
+			result: { cursor: { epoch: "replica-uid-1" }, totalCount: 2, truncated: false, sessions: [{ sessionId: "session-one" }, { sessionId: "session-two" }] },
+		});
+	});
+
 	it("returns workspace bootstrap with its independent cursor and streams each watch revision once", async () => {
 		const value = setup();
 		await value.connection.receive(hello);

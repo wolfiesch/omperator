@@ -46,10 +46,7 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, request ctrl.Reques
 		}
 		return ctrl.Result{}, err
 	}
-	storageClassName := workspace.Spec.StorageClassName
-	if storageClassName == "" {
-		storageClassName = host.Spec.StorageClassName
-	}
+	storageClassName := host.Spec.StorageClassName
 	var storageClass storagev1.StorageClass
 	if err := r.Get(ctx, types.NamespacedName{Name: storageClassName}, &storageClass); err != nil {
 		if apierrors.IsNotFound(err) {

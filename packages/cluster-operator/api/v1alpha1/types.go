@@ -96,13 +96,12 @@ type RepositoryMetadata struct {
 }
 
 type T4WorkspaceSpec struct {
-	HostRef          string              `json:"hostRef"`
-	DisplayName      string              `json:"displayName"`
-	Owner            string              `json:"owner"`
-	Repository       *RepositoryMetadata `json:"repository,omitempty"`
-	StorageClassName string              `json:"storageClassName,omitempty"`
-	Size             resource.Quantity   `json:"size"`
-	RetentionPolicy  RetentionPolicy     `json:"retentionPolicy"`
+	HostRef         string              `json:"hostRef"`
+	DisplayName     string              `json:"displayName"`
+	Owner           string              `json:"owner"`
+	Repository      *RepositoryMetadata `json:"repository,omitempty"`
+	Size            resource.Quantity   `json:"size"`
+	RetentionPolicy RetentionPolicy     `json:"retentionPolicy"`
 }
 
 type T4WorkspaceStatus struct {

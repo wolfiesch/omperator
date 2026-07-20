@@ -998,6 +998,8 @@ export class OmpClient {
   private acceptSnapshot(event: PublicEvent<"snapshot">): void {
     const frame = event.payload;
     const currentKey = sessionKey(String(frame.hostId), String(frame.sessionId));
+    const previous = this.cursorJournal.bySession.get(currentKey);
+    if (previous?.epoch === frame.cursor.epoch && frame.cursor.seq <= previous.seq) return;
     this.desyncedSessions.delete(currentKey);
     this.epochValue = frame.cursor.epoch;
     this.cursorValue = frame.cursor;

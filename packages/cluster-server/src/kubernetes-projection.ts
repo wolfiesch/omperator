@@ -331,7 +331,7 @@ export class ClusterInfrastructureProjection {
 		} else return;
 		const key = `${resource.kind}/${name}`;
 		const version = text(resource.metadata.resourceVersion);
-		if (version && this.#versions.get(key) === version) return;
+		if (event.type !== "DELETED" && version && this.#versions.get(key) === version) return;
 		if (version) {
 			this.#versions.set(key, version);
 			this.#resourceVersion = version;
@@ -445,7 +445,7 @@ export class ClusterInfrastructureProjection {
 			displayName: text(spec.displayName, resource.metadata.name).slice(0, 256),
 			phase: resource.metadata.deletionTimestamp ? "Terminating" : categorical(status.phase, ["Pending", "Ready", "Failed", "Terminating", "Unknown"] as const, "Unknown"),
 			retentionPolicy: spec.retentionPolicy === "Delete" ? "Delete" : "Retain",
-			...(typeof spec.storageClassName === "string" ? { storageClass: spec.storageClassName.slice(0, 128) } : {}),
+			...(typeof record(this.#host?.spec).storageClassName === "string" ? { storageClass: String(record(this.#host?.spec).storageClassName).slice(0, 128) } : {}),
 			...(typeof status.capacity === "string" ? { capacity: status.capacity.slice(0, 64) } : typeof spec.size === "string" ? { capacity: spec.size.slice(0, 64) } : {}),
 			accessMode: "ReadWriteMany",
 			revision: resourceRevision(resource),
