@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { type AddressInfo } from "node:net";
 import { expect, test, type Page } from "@playwright/test";
+import { decodeServerFrame } from "@t4-code/protocol";
 import WebSocket, { WebSocketServer } from "ws";
 
 import { BuiltWebServer } from "./built-web-server.ts";
@@ -57,6 +58,44 @@ const WORKSPACE = {
   },
 } as const;
 
+const GRANTED_CAPABILITIES = [
+  "sessions.read",
+  "sessions.manage",
+  "sessions.prompt",
+  "sessions.control",
+  "preview.read",
+  "preview.control",
+  "preview.input",
+  "ci.trigger",
+] as const;
+const GRANTED_FEATURES = ["resume", "host.watch", "cluster.operator", "preview.control"] as const;
+const GUI_PREVIEW = {
+  previewId: "preview-a",
+  state: "ready",
+  url: "https://127.0.0.1:4173/",
+  revision: "preview-r1",
+  cursor: { epoch: "preview-1", seq: 1 },
+  title: "Session GUI",
+  canGoBack: false,
+  canGoForward: false,
+  viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
+  availableActions: ["navigate", "capture", "click", "fill", "type", "press", "scroll"],
+  authority: {
+    id: "omp-session",
+    label: "Session",
+    kind: "isolated-session",
+    requiresExplicitOptIn: false,
+  },
+} as const;
+const DECOY_PREVIEW = {
+  ...GUI_PREVIEW,
+  previewId: "preview-0",
+  url: "https://127.0.0.1:4173/decoy",
+  revision: "preview-r2",
+  cursor: { epoch: "preview-1", seq: 2 },
+  title: "Unrelated preview",
+} as const;
+
 function sessionRef(ciStatus: "queued" | "running" | "success" = "running") {
   return {
     hostId: HOST,
@@ -71,7 +110,7 @@ function sessionRef(ciStatus: "queued" | "running" | "success" = "running") {
       phase: "running",
       cluster: {
         workspaceId: WORKSPACE.id,
-        infrastructurePhase: "Running",
+        phase: "Running",
         gui: { state: "Ready", previewId: "preview-a" },
       },
       ci: {
@@ -85,7 +124,7 @@ function sessionRef(ciStatus: "queued" | "running" | "success" = "running") {
         status: ciStatus,
         currentStage: ciStatus === "success" ? "complete" : "verify",
         startedAt: "2026-07-20T12:01:00.000Z",
-        deepLink: "https://ci.tailnet.ts.net/repos/repo-a/pipeline/42",
+        link: "https://ci.tailnet.ts.net/repos/repo-a/pipeline/42",
       },
     },
   };
@@ -94,6 +133,10 @@ function sessionRef(ciStatus: "queued" | "running" | "success" = "running") {
 class OperatorWireFixture {
   readonly commands: Array<Record<string, unknown>> = [];
   readonly hellos: Array<Record<string, unknown>> = [];
+  readonly welcomes: Array<{
+    readonly grantedCapabilities: readonly string[];
+    readonly grantedFeatures: readonly string[];
+  }> = [];
   private readonly server = new WebSocketServer({ host: "127.0.0.1", port: 0, path: "/v1/ws" });
   private workspaceSeq = 2;
   private ciStatus: "queued" | "running" | "success" = "running";
@@ -125,7 +168,9 @@ class OperatorWireFixture {
   }
 
   private send(socket: WebSocket, frame: unknown): void {
-    socket.send(JSON.stringify(frame));
+    const decoded = decodeServerFrame(frame);
+    if (decoded.type === "welcome") this.welcomes.push(decoded);
+    socket.send(JSON.stringify(decoded));
   }
 
   private response(socket: WebSocket, frame: Record<string, unknown>, result: unknown): void {
@@ -155,17 +200,8 @@ class OperatorWireFixture {
         appserverVersion: "cluster-fixture",
         appserverBuild: "redacted",
         epoch: "cluster-epoch-1",
-        grantedCapabilities: [
-          "sessions.read",
-          "sessions.manage",
-          "sessions.prompt",
-          "sessions.control",
-          "preview.read",
-          "preview.control",
-          "preview.input",
-          "ci.trigger",
-        ],
-        grantedFeatures: ["resume", "host.watch", "cluster.operator", "preview.control"],
+        grantedCapabilities: GRANTED_CAPABILITIES,
+        grantedFeatures: GRANTED_FEATURES,
         negotiatedLimits: {},
         authentication: "paired",
         resumed: this.hellos.length > 1,
@@ -184,7 +220,10 @@ class OperatorWireFixture {
         });
         return;
       case "host.watch":
-        this.response(socket, frame, { watching: true, cursor: { epoch: "session-index-1", seq: 3 } });
+        this.response(socket, frame, {
+          watchId: "cluster-watch",
+          cursor: { epoch: "session-index-1", seq: 3 },
+        });
         return;
       case "workspace.list":
         this.response(socket, frame, {
@@ -244,22 +283,14 @@ class OperatorWireFixture {
           type: "preview.state",
           hostId: HOST,
           sessionId: SESSION,
-          previewId: "preview-a",
-          state: "ready",
-          url: "https://127.0.0.1:4173/",
-          revision: "preview-r1",
-          cursor: { epoch: "preview-1", seq: 1 },
-          title: "Session GUI",
-          canGoBack: false,
-          canGoForward: false,
-          viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
-          availableActions: ["navigate", "capture", "click", "fill", "type", "press", "scroll"],
-          authority: {
-            id: "omp-session",
-            label: "Session",
-            kind: "isolated-session",
-            requiresExplicitOptIn: false,
-          },
+          ...GUI_PREVIEW,
+        });
+        this.send(socket, {
+          v: "omp-app/1",
+          type: "preview.state",
+          hostId: HOST,
+          sessionId: SESSION,
+          ...DECOY_PREVIEW,
         });
         return;
       case "session.steer":
@@ -267,7 +298,7 @@ class OperatorWireFixture {
         this.response(socket, frame, { accepted: true });
         return;
       case "preview.policy.check":
-        this.response(socket, frame, { allowed: true });
+        this.response(socket, frame, { allowed: true, confirmationRequired: false });
         return;
       case "preview.lease.acquire":
         this.response(socket, frame, {
@@ -283,13 +314,12 @@ class OperatorWireFixture {
       case "preview.fill":
       case "preview.press":
       case "preview.scroll":
-        this.response(socket, frame, { accepted: true });
+        this.response(socket, frame, { preview: GUI_PREVIEW });
         return;
       case "ci.run":
         this.ciStatus = "queued";
         this.response(socket, frame, {
-          provider: "woodpecker",
-          correlation: "exact",
+          triggered: true,
           pipelineNumber: 43,
           status: "queued",
         });
@@ -366,6 +396,30 @@ test.describe("OMP/T4 cluster GUI boundaries", () => {
     await expect.poll(() => wire.hellos.length).toBeGreaterThan(helloCount);
     await expect(page.locator(`[data-session-row="${VIEW}"]`)).toHaveCount(1);
     expect(wire.hellos.at(-1)?.requestedFeatures).toContain("cluster.operator");
+    const latestHello = wire.hellos.at(-1);
+    const requestedCapabilities = (
+      latestHello?.capabilities as { readonly client?: readonly string[] } | undefined
+    )?.client;
+    expect(latestHello?.requestedFeatures).toEqual(
+      expect.arrayContaining(["cluster.operator", "preview.control"]),
+    );
+    expect(requestedCapabilities).toEqual(
+      expect.arrayContaining([
+        "sessions.read",
+        "sessions.manage",
+        "ci.trigger",
+        "preview.read",
+        "preview.control",
+        "preview.input",
+      ]),
+    );
+    const latestWelcome = wire.welcomes.at(-1);
+    expect(latestWelcome?.grantedFeatures).toEqual(
+      expect.arrayContaining(["cluster.operator", "preview.control"]),
+    );
+    expect(latestWelcome?.grantedCapabilities).toEqual(
+      expect.arrayContaining(["sessions.read", "sessions.manage", "ci.trigger", "preview.read", "preview.control", "preview.input"]),
+    );
     await recordScenario(
       page,
       "wire-reconnect-idempotency",
@@ -394,7 +448,7 @@ test.describe("OMP/T4 cluster GUI boundaries", () => {
     );
   });
 
-  test("phone uses one secure WSS target and reconnect replay does not duplicate workspace or session rows", async ({ page }) => {
+  test("phone explicitly chooses a cluster host and keeps CI and GUI workflows reachable", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.setViewportSize({ width: 390, height: 844 });
     await openSession(page, true);
@@ -405,14 +459,56 @@ test.describe("OMP/T4 cluster GUI boundaries", () => {
     await page.getByRole("button", { name: "Show session list" }).click();
     await expect(page.locator(`[data-session-row="${VIEW}"]`)).toHaveCount(1);
     await page.goto(`${web.url}#/hosts`);
-    await expect(page.locator('[data-cluster-workspace-id="workspace-a"]')).toHaveCount(1);
+    const workspaceRow = page.locator('[data-cluster-workspace-id="workspace-a"]');
+    await expect(workspaceRow).toHaveCount(1);
+    await expect(workspaceRow).toHaveAttribute("data-cluster-host-id", HOST);
     await expect(page.getByText("t4-workspaces-rwx", { exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Cluster workspaces" })).toBeVisible();
+
+    const creationHost = page.getByLabel("Creation host");
     const createWorkspace = page.getByRole("button", { name: "Create cluster workspace" });
-    await expect(createWorkspace).toBeVisible();
-    const createBox = await createWorkspace.boundingBox();
-    expect(createBox).not.toBeNull();
-    expect(createBox!.height).toBeGreaterThanOrEqual(43.99);
+    await expect(creationHost).toHaveValue("");
+    await expect(createWorkspace).toBeDisabled();
+    await creationHost.selectOption(HOST);
+    await expect(creationHost).toHaveValue(HOST);
+    await expect(createWorkspace).toBeEnabled();
+
+    const ciLink = page.getByRole("link", { name: "Open CI pipeline" });
+    await expect(ciLink).toHaveAttribute(
+      "href",
+      "https://ci.tailnet.ts.net/repos/repo-a/pipeline/42",
+    );
+    const openGui = page.getByRole("button", { name: "Open GUI" });
+    const runCi = page.getByRole("button", { name: "Run CI" });
+    await expect(openGui).toBeEnabled();
+    await expect(runCi).toBeEnabled();
+    for (const control of [creationHost, createWorkspace, openGui, runCi]) {
+      const box = await control.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.height).toBeGreaterThanOrEqual(43.99);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+    await runCi.click();
+    await expect.poll(() => wire.commands.some((frame) => frame.command === "ci.run")).toBe(true);
+    expect(wire.commands.findLast((frame) => frame.command === "ci.run")).toMatchObject({
+      hostId: HOST,
+      sessionId: SESSION,
+      expectedRevision: "session-r3",
+      args: {
+        provider: "woodpecker",
+        action: "run",
+        repositoryId: "repo-a",
+        ref: "refs/heads/main",
+        commit: "0123456789abcdef",
+      },
+    });
+
+    await openGui.click();
+    await expect(page.getByRole("heading", { name: "Browser preview" })).toBeVisible();
+    await expect(page.getByLabel("Preview")).toHaveValue("preview-a");
+    await expect(page.getByRole("textbox", { name: "URL" })).toHaveValue(GUI_PREVIEW.url);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     expect(
       await page.evaluate(() =>
         getComputedStyle(document.documentElement).getPropertyValue("--motion-duration-fast").trim(),
@@ -421,7 +517,14 @@ test.describe("OMP/T4 cluster GUI boundaries", () => {
     await recordScenario(
       page,
       "mobile-viewport",
-      ["mobile.wss-only", "workspace.row-unique", "motion.reduced", "touch.target"],
+      [
+        "mobile.wss-only",
+        "workspace.host-selected",
+        "ci.route-qualified",
+        "gui.preview-selected",
+        "motion.reduced",
+        "touch.target",
+      ],
       "mobile",
     );
   });
@@ -429,7 +532,8 @@ test.describe("OMP/T4 cluster GUI boundaries", () => {
   test("phone Browser Preview gates input through lease/revision and denies cross-session GUI routes", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await openSession(page, true);
-    await page.goto(`${web.url}#/sessions/${encodeURIComponent(VIEW)}/preview`);
+    await page.goto(`${web.url}#/hosts`);
+    await page.getByRole("button", { name: "Open GUI" }).click();
     await expect(page.getByRole("heading", { name: "Browser preview" })).toBeVisible();
     await page.getByRole("textbox", { name: "Text" }).fill("hello from phone");
     await page.getByRole("button", { name: "Type", exact: true }).click();

@@ -13,6 +13,7 @@ import {
   applyPublicFrame,
   clusterOperatorRequestedFeatures,
   createProjectionSnapshot,
+  ProjectionStore,
   type ProjectionFrame,
 } from "../src/index.ts";
 
@@ -133,6 +134,20 @@ describe("cluster operator client contract", () => {
     state = applyPublicFrame(state, workspaceState(2, "Ready") as ProjectionFrame);
     expect(state.workspaces.get(`${String(HOST)}\u0000workspace-a`)?.phase).toBe("Ready");
     expect(state.workspaceCursors.get(String(HOST))?.seq).toBe(2);
+  });
+
+  it("accepts a complete workspace inventory at the same cursor as the latest delta", () => {
+    const store = new ProjectionStore();
+    store.applyPublicFrame(workspaceState(2, "Ready") as ProjectionFrame);
+    store.replaceWorkspaceInventory(
+      String(HOST),
+      [workspaceState(2, "Failed", "workspace-b").upsert!],
+      { epoch: "workspace-epoch", seq: 2 },
+    );
+
+    expect(store.snapshot.workspaces.has(`${String(HOST)}\u0000workspace-a`)).toBe(false);
+    expect(store.snapshot.workspaces.get(`${String(HOST)}\u0000workspace-b`)?.phase).toBe("Failed");
+    expect(store.snapshot.workspaceCursors.get(String(HOST))?.seq).toBe(2);
   });
 
   it("applies exact workspace removals without disturbing another host", () => {

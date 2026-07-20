@@ -23,6 +23,8 @@ import {
   type PublicOmpServerEvent,
   type TimerScheduler,
 } from "../src/index.ts";
+import { CursorJournal } from "../src/omp-client-cursor.ts";
+import { MAX_SAVED, sessionKey as cursorSessionKey } from "../src/omp-client-contracts.ts";
 
 const HOST = "host-fixture";
 const SESSION = "session-fixture";
@@ -638,6 +640,36 @@ describe("OmpClient protocol state machine", () => {
     await failing.connect();
     expect(loadErrors).toContain("storage");
     await failing.close();
+  });
+  it("evicts the least recently advanced cursor instead of an active session", () => {
+    const journal = new CursorJournal(
+      undefined,
+      () => undefined,
+      () => { throw new Error("unexpected storage error"); },
+    );
+    for (let index = 0; index < MAX_SAVED; index += 1) {
+      journal.remember({
+        hostId: HOST,
+        sessionId: `session-${index}`,
+        cursor: { epoch: "epoch-a", seq: index },
+      });
+    }
+    journal.remember({
+      hostId: HOST,
+      sessionId: "session-0",
+      cursor: { epoch: "epoch-a", seq: MAX_SAVED },
+    });
+    journal.remember({
+      hostId: HOST,
+      sessionId: `session-${MAX_SAVED}`,
+      cursor: { epoch: "epoch-a", seq: MAX_SAVED },
+    });
+
+    expect(journal.records.size).toBe(MAX_SAVED);
+    expect(journal.records.has(cursorSessionKey(HOST, "session-0"))).toBe(true);
+    expect(journal.bySession.has(cursorSessionKey(HOST, "session-0"))).toBe(true);
+    expect(journal.records.has(cursorSessionKey(HOST, "session-1"))).toBe(false);
+    expect(journal.bySession.has(cursorSessionKey(HOST, "session-1"))).toBe(false);
   });
   it("serializes deferred cursor saves, coalesces latest, and continues after failure", async () => {
     const store = new DeferredStore();

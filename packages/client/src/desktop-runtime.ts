@@ -128,6 +128,9 @@ export class DesktopRuntimeController {
     this.clusterOperatorEnabled = options.clusterOperatorEnabled === true;
     this.projection = options.projection ?? new ProjectionStore(options.projectionOptions);
     this.ownsProjection = options.projection === undefined;
+    // Cached cluster truth has no current welcome grant. It must be refreshed
+    // only after this runtime observes both authority gates for a host.
+    this.projection.clearWorkspaceInventory();
     this.clock = options.clock ?? { now: () => Date.now() };
     this.timers = options.timers ?? defaultTimerScheduler;
     this.promptLeases = new PromptLeaseStore({ clock: this.clock, issue: (request) => this.shell.command(request), invalidateTarget: async (targetId) => { try { await this.disconnect(targetId); } catch { /* uncertain acquire cleanup is best effort */ } } });
@@ -150,7 +153,7 @@ export class DesktopRuntimeController {
     });
     this.projection.subscribe((snapshot) => {
       if (this.stopped) return;
-      this.replace({ projection: snapshot });
+      this.replace({ projection: this.clearUnauthorizedWorkspaceInventories(snapshot) });
     });
   }
   getSnapshot(): DesktopRuntimeSnapshot { return this.current; }
@@ -535,6 +538,42 @@ export class DesktopRuntimeController {
     const metadata = this.hostState.metadataForTarget(targetId);
     return metadata?.hostId === hostIdValue && metadata.grantedFeatures.includes("controller.lease");
   }
+  private clusterProjectionGrantedForTarget(targetId: string, hostIdValue?: string): boolean {
+    if (!this.clusterOperatorEnabled) return false;
+    const metadata = this.hostState.metadataForTarget(targetId);
+    return metadata !== undefined &&
+      (hostIdValue === undefined || metadata.hostId === hostIdValue) &&
+      metadata.grantedCapabilities.includes("sessions.read") &&
+      metadata.grantedFeatures.includes(CLUSTER_OPERATOR_FEATURE);
+  }
+  private clusterProjectionGrantedForHost(
+    hostIdValue: string,
+    targetHosts: ReadonlyMap<string, string> = this.current.targetHosts,
+  ): boolean {
+    for (const [targetId, boundHostId] of targetHosts) {
+      if (
+        boundHostId === hostIdValue &&
+        this.clusterProjectionGrantedForTarget(targetId, hostIdValue)
+      ) return true;
+    }
+    return false;
+  }
+  private clearUnauthorizedWorkspaceInventories(
+    snapshot: DesktopRuntimeSnapshot["projection"],
+    targetHosts: ReadonlyMap<string, string> = this.current.targetHosts,
+  ): DesktopRuntimeSnapshot["projection"] {
+    const hosts = new Set(snapshot.workspaceCursors.keys());
+    for (const itemKey of snapshot.workspaces.keys()) {
+      const separator = itemKey.indexOf("\u0000");
+      if (separator > 0) hosts.add(itemKey.slice(0, separator));
+    }
+    for (const hostIdValue of hosts) {
+      if (!this.clusterProjectionGrantedForHost(hostIdValue, targetHosts)) {
+        this.projection.clearWorkspaceInventory(hostIdValue);
+      }
+    }
+    return this.projection.getSnapshot();
+  }
   private async acquireControllerLeaseNow(
     targetId: string,
     hostIdValue: string,
@@ -771,6 +810,10 @@ export class DesktopRuntimeController {
     }
   }
   private applyHostCommandResult(targetId: string, hostValue: string, command: string, response: CommandResult, expectedIdentity?: DesktopTargetIdentity): void {
+    if (
+      command === "workspace.list" &&
+      !this.clusterProjectionGrantedForTarget(targetId, hostValue)
+    ) return;
     const result = asRecord(response.result);
     if (result === undefined) throw new DesktopRuntimeError("protocol", "host response result is not an object");
     if (command === "session.list" || command === "host.list") {
@@ -827,7 +870,11 @@ export class DesktopRuntimeController {
     // the previous transport generation, even for the brief notification
     // before the welcome frame itself reaches the shared projection.
     this.projection.invalidateSessionInventory(String(frame.hostId));
-    if (this.clusterOperatorEnabled) this.projection.invalidateWorkspaceInventory(String(frame.hostId));
+    if (this.clusterProjectionGrantedForHost(String(frame.hostId), reconciled.targetHosts)) {
+      this.projection.invalidateWorkspaceInventory(String(frame.hostId));
+    } else {
+      this.projection.clearWorkspaceInventory(String(frame.hostId));
+    }
     if (this.current.connections.get(targetId) !== "connected") {
       this.welcomedBeforeConnected.add(targetId);
     }
@@ -870,8 +917,7 @@ export class DesktopRuntimeController {
   ): void {
     if (
       event.kind === "workspace.state" &&
-      (!this.clusterOperatorEnabled ||
-        !this.hostState.metadataForTarget(targetId)?.grantedFeatures.includes(CLUSTER_OPERATOR_FEATURE))
+      !this.clusterProjectionGrantedForTarget(targetId, String(event.payload.hostId))
     ) return;
     if (this.stopped) return;
     this.projection.applyPublicEvent(event);
@@ -982,6 +1028,10 @@ export class DesktopRuntimeController {
       connections: reconciled.connections,
       targetHosts: reconciled.targetHosts,
       hosts: reconciled.hosts,
+      projection: this.clearUnauthorizedWorkspaceInventories(
+        this.projection.getSnapshot(),
+        reconciled.targetHosts,
+      ),
     });
     for (const targetId of refreshAfterReconcile) this.requestSessionRefresh(targetId);
   }

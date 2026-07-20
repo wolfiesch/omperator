@@ -686,6 +686,7 @@ export function appserverSupportedFeatures(
 	const unsupportedAdditiveFeatures = new Set(["host.watch", "session.watch"]);
 	const implementedFeatures = new Set<string>([
 		"resume",
+		"session.delta",
 		"prompt.images",
 		"agent.transcript",
 		"session.observer",
@@ -4402,8 +4403,12 @@ export class LocalAppserver implements AppserverHandle {
 	private async broadcastIndex(frame: ServerFrame): Promise<void> {
 		const sends: Array<Promise<boolean>> = [];
 		for (const client of this.#clients) {
-			if (!this.#hello.has(client) || !this.#clientCapabilities.get(client)?.has("sessions.read")) continue;
-			if (frame.type === "session.delta" && !this.#clientFeatures.get(client)?.has("session.delta")) continue;
+			if (
+				!this.#hello.has(client) ||
+				!this.#clientCapabilities.get(client)?.has("sessions.read") ||
+				!this.#clientFeatures.get(client)?.has("session.delta")
+			)
+				continue;
 			sends.push(this.#sendFrame(client, frame));
 		}
 		await Promise.all(sends);

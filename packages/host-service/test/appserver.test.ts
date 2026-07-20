@@ -237,6 +237,7 @@ describe("appserver lifecycle", () => {
 	test("advertises the exact default implemented feature set", () => {
 		expect(appserverSupportedFeatures({})).toEqual([
 			"resume",
+			"session.delta",
 			"prompt.images",
 			"agent.transcript",
 			"session.observer",

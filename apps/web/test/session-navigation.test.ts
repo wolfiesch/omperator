@@ -1,6 +1,12 @@
+import type { DesktopRuntimeSnapshot } from "@t4-code/client";
+
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveSessionManagementNavigation } from "../src/features/session-runtime/session-navigation.ts";
+import {
+  previewSelectionForNavigation,
+  resolveSessionManagementNavigation,
+} from "../src/features/session-runtime/session-navigation.ts";
+import { sessionViewId } from "../src/platform/live-workspace.ts";
 import type { WorkspaceSession } from "../src/lib/workspace-data.ts";
 
 function session(id: string, archived = false): WorkspaceSession {
@@ -71,6 +77,49 @@ describe("session management navigation", () => {
       view: "archived",
       destinationSessionId: null,
       navigate: false,
+    });
+  });
+
+  it("preserves the advertised preview id and only opts into negotiated authority", () => {
+    const hostId = "cluster/host";
+    const sessionId = "session/gui";
+    const viewId = sessionViewId(hostId, sessionId);
+    const snapshot = {
+      targetHosts: new Map([["cluster-target", hostId]]),
+      connections: new Map([["cluster-target", "connected"]]),
+      projection: {
+        sessions: new Map([
+          [
+            `${hostId}\u0000${sessionId}`,
+            {
+              previews: new Map([
+                [
+                  "preview-a",
+                  {
+                    previewId: "preview-a",
+                    authority: {
+                      id: "omp-session",
+                      kind: "isolated-session",
+                    },
+                  },
+                ],
+              ]),
+            },
+          ],
+        ]),
+      },
+    } as unknown as DesktopRuntimeSnapshot;
+
+    expect(viewId).toBe("cluster%2Fhost/session%2Fgui");
+    expect(previewSelectionForNavigation(snapshot, viewId, "preview-a")).toEqual({
+      previewId: "preview-a",
+      optInKind: "isolated-session",
+      optInAuthorityId: "omp-session",
+      optIn: true,
+    });
+    expect(previewSelectionForNavigation(snapshot, viewId, "preview-pending")).toEqual({
+      previewId: "preview-pending",
+      optIn: false,
     });
   });
 });

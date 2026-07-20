@@ -46,6 +46,9 @@ export class CursorJournal {
     const session = sessionId(record.sessionId);
     const key = sessionKey(String(host), String(session));
     const normalized = { hostId: String(host), sessionId: String(session), cursor };
+    // Map order is the journal's LRU order. Advancing an existing session must
+    // protect it from the next bounded eviction just like adding a new one.
+    this.records.delete(key);
     this.records.set(key, normalized);
     this.bySession.set(key, cursor);
     if (this.records.size > MAX_SAVED) {

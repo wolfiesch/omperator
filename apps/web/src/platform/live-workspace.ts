@@ -194,8 +194,14 @@ function clusterHostTarget(
 ): string | null {
   if (snapshot.clusterOperatorEnabled !== true) return null;
   const host = snapshot.hosts.get(hostId);
-  if (host === undefined || !host.grantedFeatures.includes(CLUSTER_OPERATOR_FEATURE)) return null;
-  return host.targetId;
+  if (
+    host === undefined ||
+    !host.grantedFeatures.includes(CLUSTER_OPERATOR_FEATURE) ||
+    !host.grantedCapabilities.includes("sessions.read")
+  ) {
+    return null;
+  }
+  return resolveCurrentHostTargetId(snapshot, hostId);
 }
 
 const derived = new WeakMap<DesktopRuntimeSnapshot, WorkspaceData>();

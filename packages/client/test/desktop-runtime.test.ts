@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { hostId, revision, sessionId, type WelcomeFrame } from "@t4-code/protocol";
+import { CLUSTER_OPERATOR_FEATURE, hostId, revision, sessionId, type WelcomeFrame, type WorkspaceInfrastructureProjection } from "@t4-code/protocol";
 import { rendererServerEventFromFrame } from "@t4-code/protocol/desktop-ipc";
 import type {
   BootstrapResult,
@@ -40,6 +40,8 @@ interface TestServerFrameEnvelope {
 }
 import { createDesktopRuntimeController, type DesktopRuntimeController, type DesktopShellPort } from "../src/desktop-runtime.ts";
 import { redactedMessage } from "../src/desktop-runtime-contracts.ts";
+import { ProjectionStore } from "../src/projection.ts";
+import { decodeProjectionCacheValue } from "../src/projection-cache.ts";
 import {
   MAX_RETAINED_SESSION_EVENT_BYTES,
   retainedJsonBytes,
@@ -68,6 +70,16 @@ const remoteTargetRequest = (targetId: string): TargetAddRequest => ({
 });
 const welcome = (host: string, capabilities: readonly string[], features: readonly string[], epoch = "epoch-1"): WelcomeFrame => ({
   v: "omp-app/1", type: "welcome", selectedProtocol: "omp-app/1", hostId: hostId(host), ompVersion: "omp", ompBuild: "test", appserverVersion: "app", appserverBuild: "test", epoch, grantedCapabilities: [...capabilities], grantedFeatures: [...features], negotiatedLimits: {}, authentication: "local", resumed: false,
+});
+const workspaceInfrastructure = (workspaceId = "workspace-a"): WorkspaceInfrastructureProjection => ({
+  id: workspaceId,
+  displayName: "Operator workspace",
+  phase: "Ready",
+  retentionPolicy: "Retain",
+  capacity: "20Gi",
+  storageClass: "rwx",
+  accessMode: "ReadWriteMany",
+  revision: revision("workspace-r1"),
 });
 class FakeTimerScheduler {
   readonly timers = new Map<number, { readonly callback: () => void; readonly delayMs: number }>();
@@ -114,6 +126,10 @@ class FakeShell implements DesktopShellPort {
   sessionListGate: Promise<void> | undefined;
   catalogResult: unknown = { revision: "catalog-1", items: [] };
   settingsResult: unknown = { revision: "settings-1", settings: {} };
+  workspaceListResult: unknown = {
+    cursor: { epoch: "workspace-epoch", seq: 1 },
+    workspaces: [workspaceInfrastructure()],
+  };
   private sessionListGateResolve: (() => void) | undefined;
   deferNextSessionList(): void {
     this.sessionListGate = new Promise<void>((resolve) => { this.sessionListGateResolve = resolve; });
@@ -168,6 +184,7 @@ class FakeShell implements DesktopShellPort {
     }
     if (request.intent.command === "catalog.get") return { ...base, result: this.catalogResult };
     if (request.intent.command === "settings.read") return { ...base, result: this.settingsResult };
+    if (request.intent.command === "workspace.list") return { ...base, result: this.workspaceListResult };
     return base;
   }
   async pair(request: PairRequest): Promise<PairResult> { return { targetId: request.targetId, paired: true }; }
@@ -339,6 +356,90 @@ describe("desktop runtime projection", () => {
       intent: { hostId: hostId("host-a"), command: "host.watch", args: { cursor: { epoch: "epoch-1", seq: 7 } } },
     });
     expect(runtime.getSnapshot().targetHosts.get("local")).toBe("host-a");
+  });
+  it.each([
+    { enabled: false, capabilities: ["sessions.read"], features: [CLUSTER_OPERATOR_FEATURE] },
+    { enabled: true, capabilities: ["sessions.read"], features: [] },
+    { enabled: true, capabilities: [], features: [CLUSTER_OPERATOR_FEATURE] },
+  ])("clears retained workspaces and rejects workspace.list projection without every authority gate", async ({ enabled, capabilities, features }) => {
+    const projection = new ProjectionStore();
+    projection.replaceWorkspaceInventory(
+      "host-a",
+      [workspaceInfrastructure()],
+      { epoch: "retained-workspace", seq: 4 },
+    );
+    const shell = new FakeShell();
+    const runtime = createDesktopRuntimeController({
+      shell,
+      projection,
+      clusterOperatorEnabled: enabled,
+    });
+
+    expect(runtime.getSnapshot().projection.workspaces.size).toBe(0);
+    expect(runtime.getSnapshot().projection.workspaceCursors.size).toBe(0);
+    await runtime.start();
+    shell.emitFrame({ targetId: "local", frame: welcome("host-a", capabilities, features) });
+    for (let index = 0; index < 8; index += 1) await Promise.resolve();
+    await runtime.command("local", {
+      hostId: hostId("host-a"),
+      command: "workspace.list",
+      args: {},
+    });
+
+    expect(runtime.getSnapshot().projection.workspaces.size).toBe(0);
+    expect(runtime.getSnapshot().projection.workspaceCursors.size).toBe(0);
+  });
+  it("purges retained workspace cache before any current host grant", async () => {
+    const saves: string[] = [];
+    const projection = new ProjectionStore({
+      cacheStore: {
+        load: () => undefined,
+        save: (serialized) => { saves.push(serialized); },
+      },
+    });
+    await projection.ready();
+    projection.replaceWorkspaceInventory(
+      "host-a",
+      [workspaceInfrastructure()],
+      { epoch: "retained-workspace", seq: 4 },
+    );
+    await projection.flush();
+    expect(decodeProjectionCacheValue(saves.at(-1))?.workspaces.size).toBe(1);
+
+    const runtime = createDesktopRuntimeController({
+      shell: new FakeShell(),
+      projection,
+      clusterOperatorEnabled: true,
+    });
+    await projection.flush();
+
+    const clearedCache = decodeProjectionCacheValue(saves.at(-1));
+    expect(runtime.getSnapshot().projection.workspaces.size).toBe(0);
+    expect(clearedCache?.workspaces.size).toBe(0);
+    expect(clearedCache?.workspaceCursors.size).toBe(0);
+  });
+  it("clears retained workspaces when a host withdraws the cluster operator grant", async () => {
+    const shell = new FakeShell();
+    const runtime = createDesktopRuntimeController({ shell, clusterOperatorEnabled: true });
+    await runtime.start();
+    shell.emitFrame({
+      targetId: "local",
+      frame: welcome("host-a", ["sessions.read"], [CLUSTER_OPERATOR_FEATURE]),
+    });
+    for (let index = 0; index < 12; index += 1) await Promise.resolve();
+
+    expect(runtime.getSnapshot().projection.workspaces.get("host-a\u0000workspace-a")?.phase).toBe("Ready");
+    expect(runtime.getSnapshot().projection.workspaceCursors.get("host-a")).toEqual({
+      epoch: "workspace-epoch",
+      seq: 1,
+    });
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: welcome("host-a", ["sessions.read"], [], "epoch-2"),
+    });
+    expect(runtime.getSnapshot().projection.workspaces.size).toBe(0);
+    expect(runtime.getSnapshot().projection.workspaceCursors.size).toBe(0);
   });
   it("refreshes inventory on cadence so a session started after bootstrap appears without reconnect", async () => {
     const timers = new FakeTimerScheduler();

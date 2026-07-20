@@ -44,6 +44,7 @@ interface ProjectionCacheData {
   readonly sessionIndex: Array<[string, SessionRef]>;
   readonly sessionIndexMetadata?: Array<[string, SessionIndexMetadata]>;
   readonly sessionDeltaCursors?: Array<[string, Cursor]>;
+  readonly sessionInventoryCursors?: Array<[string, Cursor]>;
   readonly workspaces?: Array<[string, WorkspaceInfrastructureProjection]>;
   readonly workspaceCursors?: Array<[string, Cursor]>;
   readonly activeSessionKey?: string;
@@ -271,6 +272,9 @@ export function encodeProjectionCache(snapshot: ProjectionSnapshot, savedAt = Da
       .slice(0, MAX_INDEXED_SESSION_REFS)
       .map(([key, value]) => [key, safeJson(value) as SessionIndexMetadata]),
     sessionDeltaCursors: [...snapshot.sessionDeltaCursors.entries()]
+      .slice(0, MAX_INDEXED_SESSION_REFS)
+      .map(([key, value]) => [key, safeJson(value) as Cursor]),
+    sessionInventoryCursors: [...snapshot.sessionInventoryCursors.entries()]
       .slice(0, MAX_INDEXED_SESSION_REFS)
       .map(([key, value]) => [key, safeJson(value) as Cursor]),
     workspaces: [...snapshot.workspaces.entries()]
@@ -809,6 +813,25 @@ export function decodeProjectionCache(
       sessionDeltaCursors.set(item[0], Object.freeze({ epoch: item[1].epoch, seq: item[1].seq }));
     }
   }
+  const sessionInventoryCursors = new Map<string, Cursor>();
+  if (Array.isArray(data.sessionInventoryCursors)) {
+    for (const item of data.sessionInventoryCursors.slice(0, MAX_INDEXED_SESSION_REFS)) {
+      if (
+        !Array.isArray(item) ||
+        typeof item[0] !== "string" ||
+        !isRecord(item[1]) ||
+        typeof item[1].epoch !== "string" ||
+        typeof item[1].seq !== "number" ||
+        !Number.isSafeInteger(item[1].seq) ||
+        item[1].seq < 0
+      )
+        continue;
+      sessionInventoryCursors.set(
+        item[0],
+        Object.freeze({ epoch: item[1].epoch, seq: item[1].seq }),
+      );
+    }
+  }
   const workspaces = new Map<string, WorkspaceInfrastructureProjection>();
   if (Array.isArray(data.workspaces)) {
     for (const item of data.workspaces.slice(0, MAX_INDEXED_SESSION_REFS)) {
@@ -853,6 +876,7 @@ export function decodeProjectionCache(
     sessionIndexMetadata: new ImmutableMap(sessionIndexMetadata),
     sessionRefArrivalOrdinals: new ImmutableMap<string, number>(),
     sessionDeltaCursors: new ImmutableMap(sessionDeltaCursors),
+    sessionInventoryCursors: new ImmutableMap(sessionInventoryCursors),
     workspaces: new ImmutableMap(workspaces),
     workspaceCursors: new ImmutableMap(workspaceCursors),
     lru: Object.freeze(lru),

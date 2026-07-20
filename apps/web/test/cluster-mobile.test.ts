@@ -1,4 +1,4 @@
-import { CLUSTER_OPERATOR_FEATURE } from "@t4-code/protocol";
+import { CI_TRIGGER_CAPABILITY, CLUSTER_OPERATOR_FEATURE } from "@t4-code/protocol";
 import type { OmpClient, OmpClientOptions } from "@t4-code/client";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
@@ -80,6 +80,10 @@ describe("mobile cluster target", () => {
     expect(capture.options().compatibilityRequestedFeatures).not.toContain(
       CLUSTER_OPERATOR_FEATURE,
     );
+    expect(capture.options().requestedCapabilities).not.toContain(CI_TRIGGER_CAPABILITY);
+    expect(capture.options().requestedCapabilities).toEqual(
+      expect.arrayContaining(["sessions.read", "preview.read", "preview.control", "preview.input"]),
+    );
   });
 
   it("allows one explicit secure cluster target and rejects insecure or credentialed URLs", async () => {
@@ -95,6 +99,18 @@ describe("mobile cluster target", () => {
 
     expect(detectBackend()).toMatchObject({ clusterOperatorEnabled: true });
     expect(capture.options().requestedFeatures).toContain(CLUSTER_OPERATOR_FEATURE);
+    expect(capture.options().compatibilityRequestedFeatures).toContain(CLUSTER_OPERATOR_FEATURE);
+    expect(capture.options().requestedFeatures).toContain("preview.control");
+    expect(capture.options().requestedCapabilities).toEqual(
+      expect.arrayContaining([
+        "sessions.read",
+        "sessions.manage",
+        CI_TRIGGER_CAPABILITY,
+        "preview.read",
+        "preview.control",
+        "preview.input",
+      ]),
+    );
 
     backendScript({
       wsUrl: "ws://operator.tailnet.ts.net/v1/ws",

@@ -967,7 +967,7 @@ export function TargetsScreen({
   readonly api: TargetsStoreApi;
   readonly controller: DesktopRuntimeController;
   readonly onOpenSession: (sessionId: string) => void;
-  readonly onOpenPreview: (sessionId: string) => void;
+  readonly onOpenPreview: (sessionId: string, previewId: string) => void;
   readonly snapshot: DesktopRuntimeSnapshot;
   /** Whether this desktop build exposes local service management. */
   readonly serviceAvailable: boolean;
