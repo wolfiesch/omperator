@@ -179,6 +179,30 @@ export function buildCommandSideFrames(
     additive = { ...ids, type: "files.list", path: "src", entries: [] };
   else if (frame.command === "files.diff")
     additive = { ...ids, type: "files.diff", path: "src/file.ts", diff: "" };
+  else if (frame.command === "files.write")
+    additive = {
+      ...ids,
+      type: "files.write",
+      path: typeof frame.args.path === "string" ? frame.args.path : "README.md",
+      content: typeof frame.args.content === "string" ? frame.args.content : "",
+    };
+  else if (frame.command === "review.read" || frame.command === "review.apply")
+    additive = {
+      v: V,
+      type: "review",
+      hostId: ids.hostId,
+      sessionId: ids.sessionId,
+      reviewId: typeof frame.args.reviewId === "string" ? frame.args.reviewId : "review-fixture",
+      status: frame.command === "review.apply" ? "applied" : "pending",
+      path: "src/fixture.ts",
+      findings: [
+        {
+          severity: "warning",
+          message: "Fixture review finding for the mobile application flow.",
+          line: 12,
+        },
+      ],
+    };
   else if (frame.command === "audit.tail")
     additive = [
       { v: V, type: "audit.tail", hostId: ids.hostId, cursor: ids.cursor, events: [] },

@@ -1,0 +1,35 @@
+name: t4code
+description: "T4 Code Flutter client"
+publish_to: 'none'
+version: 0.1.30+1
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  web_socket_channel: ^3.0.3
+  flutter_secure_storage: 10.3.1
+  shared_preferences: 2.5.5
+  crypto: ^3.0.7
+  flutter_markdown_plus: ^1.0.12
+  file_selector: ^1.1.0
+  xterm: ^4.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  integration_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  fonts:
+    - family: DM Sans
+      fonts:
+        - asset: assets/fonts/DMSans-Variable.ttf
+    - family: JetBrains Mono
+      fonts:
+        - asset: assets/fonts/JetBrainsMono-Variable.ttf

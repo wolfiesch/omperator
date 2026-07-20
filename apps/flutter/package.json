@@ -1,0 +1,16 @@
+{
+  "name": "@t4-code/flutter",
+  "version": "0.1.30",
+  "private": true,
+  "scripts": {
+    "dev": "flutter run",
+    "typecheck": "flutter analyze",
+    "test": "flutter test",
+    "test:coverage": "flutter test --coverage && node ../../scripts/check-flutter-coverage.mjs",
+    "test:device": "flutter test integration_test/app_smoke_test.dart",
+    "build:web": "flutter build web",
+    "build:macos": "flutter build macos",
+    "build:android": "flutter build apk --debug",
+    "build:ios": "flutter build ios --simulator"
+  }
+}

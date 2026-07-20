@@ -31,6 +31,8 @@ type FakeServeConfig = {
 	hostname?: string;
 	fetch?: (request: Request, server: FakeBunServer) => Response | undefined | Promise<Response | undefined>;
 	websocket?: {
+		backpressureLimit?: number;
+		closeOnBackpressureLimit?: boolean;
 		open?(socket: FakeWebSocket): void;
 		message?(socket: FakeWebSocket, message: string | Uint8Array): void;
 		close?(socket: FakeWebSocket): void;
@@ -285,6 +287,8 @@ describe("remote socket lifecycle", () => {
 			);
 			listener.start();
 			const server = harness.remote();
+			expect(server.config.websocket?.backpressureLimit).toBe(16 * 1024 * 1024);
+			expect(server.config.websocket?.closeOnBackpressureLimit).toBe(true);
 			const first = await openRemote(server);
 			const second = await openRemote(server);
 			expect(first.data.connectionId).not.toBe(second.data.connectionId);

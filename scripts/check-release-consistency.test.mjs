@@ -245,7 +245,7 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "needs: [core, legacy-bridge-continuity, tooling, android-debug]",
+          "needs: [core, legacy-bridge-continuity, tooling, android-debug, flutter, flutter-android, flutter-apple]",
           "needs: [core, tooling, android-debug]",
         ),
     ],
@@ -389,9 +389,7 @@ test("rejects drift between the compatibility matrix and vendored app-wire manif
 });
 
 test("rejects a stale app-wire third-party notice", () => {
-  const { package: packageName, version } = JSON.parse(
-    files.get("vendor/app-wire/manifest.json"),
-  );
+  const { package: packageName, version } = JSON.parse(files.get("vendor/app-wire/manifest.json"));
   const drifted = changed("THIRD_PARTY_NOTICES.md", (text) =>
     replaceRequired(text, `${packageName}@${version}`, `${packageName}@0.0.0`),
   );
@@ -526,13 +524,37 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("path: artifacts/legacy-bridge-continuity/"));
   assert.ok(ciWorkflow.includes("if-no-files-found: error"));
   assert.ok(ciWorkflow.includes("tooling:"));
+  assert.ok(ciWorkflow.includes("flutter:"));
+  assert.ok(ciWorkflow.includes("flutter-android:"));
+  assert.ok(ciWorkflow.includes("flutter-apple:"));
+  assert.ok(ciWorkflow.includes("Run Flutter iOS launch smoke test"));
+  assert.ok(
+    ciWorkflow.includes(
+      'xcrun simctl install "$DEVICE_ID" build/ios/iphonesimulator/Runner.app',
+    ),
+  );
+  assert.ok(ciWorkflow.includes('kill -0 "$app_pid"'));
+  assert.ok(ciWorkflow.includes("Build standalone T4 host for Flutter macOS"));
+  assert.ok(ciWorkflow.includes("Verify bundled Flutter macOS host"));
+  assert.ok(
+    ciWorkflow.includes(
+      "test -x apps/flutter/build/macos/Build/Products/Debug/t4code.app/Contents/Resources/runtime/t4-host",
+    ),
+  );
   assert.ok(ciWorkflow.includes("name: verify"));
   assert.ok(ciWorkflow.includes("if: ${{ always() }}"));
-  assert.ok(ciWorkflow.includes("needs: [core, legacy-bridge-continuity, tooling, android-debug]"));
+  assert.ok(
+    ciWorkflow.includes(
+      "needs: [core, legacy-bridge-continuity, tooling, android-debug, flutter, flutter-android, flutter-apple]",
+    ),
+  );
   assert.ok(ciWorkflow.includes('test "$CORE_RESULT" = success'));
   assert.ok(ciWorkflow.includes('test "$CONTINUITY_RESULT" = success'));
   assert.ok(ciWorkflow.includes('test "$TOOLING_RESULT" = success'));
   assert.ok(ciWorkflow.includes('test "$ANDROID_RESULT" = success'));
+  assert.ok(ciWorkflow.includes('test "$FLUTTER_RESULT" = success'));
+  assert.ok(ciWorkflow.includes('test "$FLUTTER_ANDROID_RESULT" = success'));
+  assert.ok(ciWorkflow.includes('test "$FLUTTER_APPLE_RESULT" = success'));
   assert.ok(ciWorkflow.includes("github.event_name == 'pull_request' && github.ref || github.sha"));
   assert.ok(ciWorkflow.includes("cancel-in-progress: ${{ github.event_name == 'pull_request' }}"));
   assert.ok(ciWorkflow.includes('java-version: "21"'));

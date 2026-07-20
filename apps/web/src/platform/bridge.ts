@@ -16,8 +16,10 @@ export interface RendererPlatformOptions {
 }
 
 export interface RendererPlatform {
-  /** "desktop" when the Electron preload injected the shell port. */
+  /** "desktop" when a live desktop-compatible shell port is available. */
   readonly mode: "desktop" | "browser";
+  /** Native window chrome exists only when Electron injected the shell port. */
+  readonly windowChrome: ShellPlatform | null;
   /** True only for the explicit, read-only public demo build. */
   readonly demo: boolean;
   readonly platform: ShellPlatform;
@@ -70,6 +72,7 @@ export function resolveRendererPlatform(
     mode: resolvedShell === null ? "browser" : "desktop",
     demo: forceFixture,
     platform,
+    windowChrome: shell === null ? null : platform,
     persistence: createLocalStoragePersistence(WORKSPACE_STORAGE_KEY),
     shell: resolvedShell,
     browser: shell === null ? null : injectedBrowser(),

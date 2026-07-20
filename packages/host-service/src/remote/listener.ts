@@ -8,6 +8,9 @@ import type {
 	RemoteListenerConfig,
 	RemotePeerIdentity,
 } from "./types.ts";
+// Remote bootstrap can burst multiple 4 MiB app frames. Bound the queue while
+// leaving enough room for settings metadata and a transcript snapshot.
+const DEFAULT_REMOTE_BACKPRESSURE_BYTES = 16 * 1024 * 1024;
 
 export function normalizeIpAddress(address: string): string {
 	return address.startsWith("::ffff:") && isIP(address) === 6 && isIP(address.slice(7)) === 4
@@ -160,7 +163,7 @@ export class BunRemoteListener {
 			websocket: {
 				maxPayloadLength: maxFrameBytes,
 				idleTimeout: this.config.idleTimeoutSeconds ?? 120,
-				backpressureLimit: this.config.backpressureLimit ?? 1024 * 1024,
+				backpressureLimit: this.config.backpressureLimit ?? DEFAULT_REMOTE_BACKPRESSURE_BYTES,
 				closeOnBackpressureLimit: true,
 				perMessageDeflate: false,
 				open: ws => {

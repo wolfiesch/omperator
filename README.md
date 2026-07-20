@@ -124,6 +124,11 @@ pnpm test:soak        # headless 10k-history and 20-reconnect stress checks
 pnpm package:linux    # .deb + AppImage into release/
 pnpm package:mac:unsigned  # unsigned macOS build (on a Mac)
 pnpm package:mac      # maintainer-only signed and notarized macOS build
+cd apps/flutter
+flutter test            # shared client, protocol, settings, and UI contracts
+flutter build apk --debug
+flutter build ios --simulator --debug
+pnpm --dir ../.. build:flutter:macos
 ```
 
 Prefer Task as a Make alternative? Install [Task](https://taskfile.dev/), then run `task setup`,
@@ -141,6 +146,8 @@ native release checks.
 apps/desktop   Electron main process: window, local OMP discovery,
                host lifecycle, pairing, credential storage
 apps/web       React UI (Vite): sessions, composer, panes, settings
+apps/flutter   Native Android/iOS/macOS client: responsive UI,
+               secure credentials, lifecycle, updates, OMP service controls
 packages/      client, protocol, host-wire, host-service, remote,
                service-manager, ui
 ```

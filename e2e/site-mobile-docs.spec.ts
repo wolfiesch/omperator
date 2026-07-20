@@ -157,7 +157,9 @@ test("every docs topic stays inside a 320px viewport", async ({ page }) => {
       documentScrollWidth: document.documentElement.scrollWidth,
       bodyScrollWidth: document.body.scrollWidth,
     }));
-    expect(geometry.documentScrollWidth, `document overflow at #${topic}`).toBe(geometry.clientWidth);
+    expect(geometry.documentScrollWidth, `document overflow at #${topic}`).toBe(
+      geometry.clientWidth,
+    );
     expect(geometry.bodyScrollWidth, `body overflow at #${topic}`).toBe(geometry.clientWidth);
   }
 });

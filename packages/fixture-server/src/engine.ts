@@ -4,6 +4,7 @@ import {
   decodeClientFrame,
   decodeServerFrame,
   type ClientFrame,
+  type AgentId,
   type CommandFrame,
   type ConfirmationId,
   type DurableEntry,
@@ -92,6 +93,9 @@ export class FixtureEngine {
   private epoch: string;
   private revision: Revision;
   private journal: JournalFrame[] = [];
+  private settingsRevision: Revision;
+  private settingsRevisionSeq = 0;
+  private settings: Record<string, unknown>;
   private durableEntries: DurableEntry[];
   private closed = false;
   private nextLiveEntry = 1;
@@ -108,6 +112,8 @@ export class FixtureEngine {
     this.scheduler = scheduler;
     this.epoch = seed.epoch;
     this.revision = branded<Revision>(seed.revision);
+    this.settingsRevision = branded<Revision>(seed.revision);
+    this.settings = fixtureSettings();
     this.sessionTitle = `${seed.id} fixture`;
     this.durableEntries = snapshotEntries(seed);
   }
@@ -248,6 +254,9 @@ export class FixtureEngine {
     this.sessionIndexSeq = 0;
     this.durableCount = 0;
     this.revision = branded<Revision>(this.seed.revision);
+    this.settingsRevision = branded<Revision>(this.seed.revision);
+    this.settingsRevisionSeq = 0;
+    this.settings = fixtureSettings();
     this.managementRevision = 0;
     this.controlRevision = 0;
     this.archivedAt = undefined;
@@ -384,7 +393,9 @@ export class FixtureEngine {
   }
   private previewCursorFor(sessionId: SessionId | undefined): Cursor {
     const isDefault = sessionId === undefined || sessionId === this.seed.sessionId;
-    const seq = isDefault ? this.previewSeq : (this.createdSessions.get(String(sessionId))?.previewSeq ?? 0);
+    const seq = isDefault
+      ? this.previewSeq
+      : (this.createdSessions.get(String(sessionId))?.previewSeq ?? 0);
     return sessionCursor(this.seed, seq, `${this.epoch}-preview`);
   }
   private previewRevisionFor(sessionId: SessionId | undefined): Revision {
@@ -451,11 +462,23 @@ export class FixtureEngine {
       appserverBuild: "deterministic",
       epoch: this.epoch,
       grantedCapabilities: [
+        "audit.read",
+        "agents.control",
         "catalog.read",
         "config.read",
+        "config.write",
+        "files.diff",
+        "files.list",
+        "files.read",
+        "files.write",
         "preview.control",
+        "broker.read",
         "preview.input",
         "preview.read",
+        "term.input",
+        "term.open",
+        "term.resize",
+        "usage.read",
         "sessions.read",
         "sessions.prompt",
         "sessions.control",
@@ -474,6 +497,52 @@ export class FixtureEngine {
     });
     if (saved === undefined) this.emitSnapshot(state);
     else state.cursor = { epoch: saved.cursor.epoch, seq: saved.cursor.seq };
+    this.emit(state, {
+      v: V,
+      type: "agent",
+      hostId: branded<HostId>(this.seed.hostId),
+      sessionId: branded<SessionId>(this.seed.sessionId),
+      agentId: branded<AgentId>("agent-parent"),
+      state: "running",
+      progress: 0.65,
+      detail: {
+        title: "Fixture coordinator",
+        kind: "main",
+        model: "fixture-model",
+      },
+    });
+    this.emit(state, {
+      v: V,
+      type: "agent",
+      hostId: branded<HostId>(this.seed.hostId),
+      sessionId: branded<SessionId>(this.seed.sessionId),
+      agentId: branded<AgentId>("agent-fixture"),
+      state: "running",
+      progress: 0.4,
+      detail: {
+        title: "Fixture child",
+        parentId: "agent-parent",
+        description: "Exercises mobile agent hierarchy and cancellation.",
+        model: "fixture-model",
+        currentTool: "read",
+      },
+    });
+    this.emit(state, {
+      v: V,
+      type: "review",
+      hostId: branded<HostId>(this.seed.hostId),
+      sessionId: branded<SessionId>(this.seed.sessionId),
+      reviewId: "review-fixture",
+      status: "pending",
+      path: "src/fixture.ts",
+      findings: [
+        {
+          severity: "warning",
+          message: "Fixture review finding for the mobile application flow.",
+          line: 12,
+        },
+      ],
+    });
   }
   private emitSnapshot(
     state: ClientState,
@@ -586,7 +655,7 @@ export class FixtureEngine {
         hostId: branded<HostId>(this.seed.hostId),
         ...(frame.sessionId === undefined ? {} : { sessionId: frame.sessionId }),
         commandHash: payloadHash,
-        revision: this.revision,
+        revision: frame.command === "settings.write" ? this.settingsRevision : this.revision,
         expiresAt: "2999-01-01T00:00:00.000Z",
         summary: frame.command,
       });
@@ -733,6 +802,17 @@ export class FixtureEngine {
       );
       return;
     }
+    if (frame.command === "settings.write") this.applySettingsMutation(frame);
+    if (frame.command === "settings.read" || frame.command === "settings.write") {
+      this.emit(state, {
+        v: V,
+        type: "settings",
+        hostId: branded<HostId>(this.seed.hostId),
+        revision: this.settingsRevision,
+        settings: this.settings,
+      });
+      return;
+    }
     const targetSessionId = frame.sessionId ?? branded<SessionId>(this.seed.sessionId);
     const isPreview = isPreviewEventCommand(frame.command);
     const ids = {
@@ -740,7 +820,9 @@ export class FixtureEngine {
       hostId: branded<HostId>(this.seed.hostId),
       sessionId: targetSessionId,
       cursor: isPreview ? this.previewCursorFor(targetSessionId) : this.cursorFor(targetSessionId),
-      revision: isPreview ? this.previewRevisionFor(targetSessionId) : this.revisionFor(targetSessionId),
+      revision: isPreview
+        ? this.previewRevisionFor(targetSessionId)
+        : this.revisionFor(targetSessionId),
     };
     if (frame.command === "session.list") {
       this.emit(state, {
@@ -818,18 +900,100 @@ export class FixtureEngine {
       if (state.hello && !state.closed) this.emit(state, frame);
     }
   }
+  private settingsWriteEdits(frame: CommandFrame): Record<string, unknown>[] | null {
+    if (
+      frame.command !== "settings.write" ||
+      frame.args.expectedRevision !== frame.expectedRevision ||
+      !Array.isArray(frame.args.edits) ||
+      frame.args.edits.length === 0 ||
+      frame.args.edits.length > 32
+    )
+      return null;
+    const edits: Record<string, unknown>[] = [];
+    for (const candidate of frame.args.edits) {
+      if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate))
+        return null;
+      const edit = candidate as Record<string, unknown>;
+      const path = edit.path;
+      const scope = edit.scope;
+      if (
+        typeof path !== "string" ||
+        path.length === 0 ||
+        path.length > 128 ||
+        (scope !== "global" && scope !== "session")
+      )
+        return null;
+      const current = this.settings[path];
+      if (current === null || typeof current !== "object" || Array.isArray(current)) return null;
+      const record = current as Record<string, unknown>;
+      if (record.sensitive === true || record.availability === false) return null;
+      const hasValue = Object.hasOwn(edit, "value");
+      const resets = edit.reset === true;
+      if (
+        hasValue === resets ||
+        Object.keys(edit).some((key) => !["path", "scope", "value", "reset"].includes(key))
+      )
+        return null;
+      edits.push(edit);
+    }
+    return edits;
+  }
+  private applySettingsMutation(frame: CommandFrame): void {
+    const edits = this.settingsWriteEdits(frame);
+    if (edits === null) return;
+    const next = { ...this.settings };
+    for (const edit of edits) {
+      const path = String(edit.path);
+      const current = { ...(next[path] as Record<string, unknown>) };
+      if (edit.reset === true) {
+        current.configured = false;
+        if (Object.hasOwn(current, "default")) {
+          current.effective = current.default;
+          current.effectiveSource = "default";
+        } else {
+          delete current.effective;
+          delete current.effectiveSource;
+        }
+      } else {
+        current.effective = edit.value;
+        current.effectiveSource = edit.scope === "session" ? "override" : "global";
+        current.configured = true;
+      }
+      next[path] = current;
+    }
+    this.settings = next;
+    this.settingsRevisionSeq += 1;
+    this.settingsRevision = branded<Revision>(
+      `${this.seed.revision}-settings-${this.settingsRevisionSeq}`,
+    );
+  }
   private makeCommandResponse(
     frame: CommandFrame,
     base: Omit<Extract<ServerFrame, { type: "response" }>, "ok" | "result" | "error">,
   ): Extract<ServerFrame, { type: "response" }> {
-    const actualRevision = this.revisionFor(frame.sessionId);
+    const actualRevision =
+      frame.command === "settings.write"
+        ? this.settingsRevision
+        : this.revisionFor(frame.sessionId);
+    if (frame.command === "settings.write" && this.settingsWriteEdits(frame) === null)
+      return {
+        ...base,
+        ok: false,
+        error: {
+          code: "invalid_args",
+          message: "settings write edits are invalid or unavailable",
+        },
+      };
     const targetSessionId = frame.sessionId ?? branded<SessionId>(this.seed.sessionId);
     if (
       frame.expectedRevision !== undefined &&
       frame.expectedRevision !== actualRevision &&
       (frame.command === "session.prompt" ||
         frame.command === "session.rename" ||
-        isSessionLifecycleCommand(frame.command))
+        isSessionLifecycleCommand(frame.command) ||
+        frame.command === "files.write" ||
+        frame.command === "review.apply" ||
+        frame.command === "settings.write")
     )
       return {
         ...base,
@@ -863,6 +1027,99 @@ export class FixtureEngine {
         ok: true,
         result: { cursor: this.currentSessionIndexCursor(), sessions: this.currentSessionRefs() },
       };
+    if (frame.command === "transcript.search")
+      return {
+        ...base,
+        ok: true,
+        result: {
+          items: [
+            {
+              sessionId: this.seed.sessionId,
+              projectId: this.seed.projectId,
+              sessionTitle: this.sessionTitle,
+              ...(this.archivedAt === undefined ? {} : { archivedAt: this.archivedAt }),
+              anchorId: "entry-fixture-search",
+              role: "assistant",
+              timestamp: this.seed.baseTime,
+              snippet: "Fixture transcript search result",
+              highlights: [{ start: 8, end: 18 }],
+            },
+          ],
+          incomplete: false,
+          index: {
+            state: "ready",
+            indexedSessions: 1,
+            knownSessions: 1,
+            generation: `${this.epoch}:${this.sessionIndexSeq}`,
+          },
+        },
+      };
+    if (frame.command === "transcript.context") {
+      const anchorId = String(frame.args.anchorId);
+      return {
+        ...base,
+        ok: true,
+        result: {
+          anchorId,
+          rows: [
+            {
+              anchorId: "entry-fixture-before",
+              role: "user",
+              timestamp: this.seed.baseTime,
+              text: "Find the previous fixture decision.",
+            },
+            {
+              anchorId,
+              role: "assistant",
+              timestamp: this.seed.baseTime,
+              text: "Fixture transcript search result",
+            },
+          ],
+          anchorIndex: 1,
+          hasBefore: false,
+          hasAfter: false,
+          generation: `${this.epoch}:${this.sessionIndexSeq}`,
+        },
+      };
+    }
+    if (frame.command === "usage.read")
+      return {
+        ...base,
+        ok: true,
+        result: {
+          generatedAt: Date.parse(this.seed.baseTime),
+          reports: [
+            {
+              provider: "fixture-provider",
+              fetchedAt: Date.parse(this.seed.baseTime),
+              limits: [
+                {
+                  id: "fixture-requests",
+                  label: "Fixture requests",
+                  scope: { provider: "fixture-provider" },
+                  amount: { used: 4, limit: 10, unit: "requests" },
+                  status: "ok",
+                  notes: [],
+                },
+              ],
+              notes: ["Deterministic fixture usage"],
+              metadata: { plan: "fixture" },
+            },
+          ],
+          accountsWithoutUsage: [],
+          capacity: {},
+        },
+      };
+    if (frame.command === "broker.status")
+      return {
+        ...base,
+        ok: true,
+        result: {
+          state: "connected",
+          endpoint: "https://broker.fixture.invalid",
+          generation: 1,
+        },
+      };
     if (frame.command === "host.list")
       return {
         ...base,
@@ -878,7 +1135,8 @@ export class FixtureEngine {
     if (frame.command === "session.restore")
       return { ...base, ok: true, result: { restored: true } };
     if (frame.command === "session.delete") return { ...base, ok: true, result: { deleted: true } };
-    if (frame.command === "files.read") return { ...base, ok: true, result: { content: "" } };
+    if (frame.command === "files.read")
+      return { ...base, ok: true, result: { content: "", revision: this.revision } };
     if (
       frame.command === "files.write" ||
       frame.command === "files.patch" ||
@@ -896,7 +1154,7 @@ export class FixtureEngine {
         ...base,
         ok: true,
         result: {
-          revision: this.revision,
+          revision: this.settingsRevision,
           items: fixtureCatalogItems(),
         },
       };
@@ -904,8 +1162,9 @@ export class FixtureEngine {
       return {
         ...base,
         ok: true,
-        result: { revision: this.revision, settings: fixtureSettings() },
+        result: { revision: this.settingsRevision, settings: this.settings },
       };
+    if (frame.command === "settings.write") return { ...base, ok: true, result: { applied: true } };
     if (frame.command.startsWith("host.watch") || frame.command.startsWith("session.watch"))
       return {
         ...base,

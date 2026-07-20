@@ -42,7 +42,29 @@ Secrets are available only to the protected release job. Pull requests and ordin
 
 ## Local commands
 
-Contributors can still build an unsigned artifact without Apple credentials:
+### Flutter migration development
+
+Flutter macOS `Debug` builds deliberately omit Keychain Sharing so contributors can build and run
+the app without joining the Apple Developer team:
+
+```bash
+pnpm dev:flutter -- -d macos
+```
+
+These builds use a process-local credential store and show an **Unsigned development** strip.
+Saved host metadata remains available, but paired device credentials are never written to disk and
+must be paired again after the app exits. `Profile` and `Release` use separate entitlements that
+retain Keychain Sharing and therefore require Apple development signing. Never add a plaintext
+fallback, remove the warning, or remove Keychain Sharing from the signed configurations.
+
+Signed Flutter milestone artifacts must be produced by a protected maintainer workflow or signing
+machine. Contributors do not need the certificate, provisioning profile, or Apple team membership
+to run those artifacts.
+
+### Released Electron application
+
+
+Contributors can build the released Electron application without Apple credentials:
 
 ```bash
 pnpm package:mac:unsigned

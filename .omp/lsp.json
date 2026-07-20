@@ -1,0 +1,16 @@
+{
+  "servers": {
+    "typescript-language-server": {
+      "warmupTimeoutMs": 60000
+    },
+    "dartls": {
+      "rootMarkers": [".git", "pubspec.yaml", "pubspec.lock"],
+      "warmupTimeoutMs": 120000
+    },
+    "sourcekit-lsp": {
+      "rootMarkers": [".git", "Package.swift", "*.xcodeproj", "*.xcworkspace"],
+      "warmupTimeoutMs": 120000
+    }
+  },
+  "idleTimeoutMs": 900000
+}

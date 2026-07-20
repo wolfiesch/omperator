@@ -574,6 +574,27 @@ describe("projection, replay, and idempotency", () => {
 		expect(new TextEncoder().encode(serialized).byteLength).toBeLessThan(1_048_576);
 		expect(() => decodeServerFrame(serialized)).not.toThrow();
 	});
+	test("oversized observer append backlog collapses to one bounded snapshot", () => {
+		const projection = new SessionProjection(host, record("s"), "epoch-a", 4096);
+		const entries = Array.from({ length: 80 }, (_, index) => ({
+			id: entryId(`observer-${index}`),
+			parentId: index === 0 ? null : entryId(`observer-${index - 1}`),
+			hostId: host,
+			sessionId: sessionId("s"),
+			kind: "message",
+			timestamp: stamp,
+			data: { role: "assistant", text: "x".repeat(8192) },
+		}));
+
+		const frames = projection.rebaseEntries(entries);
+
+		expect(frames.map(frame => frame.type)).toEqual(["gap", "snapshot"]);
+		expect(frames[0]).toMatchObject({ type: "gap", reason: "rebase_budget_exceeded" });
+		expect(projection.value.entries).toHaveLength(entries.length);
+		const serialized = JSON.stringify(frames[1]);
+		expect(new TextEncoder().encode(serialized).byteLength).toBeLessThan(1_048_576);
+		expect(() => decodeServerFrame(serialized)).not.toThrow();
+	});
 	test("same command id pending waiters settle once and replay", async () => {
 		const store = new IdempotencyStore();
 		const id = "same" as never;

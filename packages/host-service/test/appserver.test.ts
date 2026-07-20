@@ -1,15 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, stat, symlink } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DESKTOP_CATALOG_COMMANDS, type DurableEntry, hostId, projectId, sessionId } from "@t4-code/host-wire";
 import { completeAttachOutput, prepareAttachOutput } from "../src/attach-output.ts";
 import { IdempotencyStore } from "../src/idempotency.ts";
 import { ensureSecureSocketDirectory } from "../src/ownership.ts";
+import { FileSessionDiscovery, realFs } from "../src/discovery.ts";
 import { SessionProjection } from "../src/projection.ts";
 import { appserverSupportedCapabilities, appserverSupportedFeatures, createAppserver } from "../src/server.ts";
 import { SubagentProjection } from "../src/subagent-projection.ts";
 import type { ChildHandle, RpcChildFactory, SessionDiscovery, SessionRecord } from "../src/types.ts";
+import { RawUdsWebSocket } from "./raw-uds-client.ts";
 
 const host = hostId("host-test");
 function record(id: string): SessionRecord {
@@ -340,6 +342,151 @@ describe("appserver lifecycle", () => {
 				"appserver socket directory is a symlink",
 			);
 		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+	test("tails an initially lockless session without spawning a writer", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-lockless-observer-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const transcriptPath = join(root, "lockless-session.jsonl");
+		const sid = sessionId("lockless-session");
+		const timestamp = "2026-07-20T00:00:00.000Z";
+		const first = {
+			type: "message",
+			id: "first",
+			parentId: null,
+			timestamp,
+			message: { role: "user", content: "first" },
+		};
+		const second = {
+			type: "message",
+			id: "second",
+			parentId: "first",
+			timestamp,
+			message: { role: "assistant", content: "second" },
+		};
+		await writeFile(
+			transcriptPath,
+			`${JSON.stringify({ type: "session", version: 3, id: sid, cwd: root, timestamp, title: "Lockless session" })}\n${JSON.stringify(first)}\n`,
+		);
+		const factory = new FakeFactory();
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "lockless-observer-test",
+			socketPath,
+			discovery: new FileSessionDiscovery(root, realFs, host, true),
+			childFactory: factory,
+			lockStatus: () => "missing",
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "lockless-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: ["session.observer", "transcript.page"],
+				capabilities: { client: ["sessions.read"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect((await client.nextServer()).type).toBe("sessions");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "page-lockless",
+				commandId: "page-lockless-command",
+				hostId: host,
+				sessionId: sid,
+				command: "transcript.page",
+				args: { limit: 64, maxBytes: 256 * 1024 },
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "page-lockless") {
+					expect(frame.ok).toBe(true);
+					break;
+				}
+			}
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "attach-lockless",
+				commandId: "attach-lockless-command",
+				hostId: host,
+				sessionId: sid,
+				command: "session.attach",
+				args: {},
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "attach-lockless") {
+					expect(frame.ok).toBe(true);
+					break;
+				}
+			}
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "list-lockless",
+				commandId: "list-lockless-command",
+				hostId: host,
+				command: "session.list",
+				args: {},
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "list-lockless") {
+					expect(frame.ok).toBe(true);
+					break;
+				}
+			}
+
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "state-lockless",
+				commandId: "state-lockless-command",
+				hostId: host,
+				sessionId: sid,
+				command: "session.state.get",
+				args: {},
+			});
+			const stateResponse = await Promise.race([
+				(async () => {
+					for (;;) {
+						const frame = await client.nextServer();
+						if (frame.type === "response" && frame.requestId === "state-lockless") return frame;
+					}
+				})(),
+				Bun.sleep(1_000).then(() => {
+					throw new Error("observer state read did not settle");
+				}),
+			]);
+			expect(stateResponse).toMatchObject({
+				type: "response",
+				ok: false,
+				error: { code: "session_locked" },
+			});
+			expect(factory.children).toHaveLength(0);
+
+			await appendFile(transcriptPath, `${JSON.stringify(second)}\n`);
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "entry" && frame.entry.data.text === "second") break;
+				if (frame.type === "snapshot" && frame.entries.some(value => value.data.text === "second")) break;
+			}
+			expect(appserver.snapshot(sid)?.entries.at(-1)?.data.text).toBe("second");
+			expect(appserver.snapshot(sid)?.ref.liveState?.sessionControl).toEqual({
+				mode: "reconciling",
+				transcript: "live",
+			});
+			expect(factory.children).toHaveLength(0);
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
 			await rm(root, { recursive: true, force: true });
 		}
 	});

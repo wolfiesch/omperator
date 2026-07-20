@@ -83,6 +83,36 @@ The browser build uses deterministic sample sessions and labels them **Sample da
 fastest path for layout, interaction, accessibility, and renderer work. It does not prove that a
 real OMP host can connect or execute a command.
 
+### Flutter migration client
+
+Start the deterministic fixture host from the repository root:
+
+```sh
+T4_FIXTURE_SCENARIO=stream-v1 node_modules/.bin/jiti e2e/fixture-process.ts
+```
+
+Copy the `wsUrl` from `T4_FIXTURE_READY`, then launch a target from another terminal:
+
+```sh
+T4_DEVELOPMENT_ENDPOINT=ws://127.0.0.1:PORT/fixture pnpm dev:flutter -- -d macos
+```
+
+For the Android emulator, run `adb reverse tcp:PORT tcp:PORT`, then keep
+`T4_DEVELOPMENT_ENDPOINT=ws://127.0.0.1:PORT/fixture`. Do not substitute `10.0.2.2`: the
+deterministic fixture intentionally binds only to host loopback, so that address leaves the app
+retrying with no session selected. Do not expose the fixture through Funnel or a public firewall
+rule.
+
+`T4_DEVELOPMENT_ENDPOINT` is only for deterministic fixture work. Without it, the app starts from
+its persisted host directory and accepts an exact Tailnet HTTPS address, then performs normal OMP
+device pairing. Unsigned macOS `Debug` builds keep the credential in memory only and identify that
+behavior in the window; signed Apple configurations and Android use platform secure storage.
+
+
+Use `pnpm check:flutter` for analysis and `pnpm test:flutter` for the Dart protocol and real-fixture
+lifecycle checks. This proof is the migration path under active development; the existing released
+clients remain authoritative until the feature and release gates pass.
+
 ### Live desktop work
 
 Install the exact verified OMP integration shown by the setup check, then run:

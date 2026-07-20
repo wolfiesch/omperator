@@ -95,7 +95,7 @@ describe("deterministic fixture engine", () => {
       const engine = new FixtureEngine(loadScenario(scenario));
       const client = engine.connect("a");
       const handshake = engine.receive(client.id, hello());
-      expect(handshake).toHaveLength(3);
+      expect(handshake).toHaveLength(6);
       for (const frame of handshake) expect(() => decodeServerFrame(frame)).not.toThrow();
       const ping = engine.receive(client.id, {
         v: "omp-app/1",
@@ -399,6 +399,27 @@ describe("deterministic fixture engine", () => {
       )[0],
     ).toMatchObject({ type: "response", ok: false, error: { code: "idempotency_conflict" } });
   });
+  it("challenges file writes before applying their side frame", () => {
+    const engine = new FixtureEngine(loadScenario("basic-v1"));
+    const client = engine.connect("a");
+    ready(engine, client.id);
+    const challenge = engine.receive(
+      client.id,
+      command(
+        engine.seed,
+        "files.write",
+        "files-write-command",
+        "files-write-request",
+        { path: "README.md", content: "fixture edit" },
+        { expectedRevision: engine.seed.revision },
+      ),
+    )[0];
+    expect(challenge).toMatchObject({
+      type: "confirmation",
+      commandId: "files-write-command",
+      summary: "files.write",
+    });
+  });
   it("mirrors OMP confirmation correlation for approve, deny, and invalid decisions", () => {
     const engine = new FixtureEngine(loadScenario("basic-v1"));
     const client = engine.connect("a");
@@ -465,6 +486,95 @@ describe("deterministic fixture engine", () => {
       requestId: "replayed-confirm-request",
       ok: false,
       error: { code: "confirmation_invalid" },
+    });
+  });
+  it("applies confirmed settings edits, republishes state, and rejects stale revisions", () => {
+    const engine = new FixtureEngine(loadScenario("basic-v1"));
+    const client = engine.connect("settings");
+    ready(engine, client.id);
+    const expectedRevision = engine.currentRevision;
+    const write = command(
+      engine.seed,
+      "settings.write",
+      "settings-write",
+      "settings-write-request",
+      {
+        edits: [{ path: "appearance.mode", scope: "global", value: "dark" }],
+        expectedRevision,
+      },
+      { expectedRevision },
+    );
+    const challenge = engine.receive(client.id, write)[0];
+    expect(challenge).toMatchObject({
+      type: "confirmation",
+      summary: "settings.write",
+      revision: expectedRevision,
+    });
+    if (challenge?.type !== "confirmation")
+      throw new Error("fixture did not challenge settings write");
+    const applied = engine.receive(client.id, {
+      v: "omp-app/1",
+      type: "confirm",
+      requestId: "settings-confirm",
+      confirmationId: challenge.confirmationId,
+      commandId: challenge.commandId,
+      hostId: challenge.hostId,
+      decision: "approve",
+    });
+    expect(applied[0]).toMatchObject({
+      type: "response",
+      command: "settings.write",
+      ok: true,
+      result: { applied: true },
+    });
+    expect(applied[1]).toMatchObject({
+      type: "settings",
+      settings: {
+        "appearance.mode": {
+          effective: "dark",
+          effectiveSource: "global",
+          configured: true,
+        },
+        "provider.apiKey": { configured: true, sensitive: true },
+      },
+    });
+    const published = applied[1];
+    if (published?.type !== "settings") throw new Error("fixture did not republish settings");
+
+    const stale = command(
+      engine.seed,
+      "settings.write",
+      "settings-stale",
+      "settings-stale-request",
+      {
+        edits: [{ path: "appearance.mode", scope: "global", reset: true }],
+        expectedRevision,
+      },
+      { expectedRevision },
+    );
+    const staleChallenge = engine.receive(client.id, stale)[0];
+    if (staleChallenge?.type !== "confirmation")
+      throw new Error("fixture did not challenge stale settings write");
+    expect(
+      engine.receive(client.id, {
+        v: "omp-app/1",
+        type: "confirm",
+        requestId: "settings-stale-confirm",
+        confirmationId: staleChallenge.confirmationId,
+        commandId: staleChallenge.commandId,
+        hostId: staleChallenge.hostId,
+        decision: "approve",
+      })[0],
+    ).toMatchObject({
+      type: "response",
+      ok: false,
+      error: {
+        code: "stale_revision",
+        details: {
+          expectedRevision,
+          actualRevision: published.revision,
+        },
+      },
     });
   });
   it("converges rename, archive, restore, and challenged delete across clients", () => {

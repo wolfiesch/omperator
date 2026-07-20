@@ -99,6 +99,7 @@ function setup() {
   const destinations: ActionDestination[] = [];
   const platform: RendererPlatform = {
     mode: "browser",
+    windowChrome: null,
     demo: false,
     platform: "darwin",
     persistence: createMemoryPersistence(),

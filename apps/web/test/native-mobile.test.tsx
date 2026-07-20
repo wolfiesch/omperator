@@ -35,13 +35,13 @@ afterEach(() => {
 
 describe("native mobile connection", () => {
   it("normalizes a full Tailnet HTTPS origin and rejects unsafe addresses", () => {
-    expect(parseTailnetBackend("lycaon-bunker.tail9f9e1a.ts.net:8445")).toEqual({
+    expect(parseTailnetBackend("workstation.example.ts.net:8445")).toEqual({
       version: 3,
-      endpointKey: "https://lycaon-bunker.tail9f9e1a.ts.net:8445#profile=default",
-      origin: "https://lycaon-bunker.tail9f9e1a.ts.net:8445",
+      endpointKey: "https://workstation.example.ts.net:8445#profile=default",
+      origin: "https://workstation.example.ts.net:8445",
       profileId: "default",
-      wsUrl: "wss://lycaon-bunker.tail9f9e1a.ts.net:8445/v1/ws",
-      label: "T4 on lycaon-bunker",
+      wsUrl: "wss://workstation.example.ts.net:8445/v1/ws",
+      label: "T4 on workstation",
     });
     expect(() => parseTailnetBackend("http://host.tailnet.ts.net")).toThrow(/HTTPS/u);
     expect(() => parseTailnetBackend("https://example.com")).toThrow(/\.ts\.net/u);

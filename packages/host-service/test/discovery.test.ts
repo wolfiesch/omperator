@@ -1544,6 +1544,50 @@ test("follower carries a partial UTF-8 code point across reads without replaceme
 	expect(JSON.stringify(recovered.entries)).not.toContain("�");
 });
 
+test("follower skips an oversized line across bounded reads and resumes at the next record", async () => {
+	const header = `${sessionTranscript("observer-oversized", "/tmp/oversized", "Oversized")}\n`;
+	const message = (id: string, content: string) =>
+		line({
+			type: "message",
+			id,
+			parentId: null,
+			timestamp: stamp,
+			message: { role: "user", content },
+		});
+	const prefix = message("prefix-entry", "p".repeat(600_000));
+	const oversized = line({
+		type: "compaction",
+		id: "oversized-entry",
+		parentId: "prefix-entry",
+		timestamp: stamp,
+		summary: "x".repeat(1_980_000),
+	});
+	const suffix = message("suffix-entry", "s".repeat(600_000));
+	const final = message("final-entry", "current tail");
+	const state = observerFsState(
+		new TextEncoder().encode(`${header}${prefix}\n${oversized}\n${suffix}\n${final}\n`),
+	);
+	const observer = new SessionTranscriptObserver("/tmp/oversized.jsonl", host, state.fs);
+
+	const first = await observer.poll();
+	expect(first.entries.map(entry => entry.id)).toEqual([entryId("prefix-entry")]);
+	const second = await observer.poll();
+	expect(second.reset).toBe(false);
+	expect(second.transcript).toBe("live");
+	expect(second.entries.map(entry => entry.id)).toEqual([
+		entryId("oversized-transcript-record-1"),
+		entryId("suffix-entry"),
+		entryId("final-entry"),
+	]);
+	expect(second.entries[0]?.data).toEqual({
+		summary: "One transcript record was omitted because it exceeded the 1 MiB safety limit.",
+		oversizedRecordOmission: true,
+	});
+	expect(second.entries.at(-1)?.data.text).toBe("current tail");
+	expect(second.watermark).toEqual({ entryCount: 3, lastEntryId: "final-entry" });
+	expect((await observer.poll()).stable).toBe(true);
+});
+
 test("same-size in-place rewrite resets the follower and replays from byte zero", async () => {
 	const header = `${sessionTranscript("observer-rewrite", "/tmp/rewrite", "Rewrite")}\n`;
 	const makeEntry = (id: string, text: string) =>

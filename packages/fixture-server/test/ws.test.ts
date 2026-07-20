@@ -55,9 +55,9 @@ describe("loopback fixture websocket", () => {
     const socket = new WebSocket(server.address);
     await opened(socket);
     await clientConnected;
-    const frameMessages = messages(socket, 3);
+    const frameMessages = messages(socket, 6);
     socket.send(JSON.stringify(hello));
-    expect(await frameMessages).toHaveLength(3);
+    expect(await frameMessages).toHaveLength(6);
     expect(server.clientCount).toBe(1);
     const socketClose = closed(socket);
     await server.stop();
@@ -92,7 +92,7 @@ describe("loopback fixture websocket", () => {
     const server = await start();
     const socket = new WebSocket(server.address);
     await opened(socket);
-    const handshake = messages(socket, 3);
+    const handshake = messages(socket, 6);
     socket.send(JSON.stringify(hello));
     await handshake;
     expect(server.clientCount).toBe(1);
@@ -113,8 +113,8 @@ describe("loopback fixture websocket", () => {
     const manager = new WebSocket(server.address);
     const observer = new WebSocket(server.address);
     await Promise.all([opened(manager), opened(observer)]);
-    const managerHello = messages(manager, 3);
-    const observerHello = messages(observer, 3);
+    const managerHello = messages(manager, 6);
+    const observerHello = messages(observer, 6);
     manager.send(JSON.stringify(hello));
     observer.send(JSON.stringify(hello));
     await Promise.all([managerHello, observerHello]);
@@ -159,8 +159,8 @@ describe("loopback fixture websocket", () => {
     const manager = new WebSocket(server.address);
     const observer = new WebSocket(server.address);
     await Promise.all([opened(manager), opened(observer)]);
-    const managerHello = messages(manager, 3);
-    const observerHello = messages(observer, 3);
+    const managerHello = messages(manager, 6);
+    const observerHello = messages(observer, 6);
     manager.send(JSON.stringify(hello));
     observer.send(JSON.stringify(hello));
     await Promise.all([managerHello, observerHello]);

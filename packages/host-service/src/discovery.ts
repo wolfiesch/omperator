@@ -1042,14 +1042,16 @@ export interface SessionTranscriptPoll {
 
 /**
  * Incrementally consumes complete JSONL records. The byte watermark advances
- * over partial lines, while the partial text stays buffered until a newline
- * proves the record durable.
+ * over partial lines. Partial records stay bounded as raw bytes until a newline
+ * proves them durable; oversized records are discarded without losing the
+ * following transcript.
  */
 export class SessionTranscriptObserver {
 	#identity = "";
 	#offset = 0;
-	#pending = "";
-	#decoder = new TextDecoder("utf-8", { fatal: true });
+	#pending = new Uint8Array();
+	#skippingOversizedLine = false;
+	#oversizedLineCount = 0;
 	#rawCount = 0;
 	#rawLastId: string | null = null;
 	#stableSamples = 0;
@@ -1101,6 +1103,77 @@ export class SessionTranscriptObserver {
 		if (fromCurrent > 0) next.set(bytes.subarray(bytes.byteLength - fromCurrent), length - fromCurrent);
 		this.#tailAnchor = next;
 	}
+	#appendPending(bytes: Uint8Array): void {
+		if (bytes.byteLength === 0) return;
+		if (this.#pending.byteLength === 0) {
+			this.#pending = bytes.slice();
+			return;
+		}
+		const joined = new Uint8Array(this.#pending.byteLength + bytes.byteLength);
+		joined.set(this.#pending);
+		joined.set(bytes, this.#pending.byteLength);
+		this.#pending = joined;
+	}
+	#consumeLines(bytes: Uint8Array): Array<Uint8Array | null> {
+		const complete: Array<Uint8Array | null> = [];
+		let cursor = 0;
+		while (cursor < bytes.byteLength) {
+			const newline = bytes.indexOf(0x0a, cursor);
+			const end = newline < 0 ? bytes.byteLength : newline;
+			const segment = bytes.subarray(cursor, end);
+			if (this.#skippingOversizedLine) {
+				if (newline < 0) break;
+				this.#skippingOversizedLine = false;
+				this.#oversizedLineCount += 1;
+				complete.push(null);
+			} else if (this.#pending.byteLength + segment.byteLength > MAX_LINE_BYTES) {
+				this.#pending = new Uint8Array();
+				if (newline < 0) {
+					this.#skippingOversizedLine = true;
+					break;
+				}
+				this.#oversizedLineCount += 1;
+				complete.push(null);
+			} else if (newline < 0) {
+				this.#appendPending(segment);
+				break;
+			} else {
+				let line: Uint8Array;
+				if (this.#pending.byteLength === 0) line = segment;
+				else {
+					this.#appendPending(segment);
+					line = this.#pending;
+				}
+				if (line.at(-1) === 0x0d) line = line.subarray(0, line.byteLength - 1);
+				complete.push(line);
+				this.#pending = new Uint8Array();
+			}
+			cursor = end + 1;
+		}
+		return complete;
+	}
+	#oversizedLineNotice(info: DiscoveryStat): DurableEntry | undefined {
+		const projector = this.#projector;
+		const record = this.#record;
+		if (!projector || !record) return undefined;
+		const entry: DurableEntry = {
+			id: uniqueEntryId(
+				`oversized-transcript-record-${this.#oversizedLineCount}`,
+				new Set(projector.entries.map(candidate => candidate.id)),
+			),
+			parentId: null,
+			hostId: this.#host,
+			sessionId: record.sessionId,
+			kind: "compaction",
+			timestamp: new Date(info.mtimeMs).toISOString(),
+			data: {
+				summary: "One transcript record was omitted because it exceeded the 1 MiB safety limit.",
+				oversizedRecordOmission: true,
+			},
+		};
+		projector.entries.push(entry);
+		return entry;
+	}
 	#result(
 		entries: readonly DurableEntry[],
 		reset: boolean,
@@ -1128,8 +1201,9 @@ export class SessionTranscriptObserver {
 	#reset(identity: string): void {
 		this.#identity = identity;
 		this.#offset = 0;
-		this.#pending = "";
-		this.#decoder = new TextDecoder("utf-8", { fatal: true });
+		this.#pending = new Uint8Array();
+		this.#skippingOversizedLine = false;
+		this.#oversizedLineCount = 0;
 		this.#projector = undefined;
 		this.#record = undefined;
 		this.#rawCount = 0;
@@ -1145,15 +1219,17 @@ export class SessionTranscriptObserver {
 		this.#tailAnchor = new Uint8Array();
 	}
 	#observeEof(identity: string, size: number): boolean {
-		try {
-			const flushed = this.#decoder.decode(new Uint8Array(), { stream: false });
-			if (flushed) this.#pending += flushed;
-		} catch {
-			this.#invalidate(true);
-			return false;
+		if (this.#pending.byteLength > 0) {
+			try {
+				new TextDecoder("utf-8", { fatal: true }).decode(this.#pending);
+			} catch {
+				this.#invalidate(true);
+				return false;
+			}
+			this.#invalidate();
+			return true;
 		}
-		this.#decoder = new TextDecoder("utf-8", { fatal: true });
-		if (this.#pending) {
+		if (this.#skippingOversizedLine) {
 			this.#invalidate();
 			return true;
 		}
@@ -1245,31 +1321,24 @@ export class SessionTranscriptObserver {
 		const raw = fullFallback
 			? fullBytes.slice(readOffset, readOffset + bytesToRead)
 			: fullBytes.slice(0, bytesToRead);
-		let text: string;
-		try {
-			text = this.#decoder.decode(raw, { stream: true });
-		} catch {
-			this.#invalidate(true);
-			return this.#result([], reset, false, "snapshot");
-		}
 		this.#rememberTail(raw);
-		const pending = this.#pending + text;
-		if (encoder.encode(pending).byteLength > OBSERVER_MAX_BUFFER_BYTES) {
-			this.#invalidate(true);
-			return this.#result([], reset, false, "snapshot");
-		}
-		this.#pending = pending;
-		this.#offset = fullFallback ? readOffset + raw.byteLength : readOffset + raw.byteLength;
-		const complete: string[] = [];
-		let newline = this.#pending.indexOf("\n");
-		while (newline >= 0) {
-			complete.push(this.#pending.slice(0, newline).replace(/\r$/, ""));
-			this.#pending = this.#pending.slice(newline + 1);
-			newline = this.#pending.indexOf("\n");
-		}
+		this.#offset = readOffset + raw.byteLength;
+		const complete = this.#consumeLines(raw);
 		const entries: DurableEntry[] = [];
-		for (const line of complete) {
-			if (!line || encoder.encode(line).byteLength > MAX_LINE_BYTES) continue;
+		for (const encodedLine of complete) {
+			if (encodedLine === null) {
+				const notice = this.#oversizedLineNotice(info);
+				if (notice) entries.push(notice);
+				continue;
+			}
+			if (encodedLine.byteLength === 0) continue;
+			let line: string;
+			try {
+				line = new TextDecoder("utf-8", { fatal: true }).decode(encodedLine);
+			} catch {
+				this.#invalidate(true);
+				return this.#result([], reset, false, "snapshot");
+			}
 			let rawValue: Record<string, unknown>;
 			try {
 				const parsed = JSON.parse(line);

@@ -22,6 +22,7 @@ import { boundSnapshotEntries } from "./snapshot-limits.ts";
 import type { Projection, SessionRecord } from "./types.ts";
 
 const MAX_REPLAY_BYTES = 512 * 1024;
+const MAX_REBASE_FRAMES = 128;
 const encoder = new TextEncoder();
 
 export interface PendingPromptProjection {
@@ -257,12 +258,36 @@ export class SessionProjection {
 			entries.length >= current.length &&
 			current.every((entry, index) => JSON.stringify(entry) === JSON.stringify(entries[index]));
 		if (prefix) {
+			const previous = { ...this.value.cursor };
 			const frames: ServerFrame[] = [];
+			let frameBytes = 0;
+			let budgetExceeded = false;
 			for (const entry of entries.slice(current.length)) {
 				const frame = this.appendEntry(entry);
-				if (frame) frames.push(frame);
+				if (!frame || budgetExceeded) continue;
+				const bytes = encoder.encode(JSON.stringify(frame)).byteLength;
+				if (frames.length >= MAX_REBASE_FRAMES || frameBytes + bytes > MAX_REPLAY_BYTES) {
+					budgetExceeded = true;
+					continue;
+				}
+				frames.push(frame);
+				frameBytes += bytes;
 			}
-			return frames;
+			if (!budgetExceeded) return frames;
+			const gap: ServerFrame = {
+				v: "omp-app/1",
+				type: "gap",
+				hostId: this.value.hostId,
+				sessionId: this.value.sessionId,
+				from: { epoch: previous.epoch, seq: previous.seq + 1 },
+				to: this.value.cursor,
+				reason: "rebase_budget_exceeded",
+			};
+			const snapshot = this.snapshot();
+			this.value.ring.length = 0;
+			this.appendFrame(gap);
+			this.appendFrame(snapshot);
+			return [gap, snapshot];
 		}
 		const previous = this.value.cursor;
 		this.#byId.clear();

@@ -771,6 +771,8 @@ export class LocalAppserver implements AppserverHandle {
 	#observerTimers = new Map<SessionId, ReturnType<typeof setInterval>>();
 	#observerRefreshes = new Map<SessionId, { promise: Promise<void>; rerun: boolean }>();
 	#promotionFailures = new Map<SessionId, string>();
+	#locklessObservers = new WeakSet<SessionTranscriptObserver>();
+	#locklessObserverBaselines = new WeakSet<SessionTranscriptObserver>();
 	#sessionRefresh?: Promise<void>;
 	#sessionLoads = new Map<SessionId, Promise<void>>();
 	#inventoryGeneration = 0;
@@ -2727,10 +2729,13 @@ export class LocalAppserver implements AppserverHandle {
 		);
 	}
 	private observerBarrierBlocks(command: CommandFrame): boolean {
-		if (!command.sessionId || OBSERVER_READ_COMMANDS.has(command.command)) return false;
-		const control = this.#projections.get(command.sessionId)?.value.ref.liveState?.sessionControl;
-		if (!control) return false;
-		return command.command === "session.state.get" || !OBSERVER_READ_COMMANDS.has(command.command);
+		if (!command.sessionId) return false;
+		if (this.#externalRuntimes.has(command.sessionId)) return false;
+		if (command.command !== "session.state.get" && OBSERVER_READ_COMMANDS.has(command.command)) return false;
+		return (
+			this.#observers.has(command.sessionId) ||
+			this.#projections.get(command.sessionId)?.value.ref.liveState?.sessionControl !== undefined
+		);
 	}
 	private observerBarrierOutcome(command: CommandFrame): CommandOutcome {
 		return {
@@ -4253,15 +4258,23 @@ export class LocalAppserver implements AppserverHandle {
 		}
 		let observer = this.#observers.get(sessionId);
 		if (!observer) {
-			if (status === "missing" && !projection.value.ref.liveState?.sessionControl) return;
+			const lockless = status === "missing" && !projection.value.ref.liveState?.sessionControl;
 			observer = new SessionTranscriptObserver(record.path, this.hostId);
 			this.#observers.set(sessionId, observer);
+			if (lockless) this.#locklessObservers.add(observer);
 		}
+		const lockless = this.#locklessObservers.has(observer);
+		const establishingLocklessBaseline = lockless && !this.#locklessObserverBaselines.has(observer);
 		const poll = await observer.poll();
 		if (this.#supervisors.has(sessionId) || this.#startPromises.has(sessionId)) return;
 		if (!this.observerIsCurrent(sessionId, observer, record, projection)) return;
 		const pollRecordMatches = poll.record?.sessionId === sessionId;
-		if (pollRecordMatches) await this.applyObserverPoll(sessionId, projection, poll);
+		if (establishingLocklessBaseline) {
+			if (!pollRecordMatches || !poll.stable) return;
+			this.#locklessObserverBaselines.add(observer);
+		}
+		if (pollRecordMatches && (!lockless || establishingLocklessBaseline || poll.changed))
+			await this.applyObserverPoll(sessionId, projection, poll);
 		if (!this.observerIsCurrent(sessionId, observer, record, projection)) return;
 		const reconciling = projection.setSessionControl({
 			mode: "reconciling",
@@ -4269,6 +4282,7 @@ export class LocalAppserver implements AppserverHandle {
 		});
 		if (reconciling) await this.broadcastIndex(reconciling);
 		if (!this.observerIsCurrent(sessionId, observer, record, projection)) return;
+		if (lockless) return;
 		if (!this.hasAttachedClient(sessionId)) return;
 		if (!pollRecordMatches || !poll.stable || poll.transcript !== "live") return;
 		if (poll.unresolvedPendingCount !== 0) return;
