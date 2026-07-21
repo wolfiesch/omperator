@@ -294,44 +294,10 @@ jobs:
 
       - name: Run operator tests
         working-directory: packages/cluster-operator
-        run: go test ./...
+        run: GOFLAGS=-mod=readonly go test ./...
 
       - name: Lint cluster chart
         run: helm lint deploy/charts/t4-cluster
-
-  op02-crd-validator-dependencies:
-    if: ${{ github.event_name == 'pull_request' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - name: Check out exact pull request head
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-
-      - name: Install repository Go toolchain
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          go-version: "1.25.5"
-          cache: false
-
-      - name: Resolve CRD validator dependencies
-        working-directory: packages/cluster-operator
-        run: |
-          go get k8s.io/apiextensions-apiserver/pkg/apiserver/schema/cel@v0.33.2
-          go get k8s.io/apiextensions-apiserver/pkg/apiserver/validation@v0.33.2
-          go get k8s.io/apiextensions-apiserver/pkg/controller/openapi/builder@v0.33.2
-
-      - name: Upload authorized module metadata
-        if: ${{ always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: op02-crd-validator-modules-${{ github.run_id }}
-          path: |
-            packages/cluster-operator/go.mod
-            packages/cluster-operator/go.sum
-          if-no-files-found: error
-          retention-days: 1
 
   tooling:
     needs: changes
