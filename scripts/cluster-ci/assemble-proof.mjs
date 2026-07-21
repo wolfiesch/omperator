@@ -3,6 +3,8 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  AUTHORIZED_CI_MIRROR,
+  CANONICAL_BUILD_SOURCE_REPOSITORY,
   OBSERVATION_SYSTEMS,
   PROOF_SCENARIOS,
   createFileEvidence,
@@ -279,10 +281,12 @@ export async function assembleProofManifest() {
     throw new Error("image publication manifest does not match this source commit");
   }
   await verifyLiveImageDigests(imageManifest.images);
+  const ciRepository = requiredEnvironment("CI_REPO");
+  if (ciRepository !== AUTHORIZED_CI_MIRROR) throw new Error("CI_REPO is not the authorized CI mirror");
   const source = {
-    repository: requiredEnvironment("CI_REPO"),
+    repository: CANONICAL_BUILD_SOURCE_REPOSITORY,
     commit: requiredEnvironment("CI_COMMIT_SHA"),
-    woodpecker: woodpeckerIdentity(),
+    woodpecker: { repository: ciRepository, ...woodpeckerIdentity() },
   };
   const manifest = {
     schemaVersion: "t4-cluster-proof/1",
