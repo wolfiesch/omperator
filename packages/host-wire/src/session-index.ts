@@ -1,3 +1,9 @@
+import {
+	decodeSessionCiState,
+	decodeSessionClusterState,
+	type SessionCiState,
+	type SessionClusterState,
+} from "./cluster.js";
 import { type Cursor, decodeCursor } from "./cursor.js";
 import { fail } from "./errors.js";
 import {
@@ -117,6 +123,8 @@ export type SessionControlState =
 export interface SessionLiveState {
 	sessionControl?: SessionControlState;
 	providerTransport?: ProviderTransportState;
+	cluster?: SessionClusterState;
+	ci?: SessionCiState;
 	[key: string]: unknown;
 }
 export interface SessionRef {
@@ -363,6 +371,9 @@ export function decodeSessionRef(value: unknown, path: string): SessionRef {
 			decodeSessionControl(liveState.sessionControl, `${path}.liveState.sessionControl`);
 		if (liveState.providerTransport !== undefined)
 			decodeProviderTransportState(liveState.providerTransport, `${path}.liveState.providerTransport`);
+		if (liveState.cluster !== undefined)
+			decodeSessionClusterState(liveState.cluster, `${path}.liveState.cluster`);
+		if (liveState.ci !== undefined) decodeSessionCiState(liveState.ci, `${path}.liveState.ci`);
 	}
 	if (session.model !== undefined) controlFree(session.model, `${path}.model`, 256);
 	if (session.thinking !== undefined) controlFree(session.thinking, `${path}.thinking`, 256);

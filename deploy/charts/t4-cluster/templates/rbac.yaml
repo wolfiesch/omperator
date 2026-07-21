@@ -1,0 +1,163 @@
+{{- if .Values.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "controller") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [cluster.t4.dev]
+    resources: [t4clusterhosts, t4workspaces, t4sessions]
+    verbs: [get, list, watch, update, patch]
+  - apiGroups: [cluster.t4.dev]
+    resources: [t4clusterhosts/status, t4workspaces/status, t4sessions/status]
+    verbs: [get, update, patch]
+  - apiGroups: [cluster.t4.dev]
+    resources: [t4workspaces/finalizers, t4sessions/finalizers]
+    verbs: [update]
+  - apiGroups: ['']
+    resources: [pods, services, persistentvolumeclaims]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: ['']
+    resources: [configmaps]
+    resourceNames: [{{ .Values.session.omp.configMap | quote }}]
+    verbs: [get]
+  {{- if not .Values.session.omp.allowUnauthenticated }}
+  - apiGroups: ['']
+    resources: [secrets]
+    resourceNames: [{{ .Values.session.omp.credentialSecret | quote }}]
+    verbs: [get]
+  {{- end }}
+  - apiGroups: ['']
+    resources: [events]
+    verbs: [create, patch]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [cluster.t4.dev]
+    resources: [t4clusterhosts]
+    verbs: [get, list, watch]
+  - apiGroups: [cluster.t4.dev]
+    resources: [t4workspaces, t4sessions]
+    verbs: [get, list, watch, create, delete]
+  - apiGroups: ['']
+    resources: [pods, services, endpoints]
+    verbs: [get, list, watch]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "session-token-reviewer") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [authentication.k8s.io]
+    resources: [tokenreviews]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "storage-reader") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses]
+    verbs: [get, list, watch]
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "controller") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "session") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "controller") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "controller") | quote }}
+    namespace: {{ .Release.Namespace | quote }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "controller") | quote }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "storage-reader") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "controller") | quote }}
+    namespace: {{ .Release.Namespace | quote }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "storage-reader") | quote }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server") | quote }}
+    namespace: {{ .Release.Namespace | quote }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server") | quote }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "session-token-reviewer") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "session") | quote }}
+    namespace: {{ .Release.Namespace | quote }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "session-token-reviewer") | quote }}
+{{- end }}

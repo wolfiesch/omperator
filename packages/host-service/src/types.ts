@@ -55,6 +55,8 @@ export interface RemoteAuthorizationContext {
 	readonly sessionRevision?: Revision;
 }
 export interface RemoteConnectionPolicy {
+	/** Optional decoder used only by a policy-bound internal listener; public remote listeners retain the canonical wire decoder. */
+	decodeClientFrame?(input: unknown): ClientFrame;
 	authenticate(connection: RemoteConnection, hello: HelloFrame): RemoteHelloDecision | Promise<RemoteHelloDecision>;
 	pairStart?(
 		connection: RemoteConnection,

@@ -11,6 +11,8 @@
 // or explicit query parameters. An ordinary page URL is never used as an
 // implicit backend endpoint.
 import {
+  clusterOperatorRequestedCapabilities,
+  clusterOperatorRequestedFeatures,
   createOmpClient,
   isConfirmationDecisionConsumed,
   type OmpClient,
@@ -69,11 +71,6 @@ import {
 } from "./native-mobile.ts";
 
 const TARGET_ID = "remote";
-const COMPATIBILITY_FEATURES: readonly string[] = Object.freeze(
-  ADDITIVE_FEATURES.filter(
-    (feature) => feature !== "prompt.images" && feature !== "transcript.images",
-  ),
-);
 
 const MAX_URL_LENGTH = 2048;
 const MAX_LABEL_LENGTH = 128;
@@ -84,6 +81,7 @@ export interface BrowserBackendConfig {
   readonly label: string;
   readonly deviceId?: string;
   readonly deviceToken?: string;
+  readonly clusterOperatorEnabled?: true;
 }
 
 function boundedText(value: unknown, name: string, max: number): string {
@@ -114,13 +112,35 @@ function validatedWsUrl(value: unknown): string {
   }
   return parsed.toString();
 }
+function validateClusterWsUrl(value: string): string {
+  const parsed = new URL(value);
+  if (
+    parsed.protocol !== "wss:" ||
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.port !== "" ||
+    !parsed.hostname.endsWith(".ts.net") ||
+    parsed.pathname !== "/v1/ws"
+  ) {
+    throw new Error("cluster operator requires one secure WSS cluster target");
+  }
+  if (parsed.search !== "" || parsed.hash !== "") {
+    throw new Error("cluster operator target must not contain query credentials or fragments");
+  }
+  return parsed.toString();
+}
 
 function parseBackendPayload(value: unknown): BrowserBackendConfig {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("invalid browser backend payload");
   }
   const data = value as Record<string, unknown>;
-  const wsUrl = validatedWsUrl(data.wsUrl);
+  const clusterOperatorEnabled = data.clusterOperatorEnabled === true;
+  if (data.clusterOperatorEnabled !== undefined && !clusterOperatorEnabled) {
+    throw new Error("invalid browser backend clusterOperatorEnabled");
+  }
+  const rawWsUrl = validatedWsUrl(data.wsUrl);
+  const wsUrl = clusterOperatorEnabled ? validateClusterWsUrl(rawWsUrl) : rawWsUrl;
   const label =
     data.label === undefined ? "T4 host" : boundedText(data.label, "label", MAX_LABEL_LENGTH);
   const auth = data.auth;
@@ -138,6 +158,7 @@ function parseBackendPayload(value: unknown): BrowserBackendConfig {
   return {
     wsUrl,
     label,
+    ...(clusterOperatorEnabled ? { clusterOperatorEnabled: true as const } : {}),
     ...(deviceId === undefined
       ? {}
       : { deviceId: boundedText(deviceId, "deviceId", MAX_DEVICE_ID_LENGTH) }),
@@ -211,6 +232,19 @@ export function createBrowserShellPort(
   const config = detectBackend();
   if (config === null) return null;
   const backendConfig = config;
+  const requestedFeatures = clusterOperatorRequestedFeatures(
+    ADDITIVE_FEATURES,
+    backendConfig.clusterOperatorEnabled === true,
+  );
+  const requestedCapabilities = clusterOperatorRequestedCapabilities(
+    DEVICE_CAPABILITIES,
+    backendConfig.clusterOperatorEnabled === true,
+  );
+  const compatibilityRequestedFeatures = Object.freeze(
+    requestedFeatures.filter(
+      (feature) => feature !== "prompt.images" && feature !== "transcript.images",
+    ),
+  );
   const nativeEndpointKey = currentNativeMobileBackend()?.endpointKey;
   const mobilePlatform = nativeMobilePlatform();
   const platform: "linux" | "darwin" = (() => {
@@ -292,9 +326,9 @@ export function createBrowserShellPort(
 
     const c = (options.clientFactory ?? createOmpClient)({
       transport: transportFactory,
-      capabilities: DEVICE_CAPABILITIES,
-      requestedFeatures: ADDITIVE_FEATURES,
-      compatibilityRequestedFeatures: COMPATIBILITY_FEATURES,
+      capabilities: requestedCapabilities,
+      requestedFeatures,
+      compatibilityRequestedFeatures,
       authentication: () => authentication,
       privilegedPairResult: async (result) => {
         await persistNativeMobileCredentials(result, nativeEndpointKey);
@@ -393,7 +427,7 @@ export function createBrowserShellPort(
   }
   const shell: DesktopShellPort = {
     kind: "desktop" as const,
-
+    clusterOperatorEnabled: backendConfig.clusterOperatorEnabled === true,
     speakText,
     stopSpeaking,
     platform,
@@ -536,7 +570,7 @@ export function createBrowserShellPort(
             ? "T4 Browser"
             : `T4 ${mobilePlatform === "android" ? "Android" : "iOS"}`,
         platform: mobilePlatform ?? platform,
-        requestedCapabilities: DEVICE_CAPABILITIES,
+        requestedCapabilities,
       });
       return { targetId: request.targetId, paired: true };
     },

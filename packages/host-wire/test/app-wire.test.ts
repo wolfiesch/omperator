@@ -1179,6 +1179,7 @@ describe("app-wire authority", () => {
 			"preview.lease.renew": "session",
 			"preview.lease.release": "session",
 			"preview.handoff": "session",
+			"ci.run": "session",
 			"files.read": "authority",
 			"files.write": "authority",
 			"files.patch": "authority",

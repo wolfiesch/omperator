@@ -470,6 +470,16 @@ export function AgentViewScreen({
                         <p className="truncate text-muted-foreground text-xs">
                           {group.projectName} · {group.session.model} · {group.session.freshness}
                         </p>
+                        {group.session.ci !== undefined && (
+                          <p className="flex flex-wrap gap-x-2 text-muted-foreground text-xs">
+                            <span>{group.session.ci.status}</span>
+                            <span>{group.session.ci.currentStage ?? "CI stage unknown"}</span>
+                            <span>{group.session.ci.branch ?? group.session.ci.ref ?? "CI branch unknown"}</span>
+                            <span className="font-mono">
+                              {group.session.ci.commit ?? "CI commit unknown"}
+                            </span>
+                          </p>
+                        )}
                       </span>
                       {group.session.status !== null && (
                         <StatusPill className="shrink-0" status={group.session.status} />

@@ -144,6 +144,7 @@ function setup(
     readonly createServiceManager?: NonNullable<DesktopLifecycleOptions["createServiceManager"]>;
     readonly createProjectionCache?: NonNullable<DesktopLifecycleOptions["createProjectionCache"]>;
     readonly createBrowserRuntime?: NonNullable<DesktopLifecycleOptions["createBrowserRuntime"]>;
+    readonly clusterOperatorEnabled?: boolean;
   } = {},
 ) {
   const app = new FakeApp();
@@ -164,6 +165,7 @@ function setup(
   let updateScheduleCount = 0;
   let updateDisposeCount = 0;
   let menuOptions: ApplicationMenuOptions | undefined;
+  let windowOptions: { readonly clusterOperatorEnabled?: boolean } | undefined;
   let localProfileState: LocalProfileRegistryState = {
     version: 1,
     records: [DEFAULT_LOCAL_PROFILE],
@@ -208,7 +210,8 @@ function setup(
   const lifecycle = new DesktopLifecycle({
     app: app as never,
     getAllWindows: () => windows.filter((window) => !window.destroyed) as never,
-    createWindow: () => {
+    createWindow: (options?: { readonly clusterOperatorEnabled?: boolean }) => {
+      windowOptions = options;
       const next = new FakeWindow();
       windows.push(next);
       return {
@@ -230,6 +233,9 @@ function setup(
     ...(overrides.createProjectionCache === undefined
       ? {}
       : { createProjectionCache: overrides.createProjectionCache }),
+    ...(overrides.clusterOperatorEnabled === undefined
+      ? {}
+      : { clusterOperatorEnabled: overrides.clusterOperatorEnabled }),
     discoverExecutable:
       overrides.discoverExecutable ??
       (serviceManager === undefined ? async () => undefined : async () => "/opt/omp/bin/omp"),
@@ -278,10 +284,26 @@ function setup(
     get menuOptions() {
       return menuOptions;
     },
+    get windowOptions() {
+      return windowOptions;
+    },
   };
 }
 
 describe("desktop Electron lifecycle", () => {
+  it("propagates explicit cluster operator opt-in to main and renderer runtimes", async () => {
+    const disabled = setup();
+    await disabled.lifecycle.start();
+    expect(disabled.managerOptions?.clusterOperatorEnabled).toBeUndefined();
+    expect(disabled.windowOptions?.clusterOperatorEnabled).not.toBe(true);
+    await disabled.lifecycle.stop();
+
+    const enabled = setup(undefined, async () => true, { clusterOperatorEnabled: true });
+    await enabled.lifecycle.start();
+    expect(enabled.managerOptions?.clusterOperatorEnabled).toBe(true);
+    expect(enabled.windowOptions?.clusterOperatorEnabled).toBe(true);
+    await enabled.lifecycle.stop();
+  });
   it("queues initial argv, second-instance, and open-url links until renderer load", async () => {
     const original = [...process.argv];
     process.argv.push("t4-code://pair/argv-host/123456");

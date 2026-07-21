@@ -131,11 +131,11 @@ function catalogFrame(items: readonly CatalogItemSpec[]): Record<string, unknown
   };
 }
 
-function sessionSnapshotFrame(revisionValue = "rev-1"): SessionSnapshotFrame {
+function sessionSnapshotFrame(revisionValue = "rev-1", seq = 1): SessionSnapshotFrame {
   return {
     v: PROTOCOL_VERSION,
     type: "snapshot",
-    cursor: { epoch: "session-epoch", seq: 1 },
+    cursor: { epoch: "session-epoch", seq },
     revision: brandRevision(revisionValue),
     hostId: hostId(HOST),
     sessionId: sessionId(SESSION),
@@ -821,7 +821,7 @@ describe("input, resize, close", () => {
   it("refused mutation leases send nothing and do not replay after updates", async () => {
     const h = await harness();
     const { session } = await openLive(h);
-    h.shell.emitFrame({ targetId: TARGET, frame: sessionSnapshotFrame("rev-2") });
+    h.shell.emitFrame({ targetId: TARGET, frame: sessionSnapshotFrame("rev-2", 2) });
     await settle();
     h.shell.leaseRefused = true;
     session.write("blocked");
@@ -831,7 +831,7 @@ describe("input, resize, close", () => {
     expect(h.shell.inputs).toHaveLength(0);
     expect(h.shell.resizes).toHaveLength(0);
     expect(h.shell.closes).toHaveLength(0);
-    h.shell.emitFrame({ targetId: TARGET, frame: sessionSnapshotFrame("rev-3") });
+    h.shell.emitFrame({ targetId: TARGET, frame: sessionSnapshotFrame("rev-3", 3) });
     await settle();
     expect(h.shell.inputs).toHaveLength(0);
     expect(h.shell.resizes).toHaveLength(0);

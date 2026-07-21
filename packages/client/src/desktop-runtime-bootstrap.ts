@@ -1,4 +1,4 @@
-import { decodeSessionListResult } from "@t4-code/protocol";
+import { CLUSTER_OPERATOR_FEATURE, decodeSessionListResult } from "@t4-code/protocol";
 import type { CommandRequest, CommandResult } from "@t4-code/protocol/desktop-ipc";
 import { DesktopRuntimeError } from "./desktop-runtime-contracts.ts";
 import type { DesktopWelcomePayload } from "./desktop-runtime-contracts.ts";
@@ -12,6 +12,7 @@ export type DesktopBootstrapErrorReporter = (error: unknown, code: DesktopBootst
 export interface DesktopHostBootstrapOptions {
   readonly targetId: string;
   readonly frame: DesktopWelcomePayload;
+  readonly clusterOperatorEnabled?: boolean;
   readonly issue: DesktopBootstrapCommand;
   readonly onError?: DesktopBootstrapErrorReporter;
   readonly onSessionList?: (result: CommandResult) => void;
@@ -45,6 +46,13 @@ export async function bootstrapDesktopHost(options: DesktopHostBootstrapOptions)
         onError(error, "protocol");
       }
     }
+  }
+  if (
+    options.clusterOperatorEnabled === true &&
+    capability("sessions.read") &&
+    feature(CLUSTER_OPERATOR_FEATURE)
+  ) {
+    await issueSafely({ hostId: host, command: "workspace.list", args: {} });
   }
   if (capability("catalog.read") && feature("catalog.metadata")) {
     await issueSafely({ hostId: host, command: "catalog.get", args: {} });

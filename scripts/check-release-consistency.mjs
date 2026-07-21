@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -69,7 +69,10 @@ export function discoverReleasePackagePaths(repoRoot) {
   for (const parent of ["apps", "packages"]) {
     const entries = readdirSync(resolve(repoRoot, parent), { withFileTypes: true });
     for (const entry of entries) {
-      if (entry.isDirectory()) paths.push(`${parent}/${entry.name}/package.json`);
+      if (entry.isDirectory()) {
+        const manifestPath = `${parent}/${entry.name}/package.json`;
+        if (existsSync(resolve(repoRoot, manifestPath))) paths.push(manifestPath);
+      }
     }
   }
   return paths.sort((a, b) => a.localeCompare(b));
@@ -811,6 +814,11 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "path: artifacts/legacy-bridge-continuity/",
     "if-no-files-found: error",
     "tooling:",
+    "cluster:",
+    "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16",
+    "run: pnpm test:cluster:ci",
+    "run: go test ./...",
+    "run: helm lint deploy/charts/t4-cluster",
     "android-debug:",
     "flutter:",
     "flutter-android:",
@@ -823,7 +831,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "test -x apps/flutter/build/macos/Build/Products/Debug/t4code.app/Contents/Resources/runtime/t4-host",
     "name: verify",
     "if: ${{ always() }}",
-    "needs: [changes, core, legacy-bridge-continuity, tooling, android-debug, flutter, flutter-android, flutter-apple]",
+    "needs: [changes, core, legacy-bridge-continuity, cluster, tooling, android-debug, flutter, flutter-android, flutter-apple]",
     'test "$CHANGES_RESULT" = success',
     'test "$CORE_RESULT" = success',
     "for result in \\",

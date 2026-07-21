@@ -1,0 +1,914 @@
+when:
+  - event:
+      - push
+      - pull_request
+      - manual
+
+clone:
+  git:
+    image: mirror.gcr.io/woodpeckerci/plugin-git:2.6.5@sha256:2b34ecbbfd2f318405bd5d2765a750f6b02dae5dfb8707e16c943b9faeef5fc5
+    settings:
+      depth: 50
+      partial: false
+
+steps:
+  dependencies:
+    image: mirror.gcr.io/library/node:24.13.1-bookworm@sha256:00e9195ebd49985a6da8921f419978d85dfe354589755192dc090425ce4da2f7
+    commands:
+      - corepack enable
+      - pnpm install --frozen-lockfile
+      - mkdir -p .ci && cp /etc/ssl/certs/ca-certificates.crt .ci/ca-certificates.crt
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 512Mi
+            ephemeral-storage: 1Gi
+          limits:
+            cpu: "1"
+            memory: 2Gi
+            ephemeral-storage: 4Gi
+
+  bun-runtime:
+    depends_on: [dependencies]
+    image: mirror.gcr.io/oven/bun:1.3.14@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4
+    commands:
+      - cp "$(command -v bun)" .ci/bun
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 64Mi
+            ephemeral-storage: 64Mi
+          limits:
+            cpu: 250m
+            memory: 256Mi
+            ephemeral-storage: 256Mi
+
+  upstream-core:
+    depends_on: [cluster-ci-contracts, bun-runtime]
+    image: mirror.gcr.io/library/node:24.13.1-bookworm@sha256:00e9195ebd49985a6da8921f419978d85dfe354589755192dc090425ce4da2f7
+    commands:
+      - export PATH="$PWD/.ci:$PATH"
+      - corepack enable
+      - pnpm check:release && pnpm check:provenance && pnpm lint && pnpm --filter '!@t4-code/flutter' -r typecheck
+      - VP_RUN_CONCURRENCY_LIMIT=1 pnpm --filter '!@t4-code/flutter' -r test
+      - pnpm --filter '!@t4-code/flutter' -r build
+      - pnpm exec playwright install --with-deps chromium
+      - pnpm test:e2e
+      - pnpm test:packaging
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 1Gi
+            ephemeral-storage: 2Gi
+          limits:
+            cpu: "2"
+            memory: 6Gi
+            ephemeral-storage: 8Gi
+
+  upstream-tooling:
+    depends_on: [upstream-core]
+    image: mirror.gcr.io/library/node:24.13.1-bookworm@sha256:00e9195ebd49985a6da8921f419978d85dfe354589755192dc090425ce4da2f7
+    commands:
+      - apt-get update && apt-get install -y --no-install-recommends jq && rm -rf /var/lib/apt/lists/*
+      - corepack enable
+      - pnpm test:tooling
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 512Mi
+            ephemeral-storage: 512Mi
+          limits:
+            cpu: "1"
+            memory: 2Gi
+            ephemeral-storage: 2Gi
+
+  legacy-authority-source:
+    depends_on: [upstream-tooling]
+    image: mirror.gcr.io/alpine/git:2.49.1@sha256:c0280cf9572316299b08544065d3bf35db65043d5e3963982ec50647d2746e26
+    commands:
+      - git init .continuity/omp
+      - git -C .continuity/omp remote add origin https://github.com/lyc-aon/oh-my-pi.git
+      - git -C .continuity/omp fetch --depth=1 origin 8476f4451ed95c5d5401785d279a93d3c659fac4
+      - git -C .continuity/omp checkout --detach FETCH_HEAD
+      - test "$(git -C .continuity/omp rev-parse HEAD)" = 8476f4451ed95c5d5401785d279a93d3c659fac4
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 128Mi
+            ephemeral-storage: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+            ephemeral-storage: 1Gi
+
+  legacy-authority-build:
+    depends_on: [legacy-authority-source]
+    image: mirror.gcr.io/oven/bun:1.3.14@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4
+    commands:
+      - cd .continuity/omp && bun install --frozen-lockfile
+      - cd .continuity/omp && bun run build:native
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 512Mi
+            ephemeral-storage: 1Gi
+          limits:
+            cpu: "2"
+            memory: 4Gi
+            ephemeral-storage: 6Gi
+
+  legacy-bridge-continuity:
+    depends_on: [legacy-authority-build]
+    image: mirror.gcr.io/library/node:24.13.1-bookworm@sha256:00e9195ebd49985a6da8921f419978d85dfe354589755192dc090425ce4da2f7
+    environment:
+      T4_OMP_SOURCE_DIR: .continuity/omp
+    commands:
+      - corepack enable
+      - pnpm test:legacy-bridge-continuity
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 512Mi
+            ephemeral-storage: 512Mi
+          limits:
+            cpu: "1"
+            memory: 2Gi
+            ephemeral-storage: 2Gi
+
+  android-debug:
+    depends_on: [legacy-bridge-continuity]
+    image: cimg/android:2026.03.1-node@sha256:b62bbea69ba6bb28fe165ff913c23bde5220d0305fed7247121fb2919ecffd0e
+    commands:
+      - corepack enable
+      - pnpm --filter @t4-code/mobile check:android:debug
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 1Gi
+            ephemeral-storage: 2Gi
+          limits:
+            cpu: "2"
+            memory: 5Gi
+            ephemeral-storage: 8Gi
+
+  cluster-ci-contracts:
+    depends_on: [dependencies]
+    image: mirror.gcr.io/library/node:24.13.1-bookworm@sha256:00e9195ebd49985a6da8921f419978d85dfe354589755192dc090425ce4da2f7
+    commands:
+      - corepack enable
+      - pnpm test:cluster:ci
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 256Mi
+            ephemeral-storage: 256Mi
+          limits:
+            cpu: "1"
+            memory: 1Gi
+            ephemeral-storage: 1Gi
+
+  cluster-server-tests:
+    depends_on: [cluster-ci-contracts]
+    image: mirror.gcr.io/oven/bun:1.3.14@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4
+    environment:
+      T4_PROOF_OUTPUT_DIR: artifacts/cluster-proof/scenarios
+    commands:
+      - export SSL_CERT_FILE="$PWD/.ci/ca-certificates.crt"
+      - export NODE_EXTRA_CA_CERTS="$SSL_CERT_FILE"
+      - (cd packages/cluster-server && bun --bun run test)
+      - (cd packages/cluster-server && bun --bun run typecheck)
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 256Mi
+            ephemeral-storage: 256Mi
+          limits:
+            cpu: "1"
+            memory: 2Gi
+            ephemeral-storage: 2Gi
+
+  cluster-wire-tests:
+    depends_on: [cluster-server-tests, bun-runtime]
+    image: mirror.gcr.io/library/node:24.13.1-bookworm@sha256:00e9195ebd49985a6da8921f419978d85dfe354589755192dc090425ce4da2f7
+    commands:
+      - export PATH="$PWD/.ci:$PATH"
+      - export SSL_CERT_FILE="$PWD/.ci/ca-certificates.crt"
+      - export NODE_EXTRA_CA_CERTS="$SSL_CERT_FILE"
+      - (cd packages/host-wire && bun test test/cluster-operator.test.ts)
+      - (cd packages/host-service && bun test test/cluster-default-off.test.ts)
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 256Mi
+            ephemeral-storage: 256Mi
+          limits:
+            cpu: "1"
+            memory: 2Gi
+            ephemeral-storage: 2Gi
+
+  cluster-operator-tests:
+    depends_on: [cluster-wire-tests]
+    image: mirror.gcr.io/library/golang:1.25.1-bookworm@sha256:c423747fbd96fd8f0b1102d947f51f9b266060217478e5f9bf86f145969562ee
+    directory: packages/cluster-operator
+    commands:
+      - GOMAXPROCS=1 GOFLAGS=-p=1 go test ./api/... ./controllers/... ./cmd/...
+      - mkdir -p ../../artifacts/cluster-proof
+      - CGO_ENABLED=0 GOMAXPROCS=1 GOFLAGS=-p=1 go test -c ./charttests -o ../../artifacts/cluster-proof/chart-contract.test
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 256Mi
+            ephemeral-storage: 256Mi
+          limits:
+            cpu: "1"
+            memory: 2Gi
+            ephemeral-storage: 2Gi
+
+  cluster-chart-tests:
+    depends_on: [cluster-operator-tests]
+    image: mirror.gcr.io/alpine/helm:3.19.0@sha256:aef9b56f64e866207d9591d0abd8f6d767b36aadd12edf68f8a719716d9d29c9
+    directory: packages/cluster-operator/charttests
+    commands:
+      - helm lint ../../../deploy/charts/t4-cluster
+      - ../../../artifacts/cluster-proof/chart-contract.test
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 128Mi
+            ephemeral-storage: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+            ephemeral-storage: 512Mi
+
+  harbor-auth:
+    depends_on: [cluster-chart-tests, android-debug]
+    image: harbor.tailb18de3.ts.net/linkedin-bot/woodpecker-buildkit-deploy-tools@sha256:7936be1edac8ce3c225b148cff0e89b1446fc88185d72379398617f7279ad8cc
+    commands:
+      - sh scripts/cluster-ci/load-registry-auth.sh
+    when:
+      - event: push
+        branch: main
+      - event: manual
+        branch: [main, agent/t4-cluster-operator]
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-dev-verifier
+        resources:
+          requests:
+            cpu: "0"
+            memory: 128Mi
+            ephemeral-storage: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+            ephemeral-storage: 512Mi
+
+  build-controller:
+    depends_on: [harbor-auth]
+    image: mirror.gcr.io/moby/buildkit:v0.30.0-rootless@sha256:d76eb1caecac5733ef7553c1e90a1b21f1bb218cd1142d3553de0747b4a14ba9
+    environment:
+      BUILDKIT_ADDR: tcp://woodpecker-buildkitd.linkedin-ci.svc.cluster.local:1234
+      HARBOR_REGISTRY: harbor.tailb18de3.ts.net
+      HARBOR_PROJECT: linkedin-bot
+    commands:
+      - scripts/cluster-ci/build-image.sh controller t4-cluster-operator cluster/images/controller/Dockerfile
+    when:
+      - event: push
+        branch: main
+      - event: manual
+        branch: [main, agent/t4-cluster-operator]
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 256Mi
+            ephemeral-storage: 256Mi
+          limits:
+            cpu: "1"
+            memory: 1Gi
+            ephemeral-storage: 1Gi
+
+  sbom-controller:
+    depends_on: [build-session-runtime]
+    image: anchore/syft:v1.33.0-debug@sha256:421a1367ee81b35b094defc7c1c42774e9f0c2f818e278848175015987c4a034
+    environment:
+      HARBOR_REGISTRY: harbor.tailb18de3.ts.net
+      HARBOR_PROJECT: linkedin-bot
+      PATH: "/busybox:/"
+    entrypoint:
+      - /busybox/sh
+      - -c
+      - echo "$CI_SCRIPT" | /busybox/base64 -d | /busybox/sh -e
+    commands:
+      - sh scripts/cluster-ci/capture-image-evidence.sh sbom controller t4-cluster-operator
+    when:
+      - event: push
+        branch: main
+      - event: manual
+        branch: [main, agent/t4-cluster-operator]
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 256Mi
+            ephemeral-storage: 256Mi
+          limits:
+            cpu: "1"
+            memory: 1Gi
+            ephemeral-storage: 2Gi
+
+  vulnerability-controller:
+    depends_on: [sbom-controller]
+    image: aquasec/trivy:0.66.0@sha256:086971aaf400beebd94e8300fd8ea623774419597169156cec56eec5b00dfb1e
+    environment:
+      HARBOR_REGISTRY: harbor.tailb18de3.ts.net
+      HARBOR_PROJECT: linkedin-bot
+    commands:
+      - scripts/cluster-ci/capture-image-evidence.sh vulnerability controller t4-cluster-operator
+    when:
+      - event: push
+        branch: main
+      - event: manual
+        branch: [main, agent/t4-cluster-operator]
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 512Mi
+            ephemeral-storage: 1Gi
+          limits:
+            cpu: "1"
+            memory: 2Gi
+            ephemeral-storage: 4Gi
+
+  provenance-controller:
+    depends_on: [vulnerability-controller]
+    image: gcr.io/projectsigstore/cosign:v2.6.0-dev@sha256:927acebad5fd845802b560f2a1b2cfa7c7170a5056511d2cae137a5e4fc39a4c
+    environment:
+      HARBOR_REGISTRY: harbor.tailb18de3.ts.net
+      HARBOR_PROJECT: linkedin-bot
+    entrypoint:
+      - /busybox/sh
+      - -c
+      - echo "$CI_SCRIPT" | /busybox/base64 -d | /busybox/sh -e
+    commands:
+      - sh scripts/cluster-ci/capture-image-evidence.sh provenance controller t4-cluster-operator
+    when:
+      - event: push
+        branch: main
+      - event: manual
+        branch: [main, agent/t4-cluster-operator]
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 128Mi
+            ephemeral-storage: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+            ephemeral-storage: 1Gi
+
+  build-cluster-server:
+    depends_on: [build-controller]
+    image: mirror.gcr.io/moby/buildkit:v0.30.0-rootless@sha256:d76eb1caecac5733ef7553c1e90a1b21f1bb218cd1142d3553de0747b4a14ba9
+    environment:
+      BUILDKIT_ADDR: tcp://woodpecker-buildkitd.linkedin-ci.svc.cluster.local:1234
+      HARBOR_REGISTRY: harbor.tailb18de3.ts.net
+      HARBOR_PROJECT: linkedin-bot
+    commands:
+      - scripts/cluster-ci/build-image.sh cluster-server t4-cluster-server cluster/images/cluster-server/Dockerfile
+    when:
+      - event: push
+        branch: main
+      - event: manual
+        branch: [main, agent/t4-cluster-operator]
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 256Mi
+            ephemeral-storage: 256Mi
+          limits:
+            cpu: "1"
+            memory: 1Gi
+            ephemeral-storage: 1Gi
+
+  sbom-cluster-server:
+    depends_on: [provenance-controller]
+    image: anchore/syft:v1.33.0-debug@sha256:421a1367ee81b35b094defc7c1c42774e9f0c2f818e278848175015987c4a034
+    environment:
+      HARBOR_REGISTRY: harbor.tailb18de3.ts.net
+      HARBOR_PROJECT: linkedin-bot
+      PATH: "/busybox:/"
+    entrypoint:
+      - /busybox/sh
+      - -c
+      - echo "$CI_SCRIPT" | /busybox/base64 -d | /busybox/sh -e
+    commands:
+      - sh scripts/cluster-ci/capture-image-evidence.sh sbom cluster-server t4-cluster-server
+    when:
+      - event: push
+        branch: main
+      - event: manual
+        branch: [main, agent/t4-cluster-operator]
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 256Mi
+            ephemeral-storage: 256Mi
+          limits:
+            cpu: "1"
+            memory: 1Gi
+            ephemeral-storage: 2Gi
+
+  vulnerability-cluster-server:
+    depends_on: [sbom-cluster-server]
+    image: aquasec/trivy:0.66.0@sha256:086971aaf400beebd94e8300fd8ea623774419597169156cec56eec5b00dfb1e
+    environment:
+      HARBOR_REGISTRY: harbor.tailb18de3.ts.net
+      HARBOR_PROJECT: linkedin-bot
+    commands:
+      - scripts/cluster-ci/capture-image-evidence.sh vulnerability cluster-server t4-cluster-server
+    when:
+      - event: push
+        branch: main
+      - event: manual
+        branch: [main, agent/t4-cluster-operator]
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 512Mi
+            ephemeral-storage: 1Gi
+          limits:
+            cpu: "1"
+            memory: 2Gi
+            ephemeral-storage: 4Gi
+
+  provenance-cluster-server:
+    depends_on: [vulnerability-cluster-server]
+    image: gcr.io/projectsigstore/cosign:v2.6.0-dev@sha256:927acebad5fd845802b560f2a1b2cfa7c7170a5056511d2cae137a5e4fc39a4c
+    environment:
+      HARBOR_REGISTRY: harbor.tailb18de3.ts.net
+      HARBOR_PROJECT: linkedin-bot
+    entrypoint:
+      - /busybox/sh
+      - -c
+      - echo "$CI_SCRIPT" | /busybox/base64 -d | /busybox/sh -e
+    commands:
+      - sh scripts/cluster-ci/capture-image-evidence.sh provenance cluster-server t4-cluster-server
+    when:
+      - event: push
+        branch: main
+      - event: manual
+        branch: [main, agent/t4-cluster-operator]
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 128Mi
+            ephemeral-storage: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+            ephemeral-storage: 1Gi
+
+  build-session-runtime:
+    depends_on: [build-cluster-server]
+    image: mirror.gcr.io/moby/buildkit:v0.30.0-rootless@sha256:d76eb1caecac5733ef7553c1e90a1b21f1bb218cd1142d3553de0747b4a14ba9
+    environment:
+      BUILDKIT_ADDR: tcp://woodpecker-buildkitd.linkedin-ci.svc.cluster.local:1234
+      HARBOR_REGISTRY: harbor.tailb18de3.ts.net
+      HARBOR_PROJECT: linkedin-bot
+    commands:
+      - scripts/cluster-ci/build-image.sh session-runtime t4-session-runtime cluster/images/session-runtime/Dockerfile
+    when:
+      - event: push
+        branch: main
+      - event: manual
+        branch: [main, agent/t4-cluster-operator]
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 256Mi
+            ephemeral-storage: 256Mi
+          limits:
+            cpu: "1"
+            memory: 1Gi
+            ephemeral-storage: 1Gi
+
+  sbom-session-runtime:
+    depends_on: [provenance-cluster-server]
+    image: anchore/syft:v1.33.0-debug@sha256:421a1367ee81b35b094defc7c1c42774e9f0c2f818e278848175015987c4a034
+    environment:
+      HARBOR_REGISTRY: harbor.tailb18de3.ts.net
+      HARBOR_PROJECT: linkedin-bot
+      PATH: "/busybox:/"
+    entrypoint:
+      - /busybox/sh
+      - -c
+      - echo "$CI_SCRIPT" | /busybox/base64 -d | /busybox/sh -e
+    commands:
+      - sh scripts/cluster-ci/capture-image-evidence.sh sbom session-runtime t4-session-runtime
+    when:
+      - event: push
+        branch: main
+      - event: manual
+        branch: [main, agent/t4-cluster-operator]
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 256Mi
+            ephemeral-storage: 256Mi
+          limits:
+            cpu: "1"
+            memory: 1Gi
+            ephemeral-storage: 2Gi
+
+  vulnerability-session-runtime:
+    depends_on: [sbom-session-runtime]
+    image: aquasec/trivy:0.66.0@sha256:086971aaf400beebd94e8300fd8ea623774419597169156cec56eec5b00dfb1e
+    environment:
+      HARBOR_REGISTRY: harbor.tailb18de3.ts.net
+      HARBOR_PROJECT: linkedin-bot
+    commands:
+      - scripts/cluster-ci/capture-image-evidence.sh vulnerability session-runtime t4-session-runtime
+    when:
+      - event: push
+        branch: main
+      - event: manual
+        branch: [main, agent/t4-cluster-operator]
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 512Mi
+            ephemeral-storage: 1Gi
+          limits:
+            cpu: "1"
+            memory: 2Gi
+            ephemeral-storage: 4Gi
+
+  provenance-session-runtime:
+    depends_on: [vulnerability-session-runtime]
+    image: gcr.io/projectsigstore/cosign:v2.6.0-dev@sha256:927acebad5fd845802b560f2a1b2cfa7c7170a5056511d2cae137a5e4fc39a4c
+    environment:
+      HARBOR_REGISTRY: harbor.tailb18de3.ts.net
+      HARBOR_PROJECT: linkedin-bot
+    entrypoint:
+      - /busybox/sh
+      - -c
+      - echo "$CI_SCRIPT" | /busybox/base64 -d | /busybox/sh -e
+    commands:
+      - sh scripts/cluster-ci/capture-image-evidence.sh provenance session-runtime t4-session-runtime
+    when:
+      - event: push
+        branch: main
+      - event: manual
+        branch: [main, agent/t4-cluster-operator]
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 128Mi
+            ephemeral-storage: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+            ephemeral-storage: 1Gi
+
+  promote-images:
+    depends_on: [image-publication-manifest]
+    image: ghcr.io/oras-project/oras:v1.3.0@sha256:6ce045ce069a89934d6666b8b49f9c4c0145201bd6de6dbe2aee267814c55468
+    environment:
+      HARBOR_REGISTRY: harbor.tailb18de3.ts.net
+      HARBOR_PROJECT: linkedin-bot
+    commands:
+      - scripts/cluster-ci/promote-images.sh
+    when:
+      - event: push
+        branch: main
+      - event: manual
+        branch: [main, agent/t4-cluster-operator]
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 128Mi
+            ephemeral-storage: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+            ephemeral-storage: 1Gi
+
+  image-publication-manifest:
+    depends_on: [provenance-session-runtime]
+    image: mirror.gcr.io/library/node:24.13.1-bookworm@sha256:00e9195ebd49985a6da8921f419978d85dfe354589755192dc090425ce4da2f7
+    environment:
+      HARBOR_REGISTRY: harbor.tailb18de3.ts.net
+      HARBOR_PROJECT: linkedin-bot
+    commands:
+      - node scripts/cluster-ci/assemble-image-manifest.mjs
+      - node scripts/cluster-ci/validate-proof.mjs artifacts/cluster-proof/image-publication.json --images-only
+    when:
+      - event: push
+        branch: main
+      - event: manual
+        branch: [main, agent/t4-cluster-operator]
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 128Mi
+            ephemeral-storage: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+            ephemeral-storage: 1Gi
+
+  publish-image-evidence:
+    depends_on: [promote-images]
+    image: ghcr.io/oras-project/oras:v1.3.0@sha256:6ce045ce069a89934d6666b8b49f9c4c0145201bd6de6dbe2aee267814c55468
+    environment:
+      HARBOR_REGISTRY: harbor.tailb18de3.ts.net
+      HARBOR_PROJECT: linkedin-bot
+    commands:
+      - scripts/cluster-ci/publish-artifact.sh images
+    when:
+      - event: push
+        branch: main
+      - event: manual
+        branch: [main, agent/t4-cluster-operator]
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 128Mi
+            ephemeral-storage: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+            ephemeral-storage: 1Gi
+
+  cleanup-image-registry-auth:
+    depends_on: [publish-image-evidence]
+    image: mirror.gcr.io/library/busybox:1.37.0-musl@sha256:222ad6d973c0d198014546a65cd02c5fdedcc172123c5b4c2bf0af636550bd94
+    commands:
+      - rm -rf .cluster-ci/registry-auth
+    when:
+      - event: push
+        branch: main
+        status: [success, failure]
+      - event: manual
+        branch: [main, agent/t4-cluster-operator]
+        status: [success, failure]
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 16Mi
+            ephemeral-storage: 16Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+            ephemeral-storage: 64Mi
+
+  live-cluster-observations:
+    depends_on: [cleanup-image-registry-auth]
+    image: harbor.tailb18de3.ts.net/linkedin-bot/woodpecker-buildkit-deploy-tools@sha256:7936be1edac8ce3c225b148cff0e89b1446fc88185d72379398617f7279ad8cc
+    environment:
+      T4_CLUSTER_NAMESPACE: t4-development
+    commands:
+      - node scripts/cluster-ci/collect-readonly-cluster.mjs
+    when:
+      - event: manual
+        branch: [main, agent/t4-cluster-operator]
+        evaluate: 'T4_CLUSTER_PROOF_ENABLED == "true"'
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-dev-verifier
+        resources:
+          requests:
+            cpu: "0"
+            memory: 256Mi
+            ephemeral-storage: 256Mi
+          limits:
+            cpu: "1"
+            memory: 1Gi
+            ephemeral-storage: 1Gi
+
+  live-frame-proof:
+    depends_on: [live-cluster-observations]
+    image: mirror.gcr.io/library/node:24.13.1-bookworm@sha256:00e9195ebd49985a6da8921f419978d85dfe354589755192dc090425ce4da2f7
+    environment:
+      T4_CLUSTER_BASE_URL: https://t4-dev.tailb18de3.ts.net/
+    commands:
+      - node scripts/cluster-ci/capture-redacted-frames.mjs
+    when:
+      - event: manual
+        branch: [main, agent/t4-cluster-operator]
+        evaluate: 'T4_CLUSTER_PROOF_ENABLED == "true"'
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 1Gi
+            ephemeral-storage: 1Gi
+          limits:
+            cpu: "2"
+            memory: 4Gi
+            ephemeral-storage: 6Gi
+
+  live-proof-assembly:
+    depends_on: [live-frame-proof]
+    image: mirror.gcr.io/library/node:24.13.1-bookworm@sha256:00e9195ebd49985a6da8921f419978d85dfe354589755192dc090425ce4da2f7
+    commands:
+      - node scripts/cluster-ci/assemble-proof.mjs
+      - node scripts/cluster-ci/validate-proof.mjs artifacts/cluster-proof/manifest.json
+    when:
+      - event: manual
+        branch: [main, agent/t4-cluster-operator]
+        evaluate: 'T4_CLUSTER_PROOF_ENABLED == "true"'
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 256Mi
+            ephemeral-storage: 256Mi
+          limits:
+            cpu: "1"
+            memory: 1Gi
+            ephemeral-storage: 1Gi
+
+  harbor-auth-live-proof:
+    depends_on: [live-proof-assembly]
+    image: harbor.tailb18de3.ts.net/linkedin-bot/woodpecker-buildkit-deploy-tools@sha256:7936be1edac8ce3c225b148cff0e89b1446fc88185d72379398617f7279ad8cc
+    commands:
+      - sh scripts/cluster-ci/load-registry-auth.sh
+    when:
+      - event: manual
+        branch: [main, agent/t4-cluster-operator]
+        evaluate: 'T4_CLUSTER_PROOF_ENABLED == "true"'
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-dev-verifier
+        resources:
+          requests:
+            cpu: "0"
+            memory: 128Mi
+            ephemeral-storage: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+            ephemeral-storage: 512Mi
+
+  publish-live-proof:
+    depends_on: [harbor-auth-live-proof]
+    image: ghcr.io/oras-project/oras:v1.3.0@sha256:6ce045ce069a89934d6666b8b49f9c4c0145201bd6de6dbe2aee267814c55468
+    environment:
+      HARBOR_REGISTRY: harbor.tailb18de3.ts.net
+      HARBOR_PROJECT: linkedin-bot
+    commands:
+      - scripts/cluster-ci/publish-artifact.sh proof
+    when:
+      - event: manual
+        branch: [main, agent/t4-cluster-operator]
+        evaluate: 'T4_CLUSTER_PROOF_ENABLED == "true"'
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 128Mi
+            ephemeral-storage: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+            ephemeral-storage: 1Gi
+
+  cleanup-live-registry-auth:
+    depends_on: [publish-live-proof]
+    image: mirror.gcr.io/library/busybox:1.37.0-musl@sha256:222ad6d973c0d198014546a65cd02c5fdedcc172123c5b4c2bf0af636550bd94
+    commands:
+      - rm -rf .cluster-ci/registry-auth
+    when:
+      - event: manual
+        branch: [main, agent/t4-cluster-operator]
+        status: [success, failure]
+        evaluate: 'T4_CLUSTER_PROOF_ENABLED == "true"'
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 16Mi
+            ephemeral-storage: 16Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+            ephemeral-storage: 64Mi
+
+  verify:
+    depends_on:
+      - cluster-chart-tests
+    image: mirror.gcr.io/library/alpine:3.22.1@sha256:4bcff63911fcb4448bd4fdacec207030997caf25e9bea4045fa6c8c44de311d1
+    commands:
+      - test -f package.json
+    when:
+      - event:
+          - push
+          - pull_request
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 32Mi
+            ephemeral-storage: 16Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+            ephemeral-storage: 64Mi

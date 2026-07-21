@@ -50,6 +50,8 @@ import type { RuntimeIntegrationDescriptor } from "./runtime-integration.ts";
 export interface DesktopShellPort {
   readonly kind: "desktop";
   readonly platform: "linux" | "darwin";
+  /** Local source option; absent means cluster.operator is not requested or projected. */
+  readonly clusterOperatorEnabled?: boolean;
   readonly bootstrap: () => Promise<BootstrapResult>;
   readonly connect: (request: TargetRequest) => Promise<ConnectResult>;
   readonly disconnect: (request: TargetRequest) => Promise<DisconnectResult>;
@@ -151,6 +153,8 @@ export interface DesktopRuntimeSnapshot {
   readonly catalogs: ReadonlyMap<string, CatalogFrame>;
   readonly settings: ReadonlyMap<string, SettingsFrame>;
   readonly projection: ProjectionSnapshot;
+  /** Local opt-in. Missing remains false for older renderer snapshots. */
+  readonly clusterOperatorEnabled?: boolean;
   readonly runtimeErrors: readonly DesktopRuntimeErrorEntry[];
 }
 
@@ -163,6 +167,8 @@ export interface DesktopRuntimeTimerScheduler {
 
 export interface DesktopRuntimeOptions {
   readonly shell: DesktopShellPort;
+  /** Requests and projects cluster.operator only when explicitly true. */
+  readonly clusterOperatorEnabled?: boolean;
   readonly projection?: ProjectionStore;
   readonly projectionOptions?: ProjectionOptions;
   readonly clock?: { now(): number };

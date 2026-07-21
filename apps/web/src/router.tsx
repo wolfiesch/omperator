@@ -36,6 +36,7 @@ import { FixturePreviewWorkspace } from "./features/preview/FixturePreviewWorksp
 import { LiveAttentionInbox } from "./features/attention/index.ts";
 import { LiveTranscriptSearch } from "./features/transcript-search/index.ts";
 import { TRANSCRIPT_SEARCH_ROUTE } from "./features/transcript-search/route.ts";
+import { previewSelectionForNavigation } from "./features/session-runtime/session-navigation.ts";
 import { SettingsWorkspace } from "./features/settings/index.ts";
 import { LiveSettingsScreen } from "./features/settings/LiveSettingsScreen.tsx";
 import { TargetsScreen } from "./features/targets/TargetsScreen.tsx";
@@ -463,6 +464,17 @@ function HostsRoute() {
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <TargetsScreen
+        controller={controller}
+        onOpenPreview={(sessionId, previewId) => {
+          const selection = previewSelectionForNavigation(snapshot, sessionId, previewId);
+          if (selection !== null) {
+            workspaceStore.getState().setSessionPreview(sessionId, selection);
+          }
+          void navigate({ to: "/sessions/$sessionId/preview", params: { sessionId } });
+        }}
+        onOpenSession={(sessionId) =>
+          void navigate({ to: "/sessions/$sessionId", params: { sessionId } })
+        }
         api={targetsStoreInstance}
         onBack={() => void navigate({ to: "/settings" })}
         profilesAvailable={localProfiles !== undefined}

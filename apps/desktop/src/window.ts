@@ -7,6 +7,7 @@ import {
   rendererUrl,
   type TrustedRenderer,
 } from "./security.ts";
+import { DESKTOP_CLUSTER_OPERATOR_SWITCH } from "./cluster-operator-flag.ts";
 
 export const WINDOW_MIN_WIDTH = 840;
 export const WINDOW_MIN_HEIGHT = 620;
@@ -17,6 +18,7 @@ export interface DesktopWindowOptions {
   readonly devServerUrl?: string;
   readonly webRoot?: string;
   readonly isPackaged?: boolean;
+  readonly clusterOperatorEnabled?: boolean;
 }
 
 export interface DesktopWindowHandle {
@@ -49,6 +51,9 @@ export function createDesktopWindow(options: DesktopWindowOptions = {}): Desktop
       : { titleBarStyle: "default" as const }),
     webPreferences: {
       preload: join(__dirname, "preload.cjs"),
+      ...(options.clusterOperatorEnabled
+        ? { additionalArguments: [DESKTOP_CLUSTER_OPERATOR_SWITCH] }
+        : {}),
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,

@@ -1,0 +1,207 @@
+{{- if and .Values.enabled .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "default-deny") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: t4-cluster
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "dns") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: t4-cluster
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.dns.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml .Values.networkPolicy.dns.podSelector | nindent 12 }}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "controller-api") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "t4-cluster.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: controller
+  policyTypes: [Egress]
+  egress:
+    {{- range .Values.networkPolicy.kubernetesApiCIDRs }}
+    - to:
+        - ipBlock: {cidr: {{ . | quote }}}
+      ports:
+        - {protocol: TCP, port: 443}
+        - {protocol: TCP, port: 6443}
+    {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server-egress") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "t4-cluster.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: server
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: t4-session-runtime
+              app.kubernetes.io/part-of: t4-cluster
+      ports:
+        - {protocol: TCP, port: 8787}
+    {{- range .Values.networkPolicy.kubernetesApiCIDRs }}
+    - to:
+        - ipBlock: {cidr: {{ . | quote }}}
+      ports:
+        - {protocol: TCP, port: 443}
+        - {protocol: TCP, port: 6443}
+    {{- end }}
+    {{- if .Values.networkPolicy.ciProviderPorts }}
+    {{- range .Values.networkPolicy.ciProviderCIDRs }}
+    - to:
+        - ipBlock: {cidr: {{ . | quote }}}
+      ports:
+        {{- range $.Values.networkPolicy.ciProviderPorts }}
+        - {protocol: TCP, port: {{ . }}}
+        {{- end }}
+    {{- end }}
+    {{- if and (not (empty .Values.networkPolicy.ciProvider.namespaceSelector)) (not (empty .Values.networkPolicy.ciProvider.podSelector)) }}
+    - to:
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.ciProvider.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml .Values.networkPolicy.ciProvider.podSelector | nindent 12 }}
+      ports:
+        {{- range .Values.networkPolicy.ciProviderPorts }}
+        - {protocol: TCP, port: {{ . }}}
+        {{- end }}
+    {{- end }}
+    {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "session-host") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: t4-session-runtime
+      app.kubernetes.io/part-of: t4-cluster
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "t4-cluster.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: server
+      ports:
+        - {protocol: TCP, port: 8787}
+  egress:
+    {{- range .Values.networkPolicy.kubernetesApiCIDRs }}
+    - to:
+        - ipBlock: {cidr: {{ . | quote }}}
+      ports:
+        - {protocol: TCP, port: 443}
+        - {protocol: TCP, port: 6443}
+    {{- end }}
+    {{- if .Values.networkPolicy.modelRoutePorts }}
+    {{- range .Values.networkPolicy.modelRouteCIDRs }}
+    - to:
+        - ipBlock: {cidr: {{ . | quote }}}
+      ports:
+        {{- range $.Values.networkPolicy.modelRoutePorts }}
+        - {protocol: TCP, port: {{ . }}}
+        {{- end }}
+    {{- end }}
+    {{- if and (not (empty .Values.networkPolicy.modelRoute.namespaceSelector)) (not (empty .Values.networkPolicy.modelRoute.podSelector)) }}
+    - to:
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.modelRoute.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml .Values.networkPolicy.modelRoute.podSelector | nindent 12 }}
+      ports:
+        {{- range .Values.networkPolicy.modelRoutePorts }}
+        - {protocol: TCP, port: {{ . }}}
+        {{- end }}
+    {{- end }}
+    {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "gateway-ingress") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "t4-cluster.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: server
+  policyTypes: [Ingress]
+  {{- if and (not (empty .Values.networkPolicy.gatewayIngress.namespaceSelector)) (not (empty .Values.networkPolicy.gatewayIngress.podSelector)) }}
+  ingress:
+    - from:
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.gatewayIngress.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml .Values.networkPolicy.gatewayIngress.podSelector | nindent 12 }}
+      ports:
+        - {protocol: TCP, port: 8080}
+  {{- else }}
+  ingress: []
+  {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "observability") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "t4-cluster.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/part-of: "t4-cluster"
+    matchExpressions:
+      - {key: app.kubernetes.io/component, operator: In, values: [controller, server]}
+  policyTypes: [Ingress]
+  {{- if and (not (empty .Values.networkPolicy.observability.namespaceSelector)) (not (empty .Values.networkPolicy.observability.podSelector)) }}
+  ingress:
+    - from:
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.observability.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml .Values.networkPolicy.observability.podSelector | nindent 12 }}
+      ports:
+        - {protocol: TCP, port: 8080}
+        - {protocol: TCP, port: 9090}
+  {{- else }}
+  ingress: []
+  {{- end }}
+{{- end }}

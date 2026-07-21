@@ -1,0 +1,25 @@
+{{- if .Values.enabled }}
+apiVersion: cluster.t4.dev/v1alpha1
+kind: T4ClusterHost
+metadata:
+  name: {{ .Values.clusterHost.name | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+spec:
+  storageClassName: {{ .Values.storage.adminRWXStorageClass | quote }}
+  runtimeProfiles:
+    {{- toYaml .Values.clusterHost.runtimeProfiles | nindent 4 }}
+  allowedOrigins:
+    {{- toYaml .Values.clusterHost.allowedOrigins | nindent 4 }}
+  {{- if and .Values.woodpecker.configMap (or .Values.woodpecker.existingSecret .Values.woodpecker.serviceAccountAudience) }}
+  ciProvider:
+    {{- if .Values.woodpecker.existingSecret }}
+    secretRef:
+      name: {{ .Values.woodpecker.existingSecret | quote }}
+    {{- else }}
+    serviceAccountAudience: {{ .Values.woodpecker.serviceAccountAudience | quote }}
+    {{- end }}
+    configMapRef:
+      name: {{ .Values.woodpecker.configMap | quote }}
+  {{- end }}
+{{- end }}

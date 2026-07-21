@@ -25,10 +25,10 @@ const repoRoot = resolve(import.meta.dirname, "..");
 const deployScript = resolve(repoRoot, "ops/t4-maintainer/deploy-local.sh");
 const runnerScript = resolve(repoRoot, "ops/t4-maintainer/run.sh");
 const bashPath = "/bin/bash";
-// Full-suite contention can push a successful convergence run past 30 seconds
-// on macOS. Keep this above the production process boundary so the fixture
+// Full-suite contention on shared CI and macOS can push a successful convergence
+// run past one minute. Keep this above the production process boundary so the fixture
 // reports the child result instead of a test-harness timeout.
-const integrationProcessTimeoutMs = 60_000;
+const integrationProcessTimeoutMs = 180_000;
 const upstreamCommit = "a".repeat(40);
 const integrationCommit = "b".repeat(40);
 const t4Commit = "c".repeat(40);
@@ -706,7 +706,7 @@ SH
         --arg allowedOrigin "$origin" \
         --argjson port "$port" \
         --arg appSocket "$app_socket" \
-        --arg label "$label" \
+        --arg hostLabel "$label" \
         --arg deploymentIdentity "$deployment_identity" \
         --arg webRoot "$web_root" \
         --argjson profileRoutes "$profile_routes" \
@@ -719,7 +719,7 @@ SH
           allowedOrigin:$allowedOrigin,
           port:$port,
           appSocket:$appSocket,
-          label:$label,
+          "label":$hostLabel,
           deploymentIdentity:$deploymentIdentity
         } + (if $profileRoutes == null then {} else {
           profileRoutes:$profileRoutes,
@@ -972,7 +972,7 @@ jq -n \
   --arg allowedOrigin "$gateway_origin" \
   --argjson port "$gateway_port" \
   --arg appSocket "$gateway_socket" \
-  --arg label "$gateway_label" \
+  --arg hostLabel "$gateway_label" \
   --arg nodeExecutable "$node_executable" \
   --arg gatewayScript "$gateway_script" \
   --arg webRoot "$web_root" \
@@ -982,7 +982,7 @@ jq -n \
     allowedOrigin: $allowedOrigin,
     port: $port,
     appSocket: $appSocket,
-    label: $label,
+    "label": $hostLabel,
     nodeExecutable: $nodeExecutable,
     gatewayScript: $gatewayScript,
     webRoot: $webRoot,
@@ -1060,7 +1060,7 @@ jq -n \
       allowedOrigin: $gateway_origin,
       port: $gateway_port,
       appSocket: $gateway_socket,
-      label: $gateway_label,
+      "label": $gateway_label,
         nodeExecutable: $node_executable,
         deploymentIdentity: $deployment_identity,
       artifacts: {

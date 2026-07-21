@@ -50,6 +50,15 @@ export function createListenerPlan(config: RemoteListenerConfig): ListenerPlan {
 		throw new Error("listener port is invalid");
 	return { mode: "direct", address: config.address, port: config.port, path: "/v1/ws", trustedServeProxy: false };
 }
+export function createInternalListenerPlan(config: RemoteListenerConfig): ListenerPlan {
+	if (config.address !== "0.0.0.0" && config.address !== "::")
+		throw new Error("internal listener must bind an unspecified pod address");
+	if (!config.internalPeerNodeId || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(config.internalPeerNodeId))
+		throw new Error("internal listener peer id is invalid");
+	if (!Number.isInteger(config.port) || config.port < 1 || config.port > 65535)
+		throw new Error("listener port is invalid");
+	return { mode: "direct", address: config.address, port: config.port, path: "/v1/ws", trustedServeProxy: false };
+}
 export function originAllowed(origin: string | null, allowlist: readonly string[] = []): boolean {
 	return origin === null || allowlist.includes(origin);
 }
@@ -138,9 +147,14 @@ export class BunRemoteListener {
 					const address = normalizeIpAddress(requested);
 					let peer: ListenerPeerContext | undefined;
 					if (this.plan.mode === "direct") {
-						if (!isTailnetAddress(address) || !this.resolver)
-							return new Response("Unauthorized", { status: 401 });
-						peer = { address, source: "direct", identity: await this.resolver.resolve(address) };
+						if (this.config.internalPeerNodeId) {
+							const normalized = normalizeIpAddress(address);
+							peer = { address: normalized, source: "direct", identity: { nodeId: this.config.internalPeerNodeId, addresses: [normalized], source: "direct" } };
+						}
+						else {
+							if (!isTailnetAddress(address) || !this.resolver) return new Response("Unauthorized", { status: 401 });
+							peer = { address, source: "direct", identity: await this.resolver.resolve(address) };
+						}
 					} else {
 						peer = resolveServePeer(address, request.headers, this.plan.trustedServeProxy);
 						if (!peer) return new Response("Forbidden", { status: 403 });

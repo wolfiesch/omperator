@@ -1,0 +1,366 @@
+{{- if .Values.enabled }}
+{{- if eq .Values.session.omp.modelsKey .Values.session.omp.settingsKey }}
+{{- fail "session.omp.modelsKey and session.omp.settingsKey must be different" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "controller") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
+spec:
+  replicas: {{ .Values.controller.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "t4-cluster.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: controller
+  template:
+    metadata:
+      labels:
+        {{- include "t4-cluster.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: controller
+        app.kubernetes.io/part-of: t4-cluster
+    spec:
+      serviceAccountName: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "controller") | quote }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values: ["k3s-worker-02"]
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "t4-cluster.selectorLabels" . | nindent 20 }}
+                    app.kubernetes.io/component: controller
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              {{- include "t4-cluster.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: controller
+      containers:
+        - name: controller
+          image: {{ include "t4-cluster.image" .Values.images.controller | quote }}
+          imagePullPolicy: {{ .Values.images.controller.pullPolicy | quote }}
+          args: ["--zap-log-level=info"]
+          env:
+            - name: POD_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+            - name: T4_SESSION_RUNTIME_IMAGE
+              value: {{ include "t4-cluster.image" .Values.images.sessionRuntime | quote }}
+            - name: T4_SESSION_OMP_CONFIG_MAP
+              value: {{ .Values.session.omp.configMap | quote }}
+            - name: T4_SESSION_OMP_MODELS_KEY
+              value: {{ .Values.session.omp.modelsKey | quote }}
+            - name: T4_SESSION_OMP_SETTINGS_KEY
+              value: {{ .Values.session.omp.settingsKey | quote }}
+            - name: T4_SESSION_OMP_CREDENTIAL_SECRET
+              value: {{ .Values.session.omp.credentialSecret | quote }}
+            - name: T4_SESSION_OMP_CREDENTIAL_KEY
+              value: {{ .Values.session.omp.credentialKey | quote }}
+            - name: T4_SESSION_OMP_ALLOW_UNAUTHENTICATED
+              value: {{ .Values.session.omp.allowUnauthenticated | quote }}
+            - name: T4_SESSION_SERVICE_ACCOUNT
+              value: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "session") | quote }}
+            - name: T4_CLUSTER_SERVER_SERVICE_ACCOUNT
+              value: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server") | quote }}
+            - name: T4_KUBERNETES_API_AUDIENCE
+              value: {{ .Values.kubernetes.apiAudience | quote }}
+            - name: T4_SESSION_EXCLUDED_NODES
+              value: {{ join "," .Values.session.nodeExclude | quote }}
+            - name: T4_SESSION_REQUEST_CPU
+              value: {{ .Values.session.resources.requests.cpu | quote }}
+            - name: T4_SESSION_REQUEST_MEMORY
+              value: {{ .Values.session.resources.requests.memory | quote }}
+            - name: T4_SESSION_LIMIT_CPU
+              value: {{ .Values.session.resources.limits.cpu | quote }}
+            - name: T4_SESSION_LIMIT_MEMORY
+              value: {{ .Values.session.resources.limits.memory | quote }}
+            - name: T4_SESSION_SHM_SIZE
+              value: {{ .Values.session.sharedMemorySize | quote }}
+            - name: T4_SESSION_TEMPORARY_SIZE
+              value: {{ .Values.session.temporarySize | quote }}
+          ports:
+            - name: metrics
+              containerPort: 8080
+            - name: health
+              containerPort: 8081
+          startupProbe:
+            httpGet: {path: /healthz, port: health}
+            failureThreshold: 30
+            periodSeconds: 2
+          readinessProbe:
+            httpGet: {path: /readyz, port: health}
+            failureThreshold: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: health}
+            failureThreshold: 3
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.controller.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: temporary
+              mountPath: /tmp
+            - name: kubernetes-api-access
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+      volumes:
+        - name: temporary
+          emptyDir:
+            sizeLimit: 128Mi
+        - name: kubernetes-api-access
+          projected:
+            defaultMode: 0440
+            sources:
+              - serviceAccountToken:
+                  audience: {{ .Values.kubernetes.apiAudience | quote }}
+                  expirationSeconds: 3600
+                  path: token
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+spec:
+  replicas: {{ .Values.server.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  minReadySeconds: 10
+  selector:
+    matchLabels:
+      {{- include "t4-cluster.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: server
+  template:
+    metadata:
+      annotations:
+        cluster.t4.dev/pre-stop-method: POST
+        cluster.t4.dev/pre-stop-path: /drainz
+      labels:
+        {{- include "t4-cluster.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: server
+        app.kubernetes.io/part-of: t4-cluster
+    spec:
+      serviceAccountName: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server") | quote }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.server.terminationGracePeriodSeconds }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values: ["k3s-worker-02"]
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "t4-cluster.selectorLabels" . | nindent 20 }}
+                    app.kubernetes.io/component: server
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              {{- include "t4-cluster.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: server
+      containers:
+        - name: server
+          image: {{ include "t4-cluster.image" .Values.images.server | quote }}
+          imagePullPolicy: {{ .Values.images.server.pullPolicy | quote }}
+          env:
+            - name: T4_CLUSTER_SERVER_PORT
+              value: "8080"
+            - name: T4_CLUSTER_ADMIN_PORT
+              value: "9090"
+            - name: T4_CLUSTER_TRUSTED_PROXY_ADDRESSES
+              value: {{ join "," .Values.server.trustedProxyAddresses | quote }}
+            - name: T4_CLUSTER_TRUSTED_PROXY_CIDRS
+              value: {{ join "," .Values.server.trustedProxyCIDRs | quote }}
+            - name: T4_CLUSTER_HOST_NAME
+              value: {{ .Values.clusterHost.name | quote }}
+            - name: T4_CLUSTER_IDENTITY_TOKEN_FILE
+              value: /var/run/secrets/t4-cluster-identity/token
+            - name: T4_CLUSTER_SERVER_SERVICE_ACCOUNT
+              value: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server") | quote }}
+            - name: T4_KUBERNETES_API_AUDIENCE
+              value: {{ .Values.kubernetes.apiAudience | quote }}
+            - name: T4_KUBERNETES_TOKEN_PATH
+              value: /var/run/secrets/kubernetes.io/serviceaccount/token
+            - name: T4_KUBERNETES_CA_PATH
+              value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+            - name: POD_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: POD_UID
+              valueFrom: {fieldRef: {fieldPath: metadata.uid}}
+            {{- if .Values.woodpecker.existingSecret }}
+            - name: T4_WOODPECKER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.woodpecker.existingSecret | quote }}
+                  key: {{ .Values.woodpecker.tokenKey | quote }}
+            {{- else if .Values.woodpecker.serviceAccountAudience }}
+            - name: T4_WOODPECKER_TOKEN_FILE
+              value: /var/run/secrets/t4-ci/token
+            {{- end }}
+            {{- if .Values.woodpecker.configMap }}
+            - name: T4_WOODPECKER_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.woodpecker.configMap | quote }}
+                  key: {{ .Values.woodpecker.baseURLKey | quote }}
+            - name: T4_WOODPECKER_WEB_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.woodpecker.configMap | quote }}
+                  key: {{ .Values.woodpecker.webBaseURLKey | quote }}
+            - name: T4_WOODPECKER_REPOSITORIES
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.woodpecker.configMap | quote }}
+                  key: {{ .Values.woodpecker.repositoriesKey | quote }}
+            {{- end }}
+          ports:
+            - name: websocket
+              containerPort: 8080
+            - name: admin
+              containerPort: 9090
+          lifecycle:
+            preStop:
+              exec:
+                command: [/usr/bin/curl, -fsS, -X, POST, http://127.0.0.1:9090/drainz]
+          startupProbe:
+            httpGet: {path: /healthz, port: admin}
+            failureThreshold: 30
+            periodSeconds: 2
+          readinessProbe:
+            httpGet: {path: /readyz, port: admin}
+            failureThreshold: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: admin}
+            failureThreshold: 3
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.server.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: temporary
+              mountPath: /tmp
+            - name: cluster-identity
+              mountPath: /var/run/secrets/t4-cluster-identity
+              readOnly: true
+            - name: kubernetes-api-access
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+            {{- if .Values.woodpecker.serviceAccountAudience }}
+            - name: ci-identity
+              mountPath: /var/run/secrets/t4-ci
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: cluster-identity
+          projected:
+            defaultMode: 0440
+            sources:
+              - serviceAccountToken:
+                  audience: "t4-cluster-internal"
+                  expirationSeconds: 600
+                  path: token
+        - name: kubernetes-api-access
+          projected:
+            defaultMode: 0440
+            sources:
+              - serviceAccountToken:
+                  audience: {{ .Values.kubernetes.apiAudience | quote }}
+                  expirationSeconds: 3600
+                  path: token
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+        {{- if .Values.woodpecker.serviceAccountAudience }}
+        - name: ci-identity
+          projected:
+            defaultMode: 0440
+            sources:
+              - serviceAccountToken:
+                  audience: {{ .Values.woodpecker.serviceAccountAudience | quote }}
+                  expirationSeconds: {{ .Values.woodpecker.tokenExpirationSeconds }}
+                  path: token
+        {{- end }}
+        - name: temporary
+          emptyDir:
+            sizeLimit: 256Mi
+{{- end }}

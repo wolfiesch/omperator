@@ -16,13 +16,22 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { createOmpClient } from "../packages/client/src/index.ts";
+import {
+  clusterOperatorRequestedCapabilities,
+  clusterOperatorRequestedFeatures,
+  createOmpClient,
+} from "../packages/client/src/index.ts";
 import { UnixWebSocketTransport } from "../apps/desktop/src/transport.ts";
 import {
   ADDITIVE_FEATURES,
   decodeSessionListResult,
   DEVICE_CAPABILITIES,
 } from "../packages/protocol/src/index.ts";
+
+const LEGACY_DEVICE_CAPABILITIES =
+  clusterOperatorRequestedCapabilities(DEVICE_CAPABILITIES);
+const LEGACY_REQUESTED_FEATURES =
+  clusterOperatorRequestedFeatures(ADDITIVE_FEATURES);
 
 const PROCESS_TIMEOUT_MS = 30_000;
 const RECONNECT_TIMEOUT_MS = 45_000;
@@ -462,9 +471,9 @@ class T4Probe {
     this.transport = auditedTransportFactory(socketPath, label, wireJournal);
     this.client = createOmpClient({
       transport: this.transport.factory,
-      capabilities: DEVICE_CAPABILITIES,
-      requestedFeatures: ADDITIVE_FEATURES,
-      compatibilityRequestedFeatures: ADDITIVE_FEATURES.filter(
+      capabilities: LEGACY_DEVICE_CAPABILITIES,
+      requestedFeatures: LEGACY_REQUESTED_FEATURES,
+      compatibilityRequestedFeatures: LEGACY_REQUESTED_FEATURES.filter(
         (feature) => feature !== "prompt.images" && feature !== "transcript.images",
       ),
       client: {
@@ -952,6 +961,7 @@ export async function runLegacyBridgeContinuity(argv = []) {
       "reconnected T4 client recovered no transcript rows",
     );
 
+    const restartMark = t4Primary.mark();
     const beforeRestartEpoch = t4Primary.client.snapshot().epoch;
     await stopProcess(primaryProcess, "primary appserver before restart");
     running.delete("continuity-a");
@@ -977,6 +987,16 @@ export async function runLegacyBridgeContinuity(argv = []) {
       "second T4 reconnect after appserver restart",
       RECONNECT_TIMEOUT_MS,
     );
+    const postRestartSnapshotEvent = await t4Primary.event(
+      "snapshot",
+      (payload) => payload.sessionId === target.sessionId,
+      restartMark,
+      RECONNECT_TIMEOUT_MS,
+    );
+    const postRestartSnapshot = {
+      label: "post-restart transcript snapshot",
+      ...postRestartSnapshotEvent.payload,
+    };
     const persistedStatus = await adminRequest(restarted, "POST", "/admin/test/status", {
       runId: profiles[0].runId,
     });
@@ -1060,11 +1080,6 @@ export async function runLegacyBridgeContinuity(argv = []) {
     });
     assert.equal(secondRename.ok, true, "fresh revision did not recover control");
 
-    const postRestartSnapshot = await attachSnapshot(
-      t4Primary,
-      target.sessionId,
-      "post-restart transcript snapshot",
-    );
     const searchResponse = await t4Primary.client.command({
       hostId: t4Primary.hostId(),
       command: "transcript.search",

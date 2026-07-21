@@ -8,6 +8,13 @@ import {
 	type PreviewAction,
 	type PreviewSnapshot,
 } from "./additive.js";
+import {
+	decodeCiRunArguments,
+	decodeCiRunResult,
+	decodeClusterSessionCreateArguments,
+	decodeClusterWorkspaceCreateArguments,
+	decodeWorkspaceInfrastructureProjection,
+} from "./cluster.js";
 import { decodeBrokerStatusResult } from "./broker.js";
 import type { DeviceCapability } from "./capabilities.js";
 import { decodeCursor } from "./cursor.js";
@@ -720,6 +727,13 @@ export const COMMAND_DESCRIPTORS: Readonly<Record<string, CommandDescriptor>> = 
 		revisionOwner: "session",
 		confirmation: "none",
 	},
+	"ci.run": {
+		capability: "ci.trigger",
+		scope: "session",
+		revision: "required",
+		revisionOwner: "session",
+		confirmation: "none",
+	},
 };
 export const DESKTOP_CATALOG_COMMANDS: readonly string[] = Object.freeze(
 	Object.entries(COMMAND_DESCRIPTORS)
@@ -1020,7 +1034,10 @@ function decodeRuntimeResultItem(value: unknown, path: string): Record<string, u
 	};
 }
 function decodeWorkspaceResultItem(value: unknown, path: string): Record<string, unknown> {
-	const item = strictMap(value, path, [
+	const candidate = boundedMap(value, path);
+	if (Object.hasOwn(candidate, "id"))
+		return decodeWorkspaceInfrastructureProjection(candidate, path) as unknown as Record<string, unknown>;
+	const item = strictMap(candidate, path, [
 		"repositoryId",
 		"instanceId",
 		"ownership",
@@ -1593,7 +1610,10 @@ export const COMMAND_ARGUMENT_DECODERS: Readonly<Record<string, (value: unknown)
 	"runtime.list": noArgs,
 	"workspace.list": noArgs,
 	"workspace.create": value => {
-		const x = strictArgs(value, ["projectId", "name", "branch", "sourceCommit"]);
+		const candidate = boundedMap(value, "args");
+		if (Object.hasOwn(candidate, "displayName"))
+			return decodeClusterWorkspaceCreateArguments(candidate) as unknown as CommandArguments;
+		const x = strictArgs(candidate, ["projectId", "name", "branch", "sourceCommit"]);
 		projectId(x.projectId, "args.projectId");
 		controlFree(x.name, "args.name", 128);
 		controlFree(x.branch, "args.branch", 256);
@@ -1623,7 +1643,10 @@ export const COMMAND_ARGUMENT_DECODERS: Readonly<Record<string, (value: unknown)
 		return x;
 	},
 	"session.create": value => {
-		const x = strictArgs(value, ["projectId", "title", "runtimeId", "workspaceInstanceId"]);
+		const candidate = boundedMap(value, "args");
+		if (Object.hasOwn(candidate, "workspaceId"))
+			return decodeClusterSessionCreateArguments(candidate) as unknown as CommandArguments;
+		const x = strictArgs(candidate, ["projectId", "title", "runtimeId", "workspaceInstanceId"]);
 		projectId(x.projectId, "args.projectId");
 		if (x.title !== undefined) boundedText(x.title, "args.title", 512);
 		const runtimeId = x.runtimeId === undefined ? undefined : controlFree(x.runtimeId, "args.runtimeId", 64);
@@ -1848,6 +1871,7 @@ export const COMMAND_ARGUMENT_DECODERS: Readonly<Record<string, (value: unknown)
 	"preview.lease.renew": decodePreviewLeaseRenewArguments,
 	"preview.lease.release": decodePreviewLeaseReleaseArguments,
 	"preview.handoff": decodePreviewHandoffArguments,
+	"ci.run": value => decodeCiRunArguments(value) as unknown as CommandArguments,
 };
 export const COMMAND_RESULT_DECODERS: Readonly<Record<string, (value: unknown) => CommandResult>> = {
 	"runtime.list": value => {
@@ -1859,11 +1883,12 @@ export const COMMAND_RESULT_DECODERS: Readonly<Record<string, (value: unknown) =
 		};
 	},
 	"workspace.list": value => {
-		const x = strictResult(value, ["workspaces"]);
+		const x = strictResult(value, ["workspaces", "cursor"]);
 		return {
 			workspaces: boundedArray(x.workspaces, "result.workspaces", 256).map((workspace, index) =>
 				decodeWorkspaceResultItem(workspace, `result.workspaces[${index}]`),
 			),
+			...(x.cursor === undefined ? {} : { cursor: decodeCursor(x.cursor, "result.cursor") }),
 		};
 	},
 	"workspace.create": value => {
@@ -2005,6 +2030,7 @@ export const COMMAND_RESULT_DECODERS: Readonly<Record<string, (value: unknown) =
 	"preview.lease.renew": decodePreviewLeaseResult,
 	"preview.lease.release": decodePreviewLeaseReleaseResult,
 	"preview.handoff": decodePreviewMutationResult,
+	"ci.run": value => decodeCiRunResult(value) as unknown as CommandResult,
 };
 export function decodeCommandArguments(command: string, value: unknown): CommandArguments {
 	const decoder = COMMAND_ARGUMENT_DECODERS[command];

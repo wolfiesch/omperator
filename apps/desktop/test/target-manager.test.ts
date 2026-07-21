@@ -7,8 +7,10 @@ import {
   type PublicOmpServerEvent,
 } from "@t4-code/client";
 import {
+  CI_TRIGGER_CAPABILITY,
   commandId,
   confirmationId,
+  CLUSTER_OPERATOR_FEATURE,
   DEVICE_CAPABILITIES,
   hostId,
   revision,
@@ -224,6 +226,68 @@ async function settlesBeforeTurnLimit<T>(promise: Promise<T>): Promise<T> {
 }
 
 describe("desktop target manager boundaries", () => {
+  it("requests cluster.operator only after explicit desktop opt-in", async () => {
+    const defaultTransport = new Transport();
+    const defaultRuntime = new DesktopTargetManager({
+      cursorStore: new Store(),
+      localTransportFactory: () => defaultTransport as never,
+      events: { onEvent: () => {}, onState: () => {}, onError: () => {} },
+    });
+    await defaultRuntime.connect("local");
+    const defaultHello = JSON.parse(defaultTransport.sent[0] ?? "{}") as {
+      readonly requestedFeatures?: readonly string[];
+    };
+    expect(defaultHello.requestedFeatures).not.toContain(CLUSTER_OPERATOR_FEATURE);
+    await defaultRuntime.close();
+
+    const enabledTransport = new Transport();
+    const enabledRuntime = new DesktopTargetManager({
+      cursorStore: new Store(),
+      clusterOperatorEnabled: true,
+      localTransportFactory: () => enabledTransport as never,
+      events: { onEvent: () => {}, onState: () => {}, onError: () => {} },
+    });
+    await enabledRuntime.connect("local");
+    const enabledHello = JSON.parse(enabledTransport.sent[0] ?? "{}") as {
+      readonly requestedFeatures?: readonly string[];
+    };
+    expect(enabledHello.requestedFeatures).toContain(CLUSTER_OPERATOR_FEATURE);
+    await enabledRuntime.close();
+
+    const registry = new Registry();
+    await registry.put({
+      ...target("cluster"),
+      requestedCapabilities: [...DEVICE_CAPABILITIES],
+    });
+    const disabledRemoteTransport = new Transport();
+    const disabledRemoteRuntime = new DesktopTargetManager({
+      cursorStore: new Store(),
+      registry,
+      remoteTransportFactory: () => disabledRemoteTransport as never,
+      events: { onEvent: () => {}, onState: () => {}, onError: () => {} },
+    });
+    await disabledRemoteRuntime.connect("cluster");
+    const disabledRemoteHello = JSON.parse(disabledRemoteTransport.sent[0] ?? "{}") as {
+      readonly capabilities?: { readonly client?: readonly string[] };
+    };
+    expect(disabledRemoteHello.capabilities?.client).not.toContain(CI_TRIGGER_CAPABILITY);
+    await disabledRemoteRuntime.close();
+
+    const enabledRemoteTransport = new Transport();
+    const enabledRemoteRuntime = new DesktopTargetManager({
+      cursorStore: new Store(),
+      registry,
+      clusterOperatorEnabled: true,
+      remoteTransportFactory: () => enabledRemoteTransport as never,
+      events: { onEvent: () => {}, onState: () => {}, onError: () => {} },
+    });
+    await enabledRemoteRuntime.connect("cluster");
+    const enabledRemoteHello = JSON.parse(enabledRemoteTransport.sent[0] ?? "{}") as {
+      readonly capabilities?: { readonly client?: readonly string[] };
+    };
+    expect(enabledRemoteHello.capabilities?.client).toContain(CI_TRIGGER_CAPABILITY);
+    await enabledRemoteRuntime.close();
+  });
   it("lists and connects named local profiles through profile-scoped transports", async () => {
     const transports: Transport[] = [];
     const requestedProfiles: string[] = [];
@@ -573,7 +637,7 @@ describe("desktop target manager boundaries", () => {
     expect(transports.every((item) => item.closed)).toBe(true);
     await runtime.close();
   });
-  it("keeps local full scope and isolates each remote scope across reconnects", async () => {
+  it("keeps local cluster control default-off and isolates each remote scope across reconnects", async () => {
     const localTransports: Transport[] = [];
     const local = new DesktopTargetManager({
       cursorStore: new Store(),
@@ -588,7 +652,9 @@ describe("desktop target manager boundaries", () => {
     const localHello = JSON.parse(localTransports[0]?.sent[0] ?? "{}") as Record<string, unknown>;
     expect(localHello).toMatchObject({
       type: "hello",
-      capabilities: { client: [...DEVICE_CAPABILITIES] },
+      capabilities: {
+        client: DEVICE_CAPABILITIES.filter((capability) => capability !== "ci.trigger"),
+      },
     });
     await local.close();
 
@@ -653,8 +719,9 @@ describe("desktop target manager boundaries", () => {
     const registry = new Registry();
     const remote = {
       ...target("observe-pair"),
-      requestedCapabilities: ["sessions.read", "catalog.read"],
+      requestedCapabilities: ["sessions.read", "catalog.read", CI_TRIGGER_CAPABILITY],
     };
+    const effectiveCapabilities = ["sessions.read", "catalog.read"];
     await registry.put(remote);
     const credentials = {
       withCredential<T>(): T {
@@ -678,7 +745,7 @@ describe("desktop target manager boundaries", () => {
     expect(await runtime.connect("observe-pair")).toBe("connecting");
     expect(transports).toHaveLength(1);
     const hello = JSON.parse(transports[0]?.sent[0] ?? "{}") as Record<string, unknown>;
-    expect(hello).toMatchObject({ capabilities: { client: remote.requestedCapabilities } });
+    expect(hello).toMatchObject({ capabilities: { client: effectiveCapabilities } });
     const pairTransport = transports[0];
     if (pairTransport === undefined) throw new Error("pairing transport was not created");
     const pairRequestPromise = pairTransport.waitForSent(1);
@@ -686,8 +753,9 @@ describe("desktop target manager boundaries", () => {
     const pairRequest = await pairRequestPromise;
     expect(pairRequest).toMatchObject({
       type: "pair.start",
-      requestedCapabilities: remote.requestedCapabilities,
+      requestedCapabilities: effectiveCapabilities,
     });
+    expect(pairRequest).not.toMatchObject({ requestedCapabilities: remote.requestedCapabilities });
     expect(pairRequest).not.toMatchObject({ requestedCapabilities: [...DEVICE_CAPABILITIES] });
     pairTransport.receive({
       v: V,
@@ -697,11 +765,12 @@ describe("desktop target manager boundaries", () => {
       deviceId: "desktop",
       deviceName: "T4 Code Desktop",
       platform: process.platform,
-      requestedCapabilities: remote.requestedCapabilities,
-      grantedCapabilities: remote.requestedCapabilities,
+      requestedCapabilities: effectiveCapabilities,
+      grantedCapabilities: effectiveCapabilities,
       deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
       expiresAt: "2030-01-01T00:00:00Z",
     });
+    expect(transports).toHaveLength(1);
     const result = await pairing;
     expect(result).toEqual({ targetId: "observe-pair", paired: true });
     await runtime.close();

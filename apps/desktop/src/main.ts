@@ -1,5 +1,6 @@
 import { app } from "electron";
 import { DesktopLifecycle } from "./lifecycle.ts";
+import { desktopClusterOperatorEnabled } from "./cluster-operator-flag.ts";
 
 const MAX_RUNTIME_REJECTION_REPORTS = 10;
 const MAX_FAILURE_MESSAGE_LENGTH = 1_024;
@@ -124,7 +125,9 @@ export function bootstrapDesktopMain(options: MainRuntimeOptions): Promise<void>
   }
 }
 
-const lifecycle = new DesktopLifecycle();
+const lifecycle = new DesktopLifecycle({
+  clusterOperatorEnabled: desktopClusterOperatorEnabled(),
+});
 void bootstrapDesktopMain({
   app: app as unknown as DesktopApp,
   lifecycle,

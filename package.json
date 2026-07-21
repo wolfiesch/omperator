@@ -47,6 +47,8 @@
     "test:soak": "pnpm --filter @t4-code/client exec vp test run test/projection.test.ts -t \"retains a 10k snapshot\" && pnpm build:web && playwright test e2e/remote-app.spec.ts --grep \"@soak\"",
     "test:protocol": "vp run --filter @t4-code/protocol --filter @t4-code/fixture-server test",
     "test:legacy-bridge-continuity": "vp test run scripts/legacy-bridge-continuity.test.ts --reporter=verbose",
+    "test:cluster:ci": "node --test scripts/cluster-ci/*.test.mjs",
+    "test:cluster:e2e": "playwright test e2e/cluster-operator.spec.ts",
     "perf:core": "vp test run scripts/perf/core.test.ts",
     "perf:ui": "pnpm build:web && node scripts/perf/ui.mjs",
     "perf:electron": "pnpm build:web && pnpm build:desktop && node scripts/perf/electron.mjs",

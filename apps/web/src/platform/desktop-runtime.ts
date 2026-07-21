@@ -66,6 +66,7 @@ export function acquireRuntimeController(
     const cacheStore = projectionCacheStore(shell);
     const controller = createDesktopRuntimeController({
       shell,
+      clusterOperatorEnabled: shell.clusterOperatorEnabled === true,
       ...(cacheStore === undefined
         ? {}
         : { projection: createProjectionStore({ cacheStore }) }),

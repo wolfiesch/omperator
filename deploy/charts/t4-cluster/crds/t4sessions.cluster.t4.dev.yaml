@@ -1,0 +1,147 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: t4sessions.cluster.t4.dev
+spec:
+  group: cluster.t4.dev
+  scope: Namespaced
+  names:
+    plural: t4sessions
+    singular: t4session
+    kind: T4Session
+    listKind: T4SessionList
+    shortNames: [t4sess]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      additionalPrinterColumns:
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Pod
+          type: string
+          jsonPath: .status.podName
+      subresources:
+        status: {}
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required: [hostRef, workspaceRef, title, runtimeProfile]
+              x-kubernetes-validations:
+                - rule: "!has(self.ci) || (self.ci.repositoryId != '' && self.ci.ref != '' && self.ci.commit != '')"
+                  message: CI metadata must contain an allowlisted repository id, ref, and commit
+                - rule: "!has(self.initialPromptSecretRef) || self.initialPromptSecretRef.name != ''"
+                  message: initial prompt Secret reference must name a Secret
+              properties:
+                hostRef:
+                  type: string
+                  minLength: 1
+                  maxLength: 253
+                  pattern: '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'
+                  x-kubernetes-validations:
+                    - rule: self == oldSelf
+                      message: hostRef is immutable
+                workspaceRef:
+                  type: string
+                  minLength: 1
+                  maxLength: 253
+                  pattern: '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'
+                title:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                runtimeProfile:
+                  type: string
+                  minLength: 1
+                  maxLength: 64
+                  pattern: '^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$'
+                initialPromptSecretRef:
+                  type: object
+                  required: [name]
+                  properties:
+                    name:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                      pattern: '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'
+                guiEnabled:
+                  type: boolean
+                  default: false
+                ci:
+                  type: object
+                  required: [repositoryId, ref, commit]
+                  properties:
+                    repositoryId:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                      pattern: '^[A-Za-z0-9][A-Za-z0-9._:/-]*$'
+                    ref:
+                      type: string
+                      minLength: 1
+                      maxLength: 256
+                    commit:
+                      type: string
+                      minLength: 7
+                      maxLength: 64
+                      pattern: '^[0-9a-fA-F]+$'
+            status:
+              type: object
+              properties:
+                observedGeneration:
+                  type: integer
+                  format: int64
+                  minimum: 0
+                podName:
+                  type: string
+                  minLength: 1
+                  maxLength: 63
+                serviceName:
+                  type: string
+                  minLength: 1
+                  maxLength: 63
+                phase:
+                  type: string
+                  enum: [Pending, Running, Failed, Terminating, Unknown]
+                conditions:
+                  type: array
+                  maxItems: 8
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys: [type]
+                  items:
+                    type: object
+                    required: [type, status, reason, message, lastTransitionTime]
+                    properties:
+                      type:
+                        type: string
+                        enum: [Available, WorkspaceReady, HostReady, RuntimeConfigured]
+                      status:
+                        type: string
+                        enum: ['True', 'False', Unknown]
+                      observedGeneration:
+                        type: integer
+                        format: int64
+                        minimum: 0
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                        maxLength: 64
+                      reason:
+                        type: string
+                        minLength: 1
+                        maxLength: 64
+                        pattern: '^[A-Za-z][A-Za-z0-9]*$'
+                      message:
+                        type: string
+                        maxLength: 512

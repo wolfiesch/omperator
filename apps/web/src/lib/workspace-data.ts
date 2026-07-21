@@ -5,6 +5,11 @@
 // is feeding it. Display data only; never runtime authority.
 import type { SessionStatus } from "@t4-code/ui";
 import type { RuntimeKind } from "@t4-code/client";
+import type {
+  SessionCiState,
+  SessionClusterState,
+  WorkspaceInfrastructureProjection,
+} from "@t4-code/protocol";
 
 /** How current the projection of a session is. */
 export type SessionFreshness = "live" | "cached" | "offline";
@@ -62,10 +67,21 @@ export interface WorkspaceSession {
    * SessionControlDisplayKind in session-observer.ts.
    */
   readonly control?: "observer" | "suspect" | "reconciling" | "unclear";
+  /** Cluster runtime and GUI truth, present only after local opt-in and host grant. */
+  readonly cluster?: SessionClusterState;
+  /** Strict CI correlation and progress from the authoritative session projection. */
+  readonly ci?: SessionCiState;
+}
+
+export interface WorkspaceClusterWorkspace {
+  readonly hostId: string;
+  readonly targetId: string;
+  readonly infrastructure: WorkspaceInfrastructureProjection;
 }
 
 export interface WorkspaceData {
   readonly hosts: readonly WorkspaceHost[];
   readonly projects: readonly WorkspaceProject[];
   readonly sessions: readonly WorkspaceSession[];
+  readonly clusterWorkspaces?: readonly WorkspaceClusterWorkspace[];
 }

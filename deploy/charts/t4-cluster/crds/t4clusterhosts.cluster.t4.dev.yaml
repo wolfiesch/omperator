@@ -1,0 +1,137 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: t4clusterhosts.cluster.t4.dev
+spec:
+  group: cluster.t4.dev
+  scope: Namespaced
+  names:
+    plural: t4clusterhosts
+    singular: t4clusterhost
+    kind: T4ClusterHost
+    listKind: T4ClusterHostList
+    shortNames: [t4host]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      additionalPrinterColumns:
+        - name: Storage
+          type: string
+          jsonPath: .spec.storageClassName
+        - name: Available
+          type: string
+          jsonPath: .status.conditions[?(@.type=="Available")].status
+      subresources:
+        status: {}
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required: [storageClassName, runtimeProfiles]
+              x-kubernetes-validations:
+                - rule: "!has(self.ciProvider) || (self.ciProvider.configMapRef.name != '' && (has(self.ciProvider.secretRef) != has(self.ciProvider.serviceAccountAudience)))"
+                  message: CI provider requires a ConfigMap and exactly one Secret or projected ServiceAccount identity
+                - rule: "!has(self.allowedOrigins) || self.allowedOrigins.all(o, o.startsWith('https://') && !o.contains('@'))"
+                  message: allowed origins must be credential-free HTTPS origins
+              properties:
+                storageClassName:
+                  type: string
+                  minLength: 1
+                  maxLength: 253
+                  pattern: '^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$'
+                runtimeProfiles:
+                  type: array
+                  minItems: 1
+                  maxItems: 16
+                  uniqueItems: true
+                  items:
+                    type: string
+                    minLength: 1
+                    maxLength: 64
+                    pattern: '^[a-z0-9]([-._a-z0-9]{0,62}[a-z0-9])?$'
+                ciProvider:
+                  type: object
+                  required: [configMapRef]
+                  properties:
+                    secretRef:
+                      type: object
+                      required: [name]
+                      properties:
+                        name:
+                          type: string
+                          minLength: 1
+                          maxLength: 253
+                          pattern: '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'
+                    serviceAccountAudience:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                      pattern: '^[A-Za-z0-9][A-Za-z0-9._:/-]*$'
+                    configMapRef:
+                      type: object
+                      required: [name]
+                      properties:
+                        name:
+                          type: string
+                          minLength: 1
+                          maxLength: 253
+                          pattern: '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'
+                allowedOrigins:
+                  type: array
+                  maxItems: 32
+                  uniqueItems: true
+                  items:
+                    type: string
+                    minLength: 9
+                    maxLength: 256
+                    pattern: '^https://[^/?#]+$'
+            status:
+              type: object
+              properties:
+                observedGeneration:
+                  type: integer
+                  format: int64
+                  minimum: 0
+                conditions:
+                  type: array
+                  maxItems: 8
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys: [type]
+                  items:
+                    type: object
+                    required: [type, status, reason, message, lastTransitionTime]
+                    properties:
+                      type:
+                        type: string
+                        minLength: 1
+                        maxLength: 32
+                        enum: [Available, StorageReady, CIReady]
+                      status:
+                        type: string
+                        enum: ['True', 'False', Unknown]
+                      observedGeneration:
+                        type: integer
+                        format: int64
+                        minimum: 0
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                        maxLength: 64
+                      reason:
+                        type: string
+                        minLength: 1
+                        maxLength: 64
+                        pattern: '^[A-Za-z][A-Za-z0-9]*$'
+                      message:
+                        type: string
+                        maxLength: 512

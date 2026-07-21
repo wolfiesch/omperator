@@ -62,6 +62,7 @@ export function TailnetAddressForm({
   const id = useId();
   const [address, setAddress] = useState("");
   const [profileId, setProfileId] = useState("");
+  const [clusterOperatorEnabled, setClusterOperatorEnabled] = useState(false);
   const [message, setMessage] = useState<string | null>(initialMessage ?? null);
   const [checking, setChecking] = useState(false);
   const activeProbe = useRef<AbortController | null>(null);
@@ -73,6 +74,7 @@ export function TailnetAddressForm({
   );
   const addressId = `${id}-address`;
   const profileIdId = `${id}-profile`;
+  const clusterOperatorId = `${id}-cluster-operator`;
   const helpId = `${id}-help`;
   const statusId = `${id}-status`;
 
@@ -85,7 +87,7 @@ export function TailnetAddressForm({
         setMessage(null);
         let backend;
         try {
-          backend = parseTailnetBackend(address, profileId);
+          backend = parseTailnetBackend(address, profileId, clusterOperatorEnabled);
         } catch (error) {
           setMessage(error instanceof Error ? error.message : "Enter a valid Tailnet address.");
           return;
@@ -141,13 +143,35 @@ export function TailnetAddressForm({
         autoComplete="off"
         autoCorrect="off"
         className="h-12 w-full rounded-lg border border-input bg-background px-3 font-mono text-base outline-none transition-shadow duration-(--motion-duration-fast) placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
-        disabled={checking}
+        disabled={checking || clusterOperatorEnabled}
         id={profileIdId}
         onChange={(event) => setProfileId(event.target.value)}
         placeholder="default route"
         spellCheck={false}
         value={profileId}
       />
+      <label
+        className="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-border px-3 py-2.5"
+        htmlFor={clusterOperatorId}
+      >
+        <input
+          checked={clusterOperatorEnabled}
+          className="mt-0.5 size-4 accent-primary"
+          disabled={checking}
+          id={clusterOperatorId}
+          onChange={(event) => {
+            setClusterOperatorEnabled(event.target.checked);
+            if (event.target.checked) setProfileId("");
+          }}
+          type="checkbox"
+        />
+        <span className="flex min-w-0 flex-col">
+          <span className="font-medium text-sm">Cluster operator endpoint</span>
+          <span className="text-muted-foreground text-xs">
+            Request cluster workspaces only from this secure WSS host.
+          </span>
+        </span>
+      </label>
       <p className="text-muted-foreground text-xs leading-relaxed" id={helpId}>
         Use the full HTTPS address shown by the T4 gateway on your computer.
       </p>

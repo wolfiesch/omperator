@@ -1,3 +1,4 @@
+import { decodeWorkspaceState, type WorkspaceStateFrame } from "./cluster.js";
 import { type Cursor, decodeCursor } from "./cursor.js";
 import { type DurableEntry, decodeEntry } from "./entry.js";
 import { fail } from "./errors.js";
@@ -75,6 +76,7 @@ export const ADDITIVE_FEATURES = [
 	"catalog.metadata",
 	"settings.metadata",
 	"preview.control",
+	"cluster.operator",
 ] as const;
 export type AdditiveFeature = (typeof ADDITIVE_FEATURES)[number];
 export type WireFeature = AdditiveFeature | "resume";
@@ -1113,10 +1115,12 @@ export type AdditiveServerFrame =
 	| AuditEventFrame
 	| CatalogFrame
 	| SettingsFrame
+	| WorkspaceStateFrame
 	| PreviewFrame;
 export function decodeAdditiveServerFrame(input: unknown): AdditiveServerFrame {
 	const type = inputObject(input).type;
 	if (typeof type !== "string") fail("INVALID_FRAME", "frame type must be string", "type");
+	if (type === "workspace.state") return decodeWorkspaceState(input);
 	if (["host.watch", "session.watch", "session.state", "session.delta"].includes(type)) return decodeWatch(input);
 	if (type === "lease" || type === "prompt.lease") return decodeLease(input);
 	if (type.startsWith("agent.")) return decodeAgentAdditive(input);

@@ -418,7 +418,7 @@ download_release_asset() {
 verify_release_checksum() {
   local sums=$1 asset=$2 name expected actual matches
   name=$(basename -- "$asset")
-  matches=$(awk -v name="$name" '$2 == name && $1 ~ /^[0-9a-f]{64}$/ {print $1}' "$sums")
+  matches=$(awk -v name="$name" '$2 == name && length($1) == 64 && $1 ~ /^[0-9a-f]+$/ {print $1}' "$sums")
   [[ $matches != *$'\n'* && $matches =~ ^[0-9a-f]{64}$ ]] || fail "release checksum is missing or ambiguous for $name"
   expected=$matches
   actual=$($SHA256SUM "$asset" | awk '{print $1}')
@@ -1324,7 +1324,7 @@ $JQ -n \
         allowedOrigin: $gateway_origin,
         port: $gateway_port,
         appSocket: $gateway_socket,
-        label: $gateway_label,
+        "label": $gateway_label,
         deploymentIdentity: $deployment_identity,
         nodeExecutable: $gateway_node_executable,
         runtimeSourceRoot: $runtime_root,

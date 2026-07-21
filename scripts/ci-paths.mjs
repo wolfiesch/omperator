@@ -18,6 +18,16 @@ const GROUP_PATTERNS = Object.freeze({
     /^provenance\/omp-host-migration\.json$/u,
     /^scripts\/legacy-bridge-continuity(?:\.test)?\.mjs$/u,
   ],
+  cluster: [
+    /^\.github\/workflows\/ci\.yml$/u,
+    /^\.woodpecker\.yml$/u,
+    /^cluster\//u,
+    /^deploy\/charts\/t4-cluster\//u,
+    /^e2e\/cluster-operator\.spec\.ts$/u,
+    /^packages\/cluster-(?:operator|server)\//u,
+    /^packages\/host-(?:service|wire)\/(?:src\/|package\.json$)/u,
+    /^scripts\/cluster-ci\//u,
+  ],
   tooling: [
     /^\.github\//u,
     /^compat\//u,

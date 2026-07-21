@@ -234,6 +234,36 @@ describe("client projections", () => {
     });
   });
 
+  it("rejects a delayed lower same-epoch session inventory without regressing the index", () => {
+    const currentRef = ref(String(HOST), "ordered", { title: "Current" });
+    const staleRef = ref(String(HOST), "ordered", { title: "Stale" });
+    const current = applyPublicFrame(createProjectionSnapshot(), {
+      v: V,
+      type: "sessions",
+      hostId: HOST,
+      cursor: { epoch: "ordered-inventory", seq: 5 },
+      sessions: [currentRef],
+      totalCount: 1,
+      truncated: false,
+    } as ProjectionFrame);
+    const staleFrame = {
+      v: V,
+      type: "sessions",
+      hostId: HOST,
+      cursor: { epoch: "ordered-inventory", seq: 4 },
+      sessions: [staleRef],
+      totalCount: 1,
+      truncated: false,
+    } as ProjectionFrame;
+
+    expect(applyPublicFrame(current, staleFrame)).toBe(current);
+    expect(current.sessionIndex.get(sessionKey("ordered"))?.title).toBe("Current");
+    expect(current.sessionInventoryCursors.get(String(HOST))?.seq).toBe(5);
+
+    const restored = decodeProjectionCacheValue(encodeProjectionCache(current))!;
+    expect(applyPublicFrame(restored, staleFrame)).toBe(restored);
+  });
+
   it("invalidates inventory completeness on welcome until the next sessions frame", () => {
     const listed = ref(String(HOST), "cached");
     let state = applyPublicFrame(createProjectionSnapshot(), {
@@ -251,6 +281,7 @@ describe("client projections", () => {
     expect(state.sessionIndex.has(sessionKey("cached"))).toBe(true);
     expect(state.sessionIndexMetadata.has(String(HOST))).toBe(false);
 
+    expect(state.sessionInventoryCursors.has(String(HOST))).toBe(false);
     state = applyPublicFrame(state, {
       v: V,
       type: "sessions",
@@ -547,6 +578,48 @@ describe("client projections", () => {
       cursor: { epoch: "e2", seq: 1 },
     });
     expect(state.sessions.get(sessionKey("session-a"))?.events).toEqual([]);
+  });
+  it("rejects a stale same-epoch snapshot without replacing newer projection state", () => {
+    const freshEntry = childEntry("fresh-entry", "fresh");
+    const staleEntry = childEntry("stale-entry", "stale");
+    const state = applyPublicFrame(createProjectionSnapshot(), {
+      ...frame("snapshot"),
+      cursor: { epoch: "e1", seq: 10 },
+      revision: revision("fresh-revision"),
+      entries: [freshEntry],
+    });
+    const stale = applyPublicFrame(state, {
+      ...frame("snapshot"),
+      cursor: { epoch: "e1", seq: 9 },
+      revision: revision("stale-revision"),
+      entries: [staleEntry],
+    });
+
+    expect(stale).toBe(state);
+    expect(stale.sessions.get(sessionKey("session-a"))?.cursor).toEqual({ epoch: "e1", seq: 10 });
+    expect(stale.sessions.get(sessionKey("session-a"))?.entries).toEqual([freshEntry]);
+  });
+
+  it("accepts an equal-cursor live snapshot to refresh a cached baseline", () => {
+    const cached = decodeProjectionCacheValue(
+      encodeProjectionCache(
+        applyPublicFrame(createProjectionSnapshot(), {
+          ...frame("snapshot"),
+          cursor: { epoch: "e1", seq: 10 },
+          entries: [childEntry("cached-entry", "cached")],
+        }),
+      ),
+    )!;
+    const refreshed = applyPublicFrame(cached, {
+      ...frame("snapshot"),
+      cursor: { epoch: "e1", seq: 10 },
+      revision: revision("live-revision"),
+      entries: [childEntry("live-entry", "live")],
+    });
+
+    expect(refreshed.sessions.get(sessionKey("session-a"))?.freshness).toBe("fresh");
+    expect(refreshed.sessions.get(sessionKey("session-a"))?.revision).toBe("live-revision");
+    expect(refreshed.sessions.get(sessionKey("session-a"))?.entries[0]?.id).toBe("live-entry");
   });
   it("uses the emitting owner cursor for remove-other deltas without touching transcript state", () => {
     let state = applyPublicFrame(createProjectionSnapshot(), frame("snapshot"));

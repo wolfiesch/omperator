@@ -159,11 +159,11 @@ function fileFrame(path: string, content?: string, session = SESSION): FileFrame
   };
 }
 
-function snapshotFrame(revision: string): SessionSnapshotFrame {
+function snapshotFrame(revision: string, seq = 0): SessionSnapshotFrame {
   return {
     v: PROTOCOL_VERSION,
     type: "snapshot",
-    cursor: { epoch: "epoch-1", seq: 0 },
+    cursor: { epoch: "epoch-1", seq },
     revision: brandRevision(revision),
     hostId: brandHostId(HOST),
     sessionId: brandSessionId(SESSION),
@@ -1030,7 +1030,7 @@ describe("live pane actions", () => {
 
     fake.setProjection(
       project(
-        [snapshotFrame("rev-4"), fileFrame("src/app.ts", "const value = 2;\n")],
+        [snapshotFrame("rev-4", 1), fileFrame("src/app.ts", "const value = 2;\n")],
         base,
       ),
     );

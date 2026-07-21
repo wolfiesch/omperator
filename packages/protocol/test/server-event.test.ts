@@ -49,7 +49,7 @@ function pairOk(): PairOkFrame {
 
 describe("shared server events", () => {
   it("publishes the complete immutable server event vocabulary", () => {
-    expect(OMP_SERVER_EVENT_KINDS).toHaveLength(45);
+    expect(OMP_SERVER_EVENT_KINDS).toHaveLength(46);
     expect(new Set(OMP_SERVER_EVENT_KINDS).size).toBe(OMP_SERVER_EVENT_KINDS.length);
     expect(Object.isFrozen(OMP_SERVER_EVENT_KINDS)).toBe(true);
     expect(OMP_SERVER_EVENT_KINDS).toContain("welcome");

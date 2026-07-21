@@ -49,10 +49,12 @@ import {
 } from "@t4-code/protocol/desktop-ipc";
 import { BROWSER_CHANNELS, decodeBrowserCall, decodeBrowserEvent, decodeBrowserResult, type BrowserCall, type BrowserCallResult, type BrowserEvent } from "@t4-code/protocol/browser-ipc";
 import type { BrowserShellPort } from "@t4-code/client";
+import { desktopClusterOperatorEnabled } from "./cluster-operator-flag.ts";
  
 export interface OmpShellBridge {
   readonly kind: "desktop";
   readonly platform: "linux" | "darwin";
+  readonly clusterOperatorEnabled?: true;
   readonly bootstrap: () => Promise<BootstrapResult>;
   readonly confirm: (request: ConfirmRequest) => Promise<ConfirmResult>;
   readonly terminalInput: (request: TerminalInputRequest) => Promise<TerminalResult>;
@@ -169,6 +171,7 @@ function createBrowserBridge(): BrowserShellPort {
 const bridge: OmpShellBridge = {
   kind: "desktop",
   platform: process.platform === "darwin" ? "darwin" : "linux",
+  ...(desktopClusterOperatorEnabled() ? { clusterOperatorEnabled: true as const } : {}),
   speakText: (request) => invoke("omp:speech:speak", request),
   stopSpeaking: () => invoke("omp:speech:stop", {}),
   bootstrap: () => invoke("omp:bootstrap", {}),

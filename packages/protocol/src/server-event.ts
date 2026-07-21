@@ -26,6 +26,7 @@ const OMP_SERVER_EVENT_KIND_MEMBERS = {
   "session.watch": true,
   "session.state": true,
   "session.delta": true,
+  "workspace.state": true,
   lease: true,
   "prompt.lease": true,
   "agent.state": true,

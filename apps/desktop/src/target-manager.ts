@@ -1,4 +1,4 @@
-import { createOmpClient, isConfirmationDecisionConsumed, OmpClientError, type CommandIntent, type CursorStore, type OmpClient, type OmpPairOk, type PublicOmpServerEvent } from "@t4-code/client";
+import { clusterOperatorRequestedCapabilities, clusterOperatorRequestedFeatures, createOmpClient, isConfirmationDecisionConsumed, OmpClientError, type CommandIntent, type CursorStore, type OmpClient, type OmpPairOk, type PublicOmpServerEvent } from "@t4-code/client";
 import { commandResultError, type CommandResult, type ConnectionStateEvent, type RuntimeErrorEvent } from "@t4-code/protocol/desktop-ipc";
 import type { ConfirmRequest, ConfirmResult, TerminalCloseRequest, TerminalInputRequest, TerminalResizeRequest, TerminalResult } from "@t4-code/protocol/desktop-ipc";
 import { ADDITIVE_FEATURES, DEVICE_CAPABILITIES, type DeviceCapability } from "@t4-code/protocol";
@@ -8,11 +8,6 @@ import { validateRemoteTarget, type CredentialStore, type PublicRemoteTarget, ty
 import { DEFAULT_LOCAL_PROFILE, localTargetId, type LocalProfileRecord } from "./local-profiles.ts";
 const DEFAULT_CAPABILITIES: readonly DeviceCapability[] = Object.freeze([...DEVICE_CAPABILITIES]);
 const REQUESTED_FEATURES: readonly string[] = ADDITIVE_FEATURES;
-const COMPATIBILITY_FEATURES: readonly string[] = Object.freeze(
-  REQUESTED_FEATURES.filter(
-    (feature) => feature !== "prompt.images" && feature !== "transcript.images",
-  ),
-);
 
 export type DesktopTargetState = "disconnected" | "connecting" | "connected" | "pairing-required" | "error";
 export interface PublicDesktopTarget {
@@ -44,6 +39,7 @@ export interface TargetManagerOptions {
   readonly capabilities?: readonly DeviceCapability[];
   readonly deviceId?: string;
   readonly deviceName?: string;
+  readonly clusterOperatorEnabled?: boolean;
 }
 type Transport = UnixWebSocketTransport | RemoteWebSocketTransport;
 interface Runtime {
@@ -99,6 +95,9 @@ export class DesktopTargetManager {
   private readonly deviceId: string;
   private readonly deviceName: string;
   private readonly capabilities: readonly DeviceCapability[];
+  private readonly clusterOperatorEnabled: boolean;
+  private readonly requestedFeatures: readonly string[];
+  private readonly compatibilityRequestedFeatures: readonly string[];
   private readonly connectAttempts = new Map<string, { readonly generation: number; readonly result: Promise<"connecting" | "connected"> }>();
   private readonly registryQueue = { tail: Promise.resolve() };
   private readonly targetQueues = new Map<string, { tail: Promise<void> }>();
@@ -127,7 +126,19 @@ export class DesktopTargetManager {
     this.registry = options.registry;
     this.deviceId = options.deviceId ?? "desktop";
     this.credentials = options.credentials;
-    this.capabilities = Object.freeze([...(options.capabilities ?? DEFAULT_CAPABILITIES)]);
+    this.clusterOperatorEnabled = options.clusterOperatorEnabled === true;
+    this.capabilities = this.effectiveCapabilities(
+      options.capabilities ?? DEFAULT_CAPABILITIES,
+    ) as readonly DeviceCapability[];
+    this.requestedFeatures = clusterOperatorRequestedFeatures(
+      REQUESTED_FEATURES,
+      this.clusterOperatorEnabled,
+    );
+    this.compatibilityRequestedFeatures = Object.freeze(
+      this.requestedFeatures.filter(
+        (feature) => feature !== "prompt.images" && feature !== "transcript.images",
+      ),
+    );
     this.deviceName = options.deviceName ?? "T4 Code Desktop";
   }
 
@@ -190,8 +201,12 @@ export class DesktopTargetManager {
     return enqueueTarget(this.targetQueues, targetId, async () => {
       if (localProfileId(targetId) === undefined) {
         const remote = await this.remoteTarget(targetId);
+        const effectiveCapabilities = this.effectiveCapabilities(remote.requestedCapabilities);
         const current = this.runtimes.get(targetId);
-        if (current !== undefined && !sameCapabilities(current.requestedCapabilities, remote.requestedCapabilities)) {
+        if (
+          current !== undefined &&
+          !sameCapabilities(current.requestedCapabilities, effectiveCapabilities)
+        ) {
           await this.closeRuntime(targetId);
           const attempt = await this.connectNow(targetId);
           await attempt.result;
@@ -321,6 +336,12 @@ export class DesktopTargetManager {
     this.targetQueues.clear();
   }
 
+  private effectiveCapabilities(capabilities: readonly string[]): readonly string[] {
+    return Object.freeze([
+      ...clusterOperatorRequestedCapabilities(capabilities, this.clusterOperatorEnabled),
+    ]);
+  }
+
   private async remoteTarget(targetId: string): Promise<RemoteTargetRecord> {
     if (this.registry === undefined) throw new Error("target not found");
     const target = await this.registry.get(targetId);
@@ -331,7 +352,9 @@ export class DesktopTargetManager {
     if (this.closed) throw new Error("target manager is closed");
     const local = await this.localProfile(targetId);
     const remote = local === undefined ? await this.remoteTarget(targetId) : undefined;
-    const requestedCapabilities = Object.freeze([...(local !== undefined ? this.capabilities : remote!.requestedCapabilities)]);
+    const requestedCapabilities = this.effectiveCapabilities(
+      local !== undefined ? this.capabilities : remote!.requestedCapabilities,
+    );
     const existing = this.runtimes.get(targetId);
     if (existing !== undefined && sameCapabilities(existing.requestedCapabilities, requestedCapabilities)) {
       if (existing.client.state === "ready") {
@@ -381,8 +404,8 @@ export class DesktopTargetManager {
       }),
       cursorStore: this.cursorStoreFactory(targetId),
       capabilities: requestedCapabilities,
-      requestedFeatures: REQUESTED_FEATURES,
-      compatibilityRequestedFeatures: COMPATIBILITY_FEATURES,
+      requestedFeatures: this.requestedFeatures,
+      compatibilityRequestedFeatures: this.compatibilityRequestedFeatures,
       client: { name: "T4 Code", version: "0.1.30", build: "desktop", platform: process.platform },
       reconnect: { baseMs: 250, maxMs: 10_000 },
     };

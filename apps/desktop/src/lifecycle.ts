@@ -6,7 +6,11 @@ import { parsePairDeepLink, PendingPairQueue, type PendingPair } from "@t4-code/
 import { decodeLocalProfileId, type ConnectionStateEvent, type ServiceAvailabilityIssue } from "@t4-code/protocol/desktop-ipc";
 import type { ServiceManager } from "@t4-code/service-manager";
 import type { RemoteTargetRegistry } from "./remote-runtime/registry.ts";
-import { createDesktopWindow, type DesktopWindowHandle } from "./window.ts";
+import {
+  createDesktopWindow,
+  type DesktopWindowHandle,
+  type DesktopWindowOptions,
+} from "./window.ts";
 import { DesktopIpcRegistry, runtimeError, type IpcRuntime } from "./ipc.ts";
 import { BrowserRuntime, type BrowserRuntimeOptions } from "./browser-runtime.ts";
 import {
@@ -65,7 +69,8 @@ export function appserverLogsDirectory(
 export interface DesktopLifecycleOptions {
   readonly app?: typeof app;
   readonly getAllWindows?: () => readonly BrowserWindow[];
-  readonly createWindow?: () => DesktopWindowHandle;
+  readonly createWindow?: (options?: DesktopWindowOptions) => DesktopWindowHandle;
+  readonly clusterOperatorEnabled?: boolean;
   readonly createBrowserRuntime?: (options: BrowserRuntimeOptions) => BrowserRuntime;
   readonly createIpcRegistry?: (runtime: IpcRuntime) => DesktopIpcRegistry;
   readonly loadIdentity?: () => DeviceIdentity;
@@ -99,7 +104,8 @@ export class DesktopLifecycle {
   private readonly pendingPairs = new PendingPairQueue(8);
   private readonly electronApp: typeof app;
   private readonly allWindows: () => readonly BrowserWindow[];
-  private readonly windowFactory: () => DesktopWindowHandle;
+  private readonly windowFactory: (options?: DesktopWindowOptions) => DesktopWindowHandle;
+  private readonly clusterOperatorEnabled: boolean;
   private readonly ipcFactory: (runtime: IpcRuntime) => DesktopIpcRegistry;
   private readonly browserRuntimeFactory: (options: BrowserRuntimeOptions) => BrowserRuntime;
   private readonly identityFactory: () => DeviceIdentity;
@@ -151,6 +157,7 @@ export class DesktopLifecycle {
 
   constructor(options: DesktopLifecycleOptions = {}) {
     this.electronApp = options.app ?? app;
+    this.clusterOperatorEnabled = options.clusterOperatorEnabled === true;
     this.browserRuntimeFactory =
       options.createBrowserRuntime ?? ((runtimeOptions) => new BrowserRuntime(runtimeOptions));
     this.allWindows = options.getAllWindows ?? (() => BrowserWindow.getAllWindows());
@@ -272,6 +279,7 @@ export class DesktopLifecycle {
       registry: remoteRegistry,
       localProfiles: () => this.localProfileRegistry?.list() ?? Promise.resolve([]),
       ...(credentials === undefined ? {} : { credentials }),
+      ...(this.clusterOperatorEnabled ? { clusterOperatorEnabled: true } : {}),
       deviceId: identity.deviceId,
       deviceName: identity.deviceName,
       events: {
@@ -293,7 +301,11 @@ export class DesktopLifecycle {
     this.speechService = this.speechServiceFactory({
       discoverExecutable: () => this.discoverServiceExecutable(),
     });
-    this.bindWindow(this.windowFactory());
+    this.bindWindow(
+      this.windowFactory(
+        this.clusterOperatorEnabled ? { clusterOperatorEnabled: true } : undefined,
+      ),
+    );
     await this.acquireServiceManager();
     if (this.stopping) return;
     await this.profileRuntime.startAutomaticProfiles((profileId, error) => {
@@ -307,7 +319,12 @@ export class DesktopLifecycle {
     this.electronApp.on("before-quit", this.beforeQuitHandler);
     this.electronApp.on("activate", () => {
       if (this.stopping) return;
-      if (this.allWindows().length === 0) this.bindWindow(this.windowFactory());
+      if (this.allWindows().length === 0)
+        this.bindWindow(
+          this.windowFactory(
+            this.clusterOperatorEnabled ? { clusterOperatorEnabled: true } : undefined,
+          ),
+        );
     });
   }
 
@@ -696,7 +713,11 @@ export class DesktopLifecycle {
   private openUpdatesFromMenu(): void {
     if (this.stopping) return;
     if (this.mainWindow === undefined && this.manager !== undefined) {
-      this.bindWindow(this.windowFactory());
+      this.bindWindow(
+        this.windowFactory(
+          this.clusterOperatorEnabled ? { clusterOperatorEnabled: true } : undefined,
+        ),
+      );
     }
     this.mainWindow?.show();
     this.mainWindow?.focus();

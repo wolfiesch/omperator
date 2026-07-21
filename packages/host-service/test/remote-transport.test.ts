@@ -184,7 +184,7 @@ function peerIdentity(nodeId: string): RemotePeerIdentity {
 		source: "tailscale",
 	};
 }
-function hello(requestedFeatures: string[] = ["resume"]): string {
+function hello(requestedFeatures: string[] = ["resume"], requestedCapabilities?: string[]): string {
 	return JSON.stringify({
 		v: "omp-app/1",
 		type: "hello",
@@ -192,6 +192,7 @@ function hello(requestedFeatures: string[] = ["resume"]): string {
 		client: { name: "test", version: "1", build: "b", platform: "linux" },
 		requestedFeatures,
 		savedCursors: [],
+		...(requestedCapabilities === undefined ? {} : { capabilities: { client: requestedCapabilities } }),
 	});
 }
 function listCommand(requestId: string): string {
@@ -418,6 +419,82 @@ describe("remote appserver policy transport", () => {
 		}
 	});
 
+	for (const { name, features, capabilities, forwards } of [
+		{
+			name: "does not forward session deltas without negotiated session.delta",
+			features: ["resume"],
+			capabilities: ["sessions.read"],
+			forwards: false,
+		},
+		{
+			name: "does not forward negotiated session deltas without sessions.read",
+			features: ["resume", "session.delta"],
+			capabilities: [] as string[],
+			forwards: false,
+		},
+		{
+			name: "grants and forwards requested session deltas with sessions.read",
+			features: ["resume", "session.delta"],
+			capabilities: ["sessions.read"],
+			forwards: true,
+		},
+	]) {
+		test(name, async () => {
+			const harness = new FakeBunHarness();
+			harness.install();
+			let currentTitle = "Session";
+			try {
+				const appserver = createAppserver({
+					hostId: hostId("host"),
+					socketPath: join(mkdtempSync(join(tmpdir(), "omp-delta-capability-")), "app.sock"),
+					discovery: {
+						list: async () => [
+							{
+								...leaseSessionRecord(),
+								title: currentTitle,
+								updatedAt:
+									currentTitle === "Session" ? "2026-01-01T00:00:00.000Z" : "2026-01-01T00:00:01.000Z",
+							},
+						],
+					},
+					remoteEndpoint: { address: "100.64.0.1", port: 1 },
+					remoteResolver: { resolve: async () => peerIdentity("node") },
+					remotePolicy: {
+						authenticate: async () => ({ authenticated: true, grantedCapabilities: capabilities }),
+						authorize: async () => true,
+					},
+				});
+				await appserver.start();
+				const remote = harness.remote();
+				const socket = await openRemote(remote);
+				await remote.config.websocket?.message?.(socket, hello(features, capabilities));
+				await flush();
+				expect(sentFrames(socket).find(frame => frame.type === "welcome")).toMatchObject({
+					grantedCapabilities: capabilities,
+					grantedFeatures: features,
+				});
+				socket.sends.length = 0;
+
+				currentTitle = "Renamed session";
+				const refreshSocket = await openRemote(remote);
+				await remote.config.websocket?.message?.(refreshSocket, hello(features, capabilities));
+				await flush();
+				const deltas = sentFrames(socket).filter(frame => frame.type === "session.delta");
+				if (forwards) {
+					expect(deltas).toHaveLength(1);
+					expect(deltas[0]).toMatchObject({
+						hostId: "host",
+						sessionId: "session",
+						upsert: { title: "Renamed session" },
+					});
+				} else expect(deltas).toEqual([]);
+				await appserver.stop();
+			} finally {
+				harness.restore();
+			}
+		});
+	}
+
 	test("a delayed remote transform cannot let a later response overtake an earlier session delta", async () => {
 		const harness = new FakeBunHarness();
 		harness.install();
@@ -452,7 +529,7 @@ describe("remote appserver policy transport", () => {
 			await appserver.start();
 			const remote = harness.remote();
 			const socket = await openRemote(remote);
-			await remote.config.websocket?.message?.(socket, hello());
+			await remote.config.websocket?.message?.(socket, hello(["resume", "session.delta"], ["sessions.read", "sessions.prompt"]));
 			await flush();
 			socket.sends.length = 0;
 			holdActive = true;

@@ -1,0 +1,16 @@
+.git
+.gitignore
+.cluster-ci
+.cluster-ci/registry-auth
+**/.cluster-ci/registry-auth
+artifacts
+**/artifacts
+node_modules
+**/node_modules
+.env
+.env.*
+*.log
+coverage
+**/coverage
+test-results
+playwright-report

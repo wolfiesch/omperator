@@ -3,6 +3,7 @@ export * from "./agents.js";
 export * from "./audit.js";
 export * from "./broker.js";
 export * from "./capabilities.js";
+export * from "./cluster.js";
 export * from "./command.js";
 export * from "./cursor.js";
 export * from "./entry.js";

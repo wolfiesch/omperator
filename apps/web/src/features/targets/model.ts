@@ -9,7 +9,7 @@ import type { ConnectionState, DesktopTarget, TargetAddRequest } from "@t4-code/
 // ─── Capability groups ──────────────────────────────────────────────────────
 
 /** Plain-language capability groups offered when adding a target. */
-export type TargetCapabilityGroupId = "observe" | "control" | "shell" | "files" | "settings";
+export type TargetCapabilityGroupId = "observe" | "control" | "shell" | "files" | "settings" | "cluster";
 
 export interface TargetCapabilityGroup {
   readonly id: TargetCapabilityGroupId;
@@ -54,7 +54,24 @@ export const TARGET_CAPABILITY_GROUPS: readonly TargetCapabilityGroup[] = [
     impact: "Edit that host's settings from this app.",
     capabilities: ["config.write"],
   },
+  {
+    id: "cluster",
+    label: "Cluster sessions",
+    impact: "Trigger CI and view or control isolated session GUIs on that host.",
+    capabilities: ["ci.trigger", "preview.read", "preview.control", "preview.input"],
+  },
 ];
+
+const DEFAULT_TARGET_CAPABILITY_GROUPS = TARGET_CAPABILITY_GROUPS.filter(
+  (group) => group.id !== "cluster",
+);
+
+/** Groups offered by the add-host form; cluster access is an explicit app opt-in. */
+export function selectTargetCapabilityGroups(
+  clusterOperatorEnabled?: boolean,
+): readonly TargetCapabilityGroup[] {
+  return clusterOperatorEnabled === true ? TARGET_CAPABILITY_GROUPS : DEFAULT_TARGET_CAPABILITY_GROUPS;
+}
 
 /** Wire capabilities for a set of chosen groups, in catalog order. */
 export function capabilitiesForGroups(groups: ReadonlySet<TargetCapabilityGroupId>): readonly string[] {

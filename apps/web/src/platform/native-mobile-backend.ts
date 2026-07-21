@@ -12,6 +12,7 @@ export interface StoredMobileBackend {
   readonly profileId: string;
   readonly wsUrl: string;
   readonly label: string;
+  readonly clusterOperatorEnabled?: true;
 }
 
 export interface StoredMobileBackendDirectory {
@@ -54,12 +55,19 @@ function websocketUrlFor(origin: string, profileId: string): string {
   return websocket.toString();
 }
 
-export function parseTailnetBackend(value: string, profileId?: string): StoredMobileBackend {
+export function parseTailnetBackend(
+  value: string,
+  profileId?: string,
+  clusterOperatorEnabled = false,
+): StoredMobileBackend {
   const trimmed = value.trim();
   if (trimmed.length === 0)
     throw new Error("Enter the HTTPS address shown by T4 Code on your computer.");
   if (trimmed.length > MAX_URL_LENGTH) throw new Error("That address is too long.");
   const selectedProfile = normalizeMobileProfileId(profileId);
+  if (clusterOperatorEnabled && selectedProfile !== DEFAULT_MOBILE_PROFILE_ID) {
+    throw new Error("The cluster operator uses the default secure WSS route.");
+  }
   const candidate = trimmed.includes("://") ? trimmed : `https://${trimmed}`;
   let parsed: URL;
   try {
@@ -77,6 +85,9 @@ export function parseTailnetBackend(value: string, profileId?: string): StoredMo
   if (hostname === "ts.net" || !hostname.endsWith(".ts.net")) {
     throw new Error("Use the full Tailscale hostname ending in .ts.net.");
   }
+  if (clusterOperatorEnabled && parsed.port !== "") {
+    throw new Error("The cluster operator requires the standard secure WSS route, not a NodePort.");
+  }
   const origin = parsed.origin;
   return {
     version: 3,
@@ -85,5 +96,6 @@ export function parseTailnetBackend(value: string, profileId?: string): StoredMo
     profileId: selectedProfile,
     wsUrl: websocketUrlFor(origin, selectedProfile),
     label: requiredLabel(`T4 on ${hostname.slice(0, hostname.indexOf("."))}`),
+    ...(clusterOperatorEnabled ? { clusterOperatorEnabled: true as const } : {}),
   };
 }

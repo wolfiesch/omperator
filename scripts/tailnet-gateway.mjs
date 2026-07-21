@@ -159,6 +159,28 @@ export function websocketUrlForOrigin(origin) {
   url.protocol = "wss:";
   return url.toString();
 }
+export function normalizeClusterWebSocketUrl(value) {
+  const text = requiredText(value, "T4_CLUSTER_WS_URL");
+  let url;
+  try {
+    url = new URL(text);
+  } catch {
+    throw new Error("T4_CLUSTER_WS_URL must be one secure WSS cluster target");
+  }
+  if (
+    url.protocol !== "wss:" ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.port !== "" ||
+    url.pathname !== "/v1/ws" ||
+    url.search !== "" ||
+    url.hash !== "" ||
+    !url.hostname.endsWith(".ts.net")
+  ) {
+    throw new Error("T4_CLUSTER_WS_URL must be one credential-free secure WSS cluster target");
+  }
+  return url.toString();
+}
 
 function safeJson(value) {
   return JSON.stringify(value)
@@ -172,9 +194,13 @@ export function injectBackendConfig(indexHtml, options) {
   const marker = "</head>";
   const offset = indexHtml.indexOf(marker);
   if (offset === -1) throw new Error("web index is missing </head>");
+  const clusterOperatorEnabled = options.clusterOperatorEnabled === true;
   const payload = safeJson({
-    wsUrl: websocketUrlForOrigin(options.allowedOrigin),
+    wsUrl: clusterOperatorEnabled
+      ? normalizeClusterWebSocketUrl(options.clusterWsUrl)
+      : websocketUrlForOrigin(options.allowedOrigin),
     label: requiredText(options.label, "gateway label", 128),
+    ...(clusterOperatorEnabled ? { clusterOperatorEnabled: true } : {}),
   });
   const script = `    <script id="t4-backend" type="application/json">${payload}</script>\n`;
   return `${indexHtml.slice(0, offset)}${script}${indexHtml.slice(offset)}`;
@@ -202,8 +228,8 @@ export function safeStaticPath(webRoot, pathname) {
   return candidate === root || candidate.startsWith(`${root}${sep}`) ? candidate : undefined;
 }
 
-function gatewayCsp(allowedOrigin) {
-  const websocketOrigin = new URL(websocketUrlForOrigin(allowedOrigin)).origin;
+function gatewayCsp(allowedOrigin, clusterWsUrl) {
+  const websocketOrigin = new URL(clusterWsUrl ?? websocketUrlForOrigin(allowedOrigin)).origin;
   return [
     "default-src 'self'",
     "script-src 'self'",
@@ -219,8 +245,8 @@ function gatewayCsp(allowedOrigin) {
   ].join("; ");
 }
 
-function applySecurityHeaders(response, allowedOrigin) {
-  response.setHeader("Content-Security-Policy", gatewayCsp(allowedOrigin));
+function applySecurityHeaders(response, allowedOrigin, clusterWsUrl) {
+  response.setHeader("Content-Security-Policy", gatewayCsp(allowedOrigin, clusterWsUrl));
   response.setHeader("Permissions-Policy", "camera=(), geolocation=(), microphone=(), payment=(), usb=()");
   response.setHeader("Referrer-Policy", "no-referrer");
   response.setHeader("X-Content-Type-Options", "nosniff");
@@ -491,6 +517,11 @@ export async function startTailnetGateway(input) {
     nativeAllowedOrigins: normalizeNativeAllowedOrigins(input.nativeAllowedOrigins),
     label: input.label ?? "OMP on this Tailnet host",
     deploymentIdentity: normalizeDeploymentIdentity(input.deploymentIdentity),
+    clusterOperatorEnabled: input.clusterOperatorEnabled === true,
+    clusterWsUrl:
+      input.clusterOperatorEnabled === true
+        ? normalizeClusterWebSocketUrl(input.clusterWsUrl)
+        : undefined,
     heartbeatIntervalMs: input.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS,
     profiles: normalizeProfileRoutes(input.profileRoutes ?? input.profiles ?? []),
     startProfiles: input.startProfiles === true || input.enableProfileStarts === true,
@@ -527,7 +558,7 @@ export async function startTailnetGateway(input) {
   });
   const server = createServer((request, response) => {
     void (async () => {
-      applySecurityHeaders(response, options.allowedOrigin);
+      applySecurityHeaders(response, options.allowedOrigin, options.clusterWsUrl);
       const pathname = requestPath(request.url);
       if (pathname === "/healthz") {
         const [web, resolvedAppSocket] = await Promise.all([
@@ -657,6 +688,17 @@ export function optionsFromEnvironment(environment = process.env) {
       throw new Error("T4_PROFILE_ROUTES must be valid JSON");
     }
   }
+  const clusterOperatorEnabled = environment.T4_CLUSTER_OPERATOR_ENABLED === "true";
+  if (
+    environment.T4_CLUSTER_OPERATOR_ENABLED !== undefined &&
+    environment.T4_CLUSTER_OPERATOR_ENABLED !== "false" &&
+    !clusterOperatorEnabled
+  ) {
+    throw new Error("T4_CLUSTER_OPERATOR_ENABLED must be true or false");
+  }
+  const clusterWsUrl = clusterOperatorEnabled
+    ? normalizeClusterWebSocketUrl(environment.T4_CLUSTER_WS_URL)
+    : undefined;
   return {
     webRoot: environment.T4_WEB_ROOT ?? resolve(scriptDirectory, "..", "apps", "web", "dist"),
     appSocket: environment.T4_APP_SERVER_SOCKET ?? defaultSocketPath(environment),
@@ -669,6 +711,8 @@ export function optionsFromEnvironment(environment = process.env) {
         : environment.T4_NATIVE_ALLOWED_ORIGINS.split(","),
     label: environment.T4_HOST_LABEL ?? "OMP on this Tailnet host",
     deploymentIdentity: environment.T4_DEPLOYMENT_IDENTITY,
+    clusterOperatorEnabled,
+    clusterWsUrl,
     profileRoutes,
     startProfiles: environment.T4_ENABLE_PROFILE_STARTS === "1",
   };

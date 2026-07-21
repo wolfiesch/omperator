@@ -1,0 +1,211 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://t4.dev/schemas/cluster-proof-v1.json",
+  "title": "T4 cluster operator proof artifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "source", "images", "scenarios", "observations", "artifacts"],
+  "properties": {
+    "schemaVersion": { "const": "t4-cluster-proof/1" },
+    "source": { "$ref": "#/$defs/source" },
+    "images": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": { "$ref": "#/$defs/image" }
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 9,
+      "maxItems": 9,
+      "items": { "$ref": "#/$defs/scenario" }
+    },
+    "observations": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "items": { "$ref": "#/$defs/observation" }
+    },
+    "artifacts": { "$ref": "#/$defs/artifacts" }
+  },
+  "$defs": {
+    "safeString": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "timestamp": { "type": "string", "format": "date-time", "maxLength": 40 },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "httpsUrl": { "type": "string", "format": "uri", "pattern": "^https://", "maxLength": 2048 },
+    "artifactPath": {
+      "type": "string",
+      "pattern": "^artifacts/cluster-proof/(?!.*(?:/\\.\\.?/|/\\.\\.?$))[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$",
+      "maxLength": 288
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "commit", "woodpecker"],
+      "properties": {
+        "repository": { "const": "usr-bin-roygbiv/t4-code" },
+        "commit": { "$ref": "#/$defs/commit" },
+        "woodpecker": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["repository", "repositoryId", "pipelineId", "pipelineNumber", "url"],
+          "properties": {
+            "repository": { "const": "z-peterson/t4-code" },
+            "repositoryId": { "type": "integer", "minimum": 1 },
+            "pipelineId": { "type": "integer", "minimum": 1 },
+            "pipelineNumber": { "type": "integer", "minimum": 1 },
+            "url": { "$ref": "#/$defs/httpsUrl" }
+          }
+        }
+      }
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["component", "repository", "tag", "digest", "reference", "sbom", "provenance", "vulnerability"],
+      "properties": {
+        "component": { "enum": ["controller", "cluster-server", "session-runtime"] },
+        "repository": {
+          "type": "string",
+          "pattern": "^[a-z0-9.-]+(?::[0-9]+)?/[a-z0-9._/-]+$",
+          "maxLength": 255
+        },
+        "tag": { "$ref": "#/$defs/commit" },
+        "digest": { "$ref": "#/$defs/digest" },
+        "reference": {
+          "type": "string",
+          "pattern": "^[a-z0-9.-]+(?::[0-9]+)?/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$",
+          "maxLength": 340
+        },
+        "sbom": { "$ref": "#/$defs/fileEvidence" },
+        "provenance": { "$ref": "#/$defs/provenanceEvidence" },
+        "vulnerability": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256", "scanner", "critical", "high"],
+          "properties": {
+            "path": { "$ref": "#/$defs/artifactPath" },
+            "sha256": { "$ref": "#/$defs/sha256" },
+            "scanner": { "const": "trivy" },
+            "critical": { "type": "integer", "const": 0 },
+            "high": { "type": "integer", "const": 0 }
+          }
+        }
+      }
+    },
+    "fileEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/artifactPath" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "provenanceEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "mode", "signatureVerified"],
+      "properties": {
+        "path": { "$ref": "#/$defs/artifactPath" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "mode": { "enum": ["buildkit-content", "cosign-keyless"] },
+        "signatureVerified": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "mode": { "const": "cosign-keyless" } } },
+          "then": { "properties": { "signatureVerified": { "const": true } } },
+          "else": { "properties": { "signatureVerified": { "const": false } } }
+        }
+      ]
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "status", "evidenceType", "observedAt", "assertions", "evidence"],
+      "properties": {
+        "id": {
+          "enum": [
+            "ha-manifest",
+            "leader-election",
+            "crd-reconcile-storage",
+            "feature-off",
+            "wire-reconnect-idempotency",
+            "gui-auth-isolation",
+            "ci-mapping",
+            "desktop-viewport",
+            "mobile-viewport"
+          ]
+        },
+        "status": { "const": "passed" },
+        "evidenceType": { "enum": ["contract", "live"] },
+        "observedAt": { "$ref": "#/$defs/timestamp" },
+        "assertions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" }
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/fileEvidence" }
+        }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["system", "observedAt", "url", "ids", "evidence"],
+      "properties": {
+        "system": { "enum": ["woodpecker", "kubernetes", "prometheus", "loki", "grafana"] },
+        "observedAt": { "$ref": "#/$defs/timestamp" },
+        "url": { "oneOf": [{ "$ref": "#/$defs/httpsUrl" }, { "type": "null" }] },
+        "ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/safeString" }
+        },
+        "evidence": { "$ref": "#/$defs/fileEvidence" }
+      }
+    },
+    "visualEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "redacted", "evidenceType"],
+      "properties": {
+        "path": { "$ref": "#/$defs/artifactPath" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "redacted": { "const": true },
+        "evidenceType": { "enum": ["contract", "live"] },
+        "viewport": { "enum": ["desktop", "mobile"] }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frames", "screenshots"],
+      "properties": {
+        "frames": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/visualEvidence" }
+        },
+        "screenshots": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/visualEvidence" }
+        }
+      }
+    }
+  }
+}

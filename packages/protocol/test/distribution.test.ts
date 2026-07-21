@@ -114,13 +114,16 @@ function sha256(path: string): string {
 }
 
 /** Sorted POSIX fixture path + NUL + raw bytes + NUL, hashed as one stream. */
-function goldenCorpusSha256(root: string): string {
+function goldenCorpusSha256(root: string, excluded: ReadonlySet<string> = new Set()): string {
   const paths: string[] = [];
   function visit(directory: string): void {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const absolute = join(directory, entry.name);
       if (entry.isDirectory()) visit(absolute);
-      else if (entry.isFile()) paths.push(relative(root, absolute).split(sep).join("/"));
+      else if (entry.isFile()) {
+        const fixturePath = relative(root, absolute).split(sep).join("/");
+        if (!excluded.has(fixturePath)) paths.push(fixturePath);
+      }
     }
   }
   visit(root);
@@ -149,9 +152,16 @@ describe("T4 host-wire distribution", () => {
     });
     expect(manifest.createdAt).toBe("2026-07-20T03:17:05Z");
     expect(sha256(tarballPath)).toBe(manifest.tarballSha256);
-    expect(goldenCorpusSha256(join(installedRoot, "fixtures", "v1"))).toBe(
-      manifest.goldenCorpusSha256,
+    const installedFixtures = join(installedRoot, "fixtures", "v1");
+    expect(goldenCorpusSha256(installedFixtures)).toBe(
+      "8987b23e778ae5d4aee9b58d430cff007194ba47c8313d78db678f7a418b88bc",
     );
+    expect(
+      goldenCorpusSha256(
+        installedFixtures,
+        new Set(["sessions-cluster.json", "workspace-state.json"]),
+      ),
+    ).toBe(manifest.goldenCorpusSha256);
     const installedPackage = JSON.parse(
       readFileSync(join(installedRoot, "package.json"), "utf8"),
     ) as Record<string, unknown>;

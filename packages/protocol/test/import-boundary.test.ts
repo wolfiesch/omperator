@@ -5,7 +5,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 const repoRoot = resolve(import.meta.dirname, "../../..");
 const protocolRoot = join(repoRoot, "packages", "protocol");
-const hostRoots = [join(repoRoot, "packages", "host-wire"), join(repoRoot, "packages", "host-service")];
+const hostRoots = [
+  join(repoRoot, "packages", "host-wire"),
+  join(repoRoot, "packages", "host-service"),
+  join(repoRoot, "packages", "cluster-server"),
+];
 const scannedRoots = [join(repoRoot, "apps"), join(repoRoot, "packages")];
 
 function sourceFiles(directory: string): string[] {

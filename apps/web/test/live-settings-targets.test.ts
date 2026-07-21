@@ -32,6 +32,7 @@ import {
   capabilityDiff,
   EMPTY_TARGET_DRAFT,
   pairCommandForTarget,
+  selectTargetCapabilityGroups,
   validateTargetDraft,
 } from "../src/features/targets/model.ts";
 import {
@@ -652,6 +653,59 @@ describe("target add validation", () => {
     expect(diff.granted).toEqual(["sessions.read"]);
     expect(diff.missing).toEqual(["term.open"]);
     expect(diff.extra).toEqual(["files.read"]);
+  });
+});
+
+describe("target capability groups", () => {
+  it("hides cluster sessions unless the app explicitly opts in", () => {
+    for (const enabled of [undefined, false]) {
+      expect(selectTargetCapabilityGroups(enabled).map((group) => group.id)).toEqual([
+        "observe",
+        "control",
+        "shell",
+        "files",
+        "settings",
+      ]);
+    }
+  });
+
+  it("exposes the exact cluster-session capabilities for an explicit opt-in", () => {
+    const groups = selectTargetCapabilityGroups(true);
+    expect(groups.map((group) => group.id)).toEqual([
+      "observe",
+      "control",
+      "shell",
+      "files",
+      "settings",
+      "cluster",
+    ]);
+    const cluster = groups.find((group) => group.id === "cluster");
+    expect(cluster?.label).toBe("Cluster sessions");
+    expect(cluster?.capabilities).toEqual([
+      "ci.trigger",
+      "preview.read",
+      "preview.control",
+      "preview.input",
+    ]);
+  });
+
+  it("orders observe, control, and cluster capabilities without extras", () => {
+    const capabilities = capabilitiesForGroups(new Set(["cluster", "control", "observe"]));
+    expect(capabilities).toEqual([
+      "sessions.read",
+      "catalog.read",
+      "config.read",
+      "audit.read",
+      "sessions.prompt",
+      "sessions.control",
+      "sessions.manage",
+      "agents.control",
+      "ci.trigger",
+      "preview.read",
+      "preview.control",
+      "preview.input",
+    ]);
+    expect(pairCommandForTarget(capabilities).capabilities).toEqual(capabilities);
   });
 });
 

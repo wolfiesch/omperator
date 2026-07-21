@@ -95,7 +95,7 @@ import {
 } from "./ownership.ts";
 import { OfficialOmpCapabilityAdapter, OfficialOmpOperationError } from "./official-omp-capabilities.ts";
 import { SessionProjection } from "./projection.ts";
-import { BunRemoteListener, createListenerPlan, createServeProxyPlan } from "./remote/listener.ts";
+import { BunRemoteListener, createInternalListenerPlan, createListenerPlan, createServeProxyPlan } from "./remote/listener.ts";
 import type { RemoteConnection, RemoteListenerConfig } from "./remote/types.ts";
 import { BunRpcChildFactory, RpcChildSupervisor } from "./rpc-child.ts";
 import type {
@@ -690,6 +690,7 @@ export function appserverSupportedFeatures(
 	const unsupportedAdditiveFeatures = new Set(["host.watch", "session.watch"]);
 	const implementedFeatures = new Set<string>([
 		"resume",
+		"session.delta",
 		"prompt.images",
 		"agent.transcript",
 		"session.observer",
@@ -1079,9 +1080,11 @@ export class LocalAppserver implements AppserverHandle {
 				const listener =
 					this.#remoteListener ??
 					new BunRemoteListener(
-						this.#remoteEndpoint.serveProxy === true
-							? createServeProxyPlan(this.#remoteEndpoint)
-							: createListenerPlan(this.#remoteEndpoint),
+						this.#remoteEndpoint.internalPeerNodeId
+							? createInternalListenerPlan(this.#remoteEndpoint)
+							: this.#remoteEndpoint.serveProxy === true
+								? createServeProxyPlan(this.#remoteEndpoint)
+								: createListenerPlan(this.#remoteEndpoint),
 						{
 							connected: connection => this.#remoteConnected(connection),
 							message: (connection, message) => this.#remoteMessage(connection, message),
@@ -3545,7 +3548,10 @@ export class LocalAppserver implements AppserverHandle {
 				return;
 			}
 			if (typeof raw !== "string") throw new Error("binary websocket frames are not supported");
-			const frame = decodeClientFrame(parseBounded(raw));
+			const input = parseBounded(raw);
+			const frame = ws.remote && this.#remotePolicy?.decodeClientFrame
+				? this.#remotePolicy.decodeClientFrame(input)
+				: decodeClientFrame(input);
 			if (frame.type === "command" && frame.command === "session.attach") attachingSessionId = frame.sessionId;
 			if (frame.type === "hello") {
 				if (this.#hello.has(ws)) throw new Error("hello already received");
@@ -4474,7 +4480,12 @@ export class LocalAppserver implements AppserverHandle {
 	private async broadcastIndex(frame: ServerFrame): Promise<void> {
 		const sends: Array<Promise<boolean>> = [];
 		for (const client of this.#clients) {
-			if (!this.#hello.has(client) || !this.#clientCapabilities.get(client)?.has("sessions.read")) continue;
+			if (
+				!this.#hello.has(client) ||
+				!this.#clientCapabilities.get(client)?.has("sessions.read") ||
+				!this.#clientFeatures.get(client)?.has("session.delta")
+			)
+				continue;
 			sends.push(this.#sendFrame(client, frame));
 		}
 		await Promise.all(sends);

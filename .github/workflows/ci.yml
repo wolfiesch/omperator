@@ -19,6 +19,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       continuity: ${{ steps.classify.outputs.continuity }}
+      cluster: ${{ steps.classify.outputs.cluster }}
       tooling: ${{ steps.classify.outputs.tooling }}
       android_debug: ${{ steps.classify.outputs.android_debug }}
       flutter: ${{ steps.classify.outputs.flutter }}
@@ -172,6 +173,70 @@ jobs:
           path: artifacts/legacy-bridge-continuity/
           if-no-files-found: error
           retention-days: 14
+
+  cluster:
+    needs: changes
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.cluster == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.10.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.13.1
+          cache: pnpm
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+
+      - name: Install Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.25.5"
+          cache-dependency-path: packages/cluster-operator/go.sum
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install pinned Helm
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSLo /tmp/helm.tar.gz https://get.helm.sh/helm-v3.19.0-linux-amd64.tar.gz
+          echo "a7f81ce08007091b86d8bd696eb4d86b8d0f2e1b9f6c714be62f82f96a594496  /tmp/helm.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/helm.tar.gz -C /tmp
+          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
+
+      - name: Run cluster CI proof contracts
+        run: pnpm test:cluster:ci
+
+      - name: Run cluster server tests
+        run: pnpm --filter @t4-code/cluster-server test
+
+      - name: Typecheck cluster server
+        run: pnpm --filter @t4-code/cluster-server typecheck
+
+      - name: Run cluster protocol contracts
+        run: |
+          pnpm --filter @t4-code/host-wire exec bun test test/cluster-operator.test.ts
+          pnpm --filter @t4-code/host-service exec bun test test/cluster-default-off.test.ts
+
+      - name: Run operator tests
+        working-directory: packages/cluster-operator
+        run: go test ./...
+
+      - name: Lint cluster chart
+        run: helm lint deploy/charts/t4-cluster
 
   tooling:
     needs: changes
@@ -395,7 +460,7 @@ jobs:
   verify:
     name: verify
     if: ${{ always() }}
-    needs: [changes, core, legacy-bridge-continuity, tooling, android-debug, flutter, flutter-android, flutter-apple]
+    needs: [changes, core, legacy-bridge-continuity, cluster, tooling, android-debug, flutter, flutter-android, flutter-apple]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -405,6 +470,7 @@ jobs:
           CHANGES_RESULT: ${{ needs.changes.result }}
           CORE_RESULT: ${{ needs.core.result }}
           CONTINUITY_RESULT: ${{ needs.legacy-bridge-continuity.result }}
+          CLUSTER_RESULT: ${{ needs.cluster.result }}
           TOOLING_RESULT: ${{ needs.tooling.result }}
           ANDROID_RESULT: ${{ needs.android-debug.result }}
           FLUTTER_RESULT: ${{ needs.flutter.result }}
@@ -416,6 +482,7 @@ jobs:
           test "$CORE_RESULT" = success
           for result in \
             "$CONTINUITY_RESULT" \
+            "$CLUSTER_RESULT" \
             "$TOOLING_RESULT" \
             "$ANDROID_RESULT" \
             "$FLUTTER_RESULT" \

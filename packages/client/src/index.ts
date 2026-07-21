@@ -1,10 +1,13 @@
 export { OmpClient, createOmpClient } from "./omp-client-runtime.ts";
 export {
+  DEFAULT_CLUSTER_OPERATOR_ENABLED,
   OMP_RUNTIME_INTEGRATION,
   OMP_RUNTIME_KIND,
   T4_RUNTIME_FEATURES,
   availableRuntimeFeature,
   runtimeIdentityKey,
+  clusterOperatorRequestedCapabilities,
+  clusterOperatorRequestedFeatures,
   unavailableRuntimeFeature,
 } from "./runtime-integration.ts";
 export type {
@@ -96,6 +99,7 @@ export {
   applyPublicFrame,
   ProjectionStore,
   createProjectionStore,
+  MAX_INDEXED_WORKSPACES,
   MAX_RETAINED_TERMINALS,
   MAX_RETAINED_TERMINAL_BYTES,
   MAX_RETAINED_TERMINAL_BYTES_PER_TERMINAL,
@@ -139,6 +143,7 @@ export type {
   ProjectionOptions,
   ProjectionSubscription,
 } from "./projection.ts";
+export type { WorkspaceInfrastructureProjection } from "@t4-code/protocol";
 export {
   MAX_RETAINED_TRANSCRIPT_ENTRIES,
   MAX_RETAINED_TRANSCRIPT_BYTES,

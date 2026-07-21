@@ -409,7 +409,7 @@ export function PreviewWorkspace({
               <input className="mt-1 min-h-11 w-full rounded-md border border-input bg-background px-3 text-sm sm:min-h-8" id="preview-text" onChange={(event) => setText(event.target.value)} value={text} />
               <div className="mt-2 flex gap-2">
                 {support("fill").supported && <Button className="min-h-11 sm:min-h-8" disabled={!selectorPresent} onClick={() => runAction("fill", "Fill selector", () => mutate("fill", { selector, text }))} size="sm">Fill</Button>}
-                {support("type").supported && <Button className="min-h-11 sm:min-h-8" onClick={() => runAction("type", "Type selector", () => mutate("type", { selector, text }))} size="sm">Type</Button>}
+                {support("type").supported && <Button className="min-h-11 sm:min-h-8" onClick={() => runAction("type", "Type selector", () => mutate("type", { ...(selectorPresent ? { selector } : {}), text }))} size="sm">Type</Button>}
               </div>
             </>}
             {support("select").supported && <>

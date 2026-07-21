@@ -1,4 +1,4 @@
-import type { Cursor, DurableEntry, SessionRef } from "@t4-code/protocol";
+import { decodeWorkspaceInfrastructureProjection, type Cursor, type DurableEntry, type SessionRef, type WorkspaceInfrastructureProjection } from "@t4-code/protocol";
 import { MAX_PROJECTION_CACHE_BYTES } from "@t4-code/protocol/desktop-ipc";
 import { MAX_INDEXED_SESSION_REFS } from "./projection.ts";
 import type {
@@ -44,6 +44,9 @@ interface ProjectionCacheData {
   readonly sessionIndex: Array<[string, SessionRef]>;
   readonly sessionIndexMetadata?: Array<[string, SessionIndexMetadata]>;
   readonly sessionDeltaCursors?: Array<[string, Cursor]>;
+  readonly sessionInventoryCursors?: Array<[string, Cursor]>;
+  readonly workspaces?: Array<[string, WorkspaceInfrastructureProjection]>;
+  readonly workspaceCursors?: Array<[string, Cursor]>;
   readonly activeSessionKey?: string;
   readonly lru: string[];
   readonly cursor?: Cursor;
@@ -269,6 +272,15 @@ export function encodeProjectionCache(snapshot: ProjectionSnapshot, savedAt = Da
       .slice(0, MAX_INDEXED_SESSION_REFS)
       .map(([key, value]) => [key, safeJson(value) as SessionIndexMetadata]),
     sessionDeltaCursors: [...snapshot.sessionDeltaCursors.entries()]
+      .slice(0, MAX_INDEXED_SESSION_REFS)
+      .map(([key, value]) => [key, safeJson(value) as Cursor]),
+    sessionInventoryCursors: [...snapshot.sessionInventoryCursors.entries()]
+      .slice(0, MAX_INDEXED_SESSION_REFS)
+      .map(([key, value]) => [key, safeJson(value) as Cursor]),
+    workspaces: [...snapshot.workspaces.entries()]
+      .slice(0, MAX_INDEXED_SESSION_REFS)
+      .map(([key, value]) => [key, safeJson(value) as WorkspaceInfrastructureProjection]),
+    workspaceCursors: [...snapshot.workspaceCursors.entries()]
       .slice(0, MAX_INDEXED_SESSION_REFS)
       .map(([key, value]) => [key, safeJson(value) as Cursor]),
     ...(snapshot.activeSessionKey === undefined
@@ -801,6 +813,51 @@ export function decodeProjectionCache(
       sessionDeltaCursors.set(item[0], Object.freeze({ epoch: item[1].epoch, seq: item[1].seq }));
     }
   }
+  const sessionInventoryCursors = new Map<string, Cursor>();
+  if (Array.isArray(data.sessionInventoryCursors)) {
+    for (const item of data.sessionInventoryCursors.slice(0, MAX_INDEXED_SESSION_REFS)) {
+      if (
+        !Array.isArray(item) ||
+        typeof item[0] !== "string" ||
+        !isRecord(item[1]) ||
+        typeof item[1].epoch !== "string" ||
+        typeof item[1].seq !== "number" ||
+        !Number.isSafeInteger(item[1].seq) ||
+        item[1].seq < 0
+      )
+        continue;
+      sessionInventoryCursors.set(
+        item[0],
+        Object.freeze({ epoch: item[1].epoch, seq: item[1].seq }),
+      );
+    }
+  }
+  const workspaces = new Map<string, WorkspaceInfrastructureProjection>();
+  if (Array.isArray(data.workspaces)) {
+    for (const item of data.workspaces.slice(0, MAX_INDEXED_SESSION_REFS)) {
+      if (!Array.isArray(item) || typeof item[0] !== "string") continue;
+      try {
+        workspaces.set(item[0], decodeWorkspaceInfrastructureProjection(item[1]));
+      } catch {
+        // One malformed cached projection cannot revive operator state.
+      }
+    }
+  }
+  const workspaceCursors = new Map<string, Cursor>();
+  if (Array.isArray(data.workspaceCursors)) {
+    for (const item of data.workspaceCursors.slice(0, MAX_INDEXED_SESSION_REFS)) {
+      if (
+        !Array.isArray(item) ||
+        typeof item[0] !== "string" ||
+        !isRecord(item[1]) ||
+        typeof item[1].epoch !== "string" ||
+        typeof item[1].seq !== "number" ||
+        !Number.isSafeInteger(item[1].seq) ||
+        item[1].seq < 0
+      ) continue;
+      workspaceCursors.set(item[0], Object.freeze({ epoch: item[1].epoch, seq: item[1].seq }));
+    }
+  }
   const lru = Array.isArray(data.lru)
     ? data.lru
         .filter((item): item is string => typeof item === "string" && sessions.has(item))
@@ -819,6 +876,9 @@ export function decodeProjectionCache(
     sessionIndexMetadata: new ImmutableMap(sessionIndexMetadata),
     sessionRefArrivalOrdinals: new ImmutableMap<string, number>(),
     sessionDeltaCursors: new ImmutableMap(sessionDeltaCursors),
+    sessionInventoryCursors: new ImmutableMap(sessionInventoryCursors),
+    workspaces: new ImmutableMap(workspaces),
+    workspaceCursors: new ImmutableMap(workspaceCursors),
     lru: Object.freeze(lru),
     ...(activeSessionKey === undefined ? {} : { activeSessionKey }),
     ...(isRecord(data.cursor) &&

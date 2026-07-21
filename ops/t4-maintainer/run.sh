@@ -1019,7 +1019,7 @@ release_assets_are_public() {
       return 1
     }
     if [[ $name != SHA256SUMS.txt ]]; then
-      expected_digest=$(awk -v name="$name" '$2 == name && $1 ~ /^[0-9a-f]{64}$/ {print $1}' "$manifest_file")
+      expected_digest=$(awk -v name="$name" '$2 == name && length($1) == 64 && $1 ~ /^[0-9a-f]+$/ {print $1}' "$manifest_file")
       [[ $expected_digest != *$'\n'* && $expected_digest =~ ^[0-9a-f]{64}$ ]] || {
         rm -f -- "$manifest_file"
         return 1
@@ -1037,7 +1037,7 @@ release_assets_are_public() {
       }
     fi
   done
-  manifest_entries=$(awk '$1 ~ /^[0-9a-f]{64}$/ && NF == 2 {count += 1} END {print count + 0}' "$manifest_file")
+  manifest_entries=$(awk 'length($1) == 64 && $1 ~ /^[0-9a-f]+$/ && NF == 2 {count += 1} END {print count + 0}' "$manifest_file")
   rm -f -- "$manifest_file"
   [[ $manifest_entries == 6 ]]
 }

@@ -1,0 +1,141 @@
+enabled: false
+
+clusterHost:
+  name: t4-cluster
+  runtimeProfiles:
+    - default
+  allowedOrigins: []
+
+kubernetes:
+  # Audience accepted by this cluster's API server for projected API credentials.
+  apiAudience: https://kubernetes.default.svc
+
+images:
+  controller:
+    repository: ghcr.io/lycaonllc/t4-cluster-operator
+    digest: ""
+    pullPolicy: IfNotPresent
+  server:
+    repository: ghcr.io/lycaonllc/t4-cluster-server
+    digest: ""
+    pullPolicy: IfNotPresent
+  sessionRuntime:
+    repository: ghcr.io/lycaonllc/t4-session-runtime
+    digest: ""
+    pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+controller:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+server:
+  replicas: 3
+  terminationGracePeriodSeconds: 60
+  # At least one trusted Tailscale proxy address or canonical CIDR is required for client access.
+  trustedProxyAddresses: []
+  trustedProxyCIDRs: []
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+session:
+  nodeExclude:
+    - k3s-worker-02
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "4"
+      memory: 8Gi
+  sharedMemorySize: 1Gi
+  temporarySize: 2Gi
+
+  omp:
+    # Administrator-owned runtime configuration references. The chart creates neither object.
+    configMap: ""
+    modelsKey: ""
+    settingsKey: ""
+    credentialSecret: ""
+    credentialKey: ""
+    # Explicit opt-in for a private, policy-isolated models.yml provider using auth: none.
+    allowUnauthenticated: false
+
+storage:
+  # Required when enabled. The administrator creates this backend-neutral RWX StorageClass.
+  adminRWXStorageClass: ""
+
+woodpecker:
+  existingSecret: ""
+  tokenKey: token
+  # Alternative to existingSecret: a short-lived token accepted by an administrator-owned CI adapter.
+  serviceAccountAudience: ""
+  tokenExpirationSeconds: 600
+  configMap: ""
+  baseURLKey: baseURL
+  webBaseURLKey: webBaseURL
+  repositoriesKey: repositories
+
+ingress:
+  enabled: false
+  className: ""
+  host: ""
+  annotations: {}
+  tls:
+    enabled: true
+    # Leave empty for the Tailscale ingress class; its operator provisions TLS.
+    secretName: ""
+
+networkPolicy:
+  enabled: true
+  # Empty destination lists fail closed. Supply narrow destinations for enabled components.
+  kubernetesApiCIDRs: []
+  modelRouteCIDRs: []
+  modelRoutePorts: []
+  modelRoute:
+    # Optional in-cluster model endpoint identity. Set both selectors or neither.
+    namespaceSelector: {}
+    podSelector: {}
+  ciProviderCIDRs: []
+  # This port is inert until a CI destination CIDR or complete selector pair is supplied.
+  ciProviderPorts:
+    - 443
+  ciProvider:
+    # Optional in-cluster CI endpoint identity. Set both selectors or neither.
+    namespaceSelector: {}
+    podSelector: {}
+  dns:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    podSelector:
+      matchLabels:
+        k8s-app: kube-dns
+  gatewayIngress:
+    # Empty selectors fail closed. Set both to the ingress controller identity.
+    namespaceSelector: {}
+    podSelector: {}
+  observability:
+    namespaceSelector: {}
+    podSelector: {}
+
+observability:
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+  prometheusRule:
+    enabled: false
+    labels: {}

@@ -8,9 +8,11 @@ import {
   readSessionAttention,
   type SessionProjection,
 } from "@t4-code/client";
+import { CLUSTER_OPERATOR_FEATURE } from "@t4-code/protocol";
 import type { SessionStatus } from "@t4-code/ui";
 
 import type {
+  WorkspaceClusterWorkspace,
   WorkspaceData,
   WorkspaceHost,
   SessionLifecycle,
@@ -186,6 +188,21 @@ function hostConnection(
     ? { targetId: null, state: null }
     : { targetId, state: snapshot.connections.get(targetId) ?? null };
 }
+function clusterHostTarget(
+  snapshot: DesktopRuntimeSnapshot,
+  hostId: string,
+): string | null {
+  if (snapshot.clusterOperatorEnabled !== true) return null;
+  const host = snapshot.hosts.get(hostId);
+  if (
+    host === undefined ||
+    !host.grantedFeatures.includes(CLUSTER_OPERATOR_FEATURE) ||
+    !host.grantedCapabilities.includes("sessions.read")
+  ) {
+    return null;
+  }
+  return resolveCurrentHostTargetId(snapshot, hostId);
+}
 
 const derived = new WeakMap<DesktopRuntimeSnapshot, WorkspaceData>();
 
@@ -193,6 +210,7 @@ const EMPTY_WORKSPACE: WorkspaceData = Object.freeze({
   hosts: Object.freeze([]),
   projects: Object.freeze([]),
   sessions: Object.freeze([]),
+  clusterWorkspaces: Object.freeze([]),
 });
 
 /**
@@ -213,6 +231,12 @@ export function deriveWorkspaceData(snapshot: DesktopRuntimeSnapshot): Workspace
   const hostIds = new Set(snapshot.hosts.keys());
   for (const ref of snapshot.projection.sessionIndex.values()) {
     hostIds.add(String(ref.hostId));
+  }
+  if (snapshot.clusterOperatorEnabled === true) {
+    for (const key of snapshot.projection.workspaces.keys()) {
+      const separator = key.indexOf("\u0000");
+      if (separator > 0) hostIds.add(key.slice(0, separator));
+    }
   }
   for (const hostId of hostIds) {
     const meta = snapshot.hosts.get(hostId);
@@ -252,6 +276,17 @@ export function deriveWorkspaceData(snapshot: DesktopRuntimeSnapshot): Workspace
         inventoryMetadata.truncated ||
         (indexedSessionCountByHost.get(hostId) ?? 0) < inventoryMetadata.totalCount,
     });
+  }
+
+  const clusterWorkspaces: WorkspaceClusterWorkspace[] = [];
+  if (snapshot.clusterOperatorEnabled === true) {
+    for (const [key, infrastructure] of snapshot.projection.workspaces) {
+      const separator = key.indexOf("\u0000");
+      if (separator <= 0) continue;
+      const hostId = key.slice(0, separator);
+      const targetId = clusterHostTarget(snapshot, hostId);
+      if (targetId !== null) clusterWorkspaces.push({ hostId, targetId, infrastructure });
+    }
   }
 
   const projects = new Map<string, WorkspaceProject>();
@@ -337,16 +372,23 @@ export function deriveWorkspaceData(snapshot: DesktopRuntimeSnapshot): Workspace
       lastActivity: "",
       ...(archivedAt === null ? {} : { archivedAt }),
       ...(controlKind === undefined ? {} : { control: controlKind }),
+      ...(clusterHostTarget(snapshot, hostId) === null || ref.liveState?.cluster === undefined
+        ? {}
+        : { cluster: ref.liveState.cluster }),
+      ...(clusterHostTarget(snapshot, hostId) === null || ref.liveState?.ci === undefined
+        ? {}
+        : { ci: ref.liveState.ci }),
     });
   }
 
   const data: WorkspaceData =
-    sessions.length === 0 && hosts.length === 0
+    sessions.length === 0 && hosts.length === 0 && clusterWorkspaces.length === 0
       ? EMPTY_WORKSPACE
       : Object.freeze({
           hosts: Object.freeze(hosts),
           projects: Object.freeze([...projects.values()]),
           sessions: Object.freeze(sessions),
+          clusterWorkspaces: Object.freeze(clusterWorkspaces),
         });
   derived.set(snapshot, data);
   return data;

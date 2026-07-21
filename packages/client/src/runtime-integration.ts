@@ -6,6 +6,34 @@
  * can actually support.
  */
 
+import { CI_TRIGGER_CAPABILITY, CLUSTER_OPERATOR_FEATURE } from "@t4-code/protocol";
+
+export const DEFAULT_CLUSTER_OPERATOR_ENABLED = false as const;
+
+/**
+ * Cluster operation is a local product opt-in, not an automatic consequence
+ * of a new wire version. Keep the caller's stable array when no filtering is
+ * needed and never synthesize a feature the endpoint did not publish.
+ */
+export function clusterOperatorRequestedFeatures(
+  features: readonly string[],
+  enabled: boolean = DEFAULT_CLUSTER_OPERATOR_ENABLED,
+): readonly string[] {
+  const contains = features.includes(CLUSTER_OPERATOR_FEATURE);
+  if (enabled || !contains) return features;
+  return Object.freeze(features.filter((feature) => feature !== CLUSTER_OPERATOR_FEATURE));
+}
+
+export function clusterOperatorRequestedCapabilities(
+  capabilities: readonly string[],
+  enabled: boolean = DEFAULT_CLUSTER_OPERATOR_ENABLED,
+): readonly string[] {
+  const contains = capabilities.includes(CI_TRIGGER_CAPABILITY);
+  if (enabled || !contains) return capabilities;
+  return Object.freeze(
+    capabilities.filter((capability) => capability !== CI_TRIGGER_CAPABILITY),
+  );
+}
 export const OMP_RUNTIME_KIND = "omp" as const;
 
 /** Additions to this union are deliberate product decisions, not wire changes. */

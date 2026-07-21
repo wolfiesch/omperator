@@ -1,0 +1,7 @@
+apiVersion: v2
+name: t4-cluster
+description: Default-off portable T4 Kubernetes operator and stateless cluster gateway
+version: 0.1.0
+appVersion: "0.1.30"
+type: application
+kubeVersion: ">=1.30.0-0"

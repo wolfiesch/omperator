@@ -38,6 +38,8 @@ export interface RemoteListenerConfig {
 	port: number;
 	trustedServeProxy?: boolean;
 	serveProxy?: boolean;
+	/** Fixed peer identity for a pod-network listener whose omp-app hello is authenticated by a dedicated policy. */
+	internalPeerNodeId?: string;
 	originAllowlist?: readonly string[];
 	maxConnections?: number;
 	maxFrameBytes?: number;

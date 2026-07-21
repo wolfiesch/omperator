@@ -12,6 +12,7 @@ import {
   CAPACITOR_NATIVE_ORIGINS,
   cacheControlForStaticPath,
   injectBackendConfig,
+  normalizeClusterWebSocketUrl,
   normalizeAllowedOrigin,
   normalizeDeploymentIdentity,
   normalizeNativeAllowedOrigins,
@@ -162,6 +163,60 @@ test("backend injection is explicit, credential-free, and script-safe", () => {
   assert.match(injected, /wss:\/\/host\.example-tailnet\.ts\.net:8445\/v1\/ws/u);
   assert.doesNotMatch(injected, /<script>alert/u);
   assert.doesNotMatch(injected, /token|password|credential/iu);
+});
+
+test("cluster gateway configuration is default-off and adds no implicit target", () => {
+  const options = optionsFromEnvironment({
+    T4_ALLOWED_ORIGIN: ALLOWED_ORIGIN,
+    T4_DEPLOYMENT_IDENTITY: DEPLOYMENT_IDENTITY,
+    XDG_RUNTIME_DIR: "/run/user/1000",
+  });
+  assert.equal(options.clusterOperatorEnabled, false);
+  assert.equal(options.clusterWsUrl, undefined);
+
+  const injected = injectBackendConfig("<html><head></head><body></body></html>", {
+    allowedOrigin: ALLOWED_ORIGIN,
+    label: "Ordinary host",
+  });
+  const payload = JSON.parse(/<script id="t4-backend" type="application\/json">([^<]+)<\/script>/u.exec(injected)?.[1] ?? "null");
+  assert.deepEqual(Object.keys(payload).sort(), ["label", "wsUrl"]);
+});
+
+test("cluster gateway opts into exactly one credential-free secure WSS target", () => {
+  const clusterWsUrl = "wss://operator.example-tailnet.ts.net/v1/ws";
+  assert.equal(normalizeClusterWebSocketUrl(clusterWsUrl), clusterWsUrl);
+  for (const value of [
+    "ws://operator.example-tailnet.ts.net/v1/ws",
+    "wss://operator.example-tailnet.ts.net:30000/v1/ws",
+    "wss://operator.example-tailnet.ts.net/v1/ws?token=secret",
+    "wss://user:secret@operator.example-tailnet.ts.net/v1/ws",
+    "wss://operator.example.com/v1/ws",
+  ]) {
+    assert.throws(() => normalizeClusterWebSocketUrl(value), /secure WSS cluster target/u);
+  }
+
+  const options = optionsFromEnvironment({
+    T4_ALLOWED_ORIGIN: ALLOWED_ORIGIN,
+    T4_DEPLOYMENT_IDENTITY: DEPLOYMENT_IDENTITY,
+    T4_CLUSTER_OPERATOR_ENABLED: "true",
+    T4_CLUSTER_WS_URL: clusterWsUrl,
+    XDG_RUNTIME_DIR: "/run/user/1000",
+  });
+  assert.equal(options.clusterOperatorEnabled, true);
+  assert.equal(options.clusterWsUrl, clusterWsUrl);
+  const injected = injectBackendConfig("<html><head></head><body></body></html>", {
+    allowedOrigin: ALLOWED_ORIGIN,
+    label: "Operator",
+    clusterOperatorEnabled: options.clusterOperatorEnabled,
+    clusterWsUrl: options.clusterWsUrl,
+  });
+  const payload = JSON.parse(/<script id="t4-backend" type="application\/json">([^<]+)<\/script>/u.exec(injected)?.[1] ?? "null");
+  assert.deepEqual(payload, {
+    wsUrl: clusterWsUrl,
+    label: "Operator",
+    clusterOperatorEnabled: true,
+  });
+  assert.doesNotMatch(injected, /token|secret|credential/iu);
 });
 
 test("static path resolution cannot leave the web root", () => {

@@ -32,6 +32,7 @@ export interface NativeMobileBackendConfig {
   readonly label: string;
   readonly deviceId?: string;
   readonly deviceToken?: string;
+  readonly clusterOperatorEnabled?: true;
 }
 
 interface T4SecureStoragePlugin {
@@ -196,14 +197,23 @@ function storedMobileBackend(value: unknown): StoredMobileBackend {
     throw new Error("The saved host list is from an unsupported app version.");
   }
   if (typeof data.origin !== "string") throw new Error("The saved host list is damaged. Add the host again.");
+  if (
+    data.clusterOperatorEnabled !== undefined &&
+    (data.version !== 3 || data.clusterOperatorEnabled !== true)
+  ) {
+    throw new Error("The saved host list is damaged. Add the host again.");
+  }
   const parsed = parseTailnetBackend(
     data.origin,
     data.version === 3 && typeof data.profileId === "string" ? data.profileId : undefined,
+    data.version === 3 && data.clusterOperatorEnabled === true,
   );
   if (
     data.wsUrl !== parsed.wsUrl ||
     data.label !== parsed.label ||
-    (data.version === 3 && data.endpointKey !== parsed.endpointKey)
+    (data.version === 3 && data.endpointKey !== parsed.endpointKey) ||
+    (data.version === 3 && data.clusterOperatorEnabled === true) !==
+      (parsed.clusterOperatorEnabled === true)
   ) {
     throw new Error("The saved host list is inconsistent. Add the host again.");
   }
@@ -275,6 +285,12 @@ export function writeStoredMobileBackend(
   const canonical = storedMobileBackend(backend);
   const current = readStoredMobileBackendDirectory(storage);
   const existing = current?.backends.filter((item) => item.endpointKey !== canonical.endpointKey) ?? [];
+  if (
+    canonical.clusterOperatorEnabled === true &&
+    existing.some((item) => item.clusterOperatorEnabled === true)
+  ) {
+    throw new Error("This phone can save only one cluster operator endpoint.");
+  }
   if (current === null && existing.length >= MAX_SAVED_MOBILE_BACKENDS) {
     throw new Error(`This phone can save up to ${MAX_SAVED_MOBILE_BACKENDS} T4 hosts.`);
   }
@@ -377,6 +393,7 @@ export async function prepareNativeMobileBackend(): Promise<MobileBootResult> {
     profileId: backend.profileId,
     wsUrl: backend.wsUrl,
     label: backend.label,
+    ...(backend.clusterOperatorEnabled === true ? { clusterOperatorEnabled: true as const } : {}),
     ...(credentials === null ? {} : credentials),
   };
   return { kind: "ready", backend };

@@ -17,11 +17,19 @@ const MIME_TYPES: Readonly<Record<string, string>> = {
   ".woff2": "font/woff2",
 };
 
-function injectBackend(html: string): string {
-  const payload = JSON.stringify({
-    wsUrl: "ws://127.0.0.1:1/v1/ws",
-    label: "PWA fixture backend",
-  });
+interface BuiltWebBackend {
+  readonly wsUrl: string;
+  readonly label: string;
+  readonly clusterOperatorEnabled?: true;
+}
+
+const DEFAULT_BACKEND: BuiltWebBackend = {
+  wsUrl: "ws://127.0.0.1:1/v1/ws",
+  label: "PWA fixture backend",
+};
+
+function injectBackend(html: string, backend: BuiltWebBackend): string {
+  const payload = JSON.stringify(backend);
   const tag = `<script id="t4-backend" type="application/json">${payload}</script>`;
   if (!html.includes("</head>")) throw new Error("web dist index is missing </head>");
   return html.replace("</head>", `${tag}</head>`);
@@ -32,7 +40,7 @@ export class BuiltWebServer {
   private readonly server: Server;
   private port = 0;
 
-  constructor() {
+  constructor(private readonly backend: BuiltWebBackend = DEFAULT_BACKEND) {
     this.server = createServer((request, response) => {
       void this.handle(request.url ?? "/", request.method ?? "GET")
         .then(({ body, contentType, status }) => {
@@ -96,7 +104,7 @@ export class BuiltWebServer {
     }
     if (pathname === "/" || pathname === "/index.html") {
       return {
-        body: injectBackend(await readFile(resolve(WEB_DIST, "index.html"), "utf8")),
+        body: injectBackend(await readFile(resolve(WEB_DIST, "index.html"), "utf8"), this.backend),
         contentType: MIME_TYPES[".html"]!,
         status: 200,
       };

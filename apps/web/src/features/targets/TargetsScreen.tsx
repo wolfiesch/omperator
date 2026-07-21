@@ -4,7 +4,7 @@
 // runtime snapshot or a completed desktop call — connection words are the
 // runtime's words, and removing a host says exactly what it does: it
 // deletes the credential stored on this computer, nothing more.
-import type { DesktopRuntimeSnapshot } from "@t4-code/client";
+import type { DesktopRuntimeController, DesktopRuntimeSnapshot } from "@t4-code/client";
 import type { LocalProfile, PhoneSetupState, ServiceInspection } from "@t4-code/protocol/desktop-ipc";
 import {
   Badge,
@@ -25,13 +25,14 @@ import { useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 
 import { ToneBadge } from "../onboarding/bits.tsx";
+import { ClusterOperatorSection } from "./ClusterOperatorSection.tsx";
 import { FIELD_CLASS } from "../settings/controls.tsx";
 import {
   capabilityDiff,
   CONNECTION_STATE_META,
   deriveTargetRows,
   pairCommandForTarget,
-  TARGET_CAPABILITY_GROUPS,
+  selectTargetCapabilityGroups,
   type TargetCapabilityGroupId,
   type TargetRow,
 } from "./model.ts";
@@ -720,7 +721,13 @@ function TargetCard({ api, row }: { readonly api: TargetsStoreApi; readonly row:
 
 // ─── Add-host form ──────────────────────────────────────────────────────────
 
-function AddHostForm({ api }: { readonly api: TargetsStoreApi }) {
+function AddHostForm({
+  api,
+  clusterOperatorEnabled,
+}: {
+  readonly api: TargetsStoreApi;
+  readonly clusterOperatorEnabled: boolean;
+}) {
   const draft = useTargets(api, (state) => state.draft);
   const errors = useTargets(api, (state) => state.draftErrors);
   const addError = useTargets(api, (state) => state.addError);
@@ -811,7 +818,7 @@ function AddHostForm({ api }: { readonly api: TargetsStoreApi }) {
         <legend className="pb-1 font-medium text-muted-foreground text-xs uppercase tracking-wide">
           Ask that host for permission to
         </legend>
-        {TARGET_CAPABILITY_GROUPS.map((group) => {
+        {selectTargetCapabilityGroups(clusterOperatorEnabled).map((group) => {
           const locked = group.id === "observe";
           const checked = locked || draft.groups.has(group.id);
           return (
@@ -954,6 +961,9 @@ function RemoveProfileDialog({ api }: { readonly api: TargetsStoreApi }) {
 
 export function TargetsScreen({
   api,
+  controller,
+  onOpenSession,
+  onOpenPreview,
   snapshot,
   serviceAvailable,
   profilesAvailable,
@@ -961,6 +971,9 @@ export function TargetsScreen({
   onBack,
 }: {
   readonly api: TargetsStoreApi;
+  readonly controller: DesktopRuntimeController;
+  readonly onOpenSession: (sessionId: string) => void;
+  readonly onOpenPreview: (sessionId: string, previewId: string) => void;
   readonly snapshot: DesktopRuntimeSnapshot;
   /** Whether this desktop build exposes local service management. */
   readonly serviceAvailable: boolean;
@@ -1018,7 +1031,13 @@ export function TargetsScreen({
               </ul>
             )}
           </section>
-          <AddHostForm api={api} />
+          <ClusterOperatorSection
+            controller={controller}
+            onOpenPreview={onOpenPreview}
+            onOpenSession={onOpenSession}
+            snapshot={snapshot}
+          />
+          <AddHostForm api={api} clusterOperatorEnabled={snapshot.clusterOperatorEnabled === true} />
         </div>
       </div>
       <RemoveDialog api={api} rows={rows} />

@@ -22,7 +22,7 @@ import {
   type TerminalResizeRequest,
   type TerminalResult,
 } from "@t4-code/protocol/desktop-ipc";
-import { decodeCatalog, decodeSessions, hostId, revision, sessionId, type CatalogFrame, type Cursor, type SettingsFrame } from "@t4-code/protocol";
+import { CLUSTER_OPERATOR_FEATURE, decodeCatalog, decodeCommandResult, decodeSessions, decodeWorkspaceInfrastructureProjection, hostId, revision, sessionId, type CatalogFrame, type Cursor, type SessionRef, type SettingsFrame, type WorkspaceInfrastructureProjection, type WorkspaceListResult } from "@t4-code/protocol";
 import type { Unsubscribe } from "./index.ts";
 import { ProjectionStore } from "./projection.ts";
 import {
@@ -97,6 +97,7 @@ export class DesktopRuntimeController {
   private readonly projection: ProjectionStore;
   private readonly ownsProjection: boolean;
   private readonly clock: { now(): number };
+  private readonly clusterOperatorEnabled: boolean;
   private readonly timers: DesktopRuntimeTimerScheduler;
   private readonly sessionRefreshTimers = new Map<string, unknown>();
   private readonly sessionRefreshInFlight = new Map<string, DesktopTargetIdentity>();
@@ -124,8 +125,12 @@ export class DesktopRuntimeController {
   private readonly controllerLeaseFallbackTtlMs = 20_000;
   constructor(options: DesktopRuntimeOptions) {
     this.shell = options.shell;
+    this.clusterOperatorEnabled = options.clusterOperatorEnabled === true;
     this.projection = options.projection ?? new ProjectionStore(options.projectionOptions);
     this.ownsProjection = options.projection === undefined;
+    // Cached cluster truth has no current welcome grant. It must be refreshed
+    // only after this runtime observes both authority gates for a host.
+    this.projection.clearWorkspaceInventory();
     this.clock = options.clock ?? { now: () => Date.now() };
     this.timers = options.timers ?? defaultTimerScheduler;
     this.promptLeases = new PromptLeaseStore({ clock: this.clock, issue: (request) => this.shell.command(request), invalidateTarget: async (targetId) => { try { await this.disconnect(targetId); } catch { /* uncertain acquire cleanup is best effort */ } } });
@@ -143,11 +148,12 @@ export class DesktopRuntimeController {
       catalogs: mapValue<string, CatalogFrame>([]),
       settings: mapValue<string, SettingsFrame>([]),
       projection: this.projection.getSnapshot(),
+      clusterOperatorEnabled: this.clusterOperatorEnabled,
       runtimeErrors: Object.freeze([]),
     });
     this.projection.subscribe((snapshot) => {
       if (this.stopped) return;
-      this.replace({ projection: snapshot });
+      this.replace({ projection: this.clearUnauthorizedWorkspaceInventories(snapshot) });
     });
   }
   getSnapshot(): DesktopRuntimeSnapshot { return this.current; }
@@ -293,10 +299,13 @@ export class DesktopRuntimeController {
   private async issueCommand(targetId: string, intent: CommandRequest["intent"], capturedIdentity?: DesktopTargetIdentity): Promise<CommandResult> {
     const identity = capturedIdentity ?? this.captureTargetIdentity(targetId);
     const result = freezeClone(await this.shell.command(freezeClone({ targetId, intent })));
-    const isHostProductCommand = intent.command === "session.list" || intent.command === "host.list" || intent.command === "catalog.get" || intent.command === "settings.read";
+    const isHostProductCommand = intent.command === "session.list" || intent.command === "host.list" || intent.command === "workspace.list" || intent.command === "catalog.get" || intent.command === "settings.read";
     if (result.accepted === true && isHostProductCommand) {
       if (identity === undefined || !this.isCurrentTargetIdentity(identity) || !this.isCurrentHostProjection(identity) || identity.hostId !== String(intent.hostId)) {
         throw new DesktopRuntimeError("stale", "host product command completed for a stale target binding");
+      }
+      if (intent.command === "workspace.list" && !this.clusterProjectionGrantedForTarget(targetId, String(intent.hostId))) {
+        throw new DesktopRuntimeError("stale", "workspace inventory completed without current cluster operator authority");
       }
       this.applyHostCommandResult(targetId, String(intent.hostId), intent.command, result, identity);
       this.notifyValidatedHostCommand(targetId, String(intent.hostId), intent.command, result);
@@ -532,6 +541,85 @@ export class DesktopRuntimeController {
     const metadata = this.hostState.metadataForTarget(targetId);
     return metadata?.hostId === hostIdValue && metadata.grantedFeatures.includes("controller.lease");
   }
+  private clusterProjectionGrantedForTarget(targetId: string, hostIdValue?: string): boolean {
+    if (!this.clusterOperatorEnabled) return false;
+    const metadata = this.hostState.metadataForTarget(targetId);
+    return metadata !== undefined &&
+      (hostIdValue === undefined || metadata.hostId === hostIdValue) &&
+      metadata.grantedCapabilities.includes("sessions.read") &&
+      metadata.grantedFeatures.includes(CLUSTER_OPERATOR_FEATURE);
+  }
+  private clusterProjectionGrantedForHost(
+    hostIdValue: string,
+    targetHosts: ReadonlyMap<string, string> = this.current.targetHosts,
+  ): boolean {
+    for (const [targetId, boundHostId] of targetHosts) {
+      if (
+        boundHostId === hostIdValue &&
+        this.clusterProjectionGrantedForTarget(targetId, hostIdValue)
+      ) return true;
+    }
+    return false;
+  }
+  private normalizeSessionInfrastructureEvent(
+    targetId: string,
+    event: RendererServerEvent,
+  ): RendererServerEvent {
+    if (event.kind !== "sessions" && event.kind !== "session.delta") return event;
+    const sourceHostId = typeof event.payload.hostId === "string"
+      ? event.payload.hostId
+      : this.current.targetHosts.get(targetId);
+    if (
+      sourceHostId !== undefined &&
+      this.clusterProjectionGrantedForTarget(targetId, sourceHostId)
+    ) return event;
+
+    const withoutInfrastructure = (session: SessionRef): SessionRef => {
+      if (session.liveState?.cluster === undefined && session.liveState?.ci === undefined) return session;
+      const liveState = { ...session.liveState };
+      delete liveState.cluster;
+      delete liveState.ci;
+      return Object.freeze({ ...session, liveState: Object.freeze(liveState) });
+    };
+    if (event.kind === "session.delta") {
+      if (event.payload.upsert === undefined) return event;
+      const upsert = withoutInfrastructure(event.payload.upsert);
+      if (upsert === event.payload.upsert) return event;
+      return Object.freeze({
+        ...event,
+        payload: Object.freeze({ ...event.payload, upsert }),
+      }) as RendererServerEvent;
+    }
+
+    let sessions: SessionRef[] | undefined;
+    for (const [index, session] of event.payload.sessions.entries()) {
+      const normalized = withoutInfrastructure(session);
+      if (normalized === session) continue;
+      sessions ??= [...event.payload.sessions];
+      sessions[index] = normalized;
+    }
+    if (sessions === undefined) return event;
+    return Object.freeze({
+      ...event,
+      payload: Object.freeze({ ...event.payload, sessions: Object.freeze(sessions) }),
+    }) as RendererServerEvent;
+  }
+  private clearUnauthorizedWorkspaceInventories(
+    snapshot: DesktopRuntimeSnapshot["projection"],
+    targetHosts: ReadonlyMap<string, string> = this.current.targetHosts,
+  ): DesktopRuntimeSnapshot["projection"] {
+    const hosts = new Set(snapshot.workspaceCursors.keys());
+    for (const itemKey of snapshot.workspaces.keys()) {
+      const separator = itemKey.indexOf("\u0000");
+      if (separator > 0) hosts.add(itemKey.slice(0, separator));
+    }
+    for (const hostIdValue of hosts) {
+      if (!this.clusterProjectionGrantedForHost(hostIdValue, targetHosts)) {
+        this.projection.clearWorkspaceInventory(hostIdValue);
+      }
+    }
+    return this.projection.getSnapshot();
+  }
   private async acquireControllerLeaseNow(
     targetId: string,
     hostIdValue: string,
@@ -695,20 +783,14 @@ export class DesktopRuntimeController {
   }
   private handleServerEvent(event: RendererServerEventEnvelope): void {
     const incomingEvent = event.event;
-    const transcriptEvent = this.isRetainedTranscriptEvent(incomingEvent);
-    // Do not deep-clone a potentially large transcript payload before applying
-    // retention. The shared projection consumes the decoded event directly;
-    // renderer subscribers receive only the bounded immutable copy.
-    const rendererEvent: RendererServerEventEnvelope = {
-      targetId: event.targetId,
-      event: transcriptEvent
-        ? sanitizeRetainedTranscriptEvent(incomingEvent)
-        : freezeClone(incomingEvent),
-    };
+    if (
+      incomingEvent.kind === "workspace.state" &&
+      !this.clusterProjectionGrantedForTarget(event.targetId, String(incomingEvent.payload.hostId))
+    ) return;
     if (incomingEvent.kind === "welcome") {
       if (!this.handleWelcome(event.targetId, incomingEvent.payload)) return;
       this.applyProjectionEvent(event.targetId, incomingEvent);
-      this.notifyServerEvents(rendererEvent);
+      this.notifyServerEvents({ targetId: event.targetId, event: freezeClone(incomingEvent) });
     } else {
       const payload = asRecord(incomingEvent.payload) ?? {};
       const hostIdValue = typeof payload.hostId === "string" ? payload.hostId : undefined;
@@ -720,7 +802,7 @@ export class DesktopRuntimeController {
       const targetMetadata = this.hostState.metadataForTarget(event.targetId);
       const hostMetadata = hostIdValue === undefined ? undefined : this.current.hosts.get(hostIdValue);
       const hostProjectionCurrent = targetMetadata !== undefined && hostMetadata !== undefined && hostMetadata.targetId === event.targetId && targetMetadata.epoch === hostMetadata.epoch;
-      const hostProductResponse = incomingEvent.kind === "response" && incomingEvent.payload.ok && (incomingEvent.payload.command === "session.list" || incomingEvent.payload.command === "host.list" || incomingEvent.payload.command === "catalog.get" || incomingEvent.payload.command === "settings.read");
+      const hostProductResponse = incomingEvent.kind === "response" && incomingEvent.payload.ok && (incomingEvent.payload.command === "session.list" || incomingEvent.payload.command === "host.list" || incomingEvent.payload.command === "workspace.list" || incomingEvent.payload.command === "catalog.get" || incomingEvent.payload.command === "settings.read");
       const modernInventory = targetMetadata?.grantedCapabilities.includes("sessions.read") === true;
       if (hostIdValue !== undefined && !hostProjectionCurrent) return;
       if (incomingEvent.kind === "sessions" && modernInventory && (this.sessionInventoryEpochByTarget.get(event.targetId) !== incomingEvent.payload.cursor.epoch)) return;
@@ -739,10 +821,18 @@ export class DesktopRuntimeController {
           this.replace({ settings: mapValue(new Map(this.current.settings).set(hostIdValue, settings)) });
         }
       }
-      if (hostIdValue === undefined || hostProjectionCurrent || incomingEvent.kind === "response") {
-        this.applyProjectionEvent(event.targetId, incomingEvent);
+      const normalizedEvent = this.normalizeSessionInfrastructureEvent(event.targetId, incomingEvent);
+      if (hostIdValue === undefined || hostProjectionCurrent || normalizedEvent.kind === "response") {
+        this.applyProjectionEvent(event.targetId, normalizedEvent);
       }
-      if (!hostProductResponse) this.notifyServerEvents(rendererEvent);
+      if (!hostProductResponse) {
+        this.notifyServerEvents({
+          targetId: event.targetId,
+          event: this.isRetainedTranscriptEvent(normalizedEvent)
+            ? sanitizeRetainedTranscriptEvent(normalizedEvent)
+            : freezeClone(normalizedEvent),
+        });
+      }
       return;
     }
   }
@@ -768,6 +858,10 @@ export class DesktopRuntimeController {
     }
   }
   private applyHostCommandResult(targetId: string, hostValue: string, command: string, response: CommandResult, expectedIdentity?: DesktopTargetIdentity): void {
+    if (
+      command === "workspace.list" &&
+      !this.clusterProjectionGrantedForTarget(targetId, hostValue)
+    ) return;
     const result = asRecord(response.result);
     if (result === undefined) throw new DesktopRuntimeError("protocol", "host response result is not an object");
     if (command === "session.list" || command === "host.list") {
@@ -783,6 +877,17 @@ export class DesktopRuntimeController {
       });
       if (catalog.type !== "catalog") throw new DesktopRuntimeError("protocol", "catalog response decoded as settings");
       this.replace({ catalogs: mapValue(new Map(this.current.catalogs).set(hostValue, catalog)) });
+    } else if (command === "workspace.list") {
+      const decoded = decodeCommandResult(command, result) as unknown as WorkspaceListResult;
+      const workspaces: WorkspaceInfrastructureProjection[] = [];
+      for (const item of decoded.workspaces) {
+        try {
+          workspaces.push(decodeWorkspaceInfrastructureProjection(item));
+        } catch {
+          // Legacy local workspace rows are not cluster infrastructure projections.
+        }
+      }
+      this.projection.replaceWorkspaceInventory(hostValue, workspaces, decoded.cursor);
     } else if (command === "settings.read") {
       const settings = decodeCatalog({ v: "omp-app/1", type: "settings", hostId: hostValue, revision: result.revision, settings: result.settings });
       if (settings.type !== "settings") throw new DesktopRuntimeError("protocol", "settings response decoded as catalog");
@@ -820,6 +925,11 @@ export class DesktopRuntimeController {
     // the previous transport generation, even for the brief notification
     // before the welcome frame itself reaches the shared projection.
     this.projection.invalidateSessionInventory(String(frame.hostId));
+    if (this.clusterProjectionGrantedForHost(String(frame.hostId), reconciled.targetHosts)) {
+      this.projection.invalidateWorkspaceInventory(String(frame.hostId));
+    } else {
+      this.projection.clearWorkspaceInventory(String(frame.hostId));
+    }
     if (this.current.connections.get(targetId) !== "connected") {
       this.welcomedBeforeConnected.add(targetId);
     }
@@ -839,6 +949,7 @@ export class DesktopRuntimeController {
     if (identity === undefined) return;
     void bootstrapDesktopHost({
       targetId,
+      clusterOperatorEnabled: this.clusterOperatorEnabled,
       frame,
       issue: (intent) => this.stopped ? Promise.resolve(undefined) : this.issueCommand(targetId, intent, identity),
       onError: (error, code) => {
@@ -968,6 +1079,10 @@ export class DesktopRuntimeController {
       connections: reconciled.connections,
       targetHosts: reconciled.targetHosts,
       hosts: reconciled.hosts,
+      projection: this.clearUnauthorizedWorkspaceInventories(
+        this.projection.getSnapshot(),
+        reconciled.targetHosts,
+      ),
     });
     for (const targetId of refreshAfterReconcile) this.requestSessionRefresh(targetId);
   }
