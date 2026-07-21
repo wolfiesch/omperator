@@ -125,7 +125,7 @@ function hex(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function readFileWithFileReader(file: File): Promise<ArrayBuffer> {
+export function readFileWithFileReader(file: File): Promise<ArrayBuffer> {
   if (typeof globalThis.FileReader !== "function") {
     return Promise.reject(new Error("This browser cannot read the selected file."));
   }

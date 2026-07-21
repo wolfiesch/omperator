@@ -6,13 +6,20 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   admitAttachments,
+  materializeAttachmentCandidates,
+  MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENTS,
   MAX_STAGED_ATTACHMENT_BYTES,
   MAX_STAGED_ATTACHMENTS,
   toPromptAttachment,
   type AttachmentIntakeOptions,
   type StagedAttachment,
 } from "../src/features/composer/attachments.ts";
-import { resolveAskDigit, resolveComposerKey, resolveMenuKey } from "../src/features/composer/keys.ts";
+import {
+  resolveAskDigit,
+  resolveComposerKey,
+  resolveMenuKey,
+} from "../src/features/composer/keys.ts";
 import {
   activeSlashQuery,
   buildSlashCatalog,
@@ -120,6 +127,225 @@ describe("slash commands", () => {
 });
 
 describe("attachments", () => {
+  it("rejects oversized and excess picker Files before reading their bytes", async () => {
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe1, 0x00, 0x10]);
+    const oversized = new File([jpeg], "oversized.jpg", { type: "image/jpeg" });
+    Object.defineProperty(oversized, "size", {
+      configurable: true,
+      value: MAX_ATTACHMENT_BYTES + 1,
+    });
+    const candidates = [
+      { file: oversized },
+      ...Array.from({ length: MAX_ATTACHMENTS + 1 }, (_, index) => ({
+        file: new File([jpeg], `image-${index}.jpg`, { type: "image/jpeg" }),
+      })),
+    ];
+    const reads: File[] = [];
+
+    const result = await materializeAttachmentCandidates(candidates, {
+      readFile: (file) => {
+        reads.push(file);
+        return Promise.resolve(new Uint8Array(jpeg).buffer);
+      },
+    });
+
+    expect(reads).toHaveLength(MAX_ATTACHMENTS);
+    expect(reads).not.toContain(oversized);
+    expect(result.accepted).toHaveLength(MAX_ATTACHMENTS);
+    expect(result.rejections).toEqual([
+      "oversized.jpg: 20.0 MB is over the 20.0 MB limit.",
+      `image-${MAX_ATTACHMENTS}.jpg: limit of ${MAX_ATTACHMENTS} attachments reached.`,
+    ]);
+  });
+
+  it("reads and materializes a repeated source File only once", async () => {
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe1, 0x00, 0x10]);
+    const source = new File([jpeg], "repeat.jpg", { type: "image/jpeg" });
+    const reads: File[] = [];
+
+    const result = await materializeAttachmentCandidates([{ file: source }, { file: source }], {
+      readFile: (file) => {
+        reads.push(file);
+        return Promise.resolve(new Uint8Array(jpeg).buffer);
+      },
+    });
+
+    expect(reads).toEqual([source]);
+    expect(result.accepted).toHaveLength(1);
+    expect(result.rejections).toEqual(["repeat.jpg: already attached."]);
+  });
+
+  it("applies current session and global staging budgets before reading", async () => {
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe1, 0x00, 0x10]);
+    const existing = admitAttachments(
+      [],
+      Array.from({ length: MAX_ATTACHMENTS - 1 }, (_, index) => ({
+        file: new File([jpeg], `existing-${index}.jpg`, { type: "image/jpeg" }),
+      })),
+      deterministicAttachmentOptions(),
+    ).accepted;
+    const reads: File[] = [];
+    const readFile = (file: File): Promise<ArrayBuffer> => {
+      reads.push(file);
+      return Promise.resolve(new Uint8Array(jpeg).buffer);
+    };
+
+    const promptBudget = await materializeAttachmentCandidates(
+      [
+        { file: new File([jpeg], "last-slot.jpg", { type: "image/jpeg" }) },
+        { file: new File([jpeg], "no-slot.jpg", { type: "image/jpeg" }) },
+      ],
+      {
+        existing,
+        stagedBytes: existing.reduce((total, attachment) => total + attachment.sizeBytes, 0),
+        stagedCount: existing.length,
+        readFile,
+      },
+    );
+    expect(reads.map((file) => file.name)).toEqual(["last-slot.jpg"]);
+    expect(promptBudget.rejections).toEqual([
+      `no-slot.jpg: limit of ${MAX_ATTACHMENTS} attachments reached.`,
+    ]);
+
+    reads.length = 0;
+    const globalBudget = await materializeAttachmentCandidates(
+      [{ file: new File([jpeg], "global-limit.jpg", { type: "image/jpeg" }) }],
+      {
+        stagedBytes: MAX_STAGED_ATTACHMENT_BYTES,
+        stagedCount: MAX_STAGED_ATTACHMENTS,
+        readFile,
+      },
+    );
+    expect(reads).toEqual([]);
+    expect(globalBudget.accepted).toEqual([]);
+    expect(globalBudget.rejections[0]).toContain(
+      `already has ${MAX_STAGED_ATTACHMENTS} staged images`,
+    );
+
+    const byteBudget = await materializeAttachmentCandidates(
+      [{ file: new File([jpeg], "global-bytes.jpg", { type: "image/jpeg" }) }],
+      {
+        stagedBytes: MAX_STAGED_ATTACHMENT_BYTES,
+        stagedCount: 0,
+        readFile,
+      },
+    );
+    expect(reads).toEqual([]);
+    expect(byteBudget.accepted).toEqual([]);
+    expect(byteBudget.rejections[0]).toContain(
+      "staged images across sessions would exceed 160.0 MB",
+    );
+  });
+
+  it("counts pending materialization reservations across concurrent batches", async () => {
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe1, 0x00, 0x10]);
+    const store = createComposerStore();
+    const reservedFiles = Array.from({ length: MAX_ATTACHMENTS }, (_, index) => {
+      const file = new File([jpeg], `reserved-${index}.jpg`, { type: "image/jpeg" });
+      Object.defineProperty(file, "size", {
+        configurable: true,
+        value: MAX_ATTACHMENT_BYTES,
+      });
+      return { file };
+    });
+    let firstToken: string | null = null;
+    const first = await materializeAttachmentCandidates(reservedFiles, {
+      onReserve: (reservation) => {
+        firstToken = store.getState().beginAttachmentIntake("A", reservation);
+      },
+      readFile: () => Promise.resolve(new Uint8Array(jpeg).buffer),
+    });
+    expect(first.accepted).toHaveLength(MAX_ATTACHMENTS);
+    expect(firstToken).not.toBeNull();
+    expect(store.getState().pendingAttachmentIntakeUsage()).toEqual({
+      bytes: MAX_STAGED_ATTACHMENT_BYTES,
+      count: MAX_ATTACHMENTS,
+    });
+
+    const reads: File[] = [];
+    const pending = store.getState().pendingAttachmentIntakeUsage();
+    const second = await materializeAttachmentCandidates(
+      [{ file: new File([jpeg], "blocked.jpg", { type: "image/jpeg" }) }],
+      {
+        stagedBytes: pending.bytes,
+        stagedCount: pending.count,
+        onReserve: (reservation) => {
+          store.getState().beginAttachmentIntake("B", reservation);
+        },
+        readFile: (file) => {
+          reads.push(file);
+          return Promise.resolve(new Uint8Array(jpeg).buffer);
+        },
+      },
+    );
+    expect(reads).toEqual([]);
+    expect(second.rejections[0]).toContain("staged images across sessions would exceed 160.0 MB");
+
+    if (firstToken === null) throw new Error("first materialization did not reserve its budget");
+    store.getState().finishAttachmentIntake("A", firstToken);
+    expect(store.getState().pendingAttachmentIntakeUsage()).toEqual({ bytes: 0, count: 0 });
+  });
+
+  it("reads Android picker Files immediately and stages an owned byte-backed copy", async () => {
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe1, 0x00, 0x10]);
+    const source = new File([jpeg], "1000049502.jpg", {
+      type: "application/octet-stream",
+      lastModified: 1,
+    });
+    let readerStarted = false;
+    let sourceArrayBufferCalls = 0;
+    Object.defineProperty(source, "arrayBuffer", {
+      configurable: true,
+      value: () => {
+        sourceArrayBufferCalls += 1;
+        return Promise.reject(new DOMException("picker grant expired", "NotReadableError"));
+      },
+    });
+
+    const originalFileReader = Object.getOwnPropertyDescriptor(globalThis, "FileReader");
+    class PickerFileReader {
+      result: string | ArrayBuffer | null = null;
+      error: DOMException | null = null;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      onabort: (() => void) | null = null;
+
+      readAsArrayBuffer(file: Blob): void {
+        expect(file).toBe(source);
+        readerStarted = true;
+        const buffer = new ArrayBuffer(jpeg.byteLength);
+        new Uint8Array(buffer).set(jpeg);
+        this.result = buffer;
+        queueMicrotask(() => this.onload?.());
+      }
+    }
+    Object.defineProperty(globalThis, "FileReader", {
+      configurable: true,
+      value: PickerFileReader,
+    });
+
+    try {
+      const pending = materializeAttachmentCandidates([{ file: source }]);
+      expect(readerStarted).toBe(true);
+
+      const result = await pending;
+      expect(result.rejections).toEqual([]);
+      expect(result.accepted).toHaveLength(1);
+      const owned = result.accepted[0]?.file;
+      if (owned === undefined) throw new Error("materialized attachment omitted its owned File");
+      expect(owned).toBeInstanceOf(File);
+      expect(owned).not.toBe(source);
+      expect(owned.name).toBe("1000049502.jpg");
+      expect(owned.type).toBe("image/jpeg");
+      expect(owned.size).toBe(jpeg.byteLength);
+      expect(sourceArrayBufferCalls).toBe(0);
+      expect(new Uint8Array(await owned.arrayBuffer())).toEqual(jpeg);
+    } finally {
+      if (originalFileReader === undefined) Reflect.deleteProperty(globalThis, "FileReader");
+      else Object.defineProperty(globalThis, "FileReader", originalFileReader);
+    }
+  });
+
   it("uses crypto-backed collision-resistant ids by default", () => {
     const result = admitAttachments(
       [],
@@ -203,11 +429,7 @@ describe("attachments", () => {
 
   it("enforces the size cap, count cap, and exact-File duplicate guard", () => {
     const tooLarge = imageFile("big.png", 21 * 1024 * 1024);
-    const oversize = admitAttachments(
-      [],
-      [{ file: tooLarge }],
-      deterministicAttachmentOptions(),
-    );
+    const oversize = admitAttachments([], [{ file: tooLarge }], deterministicAttachmentOptions());
     expect(oversize.accepted.length).toBe(0);
     expect(oversize.rejections[0]).toContain("over the 20.0 MB limit");
 
@@ -230,29 +452,25 @@ describe("attachments", () => {
 
   it("bounds preserved staging across sessions without silently evicting files", () => {
     const candidate = imageFile("next.png", 1);
-    const atByteBudget = admitAttachments(
-      [],
-      [{ file: candidate }],
-      {
-        ...deterministicAttachmentOptions(),
-        stagedBytes: MAX_STAGED_ATTACHMENT_BYTES,
-        stagedCount: 8,
-      },
-    );
+    const atByteBudget = admitAttachments([], [{ file: candidate }], {
+      ...deterministicAttachmentOptions(),
+      stagedBytes: MAX_STAGED_ATTACHMENT_BYTES,
+      stagedCount: 8,
+    });
     expect(atByteBudget.accepted).toEqual([]);
-    expect(atByteBudget.rejections[0]).toContain("staged images across sessions would exceed 160.0 MB");
-
-    const atCountBudget = admitAttachments(
-      [],
-      [{ file: candidate }],
-      {
-        ...deterministicAttachmentOptions(),
-        stagedBytes: MAX_STAGED_ATTACHMENTS,
-        stagedCount: MAX_STAGED_ATTACHMENTS,
-      },
+    expect(atByteBudget.rejections[0]).toContain(
+      "staged images across sessions would exceed 160.0 MB",
     );
+
+    const atCountBudget = admitAttachments([], [{ file: candidate }], {
+      ...deterministicAttachmentOptions(),
+      stagedBytes: MAX_STAGED_ATTACHMENTS,
+      stagedCount: MAX_STAGED_ATTACHMENTS,
+    });
     expect(atCountBudget.accepted).toEqual([]);
-    expect(atCountBudget.rejections[0]).toContain(`already has ${MAX_STAGED_ATTACHMENTS} staged images`);
+    expect(atCountBudget.rejections[0]).toContain(
+      `already has ${MAX_STAGED_ATTACHMENTS} staged images`,
+    );
 
     const empty = admitAttachments(
       [],
@@ -403,6 +621,31 @@ describe("draft continuity A→B→A", () => {
     expect(clears).toBe(0);
     expect(draft).toBe("delete while pending");
     expect(store.getState().pendingSubmissionBySessionId.A).toBe(nextToken);
+  });
+
+  it("invalidates pending attachment intake when its session is deleted", () => {
+    const store = createComposerStore();
+    const token = store
+      .getState()
+      .beginAttachmentIntake("A", { bytes: MAX_ATTACHMENT_BYTES, count: 1 });
+    expect(store.getState().isAttachmentIntakeCurrent("A", token)).toBe(true);
+    expect(store.getState().pendingAttachmentIntakeUsage()).toEqual({
+      bytes: MAX_ATTACHMENT_BYTES,
+      count: 1,
+    });
+
+    store.getState().disposeSession("A");
+
+    expect(store.getState().isAttachmentIntakeCurrent("A", token)).toBe(false);
+    // Deletion invalidates ownership immediately, but the reservation remains
+    // until the reader settles so another session cannot over-allocate memory.
+    expect(store.getState().pendingAttachmentIntakeUsage()).toEqual({
+      bytes: MAX_ATTACHMENT_BYTES,
+      count: 1,
+    });
+    store.getState().finishAttachmentIntake("A", token);
+    expect(store.getState().pendingAttachmentIntakeUsage()).toEqual({ bytes: 0, count: 0 });
+    expect(store.getState().attachmentsBySessionId.A).toBeUndefined();
   });
 
   it("keeps intake warnings scoped to the session that produced them", () => {

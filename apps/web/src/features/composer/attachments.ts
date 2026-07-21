@@ -2,6 +2,10 @@
 // URLs stay renderer-local; the live runtime converts a File into an appserver
 // upload and sends only the resulting image id across the wire.
 import type { PromptAttachment } from "../session-runtime/intents.ts";
+import {
+  readFileWithFileReader,
+  sniffPromptImageMimeType,
+} from "../session-runtime/image-upload.ts";
 
 export const MAX_ATTACHMENTS = 8;
 export const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024; // Mirrors app-wire.
@@ -57,6 +61,32 @@ export interface AttachmentIntakeOptions {
   readonly stagedCount?: number;
 }
 
+export interface AttachmentMaterialization {
+  readonly accepted: readonly AttachmentCandidate[];
+  readonly rejections: readonly string[];
+}
+
+export interface AttachmentMaterializationReservation {
+  readonly bytes: number;
+  readonly count: number;
+}
+
+export interface AttachmentMaterializationOptions {
+  /**
+   * Test seam. Production deliberately starts FileReader synchronously while
+   * the Android picker grant is fresh instead of retaining its lazy File.
+   */
+  readonly readFile?: (file: File) => Promise<ArrayBuffer>;
+  /** Attachments already staged for the active session. */
+  readonly existing?: readonly StagedAttachment[];
+  /** Declared bytes already staged across every session. */
+  readonly stagedBytes?: number;
+  /** Images already staged across every session. */
+  readonly stagedCount?: number;
+  /** Synchronously records pending memory before any FileReader starts. */
+  readonly onReserve?: (reservation: AttachmentMaterializationReservation) => void;
+}
+
 function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   if (bytes >= 1024) return `${Math.round(bytes / 1024)} kB`;
@@ -76,6 +106,107 @@ export function provisionalImageMediaType(file: File): string | null {
   const dot = file.name.lastIndexOf(".");
   if (dot < 0 || dot === file.name.length - 1) return null;
   return IMAGE_EXTENSIONS[file.name.slice(dot + 1).toLowerCase()] ?? null;
+}
+
+/**
+ * Copy picker-backed Files into renderer-owned Files before the input is
+ * cleared. Android content providers can invalidate or mutate their synthetic
+ * File metadata after the change event; starting every FileReader here keeps
+ * the grant live, and staging only the immutable copies removes that lifetime
+ * from preview and submission.
+ */
+export async function materializeAttachmentCandidates(
+  candidates: readonly AttachmentCandidate[],
+  options: AttachmentMaterializationOptions = {},
+): Promise<AttachmentMaterialization> {
+  const readFile = options.readFile ?? readFileWithFileReader;
+  const existing = options.existing ?? [];
+  let count = existing.length;
+  let stagedBytes =
+    options.stagedBytes ?? existing.reduce((total, attachment) => total + attachment.sizeBytes, 0);
+  let stagedCount = options.stagedCount ?? existing.length;
+  const seenFiles = new Set(existing.map((attachment) => attachment.file));
+  let reservedBytes = 0;
+  let reservedCount = 0;
+  const planned = candidates.map(({ file }) => {
+    const name = file.name || "untitled";
+    let rejection: string | null = null;
+    if (count >= MAX_ATTACHMENTS) {
+      rejection = `${name}: limit of ${MAX_ATTACHMENTS} attachments reached.`;
+    } else if (provisionalImageMediaType(file) === null) {
+      rejection = `${name}: attach a PNG, JPEG, WebP, or GIF image.`;
+    } else if (file.size === 0) {
+      rejection = `${name}: the image is empty.`;
+    } else if (file.size > MAX_ATTACHMENT_BYTES) {
+      rejection = `${name}: ${formatBytes(file.size)} is over the ${formatBytes(MAX_ATTACHMENT_BYTES)} limit.`;
+    } else if (seenFiles.has(file)) {
+      rejection = `${name}: already attached.`;
+    } else if (stagedCount >= MAX_STAGED_ATTACHMENTS) {
+      rejection = `${name}: the app already has ${MAX_STAGED_ATTACHMENTS} staged images. Remove one before adding another.`;
+    } else if (stagedBytes + file.size > MAX_STAGED_ATTACHMENT_BYTES) {
+      rejection = `${name}: staged images across sessions would exceed ${formatBytes(MAX_STAGED_ATTACHMENT_BYTES)}. Remove one before adding another.`;
+    }
+    if (rejection !== null) return { file: null, name, rejection } as const;
+
+    count += 1;
+    stagedBytes += file.size;
+    stagedCount += 1;
+    reservedBytes += file.size;
+    reservedCount += 1;
+    seenFiles.add(file);
+    return { file, name, rejection: null } as const;
+  });
+
+  // The caller owns this reservation until admission or disposal finishes.
+  // This callback runs before any asynchronous file read starts, so another
+  // paste/drop/picker batch sees the pending memory in its own preflight.
+  options.onReserve?.({ bytes: reservedBytes, count: reservedCount });
+  const results = await Promise.all(
+    planned.map(async ({ file, name, rejection }) => {
+      if (file === null) return { candidate: null, rejection } as const;
+      let buffer: ArrayBuffer;
+      try {
+        // This call occurs synchronously for every candidate before the outer
+        // function reaches its first await.
+        buffer = await readFile(file);
+      } catch {
+        return {
+          candidate: null,
+          rejection: `${file.name || "untitled"}: the selected image could not be read. Try choosing it again or selecting it through Files.`,
+        } as const;
+      }
+
+      const mediaType = sniffPromptImageMimeType(new Uint8Array(buffer));
+      if (mediaType === null) {
+        return {
+          candidate: null,
+          rejection: `${name}: attach a PNG, JPEG, WebP, or GIF image.`,
+        } as const;
+      }
+
+      try {
+        return {
+          candidate: {
+            file: new File([buffer], name, { type: mediaType }),
+          },
+          rejection: null,
+        } as const;
+      } catch {
+        return {
+          candidate: null,
+          rejection: `${name}: could not prepare a stable image copy.`,
+        } as const;
+      }
+    }),
+  );
+
+  const accepted: AttachmentCandidate[] = [];
+  const rejections: string[] = [];
+  for (const result of results) {
+    if (result.candidate === null) rejections.push(result.rejection);
+    else accepted.push(result.candidate);
+  }
+  return { accepted, rejections };
 }
 
 /**

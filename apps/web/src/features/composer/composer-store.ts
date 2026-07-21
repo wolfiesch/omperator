@@ -5,7 +5,7 @@
 // keeps only in-memory attachments awaiting the next prompt.
 import { createStore, type StoreApi, useStore } from "zustand";
 
-import type { StagedAttachment } from "./attachments.ts";
+import type { AttachmentMaterializationReservation, StagedAttachment } from "./attachments.ts";
 import type { SubmissionNotice, SubmissionToken } from "./submission.ts";
 import {
   admitContextItem,
@@ -19,6 +19,8 @@ import {
  * gets removed on boot so it can never leak back into a control.
  */
 export const LEGACY_COMPOSER_STORAGE_KEY = "omp:composer:v1";
+
+export type AttachmentIntakeToken = string;
 
 export function purgeLegacyComposerPersistence(storage: Pick<Storage, "removeItem">): void {
   try {
@@ -48,6 +50,13 @@ export interface ComposerStoreState {
   finishSubmission(sessionId: string, token: SubmissionToken): void;
   setSubmissionNotice(sessionId: string, notice: SubmissionNotice): void;
   setAttachmentRejections(sessionId: string, rejections: readonly string[]): void;
+  beginAttachmentIntake(
+    sessionId: string,
+    reservation: AttachmentMaterializationReservation,
+  ): AttachmentIntakeToken;
+  isAttachmentIntakeCurrent(sessionId: string, token: AttachmentIntakeToken): boolean;
+  finishAttachmentIntake(sessionId: string, token: AttachmentIntakeToken): void;
+  pendingAttachmentIntakeUsage(): AttachmentMaterializationReservation;
   /** Invalidate async owners and release renderer-owned values after permanent deletion. */
   disposeSession(sessionId: string): void;
 }
@@ -62,6 +71,15 @@ export interface ComposerStoreOptions {
 export function createComposerStore(options: ComposerStoreOptions = {}): ComposerStoreApi {
   const revokePreviewUrl = options.revokePreviewUrl ?? ((url: string) => URL.revokeObjectURL(url));
   let submissionSequence = 0;
+  let attachmentIntakeSequence = 0;
+  const attachmentIntakeGenerationBySessionId = new Map<string, number>();
+  const attachmentIntakes = new Map<
+    AttachmentIntakeToken,
+    AttachmentMaterializationReservation & {
+      readonly generation: number;
+      readonly sessionId: string;
+    }
+  >();
   return createStore<ComposerStoreState>((set, get) => ({
     attachmentsBySessionId: {},
     contextItemsBySessionId: {},
@@ -212,7 +230,48 @@ export function createComposerStore(options: ComposerStoreOptions = {}): Compose
         };
       });
     },
+    beginAttachmentIntake: (sessionId, reservation) => {
+      if (
+        !Number.isSafeInteger(reservation.bytes) ||
+        reservation.bytes < 0 ||
+        !Number.isSafeInteger(reservation.count) ||
+        reservation.count < 0
+      ) {
+        throw new Error("Attachment intake reservation must use non-negative safe integers.");
+      }
+      attachmentIntakeSequence += 1;
+      const token = `attachment-intake-${attachmentIntakeSequence}`;
+      attachmentIntakes.set(token, {
+        ...reservation,
+        generation: attachmentIntakeGenerationBySessionId.get(sessionId) ?? 0,
+        sessionId,
+      });
+      return token;
+    },
+    isAttachmentIntakeCurrent: (sessionId, token) => {
+      const intake = attachmentIntakes.get(token);
+      return (
+        intake?.sessionId === sessionId &&
+        intake.generation === (attachmentIntakeGenerationBySessionId.get(sessionId) ?? 0)
+      );
+    },
+    finishAttachmentIntake: (sessionId, token) => {
+      if (attachmentIntakes.get(token)?.sessionId === sessionId) attachmentIntakes.delete(token);
+    },
+    pendingAttachmentIntakeUsage: () => {
+      let bytes = 0;
+      let count = 0;
+      for (const intake of attachmentIntakes.values()) {
+        bytes += intake.bytes;
+        count += intake.count;
+      }
+      return { bytes, count };
+    },
     disposeSession: (sessionId) => {
+      attachmentIntakeGenerationBySessionId.set(
+        sessionId,
+        (attachmentIntakeGenerationBySessionId.get(sessionId) ?? 0) + 1,
+      );
       const attachments = get().attachmentsBySessionId[sessionId] ?? [];
       for (const attachment of attachments) revokePreviewUrl(attachment.previewUrl);
       set((state) => {

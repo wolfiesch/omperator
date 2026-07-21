@@ -31,11 +31,12 @@ import {
 } from "../context-packet/context-packet.ts";
 import {
   admitAttachments,
+  materializeAttachmentCandidates,
   toPromptAttachment,
   type AttachmentCandidate,
   type StagedAttachment,
 } from "./attachments.ts";
-import { composerStore, useComposer } from "./composer-store.ts";
+import { composerStore, type AttachmentIntakeToken, useComposer } from "./composer-store.ts";
 import { ContextMeter } from "./ContextMeter.tsx";
 import { AttachmentChips, RunOptionsMenu } from "./ComposerControls.tsx";
 import {
@@ -71,9 +72,28 @@ const IMAGE_REVISION_REASON =
   "Images cannot be added to a plan revision. Remove them or finish the revision first.";
 const IMAGE_ACTIVE_TURN_REASON =
   "Images can be sent with the next prompt after the running turn finishes.";
+const IMAGE_PREPARATION_PENDING_REASON =
+  "Your selected images are still being prepared. Wait a moment and send again.";
+const IMAGE_PREPARATION_FAILED_REASON =
+  "The selected images could not be prepared. Try choosing them again or selecting them through Files.";
 
 function filesToCandidates(files: ArrayLike<File>): AttachmentCandidate[] {
   return Array.from(files, (file) => ({ file }));
+}
+
+function attachmentIntakeState(sessionId: string): {
+  readonly existing: readonly StagedAttachment[];
+  readonly stagedBytes: number;
+  readonly stagedCount: number;
+} {
+  const stagedBySession = composerStore.getState().attachmentsBySessionId;
+  let stagedBytes = 0;
+  let stagedCount = 0;
+  for (const staged of Object.values(stagedBySession)) {
+    stagedCount += staged.length;
+    for (const attachment of staged) stagedBytes += attachment.sizeBytes;
+  }
+  return { existing: stagedBySession[sessionId] ?? [], stagedBytes, stagedCount };
 }
 
 // ---------------------------------------------------------------------------
@@ -153,6 +173,8 @@ export function Composer({
   const contextNotice = useComposer((state) => state.contextNoticeBySessionId[sessionId] ?? null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const attachmentIntakeTailRef = useRef<Promise<void>>(Promise.resolve());
+  const [preparingAttachmentCount, setPreparingAttachmentCount] = useState(0);
   const [caret, setCaret] = useState(0);
   const [menuIndex, setMenuIndex] = useState(0);
   const [menuDismissed, setMenuDismissed] = useState(false);
@@ -330,6 +352,10 @@ export function Composer({
   );
 
   const submit = useCallback(() => {
+    if (preparingAttachmentCount > 0) {
+      setRejections([IMAGE_PREPARATION_PENDING_REASON]);
+      return;
+    }
     const text = draft.trim();
     if (text === "" && attachments.length === 0) return;
     if (attachments.length > 0 && !controls.attachmentsSupported) {
@@ -373,6 +399,7 @@ export function Composer({
       },
     );
   }, [
+    preparingAttachmentCount,
     draft,
     attachments,
     controls.attachmentsSupported,
@@ -386,6 +413,10 @@ export function Composer({
   ]);
 
   const queueFollowUp = useCallback(() => {
+    if (preparingAttachmentCount > 0) {
+      setRejections([IMAGE_PREPARATION_PENDING_REASON]);
+      return;
+    }
     const text = draft.trim();
     if (text === "") return;
     if (attachments.length > 0) {
@@ -393,7 +424,7 @@ export function Composer({
       return;
     }
     runSubmission({ kind: "followUp", text }, { text: draft, attachmentIds: [] });
-  }, [draft, attachments.length, runSubmission]);
+  }, [draft, attachments.length, preparingAttachmentCount, runSubmission]);
 
   // While observed/reconciling the gate carries its own reason; the generic
   // host copy only applies when the host truly lacks image prompts.
@@ -404,26 +435,54 @@ export function Composer({
   }, [attachmentsUnavailableReason, setRejections]);
 
   const intake = useCallback(
-    (candidates: readonly AttachmentCandidate[]) => {
+    (candidates: readonly AttachmentCandidate[]): Promise<void> => {
       if (!controls.attachmentsSupported) {
         reportUnsupportedImages();
-        return;
+        return Promise.resolve();
       }
-      const stagedBySession = composerStore.getState().attachmentsBySessionId;
-      const existing = stagedBySession[sessionId] ?? [];
-      let stagedBytes = 0;
-      let stagedCount = 0;
-      for (const staged of Object.values(stagedBySession)) {
-        stagedCount += staged.length;
-        for (const attachment of staged) stagedBytes += attachment.sizeBytes;
-      }
-      const result = admitAttachments(existing, candidates, { stagedBytes, stagedCount });
-      if (result.accepted.length > 0) {
-        composerStore.getState().addAttachments(sessionId, result.accepted);
-      }
-      setRejections(result.rejections);
+
+      setPreparingAttachmentCount((count) => count + 1);
+      // Start every picker read now, before this batch waits behind an earlier
+      // intake and before the file input is cleared.
+      const initialState = attachmentIntakeState(sessionId);
+      const pending = composerStore.getState().pendingAttachmentIntakeUsage();
+      let intakeToken: AttachmentIntakeToken | null = null;
+      const materialized = materializeAttachmentCandidates(candidates, {
+        ...initialState,
+        stagedBytes: initialState.stagedBytes + pending.bytes,
+        stagedCount: initialState.stagedCount + pending.count,
+        onReserve: (reservation) => {
+          intakeToken = composerStore.getState().beginAttachmentIntake(sessionId, reservation);
+        },
+      });
+      const isCurrent = () =>
+        intakeToken !== null &&
+        composerStore.getState().isAttachmentIntakeCurrent(sessionId, intakeToken);
+      const task = attachmentIntakeTailRef.current.then(async () => {
+        const prepared = await materialized;
+        if (!isCurrent()) return;
+        const { existing, stagedBytes, stagedCount } = attachmentIntakeState(sessionId);
+        const result = admitAttachments(existing, prepared.accepted, { stagedBytes, stagedCount });
+        if (!isCurrent()) return;
+        if (result.accepted.length > 0) {
+          composerStore.getState().addAttachments(sessionId, result.accepted);
+        }
+        setRejections([...prepared.rejections, ...result.rejections]);
+      });
+      const settled = task
+        .catch(() => {
+          if (isCurrent()) setRejections([IMAGE_PREPARATION_FAILED_REASON]);
+        })
+        .finally(() => {
+          if (intakeToken !== null) {
+            composerStore.getState().finishAttachmentIntake(sessionId, intakeToken);
+          }
+          setPreparingAttachmentCount((count) => Math.max(0, count - 1));
+        });
+      attachmentIntakeTailRef.current = settled;
+      return settled;
     },
-    [sessionId, controls.attachmentsSupported, reportUnsupportedImages],
+    [sessionId, controls.attachmentsSupported, reportUnsupportedImages, setRejections],
   );
 
   const requestAttachmentPicker = useCallback(() => {
@@ -494,7 +553,9 @@ export function Composer({
   };
 
   const primaryLabel = revisingPlanId !== null ? "Send revision" : turnActive ? "Steer" : "Send";
-  const canSubmit = !disabled && (draft.trim() !== "" || attachments.length > 0);
+  const preparingAttachments = preparingAttachmentCount > 0;
+  const canSubmit =
+    !disabled && !preparingAttachments && (draft.trim() !== "" || attachments.length > 0);
   const runOptionsSummary = `${controls.modelLabel ?? "Host model"} · ${thinkingLabel(controls.thinking)}`;
 
   return (
@@ -601,7 +662,7 @@ export function Composer({
             if (event.dataTransfer.files.length === 0) return;
             event.preventDefault();
             if (disabled) return;
-            intake(filesToCandidates(event.dataTransfer.files));
+            void intake(filesToCandidates(event.dataTransfer.files));
           }}
         >
           {revisingPlanId !== null && (
@@ -695,7 +756,7 @@ export function Composer({
               if (event.clipboardData.files.length === 0) return;
               event.preventDefault();
               if (disabled) return;
-              intake(filesToCandidates(event.clipboardData.files));
+              void intake(filesToCandidates(event.clipboardData.files));
             }}
             onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
             placeholder={
@@ -717,8 +778,11 @@ export function Composer({
               className="hidden"
               multiple
               onChange={(event) => {
-                if (event.target.files !== null) intake(filesToCandidates(event.target.files));
-                event.target.value = "";
+                const input = event.currentTarget;
+                if (input.files === null) return;
+                void intake(filesToCandidates(input.files)).finally(() => {
+                  input.value = "";
+                });
               }}
               ref={fileInputRef}
               type="file"
@@ -781,7 +845,7 @@ export function Composer({
                   </TooltipPopup>
                 </Tooltip>
                 <Button
-                  disabled={disabled || sending || draft.trim() === ""}
+                  disabled={disabled || sending || preparingAttachments || draft.trim() === ""}
                   onClick={queueFollowUp}
                   size="xs"
                   variant="outline"
@@ -791,7 +855,7 @@ export function Composer({
               </>
             )}
             <Button
-              aria-busy={sending || undefined}
+              aria-busy={sending || preparingAttachments || undefined}
               aria-label={primaryLabel}
               className="ml-1"
               disabled={!canSubmit || sending}
@@ -831,10 +895,10 @@ export function Composer({
               onCancel={() => onIntent({ kind: "cancel" })}
               onQueue={queueFollowUp}
               onSubmit={submit}
-              primaryBusy={sending}
+              primaryBusy={sending || preparingAttachments}
               primaryDisabled={!canSubmit || sending}
               primaryLabel={primaryLabel}
-              queueDisabled={disabled || sending || draft.trim() === ""}
+              queueDisabled={disabled || sending || preparingAttachments || draft.trim() === ""}
               turnActive={turnActive}
             />
           </div>
