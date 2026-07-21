@@ -72,6 +72,28 @@ class MemoryConnector implements PodHostConnector {
 	}
 }
 
+class PendingConnector extends MemoryConnector {
+	readonly closes: Array<[number | undefined, string | undefined]> = [];
+	#resolve: (() => void) | undefined;
+	override connect(route: PodHostRoute, onFrame: (frame: ServerFrame) => void): Promise<PodHostConnection> {
+		this.routes.push(route);
+		this.onFrame = onFrame;
+		const deferred = Promise.withResolvers<PodHostConnection>();
+		this.#resolve = () => {
+			this.#resolve = undefined;
+			deferred.resolve({
+				send: frame => { this.sent.push(frame); },
+				close: (code, reason) => { this.closes.push([code, reason]); },
+			});
+		};
+		return deferred.promise;
+	}
+	resolveConnection(): void {
+		if (!this.#resolve) throw new Error("pod connector is not pending");
+		this.#resolve();
+	}
+}
+
 class MemoryMutations implements GatewayMutationBackend {
 	workspaceCreates = 0;
 	sessionCreates = 0;
@@ -90,7 +112,7 @@ class MemoryMutations implements GatewayMutationBackend {
 	}
 }
 
-function setup(epoch = "replica-uid-1") {
+function setup(epoch = "replica-uid-1", connector: MemoryConnector = new MemoryConnector()) {
 	const projection = new ClusterInfrastructureProjection({ epoch, namespace: "development" });
 	projection.replace({
 		host,
@@ -100,7 +122,6 @@ function setup(epoch = "replica-uid-1") {
 	});
 	projection.setSessionAuthority("session-one", authority("omp-private-one"));
 	projection.setSessionAuthority("session-two", authority("omp-private-two"));
-	const connector = new MemoryConnector();
 	const mutations = new MemoryMutations();
 	const gateway = new ClusterGateway({ projection, connector, mutations });
 	const client = new MemoryClient();
@@ -200,6 +221,92 @@ describe("stateless omp-app cluster gateway", () => {
 			hostId: "cluster:host-uid", sessionId: "session-one",
 			entry: { hostId: "cluster:host-uid", sessionId: "session-one", data: { correlationId: "omp-private-one" } },
 		});
+	});
+
+	it("closes a pending route without dispatch when session ownership changes", async () => {
+		const scenarios: Array<{ frame: unknown; commandId?: string }> = [
+			{
+				commandId: "command-revoked",
+				frame: {
+					v: "omp-app/1", type: "command", requestId: "request-revoked", commandId: "command-revoked",
+					hostId: "cluster:host-uid", sessionId: "session-one", command: "session.attach", args: {},
+				},
+			},
+			{
+				commandId: "preview-revoked",
+				frame: {
+					v: "omp-app/1", type: "command", requestId: "request-preview-revoked", commandId: "preview-revoked",
+					hostId: "cluster:host-uid", sessionId: "session-one", command: "preview.state", args: {},
+				},
+			},
+			{
+				frame: {
+					v: "omp-app/1", type: "terminal.input", hostId: "cluster:host-uid", sessionId: "session-one",
+					terminalId: "terminal-revoked", data: "blocked",
+				},
+			},
+		];
+		for (const scenario of scenarios) {
+			const connector = new PendingConnector();
+			const value = setup("replica-uid-1", connector);
+			await value.connection.receive({
+				...hello,
+				requestedFeatures: [...hello.requestedFeatures, "terminal.io"],
+				capabilities: { client: [...hello.capabilities.client, "term.input"] },
+			});
+			const pending = value.connection.receive(scenario.frame);
+			expect(connector.routes).toHaveLength(1);
+			value.projection.applyWatch({
+				type: "MODIFIED",
+				object: {
+					...workspace,
+					metadata: { ...workspace.metadata, resourceVersion: "30", generation: 2 },
+					spec: { ...workspace.spec, owner: "other@example.com" },
+				},
+			});
+			connector.resolveConnection();
+			await pending;
+			expect(connector.sent).toEqual([]);
+			expect(connector.closes).toContainEqual([1001, "session route changed"]);
+			if (scenario.commandId) {
+				expect(value.client.frames.find(frame => frame.type === "response" && frame.commandId === scenario.commandId)).toMatchObject({
+					type: "response", commandId: scenario.commandId, ok: false, error: { code: "NOT_AUTHORIZED" },
+				});
+			}
+		}
+	});
+
+	it("rejects a pending connection when its authoritative upstream route changes", async () => {
+		const changes: Array<(projection: ClusterInfrastructureProjection) => void> = [
+			projection => projection.setSessionAuthority("session-one", authority("omp-private-moved")),
+			projection => projection.applyWatch({
+				type: "MODIFIED",
+				object: {
+					...session("session-one"),
+					metadata: { ...session("session-one").metadata, resourceVersion: "31", generation: 2 },
+					status: { ...session("session-one").status, serviceName: "session-one-moved" },
+				},
+			}),
+		];
+		for (const [index, change] of changes.entries()) {
+			const connector = new PendingConnector();
+			const value = setup("replica-uid-1", connector);
+			await value.connection.receive(hello);
+			const commandId = `command-route-changed-${index}`;
+			const pending = value.connection.receive({
+				v: "omp-app/1", type: "command", requestId: `request-route-changed-${index}`, commandId,
+				hostId: "cluster:host-uid", sessionId: "session-one", command: "session.attach", args: {},
+			});
+			expect(connector.routes).toHaveLength(1);
+			change(value.projection);
+			connector.resolveConnection();
+			await pending;
+			expect(connector.sent).toEqual([]);
+			expect(connector.closes).toContainEqual([1001, "session route changed"]);
+			expect(value.client.frames.find(frame => frame.type === "response" && frame.commandId === commandId)).toMatchObject({
+				type: "response", commandId, ok: false, error: { code: "UPSTREAM_UNAVAILABLE" },
+			});
+		}
 	});
 
 	it("denies a preview id learned from another session without opening a second upstream socket", async () => {

@@ -11,7 +11,7 @@ import {
 	type KubernetesResource,
 	type KubernetesWatchEvent,
 } from "./kubernetes-projection.ts";
-import { readBoundedRegularFile } from "./config.ts";
+import { readBoundedRegularFile, readKubernetesToken } from "./config.ts";
 
 const API_PREFIX = "/apis/cluster.t4.dev/v1alpha1";
 const TOKEN_REVIEW_PATH = "/apis/authentication.k8s.io/v1/tokenreviews";
@@ -21,7 +21,8 @@ export const CLUSTER_INTERNAL_AUDIENCE = "t4-cluster-internal";
 export interface KubernetesApiClientOptions {
 	readonly baseUrl: string;
 	readonly namespace: string;
-	readonly token: string;
+	readonly token?: string;
+	readonly tokenFile?: string;
 	readonly ca?: string;
 	readonly fetch?: typeof globalThis.fetch;
 }
@@ -61,15 +62,25 @@ export class KubernetesApiError extends Error {
 export class KubernetesApiClient {
 	readonly baseUrl: string;
 	readonly namespace: string;
-	readonly #token: string;
+	readonly #token?: string;
+	readonly #tokenFile?: string;
 	readonly #ca?: string;
 	readonly #fetch: typeof globalThis.fetch;
 
 	constructor(options: KubernetesApiClientOptions) {
 		this.baseUrl = exactHttpsBase(options.baseUrl);
 		this.namespace = safeNamespace(options.namespace);
-		if (!options.token || options.token.length > 16_384) throw new Error("Kubernetes service account token is invalid");
-		this.#token = options.token;
+		const hasToken = options.token !== undefined;
+		const hasTokenFile = options.tokenFile !== undefined;
+		if (hasToken === hasTokenFile) throw new Error("Kubernetes API client requires exactly one credential source");
+		if (hasToken) {
+			if (!options.token || new TextEncoder().encode(options.token).byteLength > 16_384 || /\s/u.test(options.token))
+				throw new Error("Kubernetes service account token is invalid");
+			this.#token = options.token;
+		} else {
+			if (!isAbsolute(options.tokenFile!)) throw new Error("Kubernetes service account token file must be absolute");
+			this.#tokenFile = options.tokenFile;
+		}
 		this.#ca = options.ca;
 		this.#fetch = options.fetch ?? globalThis.fetch;
 	}
@@ -170,10 +181,11 @@ export class KubernetesApiClient {
 		if (!/^[a-z0-9]+$/u.test(resource)) throw new Error("Kubernetes resource is invalid");
 		return `${API_PREFIX}/namespaces/${this.namespace}/${resource}`;
 	}
-	#raw(path: string, init: RequestInit): Promise<Response> {
+	async #raw(path: string, init: RequestInit): Promise<Response> {
+		const token = this.#token ?? await readKubernetesToken(this.#tokenFile!);
 		const headers = new Headers(init.headers);
 		headers.set("accept", "application/json");
-		headers.set("authorization", `Bearer ${this.#token}`);
+		headers.set("authorization", `Bearer ${token}`);
 		const request = { ...init, headers } as RequestInit & { tls?: { ca?: string } };
 		if (this.#ca) request.tls = { ca: this.#ca };
 		return this.#fetch(`${this.baseUrl}${path}`, request);

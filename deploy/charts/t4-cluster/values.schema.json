@@ -19,7 +19,7 @@
     "enabled": { "type": "boolean", "default": false },
     "clusterHost": {
       "type": "object",
-      "required": ["name", "runtimeProfiles", "allowedOrigins", "projection"],
+      "required": ["name", "runtimeProfiles", "allowedOrigins"],
       "properties": {
         "name": { "$ref": "#/definitions/dnsSubdomain" },
         "runtimeProfiles": {
@@ -34,14 +34,6 @@
           "maxItems": 32,
           "uniqueItems": true,
           "items": { "type": "string", "pattern": "^https://[^/?#]+$", "maxLength": 256 }
-        },
-        "projection": {
-          "type": "object",
-          "required": ["maxWorkspaces", "resyncSeconds"],
-          "properties": {
-            "maxWorkspaces": { "type": "integer", "minimum": 1, "maximum": 256 },
-            "resyncSeconds": { "type": "integer", "minimum": 10, "maximum": 3600 }
-          }
         }
       }
     },

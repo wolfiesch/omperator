@@ -205,6 +205,20 @@ export class ClusterGateway {
 			}
 			try {
 				const socket = await cached.pending;
+				const current = this.#projection.sessionRoute(clusterSessionId, principal);
+				if (!current
+					|| current.clusterSessionId !== selected.clusterSessionId
+					|| current.url !== selected.url
+					|| current.upstreamSessionId !== selected.upstreamSessionId) {
+					if (upstream.get(clusterSessionId)?.pending === cached.pending) upstream.delete(clusterSessionId);
+					socket.close(1001, "session route changed");
+					if (frame.type === "command") {
+						client.send(current
+							? errorResult(frame, "UPSTREAM_UNAVAILABLE", "session pod route changed while connecting")
+							: errorResult(frame, "NOT_AUTHORIZED", "session is unavailable for this identity"));
+					}
+					return;
+				}
 				socket.send(rewriteClientAddress(frame, selected, socket.hostId ?? "upstream"));
 			} catch {
 				if (frame.type === "command") client.send(errorResult(frame, "UPSTREAM_UNAVAILABLE", "session pod host connection failed"));

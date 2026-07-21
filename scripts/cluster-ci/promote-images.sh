@@ -34,7 +34,22 @@ do
   esac
   source="$HARBOR_REGISTRY/$HARBOR_PROJECT/quarantine/$repository_suffix@$digest"
   destination="$HARBOR_REGISTRY/$HARBOR_PROJECT/$repository_suffix:$CI_COMMIT_SHA"
-  oras copy --recursive "$source" "$destination"
+  if resolved=$(oras resolve "$destination" 2>&1); then
+    if [ "$resolved" != "$digest" ]; then
+      echo "$component destination commit tag already resolves to a different digest" >&2
+      exit 65
+    fi
+  else
+    case "$resolved" in
+      *"failed to resolve digest: $CI_COMMIT_SHA: not found") ;;
+      *)
+        printf '%s\n' "$resolved" >&2
+        echo "$component destination commit tag could not be resolved safely" >&2
+        exit 65
+        ;;
+    esac
+    oras copy --recursive "$source" "$destination"
+  fi
   resolved=$(oras resolve "$destination")
   if [ "$resolved" != "$digest" ]; then
     echo "$component promoted reference did not resolve to the gated digest" >&2

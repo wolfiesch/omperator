@@ -5,7 +5,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ printf "%s-controller" (include "t4-cluster.fullname" .) | quote }}
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "controller") | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
     app.kubernetes.io/component: controller
@@ -27,7 +27,7 @@ spec:
         app.kubernetes.io/component: controller
         app.kubernetes.io/part-of: t4-cluster
     spec:
-      serviceAccountName: {{ printf "%s-controller" (include "t4-cluster.fullname" .) | quote }}
+      serviceAccountName: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "controller") | quote }}
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 30
       securityContext:
@@ -89,9 +89,9 @@ spec:
             - name: T4_SESSION_OMP_ALLOW_UNAUTHENTICATED
               value: {{ .Values.session.omp.allowUnauthenticated | quote }}
             - name: T4_SESSION_SERVICE_ACCOUNT
-              value: {{ printf "%s-session" (include "t4-cluster.fullname" .) | quote }}
+              value: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "session") | quote }}
             - name: T4_CLUSTER_SERVER_SERVICE_ACCOUNT
-              value: {{ printf "%s-server" (include "t4-cluster.fullname" .) | quote }}
+              value: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server") | quote }}
             - name: T4_KUBERNETES_API_AUDIENCE
               value: {{ .Values.kubernetes.apiAudience | quote }}
             - name: T4_SESSION_EXCLUDED_NODES
@@ -161,7 +161,7 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ printf "%s-server" (include "t4-cluster.fullname" .) | quote }}
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server") | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
     app.kubernetes.io/component: server
@@ -187,7 +187,7 @@ spec:
         app.kubernetes.io/component: server
         app.kubernetes.io/part-of: t4-cluster
     spec:
-      serviceAccountName: {{ printf "%s-server" (include "t4-cluster.fullname" .) | quote }}
+      serviceAccountName: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server") | quote }}
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: {{ .Values.server.terminationGracePeriodSeconds }}
       securityContext:
@@ -244,7 +244,7 @@ spec:
             - name: T4_CLUSTER_IDENTITY_TOKEN_FILE
               value: /var/run/secrets/t4-cluster-identity/token
             - name: T4_CLUSTER_SERVER_SERVICE_ACCOUNT
-              value: {{ printf "%s-server" (include "t4-cluster.fullname" .) | quote }}
+              value: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server") | quote }}
             - name: T4_KUBERNETES_API_AUDIENCE
               value: {{ .Values.kubernetes.apiAudience | quote }}
             - name: T4_KUBERNETES_TOKEN_PATH

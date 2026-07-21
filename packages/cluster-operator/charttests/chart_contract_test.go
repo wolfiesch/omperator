@@ -4,9 +4,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
+
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"sigs.k8s.io/yaml"
 )
 
 const fakeDigest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -64,6 +68,55 @@ func TestEnabledChartRendersHARestrictedWorkloads(t *testing.T) {
 	}
 	if strings.Contains(output, "kind: PersistentVolumeClaim") || strings.Contains(output, "nfs:") || strings.Contains(output, "hostPath:") {
 		t.Fatal("portable chart rendered storage backend or workload PVC")
+	}
+}
+
+func TestLongReleaseNamesRenderDNSLabelResourceNames(t *testing.T) {
+	releaseName := strings.Repeat("r", 53)
+	output := helmTemplateRelease(t, releaseName, append(enabledValues(),
+		"--set", "ingress.enabled=true",
+		"--set-string", "ingress.className=tailscale",
+		"--set-string", "ingress.host=operator.example.ts.net",
+		"--set", "observability.serviceMonitor.enabled=true",
+		"--set", "observability.prometheusRule.enabled=true",
+	)...)
+	dnsLabel := regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
+	requiredSuffixes := []string{
+		"controller",
+		"server",
+		"metrics",
+		"controller-metrics",
+		"session",
+		"session-token-reviewer",
+		"storage-reader",
+	}
+	foundSuffixes := make(map[string]bool, len(requiredSuffixes))
+	for _, document := range strings.Split(output, "\n---") {
+		var object struct {
+			Kind     string `json:"kind"`
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+		}
+		if err := yaml.Unmarshal([]byte(document), &object); err != nil {
+			t.Fatalf("decode rendered object: %v\n%s", err, document)
+		}
+		if object.Kind == "" {
+			continue
+		}
+		if len(object.Metadata.Name) > 63 || !dnsLabel.MatchString(object.Metadata.Name) {
+			t.Fatalf("rendered %s metadata.name %q is not a DNS label of at most 63 characters", object.Kind, object.Metadata.Name)
+		}
+		for _, suffix := range requiredSuffixes {
+			if strings.HasSuffix(object.Metadata.Name, "-"+suffix) {
+				foundSuffixes[suffix] = true
+			}
+		}
+	}
+	for _, suffix := range requiredSuffixes {
+		if !foundSuffixes[suffix] {
+			t.Fatalf("long release render lacks a metadata.name preserving suffix %q", suffix)
+		}
 	}
 }
 
@@ -183,6 +236,41 @@ func TestNumericDNSReferencesStayQuoted(t *testing.T) {
 	)...)
 	host := documentContainingKind(t, output, "T4ClusterHost", "name: \"123\"")
 	assertContains(t, host, "storageClassName: \"456\"")
+}
+
+func TestClusterHostDoesNotAdvertiseIgnoredProjectionConfiguration(t *testing.T) {
+	root := repoRoot(t)
+	output := helmTemplate(t, enabledValues()...)
+	host := documentContainingKind(t, output, "T4ClusterHost", "name: \"t4-cluster\"")
+	for _, ignored := range []string{"projection:", "maxWorkspaces", "resyncSeconds"} {
+		if strings.Contains(host, ignored) {
+			t.Fatalf("rendered T4ClusterHost advertises ignored configuration %q", ignored)
+		}
+	}
+
+	crdRaw := mustRead(t, filepath.Join(root, "deploy", "charts", "t4-cluster", "crds", "t4clusterhosts.cluster.t4.dev.yaml"))
+	var crd apiextensionsv1.CustomResourceDefinition
+	if err := yaml.Unmarshal([]byte(crdRaw), &crd); err != nil {
+		t.Fatalf("decode cluster host CRD: %v", err)
+	}
+	spec := crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"]
+	if _, ok := spec.Properties["projection"]; ok {
+		t.Fatal("T4ClusterHost CRD exposes ignored spec.projection")
+	}
+
+	for _, path := range []string{
+		filepath.Join(root, "deploy", "charts", "t4-cluster", "values.yaml"),
+		filepath.Join(root, "deploy", "charts", "t4-cluster", "values.schema.json"),
+		filepath.Join(root, "deploy", "charts", "t4-cluster", "templates", "clusterhost.yaml"),
+		filepath.Join(root, "packages", "cluster-operator", "api", "v1alpha1", "types.go"),
+	} {
+		content := strings.ToLower(mustRead(t, path))
+		for _, name := range []string{"projection", "maxworkspaces", "resyncseconds"} {
+			if strings.Contains(content, name) {
+				t.Fatalf("%s advertises ignored cluster projection configuration %q", path, name)
+			}
+		}
+	}
 }
 
 func TestDNSAndSourceSelectorsAreConfigurableAndReleaseScoped(t *testing.T) {
@@ -415,6 +503,53 @@ func TestCRDsRemainExplicitAcrossUpgradeAndUninstall(t *testing.T) {
 	}
 }
 
+func TestWorkspaceRetentionPolicyIsImmutable(t *testing.T) {
+	root := repoRoot(t)
+	raw := mustRead(t, filepath.Join(root, "deploy", "charts", "t4-cluster", "crds", "t4workspaces.cluster.t4.dev.yaml"))
+	var crd apiextensionsv1.CustomResourceDefinition
+	if err := yaml.Unmarshal([]byte(raw), &crd); err != nil {
+		t.Fatalf("decode workspace CRD: %v", err)
+	}
+	if len(crd.Spec.Versions) != 1 || crd.Spec.Versions[0].Schema == nil || crd.Spec.Versions[0].Schema.OpenAPIV3Schema == nil {
+		t.Fatal("workspace CRD lacks its single versioned OpenAPI schema")
+	}
+	retentionPolicy, ok := crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"].Properties["retentionPolicy"]
+	if !ok {
+		t.Fatal("workspace CRD lacks spec.retentionPolicy")
+	}
+	if len(retentionPolicy.Enum) != 2 {
+		t.Fatalf("retention policy enum = %v, want exactly Retain and Delete", retentionPolicy.Enum)
+	}
+	allowed := map[string]bool{`"Retain"`: false, `"Delete"`: false}
+	for _, value := range retentionPolicy.Enum {
+		if _, expected := allowed[string(value.Raw)]; !expected {
+			t.Fatalf("retention policy permits unexpected initial value %s", value.Raw)
+		}
+		allowed[string(value.Raw)] = true
+	}
+	for value, found := range allowed {
+		if !found {
+			t.Fatalf("retention policy rejects initial value %s", value)
+		}
+	}
+
+	immutable := false
+	for _, validation := range retentionPolicy.XValidations {
+		if validation.Rule == "self == oldSelf" && validation.Message == "retentionPolicy is immutable" {
+			immutable = true
+		}
+	}
+	if !immutable {
+		t.Fatal("spec.retentionPolicy lacks the immutable CEL transition rule and clear message")
+	}
+
+	api := mustRead(t, filepath.Join(root, "packages", "cluster-operator", "api", "v1alpha1", "types.go"))
+	assertContains(t, api,
+		"// +kubebuilder:validation:Enum=Retain;Delete\ntype RetentionPolicy string",
+		"// +kubebuilder:validation:XValidation:rule=\"self == oldSelf\",message=\"retentionPolicy is immutable\"\n\tRetentionPolicy RetentionPolicy",
+	)
+}
+
 func TestImageContractsArePinnedAndAuthorityCompatible(t *testing.T) {
 	root := repoRoot(t)
 	controller := mustRead(t, filepath.Join(root, "cluster", "images", "controller", "Dockerfile"))
@@ -556,7 +691,12 @@ func TestSessionEntrypointFailsClosedBeforeGUIWithoutPrivateOMPInputs(t *testing
 
 func helmTemplate(t *testing.T, extra ...string) string {
 	t.Helper()
-	args := []string{"template", "release-name", filepath.Join(repoRoot(t), "deploy", "charts", "t4-cluster"), "--namespace", "t4-system"}
+	return helmTemplateRelease(t, "release-name", extra...)
+}
+
+func helmTemplateRelease(t *testing.T, releaseName string, extra ...string) string {
+	t.Helper()
+	args := []string{"template", releaseName, filepath.Join(repoRoot(t), "deploy", "charts", "t4-cluster"), "--namespace", "t4-system"}
 	args = append(args, extra...)
 	command := exec.Command("helm", args...)
 	output, err := command.CombinedOutput()

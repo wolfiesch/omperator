@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -59,6 +59,58 @@ describe("namespaced Kubernetes client", () => {
 			expect(new Headers(request.init?.headers).get("authorization")).toBe("Bearer service-account-token");
 		}
 		expect(JSON.stringify(listed)).not.toContain("service-account-token");
+	});
+
+	it("observes projected service account token rotation without recreating the client", async () => {
+		const directory = await mkdtemp(join(tmpdir(), "t4-kubernetes-client-token-"));
+		try {
+			const tokenFile = join(directory, "token");
+			const nextTokenFile = join(directory, "token.next");
+			const values = recordingFetch([{}, {}]);
+			await writeFile(join(directory, "token-one"), "projected-token-one\n", { mode: 0o400 });
+			await writeFile(join(directory, "token-two"), "projected-token-two\n", { mode: 0o400 });
+			await symlink(join(directory, "token-one"), tokenFile);
+			const client = new KubernetesApiClient({
+				baseUrl: "https://kubernetes.default.svc",
+				namespace: "development",
+				tokenFile,
+				fetch: values.fetch,
+			});
+
+			await client.list("t4clusterhosts", 1);
+			await symlink(join(directory, "token-two"), nextTokenFile);
+			await rename(nextTokenFile, tokenFile);
+			await client.list("t4clusterhosts", 1);
+
+			expect(values.requests.map(request => new Headers(request.init?.headers).get("authorization"))).toEqual([
+				"Bearer projected-token-one",
+				"Bearer projected-token-two",
+			]);
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("requires exactly one bounded valid credential source and fails closed", async () => {
+		const common = { baseUrl: "https://kubernetes.default.svc", namespace: "development" } as const;
+		expect(() => new KubernetesApiClient(common)).toThrow("exactly one credential source");
+		expect(() => new KubernetesApiClient({ ...common, token: "static-token", tokenFile: "/projected/token" })).toThrow("exactly one credential source");
+		expect(() => new KubernetesApiClient({ ...common, tokenFile: "relative/token" })).toThrow("must be absolute");
+		expect(() => new KubernetesApiClient({ ...common, token: "malformed token" })).toThrow("token is invalid");
+
+		const directory = await mkdtemp(join(tmpdir(), "t4-kubernetes-client-invalid-token-"));
+		try {
+			const tokenFile = join(directory, "token");
+			const values = recordingFetch([]);
+			const client = new KubernetesApiClient({ ...common, tokenFile, fetch: values.fetch });
+			await writeFile(tokenFile, "malformed token", { mode: 0o400 });
+			await expect(client.request("/version")).rejects.toThrow("Kubernetes token file is invalid");
+			await writeFile(tokenFile, "x".repeat(16_385), { mode: 0o400 });
+			await expect(client.request("/version")).rejects.toThrow("Kubernetes token file is invalid");
+			expect(values.requests).toHaveLength(0);
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
 	});
 
 	it("persists idempotent CR identity as command id plus semantic hash without credentials or arbitrary URLs", async () => {

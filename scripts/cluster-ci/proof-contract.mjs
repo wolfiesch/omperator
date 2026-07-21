@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { basename, relative, resolve, sep } from "node:path";
 
+export const CANONICAL_BUILD_SOURCE_REPOSITORY = "usr-bin-roygbiv/t4-code";
+export const AUTHORIZED_CI_MIRROR = "z-peterson/t4-code";
 export const IMAGE_COMPONENTS = Object.freeze(["controller", "cluster-server", "session-runtime"]);
 export const PROOF_SCENARIOS = Object.freeze([
   "ha-manifest",
@@ -152,13 +154,18 @@ function visualEvidence(value, label) {
 
 function validateSource(source) {
   exactFields(source, ["repository", "commit", "woodpecker"], "source");
-  if (source.repository !== "z-peterson/t4-code") fail("source.repository is not canonical");
+  if (source.repository !== CANONICAL_BUILD_SOURCE_REPOSITORY) {
+    fail("source.repository is not the canonical build source");
+  }
   if (!COMMIT_PATTERN.test(source.commit)) fail("source.commit must be an exact lowercase SHA");
   exactFields(
     source.woodpecker,
-    ["repositoryId", "pipelineId", "pipelineNumber", "url"],
+    ["repository", "repositoryId", "pipelineId", "pipelineNumber", "url"],
     "source.woodpecker",
   );
+  if (source.woodpecker.repository !== AUTHORIZED_CI_MIRROR) {
+    fail("source.woodpecker.repository is not the authorized CI mirror");
+  }
   positiveInteger(source.woodpecker.repositoryId, "source.woodpecker.repositoryId");
   positiveInteger(source.woodpecker.pipelineId, "source.woodpecker.pipelineId");
   positiveInteger(source.woodpecker.pipelineNumber, "source.woodpecker.pipelineNumber");

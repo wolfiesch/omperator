@@ -2,7 +2,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ printf "%s-controller" (include "t4-cluster.fullname" .) | quote }}
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "controller") | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 rules:
@@ -38,7 +38,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ printf "%s-server" (include "t4-cluster.fullname" .) | quote }}
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server") | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 rules:
@@ -58,7 +58,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ printf "%s-session-token-reviewer" (include "t4-cluster.fullname" .) | quote }}
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "session-token-reviewer") | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 rules:
@@ -69,7 +69,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ printf "%s-storage-reader" (include "t4-cluster.fullname" .) | quote }}
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "storage-reader") | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 rules:
@@ -80,7 +80,7 @@ rules:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: {{ printf "%s-controller" (include "t4-cluster.fullname" .) | quote }}
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "controller") | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 automountServiceAccountToken: false
@@ -88,7 +88,7 @@ automountServiceAccountToken: false
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: {{ printf "%s-server" (include "t4-cluster.fullname" .) | quote }}
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server") | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 automountServiceAccountToken: false
@@ -96,7 +96,7 @@ automountServiceAccountToken: false
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: {{ printf "%s-session" (include "t4-cluster.fullname" .) | quote }}
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "session") | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 automountServiceAccountToken: false
@@ -104,60 +104,60 @@ automountServiceAccountToken: false
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ printf "%s-controller" (include "t4-cluster.fullname" .) | quote }}
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "controller") | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 subjects:
   - kind: ServiceAccount
-    name: {{ printf "%s-controller" (include "t4-cluster.fullname" .) | quote }}
+    name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "controller") | quote }}
     namespace: {{ .Release.Namespace | quote }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ printf "%s-controller" (include "t4-cluster.fullname" .) | quote }}
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "controller") | quote }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ printf "%s-storage-reader" (include "t4-cluster.fullname" .) | quote }}
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "storage-reader") | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 subjects:
   - kind: ServiceAccount
-    name: {{ printf "%s-controller" (include "t4-cluster.fullname" .) | quote }}
+    name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "controller") | quote }}
     namespace: {{ .Release.Namespace | quote }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ printf "%s-storage-reader" (include "t4-cluster.fullname" .) | quote }}
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "storage-reader") | quote }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ printf "%s-server" (include "t4-cluster.fullname" .) | quote }}
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server") | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 subjects:
   - kind: ServiceAccount
-    name: {{ printf "%s-server" (include "t4-cluster.fullname" .) | quote }}
+    name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server") | quote }}
     namespace: {{ .Release.Namespace | quote }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ printf "%s-server" (include "t4-cluster.fullname" .) | quote }}
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server") | quote }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ printf "%s-session-token-reviewer" (include "t4-cluster.fullname" .) | quote }}
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "session-token-reviewer") | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 subjects:
   - kind: ServiceAccount
-    name: {{ printf "%s-session" (include "t4-cluster.fullname" .) | quote }}
+    name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "session") | quote }}
     namespace: {{ .Release.Namespace | quote }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ printf "%s-session-token-reviewer" (include "t4-cluster.fullname" .) | quote }}
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "session-token-reviewer") | quote }}
 {{- end }}

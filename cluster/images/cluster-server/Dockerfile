@@ -21,7 +21,8 @@ ENV NODE_ENV=production \
     HOME=/tmp \
     T4_CLUSTER_SERVER_PORT=8080 \
     T4_CLUSTER_ADMIN_PORT=9090
-LABEL org.opencontainers.image.source="https://github.com/LycaonLLC/t4-code" \
+ARG SOURCE_REPOSITORY=https://github.com/LycaonLLC/t4-code
+LABEL org.opencontainers.image.source="${SOURCE_REPOSITORY}" \
       org.opencontainers.image.title="T4 stateless cluster server"
 USER 10001:10001
 EXPOSE 8080 9090

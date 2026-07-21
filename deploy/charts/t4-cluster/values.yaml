@@ -5,9 +5,6 @@ clusterHost:
   runtimeProfiles:
     - default
   allowedOrigins: []
-  projection:
-    maxWorkspaces: 256
-    resyncSeconds: 60
 
 kubernetes:
   # Audience accepted by this cluster's API server for projected API credentials.

@@ -30,6 +30,48 @@ describe("cluster server configuration", () => {
 		expect(() => clusterServerConfigFromEnv({ ...BASE_ENV, T4_KUBERNETES_API_AUDIENCE: "/invalid" })).toThrow("T4_KUBERNETES_API_AUDIENCE");
 	});
 
+	it("accepts Kubernetes DNS subdomains as cluster host names", () => {
+		const dottedHostName = "primary.us-west-2.example";
+		expect(clusterServerConfigFromEnv({ ...BASE_ENV, T4_CLUSTER_HOST_NAME: dottedHostName }).hostName).toBe(dottedHostName);
+
+		const maximumLengthHostName = [
+			"a".repeat(63),
+			"b".repeat(63),
+			"c".repeat(63),
+			"d".repeat(61),
+		].join(".");
+		expect(maximumLengthHostName).toHaveLength(253);
+		expect(clusterServerConfigFromEnv({ ...BASE_ENV, T4_CLUSTER_HOST_NAME: maximumLengthHostName }).hostName).toBe(maximumLengthHostName);
+	});
+
+	it("rejects invalid Kubernetes DNS subdomains as cluster host names", () => {
+		const overlongHostName = [
+			"a".repeat(63),
+			"b".repeat(63),
+			"c".repeat(63),
+			"d".repeat(62),
+		].join(".");
+		expect(overlongHostName).toHaveLength(254);
+
+		for (const hostName of [
+			"Cluster.example",
+			"",
+			overlongHostName,
+			"-cluster.example",
+			"cluster-.example",
+			"cluster..example",
+			`${"a".repeat(64)}.example`,
+		]) {
+			expect(() => clusterServerConfigFromEnv({ ...BASE_ENV, T4_CLUSTER_HOST_NAME: hostName })).toThrow("T4_CLUSTER_HOST_NAME");
+		}
+	});
+
+	it("keeps Kubernetes identity fields restricted to DNS labels", () => {
+		expect(() => clusterServerConfigFromEnv({ ...BASE_ENV, POD_NAMESPACE: "cluster.system" })).toThrow("POD_NAMESPACE");
+		expect(() => clusterServerConfigFromEnv({ ...BASE_ENV, POD_NAME: "cluster.server" })).toThrow("POD_NAME");
+		expect(() => clusterServerConfigFromEnv({ ...BASE_ENV, T4_CLUSTER_SERVER_SERVICE_ACCOUNT: "cluster.server" })).toThrow("T4_CLUSTER_SERVER_SERVICE_ACCOUNT");
+	});
+
 	it("reads only a bounded regular projected identity file", async () => {
 		const directory = await mkdtemp(join(tmpdir(), "t4-cluster-identity-"));
 		try {

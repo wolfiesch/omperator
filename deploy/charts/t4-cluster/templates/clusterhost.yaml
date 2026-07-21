@@ -9,9 +9,6 @@ spec:
   storageClassName: {{ .Values.storage.adminRWXStorageClass | quote }}
   runtimeProfiles:
     {{- toYaml .Values.clusterHost.runtimeProfiles | nindent 4 }}
-  projection:
-    maxWorkspaces: {{ .Values.clusterHost.projection.maxWorkspaces }}
-    resyncSeconds: {{ .Values.clusterHost.projection.resyncSeconds }}
   allowedOrigins:
     {{- toYaml .Values.clusterHost.allowedOrigins | nindent 4 }}
   {{- if and .Values.woodpecker.configMap (or .Values.woodpecker.existingSecret .Values.woodpecker.serviceAccountAudience) }}

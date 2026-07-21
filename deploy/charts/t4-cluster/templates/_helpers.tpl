@@ -10,6 +10,13 @@ t4-cluster
 {{- end -}}
 {{- end -}}
 
+{{- define "t4-cluster.suffixedName" -}}
+{{- $suffix := .suffix -}}
+{{- $maxBaseLength := sub 62 (len $suffix) | int -}}
+{{- $base := include "t4-cluster.fullname" .context | trunc $maxBaseLength | trimSuffix "-" -}}
+{{- printf "%s-%s" $base $suffix -}}
+{{- end -}}
+
 {{- define "t4-cluster.labels" -}}
 app.kubernetes.io/name: {{ include "t4-cluster.name" . | quote }}
 app.kubernetes.io/instance: {{ .Release.Name | quote }}

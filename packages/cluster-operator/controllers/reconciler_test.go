@@ -2,6 +2,7 @@ package controllers_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -11,12 +12,18 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	clusterv1alpha1 "github.com/LycaonLLC/t4-code/packages/cluster-operator/api/v1alpha1"
 	"github.com/LycaonLLC/t4-code/packages/cluster-operator/controllers"
+)
+
+const (
+	testRuntimeImage      = "registry.example/session@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	otherTestRuntimeImage = "registry.example/session@sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
 )
 
 func TestWorkspaceReconcileIsIdempotentAcrossDuplicateEvents(t *testing.T) {
@@ -90,7 +97,10 @@ func TestWorkspaceStorageFailsClosedWhenClassMissingOrNotRWX(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			scheme := testScheme(t)
-			objects := []client.Object{testHost(), testWorkspace(clusterv1alpha1.RetentionPolicyDelete)}
+			workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
+			workspace.Status.Phase = clusterv1alpha1.InfrastructureReady
+			workspace.Status.Conditions = []metav1.Condition{{Type: "Ready", Status: metav1.ConditionTrue, Reason: "PVCBound", ObservedGeneration: workspace.Generation}}
+			objects := []client.Object{testHost(), workspace}
 			if test.class != nil {
 				objects = append(objects, test.class)
 			}
@@ -114,6 +124,10 @@ func TestWorkspaceStorageFailsClosedWhenClassMissingOrNotRWX(t *testing.T) {
 			condition := findCondition(got.Status.Conditions, "StorageReady")
 			if condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != test.reason {
 				t.Fatalf("StorageReady = %#v, want False/%s", condition, test.reason)
+			}
+			ready := findCondition(got.Status.Conditions, "Ready")
+			if got.Status.Phase != clusterv1alpha1.InfrastructureFailed || ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != test.reason {
+				t.Fatalf("revoked workspace status = %#v, Ready = %#v, want Failed and False/%s", got.Status, ready, test.reason)
 			}
 		})
 	}
@@ -264,6 +278,180 @@ func TestSessionRejectsInvalidOMPAuthenticationAndProjectionReferences(t *testin
 	}
 }
 
+func TestSessionRuntimeImageMustBeImmutableDigest(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		image      string
+		wantReason string
+	}{
+		{name: "tag only", image: "registry.example/session:latest", wantReason: "RuntimeImageInvalid"},
+		{name: "malformed digest", image: "registry.example/session@sha256:deadbeef", wantReason: "RuntimeImageInvalid"},
+		{name: "uppercase algorithm", image: "registry.example/session@SHA256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", wantReason: "RuntimeImageInvalid"},
+		{name: "uppercase digest", image: "registry.example/session@sha256:ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789", wantReason: "RuntimeImageInvalid"},
+		{name: "registry port and path", image: "registry.example:5443/team/session-runtime@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			scheme := testScheme(t)
+			workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
+			workspace.Status.PVCName = "workspace-a-data"
+			pvc := &corev1.PersistentVolumeClaim{
+				ObjectMeta: metav1.ObjectMeta{Name: workspace.Status.PVCName, Namespace: "team"},
+				Spec:       corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
+				Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
+			}
+			session := testSession()
+			c := fake.NewClientBuilder().WithScheme(scheme).
+				WithStatusSubresource(&clusterv1alpha1.T4Session{}, &corev1.PersistentVolumeClaim{}, &corev1.Pod{}).
+				WithObjects(testHost(), workspace, pvc, session).Build()
+			r := configuredSessionReconciler(c, scheme)
+			r.RuntimeImage = test.image
+			if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
+				t.Fatal(err)
+			}
+			if test.wantReason == "" {
+				assertObjectCounts(t, c, 1, 1)
+				var pod corev1.Pod
+				if err := c.Get(context.Background(), types.NamespacedName{Namespace: session.Namespace, Name: controllers.SessionPodName(session)}, &pod); err != nil {
+					t.Fatal(err)
+				}
+				if pod.Spec.Containers[0].Image != test.image {
+					t.Fatalf("runtime image = %q, want %q", pod.Spec.Containers[0].Image, test.image)
+				}
+				return
+			}
+			assertObjectCounts(t, c, 0, 0)
+			var got clusterv1alpha1.T4Session
+			if err := c.Get(context.Background(), client.ObjectKeyFromObject(session), &got); err != nil {
+				t.Fatal(err)
+			}
+			condition := findCondition(got.Status.Conditions, "RuntimeConfigured")
+			if condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != test.wantReason {
+				t.Fatalf("RuntimeConfigured = %#v, want False/%s", condition, test.wantReason)
+			}
+		})
+	}
+}
+
+func TestSessionAuthorityRevocationDeletesOwnedPodAndService(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		conditionType string
+		wantReason    string
+		revoke        func(context.Context, client.Client, *controllers.SessionReconciler) error
+	}{
+		{name: "runtime image", conditionType: "RuntimeConfigured", wantReason: "RuntimeImageInvalid", revoke: func(_ context.Context, _ client.Client, r *controllers.SessionReconciler) error {
+			r.RuntimeImage = "registry.example/session:latest"
+			return nil
+		}},
+		{name: "runtime profile", conditionType: "RuntimeConfigured", wantReason: "RuntimeProfileNotAllowed", revoke: func(ctx context.Context, c client.Client, _ *controllers.SessionReconciler) error {
+			var host clusterv1alpha1.T4ClusterHost
+			if err := c.Get(ctx, types.NamespacedName{Namespace: "team", Name: "host-a"}, &host); err != nil {
+				return err
+			}
+			host.Spec.RuntimeProfiles = nil
+			return c.Update(ctx, &host)
+		}},
+		{name: "storage declaration", conditionType: "WorkspaceReady", wantReason: controllers.ReasonStorageClassNotRWX, revoke: func(ctx context.Context, c client.Client, _ *controllers.SessionReconciler) error {
+			var storageClass storagev1.StorageClass
+			if err := c.Get(ctx, types.NamespacedName{Name: "portable-rwx"}, &storageClass); err != nil {
+				return err
+			}
+			storageClass.Annotations = nil
+			return c.Update(ctx, &storageClass)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			scheme := testScheme(t)
+			workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
+			workspace.Status.PVCName = "workspace-a-data"
+			pvc := &corev1.PersistentVolumeClaim{
+				ObjectMeta: metav1.ObjectMeta{Name: workspace.Status.PVCName, Namespace: "team"},
+				Spec:       corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
+				Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
+			}
+			session := testSession()
+			session.UID = "session-uid"
+			c := fake.NewClientBuilder().WithScheme(scheme).
+				WithStatusSubresource(&clusterv1alpha1.T4Session{}, &corev1.PersistentVolumeClaim{}, &corev1.Pod{}).
+				WithObjects(testHost(), workspace, pvc, session).Build()
+			r := configuredSessionReconciler(c, scheme)
+			reconcileMany(t, 2, func() error {
+				_, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)})
+				return err
+			})
+			assertObjectCounts(t, c, 1, 1)
+			if err := test.revoke(ctx, c, r); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
+				t.Fatal(err)
+			}
+			assertObjectCounts(t, c, 0, 0)
+			var got clusterv1alpha1.T4Session
+			if err := c.Get(ctx, client.ObjectKeyFromObject(session), &got); err != nil {
+				t.Fatal(err)
+			}
+			condition := findCondition(got.Status.Conditions, test.conditionType)
+			available := findCondition(got.Status.Conditions, "Available")
+			if condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != test.wantReason ||
+				available == nil || available.Status != metav1.ConditionFalse || available.Reason != test.wantReason ||
+				got.Status.PodName != "" || got.Status.ServiceName != "" {
+				t.Fatalf("revoked session status = %#v, condition = %#v, available = %#v", got.Status, condition, available)
+			}
+		})
+	}
+}
+
+func TestSessionNamesProduceSafeRuntimeIdentities(t *testing.T) {
+	for _, sessionName := range []string{
+		"release.2026.07.21",
+		"session-with-a-very-long-name-that-exceeds-sixty-three-characters-and-remains-valid",
+	} {
+		t.Run(sessionName, func(t *testing.T) {
+			scheme := testScheme(t)
+			workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
+			workspace.Status.PVCName = "workspace-a-data"
+			pvc := &corev1.PersistentVolumeClaim{
+				ObjectMeta: metav1.ObjectMeta{Name: workspace.Status.PVCName, Namespace: "team"},
+				Spec:       corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
+				Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
+			}
+			session := testSession()
+			session.Name = sessionName
+			session.UID = types.UID("uid-" + sessionName)
+			c := fake.NewClientBuilder().WithScheme(scheme).
+				WithStatusSubresource(&clusterv1alpha1.T4Session{}, &corev1.PersistentVolumeClaim{}, &corev1.Pod{}).
+				WithObjects(testHost(), workspace, pvc, session).Build()
+			r := configuredSessionReconciler(c, scheme)
+			if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
+				t.Fatal(err)
+			}
+			var pod corev1.Pod
+			if err := c.Get(context.Background(), types.NamespacedName{Namespace: session.Namespace, Name: controllers.SessionPodName(session)}, &pod); err != nil {
+				t.Fatal(err)
+			}
+			var service corev1.Service
+			if err := c.Get(context.Background(), types.NamespacedName{Namespace: session.Namespace, Name: controllers.SessionServiceName(session)}, &service); err != nil {
+				t.Fatal(err)
+			}
+			for kind, name := range map[string]string{"Pod": pod.Name, "Service": service.Name} {
+				if len(name) > 63 || len(utilvalidation.IsDNS1123Label(name)) != 0 {
+					t.Fatalf("%s name %q is not a DNS label", kind, name)
+				}
+			}
+			values := map[string]string{}
+			for _, env := range pod.Spec.Containers[0].Env {
+				values[env.Name] = env.Value
+			}
+			stateID := strings.TrimPrefix(pod.Name, "t4-session-")
+			if len(stateID) > 63 || len(utilvalidation.IsDNS1123Label(stateID)) != 0 || values["T4_SESSION_NAME"] != stateID || values["T4_SESSION_STATE_ID"] != stateID {
+				t.Fatalf("runtime identity = name %q state %q, want safe state ID %q", values["T4_SESSION_NAME"], values["T4_SESSION_STATE_ID"], stateID)
+			}
+		})
+	}
+}
+
 func TestSessionWaitsForBoundRWXThenCreatesExactlyOnePodAndService(t *testing.T) {
 	scheme := testScheme(t)
 	workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
@@ -279,7 +467,7 @@ func TestSessionWaitsForBoundRWXThenCreatesExactlyOnePodAndService(t *testing.T)
 		WithStatusSubresource(&clusterv1alpha1.T4Workspace{}, &clusterv1alpha1.T4Session{}, &corev1.PersistentVolumeClaim{}, &corev1.Pod{}).
 		WithObjects(testHost(), workspace, pvc, session).Build()
 	r := configuredSessionReconciler(c, scheme)
-	r.RuntimeImage = "registry.example/t4/session@sha256:0123456789abcdef"
+	r.RuntimeImage = testRuntimeImage
 	r.KubernetesAPIAudience = "kubernetes.custom.example"
 	reconcileMany(t, 2, func() error {
 		_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)})
@@ -497,7 +685,7 @@ func TestSessionRecreatesPodWhenImmutableDesiredStateChanges(t *testing.T) {
 		WithStatusSubresource(&clusterv1alpha1.T4Session{}, &corev1.PersistentVolumeClaim{}, &corev1.Pod{}).
 		WithObjects(testHost(), workspace, pvc, session).Build()
 	r := configuredSessionReconciler(c, scheme)
-	r.RuntimeImage = "registry.example/session@sha256:old"
+	r.RuntimeImage = testRuntimeImage
 	reconcileMany(t, 2, func() error {
 		_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)})
 		return err
@@ -507,7 +695,7 @@ func TestSessionRecreatesPodWhenImmutableDesiredStateChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	originalHash := original.Annotations[clusterv1alpha1.SessionPodSpecHashAnnotation]
-	r.RuntimeImage = "registry.example/session@sha256:new"
+	r.RuntimeImage = otherTestRuntimeImage
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
 		t.Fatal(err)
 	}
@@ -714,12 +902,12 @@ func TestSessionFailsClosedWhenOMPObjectsAreMissing(t *testing.T) {
 			workspace.Status.PVCName = "workspace-a-data"
 			pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: workspace.Status.PVCName, Namespace: "team"}, Spec: corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}}, Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound}}
 			session := testSession()
-			objects := []client.Object{testHost(), workspace, pvc, session}
+			objects := []client.Object{testHost(), rwxStorageClass(), workspace, pvc, session}
 			if test.configMap != nil {
 				objects = append(objects, test.configMap)
 			}
 			c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&clusterv1alpha1.T4Session{}, &corev1.PersistentVolumeClaim{}, &corev1.Pod{}).WithObjects(objects...).Build()
-			r := &controllers.SessionReconciler{Client: c, APIReader: c, Scheme: scheme, RuntimeImage: "registry.example/session@sha256:deadbeef", OMPConfig: controllers.SessionOMPConfig{ConfigMapName: "omp-runtime-config", ModelsKey: "provider-models", SettingsKey: "agent-settings", CredentialSecretName: "omp-runtime-credential", CredentialKey: "MODEL_API_KEY"}}
+			r := &controllers.SessionReconciler{Client: c, APIReader: c, Scheme: scheme, RuntimeImage: testRuntimeImage, OMPConfig: controllers.SessionOMPConfig{ConfigMapName: "omp-runtime-config", ModelsKey: "provider-models", SettingsKey: "agent-settings", CredentialSecretName: "omp-runtime-credential", CredentialKey: "MODEL_API_KEY"}}
 			if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
 				t.Fatal(err)
 			}
@@ -958,6 +1146,7 @@ func configuredSessionReconciler(c client.Client, scheme *runtime.Scheme) *contr
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "other-credential", Namespace: "team"}, Data: map[string][]byte{
 			"MODEL_API_KEY": []byte("credential"), "OTHER_MODEL_API_KEY": []byte("other credential"),
 		}},
+		rwxStorageClass(),
 	} {
 		if err := c.Create(context.Background(), object); err != nil && !apierrors.IsAlreadyExists(err) {
 			panic(err)
@@ -967,7 +1156,7 @@ func configuredSessionReconciler(c client.Client, scheme *runtime.Scheme) *contr
 		Client:       c,
 		APIReader:    c,
 		Scheme:       scheme,
-		RuntimeImage: "registry.example/session@sha256:deadbeef",
+		RuntimeImage: testRuntimeImage,
 		OMPConfig: controllers.SessionOMPConfig{
 			ConfigMapName:        "omp-runtime-config",
 			ModelsKey:            "provider-models",

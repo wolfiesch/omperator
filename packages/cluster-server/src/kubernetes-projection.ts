@@ -40,6 +40,12 @@ export interface KubernetesWatchEvent {
 	readonly type: "ADDED" | "MODIFIED" | "DELETED";
 	readonly object: KubernetesResource;
 }
+export class KubernetesAuthorityInvalidatedError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "KubernetesAuthorityInvalidatedError";
+	}
+}
 export interface InfrastructureList {
 	readonly host: KubernetesResource;
 	readonly workspaces: readonly KubernetesResource[];
@@ -135,6 +141,7 @@ export class ClusterInfrastructureProjection {
 	#replay: WorkspaceReplayItem[] = [];
 	#resourceVersion = "0";
 	#resourceVersions: Readonly<Record<string, string>> = {};
+	#initialized = false;
 
 	constructor(options: ClusterInfrastructureProjectionOptions) {
 		if (!options.epoch || options.epoch.length > 128) throw new Error("replica epoch is invalid");
@@ -167,13 +174,14 @@ export class ClusterInfrastructureProjection {
 			if (resource.kind !== "T4Session" || record(resource.spec).hostRef !== selectedHost) throw new Error("session belongs to another cluster host");
 		const nextHostId = clusterHostIdFromUid(input.host.metadata.uid);
 		if (this.#hostId && this.#hostId !== nextHostId) throw new Error("T4ClusterHost UID changed within a replica epoch");
-		const initialized = this.#hostId !== undefined;
+		const initialized = this.#initialized;
 		const previousWorkspaces = this.#workspaces;
 		const previousSessions = this.#sessions;
 		const nextWorkspaces = new Map(input.workspaces.map(resource => [resource.metadata.name, resource]));
 		const nextSessions = new Map(input.sessions.map(resource => [resource.metadata.name, resource]));
 		this.#hostId = nextHostId;
 		this.#host = input.host;
+		this.#initialized = true;
 		this.#workspaces = nextWorkspaces;
 		this.#sessions = nextSessions;
 		for (const name of this.#authoritativeSessions.keys()) if (!nextSessions.has(name)) this.#authoritativeSessions.delete(name);
@@ -372,8 +380,19 @@ export class ClusterInfrastructureProjection {
 		const name = resource.metadata.name;
 		if (resource.kind === "T4ClusterHost") {
 			if (!this.#host || name !== this.#host.metadata.name) return;
-			if (event.type === "DELETED") throw new Error("selected T4ClusterHost was deleted");
-			if (!resource.metadata.uid || clusterHostIdFromUid(resource.metadata.uid) !== this.hostId) throw new Error("selected T4ClusterHost identity changed");
+			let authorityValid = false;
+			try {
+				authorityValid = event.type !== "DELETED"
+					&& resource.metadata.uid !== undefined
+					&& clusterHostIdFromUid(resource.metadata.uid) === this.#hostId;
+			} catch { /* An invalid replacement UID invalidates the selected authority too. */ }
+			if (!authorityValid) {
+				const error = new KubernetesAuthorityInvalidatedError(
+					event.type === "DELETED" ? "selected T4ClusterHost was deleted" : "selected T4ClusterHost identity changed",
+				);
+				this.#invalidateAuthority(error);
+				throw error;
+			}
 		} else if (resource.kind === "T4Workspace" || resource.kind === "T4Session") {
 			if (!this.#host) return;
 			if (record(resource.spec).hostRef !== this.#host.metadata.name) {
@@ -455,6 +474,37 @@ export class ClusterInfrastructureProjection {
 		return () => { this.#sessionListeners.delete(listener); };
 	}
 
+	#invalidateAuthority(error: KubernetesAuthorityInvalidatedError): void {
+		const workspaces = [...this.#workspaces.values()];
+		const sessionStateChanged = workspaces.length > 0 || this.#sessions.size > 0 || this.#authoritativeSessions.size > 0;
+		this.#workspaces.clear();
+		this.#sessions.clear();
+		this.#authoritativeSessions.clear();
+		this.#ciStates.clear();
+		for (const resource of workspaces) {
+			try { this.#publishWorkspace(resource, true, workspaceOwner(resource)); }
+			catch { /* A subscriber cannot veto authority invalidation. */ }
+		}
+		this.#host = undefined;
+		this.#hostId = undefined;
+		this.#versions.clear();
+		this.#resourceVersion = "0";
+		this.#resourceVersions = {};
+		for (const waiters of this.#authorityWaiters.values()) {
+			for (const waiter of waiters) {
+				clearTimeout(waiter.timer);
+				waiter.reject(error);
+			}
+		}
+		this.#authorityWaiters.clear();
+		if (sessionStateChanged) {
+			this.#sessionSequence++;
+			for (const listener of this.#sessionListeners) {
+				try { listener(); }
+				catch { /* A subscriber cannot veto authority invalidation. */ }
+			}
+		}
+	}
 	#ownsSessionResource(resource: KubernetesResource, principal: string): boolean {
 		const workspace = text(record(resource.spec).workspaceRef);
 		return workspace.length > 0 && this.ownsWorkspace(workspace, principal);

@@ -27,6 +27,8 @@ import { clusterWebSocketUrl, proofHelloFrame } from "./capture-redacted-frames.
 const COMMIT = "0123456789abcdef0123456789abcdef01234567";
 const DIGEST = `sha256:${"a".repeat(64)}`;
 const FILE_SHA = "b".repeat(64);
+const CANONICAL_BUILD_SOURCE_REPOSITORY = "usr-bin-roygbiv/t4-code";
+const AUTHORIZED_CI_MIRROR = "z-peterson/t4-code";
 const OBSERVED_AT = "2026-07-20T12:34:56.000Z";
 const repoRoot = resolve(import.meta.dirname, "../..");
 const OBSERVATION_HOSTS = {
@@ -54,9 +56,10 @@ function validProof() {
   return {
     schemaVersion: "t4-cluster-proof/1",
     source: {
-      repository: "z-peterson/t4-code",
+      repository: "usr-bin-roygbiv/t4-code",
       commit: COMMIT,
       woodpecker: {
+        repository: "z-peterson/t4-code",
         repositoryId: 71,
         pipelineId: 401,
         pipelineNumber: 99,
@@ -257,13 +260,14 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
     steps["android-debug"].commands.includes("pnpm --filter @t4-code/mobile check:android:debug"),
   );
   assert.ok(steps["cluster-ci-contracts"].commands.includes("pnpm test:cluster:ci"));
-  assert.ok(
-    steps["cluster-operator-tests"].commands.includes("go test ./api/... ./controllers/... ./cmd/..."),
-  );
-  assert.ok(
-    steps["cluster-operator-tests"].commands.some((command) =>
-      command.includes("go test -c ./charttests"),
-    ),
+  assert.deepEqual(steps["cluster-operator-tests"].commands, [
+    "GOMAXPROCS=1 GOFLAGS=-p=1 go test ./api/... ./controllers/... ./cmd/...",
+    "mkdir -p ../../artifacts/cluster-proof",
+    "CGO_ENABLED=0 GOMAXPROCS=1 GOFLAGS=-p=1 go test -c ./charttests -o ../../artifacts/cluster-proof/chart-contract.test",
+  ]);
+  assert.equal(
+    steps["cluster-operator-tests"].backend_options.kubernetes.resources.limits.memory,
+    "2Gi",
   );
   assert.ok(
     steps["cluster-chart-tests"].commands.includes("helm lint ../../../deploy/charts/t4-cluster"),
@@ -364,11 +368,48 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
 
   const buildSource = await readFile(resolve(repoRoot, "scripts/cluster-ci/build-image.sh"), "utf8");
   assert.match(buildSource, /platform=linux\/amd64,linux\/arm64/u);
-  assert.match(buildSource, /https:\/\/github\.com\/usr-bin-roygbiv\/t4-code\.git/u);
+  assert.match(buildSource, /source_context="https:\/\/github\.com\/\$canonical_build_source_repository\.git#\$CI_COMMIT_SHA"/u);
+  assert.match(buildSource, /SOURCE_REPOSITORY=https:\/\/github\.com\/\$canonical_build_source_repository/u);
   assert.doesNotMatch(buildSource, /https:\/\/github\.com\/z-peterson\/t4-code/u);
+  assert.match(buildSource, /^canonical_build_source_repository=usr-bin-roygbiv\/t4-code$/mu);
+  assert.match(buildSource, /^authorized_ci_mirror=z-peterson\/t4-code$/mu);
+  assert.equal(buildSource.match(/usr-bin-roygbiv\/t4-code/gu)?.length, 1);
+  assert.equal(buildSource.match(/z-peterson\/t4-code/gu)?.length, 1);
   assert.match(buildSource, /quarantine/u);
   assert.match(buildSource, /chmod 1777 "\$artifact_dir"/u);
   assert.match(buildSource, /chmod 0444 "\$metadata" "\$digest_file"/u);
+
+  const sourceArgument = "ARG SOURCE_REPOSITORY=https://github.com/LycaonLLC/t4-code";
+  const sourceLabel = 'org.opencontainers.image.source="${SOURCE_REPOSITORY}"';
+  for (const component of IMAGE_COMPONENTS) {
+    const dockerfileSource = await readFile(resolve(repoRoot, "cluster/images", component, "Dockerfile"), "utf8");
+    const finalStageOffset = dockerfileSource.lastIndexOf("\nFROM ");
+    const sourceArgumentOffset = dockerfileSource.indexOf(sourceArgument, finalStageOffset);
+    const sourceLabelOffset = dockerfileSource.indexOf(sourceLabel, sourceArgumentOffset);
+    assert.ok(finalStageOffset >= 0, `${component} must have a final image stage`);
+    assert.ok(sourceArgumentOffset > finalStageOffset, `${component} must declare SOURCE_REPOSITORY in its final stage`);
+    assert.ok(sourceLabelOffset > sourceArgumentOffset, `${component} must use SOURCE_REPOSITORY for its OCI source label`);
+    assert.equal(dockerfileSource.match(/ARG SOURCE_REPOSITORY=/gu)?.length, 1);
+    assert.equal(dockerfileSource.match(/org\.opencontainers\.image\.source=/gu)?.length, 1);
+    assert.doesNotMatch(dockerfileSource, /org\.opencontainers\.image\.source="https:\/\//u);
+  }
+
+  const promotionSource = await readFile(resolve(repoRoot, "scripts/cluster-ci/promote-images.sh"), "utf8");
+  const preflightResolveOffset = promotionSource.indexOf('if resolved=$(oras resolve "$destination" 2>&1); then');
+  const differentDigestGuardOffset = promotionSource.indexOf('if [ "$resolved" != "$digest" ]; then', preflightResolveOffset);
+  const recursiveCopyOffset = promotionSource.indexOf('oras copy --recursive "$source" "$destination"', differentDigestGuardOffset);
+  const verificationResolveOffset = promotionSource.indexOf('resolved=$(oras resolve "$destination")', recursiveCopyOffset);
+  assert.ok(
+    preflightResolveOffset >= 0 &&
+      preflightResolveOffset < differentDigestGuardOffset &&
+      differentDigestGuardOffset < recursiveCopyOffset &&
+      recursiveCopyOffset < verificationResolveOffset,
+    "promotion must resolve and reject an occupied tag before copying, then verify the result",
+  );
+  const promotionGuard = promotionSource.slice(preflightResolveOffset, recursiveCopyOffset);
+  assert.match(promotionGuard, /if \[ "\$resolved" != "\$digest" \]; then[\s\S]*?exit 65\n    fi\n  else/u);
+  assert.match(promotionGuard, /"failed to resolve digest: \$CI_COMMIT_SHA: not found"/u);
+  assert.doesNotMatch(promotionSource.slice(0, preflightResolveOffset), /oras copy/u);
   const authSource = await readFile(resolve(repoRoot, "scripts/cluster-ci/load-registry-auth.sh"), "utf8");
   assert.match(authSource, /chmod 0711 "\$auth_parent" "\$auth_dir"/u);
   const provenanceSource = await readFile(resolve(repoRoot, "scripts/cluster-ci/capture-image-evidence.sh"), "utf8");
@@ -417,6 +458,12 @@ test("proof schema is strict and enumerates every bounded evidence domain", asyn
   assert.deepEqual(schema.$defs.scenario.properties.id.enum, PROOF_SCENARIOS);
   assert.deepEqual(schema.$defs.observation.properties.system.enum, OBSERVATION_SYSTEMS);
   assert.deepEqual(schema.$defs.image.properties.component.enum, IMAGE_COMPONENTS);
+  assert.equal(schema.$defs.source.properties.repository.const, CANONICAL_BUILD_SOURCE_REPOSITORY);
+  assert.equal(
+    schema.$defs.source.properties.woodpecker.properties.repository.const,
+    AUTHORIZED_CI_MIRROR,
+  );
+  assert.ok(schema.$defs.source.properties.woodpecker.required.includes("repository"));
   assert.equal(schema.$defs.artifacts.properties.frames.maxItems, 32);
   assert.equal("videos" in schema.$defs.artifacts.properties, false);
 });
@@ -456,6 +503,20 @@ test("proof validation accepts exact run/image/scenario identity and rejects fab
   const extra = structuredClone(proof);
   extra.source.token = "must-not-survive";
   assert.throws(() => validateProofManifest(extra), /unexpected field/u);
+});
+
+test("proof source distinguishes the canonical build repository from the authorized CI mirror", () => {
+  const proof = validProof();
+  assert.equal(proof.source.repository, CANONICAL_BUILD_SOURCE_REPOSITORY);
+  assert.equal(proof.source.woodpecker.repository, AUTHORIZED_CI_MIRROR);
+
+  const mirrorAsBuildSource = structuredClone(proof);
+  mirrorAsBuildSource.source.repository = AUTHORIZED_CI_MIRROR;
+  assert.throws(() => validateProofManifest(mirrorAsBuildSource), /canonical build source/u);
+
+  const buildSourceAsMirror = structuredClone(proof);
+  buildSourceAsMirror.source.woodpecker.repository = CANONICAL_BUILD_SOURCE_REPOSITORY;
+  assert.throws(() => validateProofManifest(buildSourceAsMirror), /authorized CI mirror/u);
 });
 
 test("file evidence is content-addressed instead of trusting a claimed result", async () => {

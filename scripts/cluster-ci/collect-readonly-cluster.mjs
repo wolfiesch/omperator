@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 
 import yaml from "js-yaml";
 
+import { AUTHORIZED_CI_MIRROR } from "./proof-contract.mjs";
 import {
   collectReadOnlyClusterSnapshot,
   summarizeClusterSnapshot,
@@ -48,8 +49,8 @@ function currentCiMapping() {
   ) {
     throw new Error("CI_PIPELINE_URL does not identify the exact credential-free Woodpecker repository");
   }
-  const repository = requiredEnvironment("CI_REPO");
-  if (repository !== "z-peterson/t4-code") throw new Error("CI_REPO is not the canonical source repository");
+  const ciRepository = requiredEnvironment("CI_REPO");
+  if (ciRepository !== AUTHORIZED_CI_MIRROR) throw new Error("CI_REPO is not the authorized CI mirror");
   return {
     repositoryId: match[1],
     ref: requiredEnvironment("CI_COMMIT_REF"),

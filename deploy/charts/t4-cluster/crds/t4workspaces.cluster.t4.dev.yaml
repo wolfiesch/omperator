@@ -85,6 +85,9 @@ spec:
                 retentionPolicy:
                   type: string
                   enum: [Retain, Delete]
+                  x-kubernetes-validations:
+                    - rule: self == oldSelf
+                      message: retentionPolicy is immutable
             status:
               type: object
               properties:

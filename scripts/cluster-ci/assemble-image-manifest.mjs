@@ -3,6 +3,8 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  AUTHORIZED_CI_MIRROR,
+  CANONICAL_BUILD_SOURCE_REPOSITORY,
   IMAGE_COMPONENTS,
   createFileEvidence,
   validateImagePublicationManifest,
@@ -11,8 +13,7 @@ import {
 const repoRoot = resolve(import.meta.dirname, "../..");
 const artifactDirectory = resolve(repoRoot, "artifacts/cluster-proof/images");
 const outputPath = resolve(repoRoot, "artifacts/cluster-proof/image-publication.json");
-const CANONICAL_SOURCE_REPOSITORY = "z-peterson/t4-code";
-const CANONICAL_SOURCE_URL = "https://github.com/usr-bin-roygbiv/t4-code";
+const CANONICAL_BUILD_SOURCE_URL = `https://github.com/${CANONICAL_BUILD_SOURCE_REPOSITORY}`;
 const HARBOR_REGISTRY = "harbor.tailb18de3.ts.net";
 const QUARANTINE_PREFIX = "quarantine";
 const suffixes = {
@@ -176,7 +177,7 @@ function trustedSourceMaterial(material, commit) {
   return (
     source.protocol === "https:" &&
     source.hostname === "github.com" &&
-    source.pathname === "/usr-bin-roygbiv/t4-code.git" &&
+    source.pathname === `/${CANONICAL_BUILD_SOURCE_REPOSITORY}.git` &&
     source.hash === `#${commit}` &&
     material.digest?.sha1 === commit
   );
@@ -223,7 +224,7 @@ export function verifyProvenance(jsonLines, { repository, digest, commit }) {
       sourceMaterial &&
       baseMaterial &&
       invocationStrings.includes(commit) &&
-      invocationStrings.includes(CANONICAL_SOURCE_URL)
+      invocationStrings.includes(CANONICAL_BUILD_SOURCE_URL)
     );
   });
   if (!provenance) {
@@ -300,18 +301,18 @@ async function imageEntry(component, commit, registry, project, expectedVerifica
 
 export async function assembleImagePublicationManifest(environment = process.env) {
   const commit = requiredEnvironment("CI_COMMIT_SHA", environment);
-  const repository = requiredEnvironment("CI_REPO", environment);
+  const ciRepository = requiredEnvironment("CI_REPO", environment);
   const registry = requiredEnvironment("HARBOR_REGISTRY", environment).replace(/\/$/u, "");
   const project = requiredEnvironment("HARBOR_PROJECT", environment).replace(/^\/+|\/+$/gu, "");
-  if (repository !== CANONICAL_SOURCE_REPOSITORY) throw new Error("CI_REPO is not the canonical source repository");
+  if (ciRepository !== AUTHORIZED_CI_MIRROR) throw new Error("CI_REPO is not the authorized CI mirror");
   if (registry !== HARBOR_REGISTRY) throw new Error("HARBOR_REGISTRY must be the exact HTTPS tailnet Harbor host");
   const provenanceVerification = provenanceVerificationMode(environment);
   const manifest = {
     schemaVersion: "t4-cluster-images/1",
     source: {
-      repository,
+      repository: CANONICAL_BUILD_SOURCE_REPOSITORY,
       commit,
-      woodpecker: woodpeckerIdentity(environment),
+      woodpecker: { repository: ciRepository, ...woodpeckerIdentity(environment) },
     },
     images: await Promise.all(
       IMAGE_COMPONENTS.map((component) => imageEntry(component, commit, registry, project, provenanceVerification)),

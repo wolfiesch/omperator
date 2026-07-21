@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { CiProjectionRunner } from "./ci-projection-runner.ts";
-import { clusterServerConfigFromEnv, loadKubernetesCredentials } from "./config.ts";
+import { clusterServerConfigFromEnv, loadKubernetesCa } from "./config.ts";
 import { ClusterGateway } from "./gateway.ts";
 import { KubernetesApiClient, KubernetesGatewayMutationBackend } from "./kubernetes-client.ts";
 import { ClusterInfrastructureProjection } from "./kubernetes-projection.ts";
@@ -16,12 +16,12 @@ export async function runClusterServer(env: Readonly<Record<string, string | und
 	const logger = new JsonLogger(undefined, { component: "cluster-server", version: "0.1.30", namespace: config.namespace });
 	const health = new ClusterServerHealth();
 	const metrics = new ClusterMetrics({ component: "cluster-server", version: "0.1.30", namespace: config.namespace });
-	const credentials = await loadKubernetesCredentials(config);
+	const ca = await loadKubernetesCa(config);
 	const kubernetes = new KubernetesApiClient({
 		baseUrl: config.kubernetesBaseUrl,
 		namespace: config.namespace,
-		token: credentials.token,
-		ca: credentials.ca,
+		tokenFile: config.kubernetesTokenPath,
+		ca,
 	});
 	const projection = new ClusterInfrastructureProjection({ epoch: config.epoch, namespace: config.namespace });
 	const runner = new KubernetesProjectionRunner({

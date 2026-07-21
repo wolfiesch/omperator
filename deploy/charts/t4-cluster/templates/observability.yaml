@@ -2,7 +2,7 @@
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: {{ printf "%s-server" (include "t4-cluster.fullname" .) | quote }}
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server") | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
     {{- with .Values.observability.serviceMonitor.labels }}
@@ -24,7 +24,7 @@ spec:
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: {{ printf "%s-controller" (include "t4-cluster.fullname" .) | quote }}
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "controller") | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
     {{- with .Values.observability.serviceMonitor.labels }}
@@ -59,7 +59,7 @@ spec:
     - name: t4-cluster-ha
       rules:
         - alert: T4ClusterServerBelowQuorum
-          expr: kube_deployment_status_replicas_available{namespace={{ .Release.Namespace | quote }},deployment={{ printf "%s-server" (include "t4-cluster.fullname" .) | quote }}} < 2
+          expr: kube_deployment_status_replicas_available{namespace={{ .Release.Namespace | quote }},deployment={{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server") | quote }}} < 2
           for: 5m
           labels: {severity: critical}
           annotations:

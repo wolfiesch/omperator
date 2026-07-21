@@ -11,6 +11,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/api/meta"
 	apiresource "k8s.io/apimachinery/pkg/api/resource"
@@ -36,6 +37,7 @@ const (
 var (
 	configMapKeyPattern = regexp.MustCompile(`^[-._A-Za-z0-9]+$`)
 	envVarNamePattern   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	runtimeImagePattern = regexp.MustCompile(`^(?:(?:(?:(?:[a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9])(?:\.(?:[a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9]))*)|\[(?:[a-fA-F0-9:]+)\])(?::[0-9]+)?)/)?[a-z0-9]+(?:(?:[._]|__|[-]+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]|__|[-]+)[a-z0-9]+)*)*@sha256:[a-f0-9]{64}$`)
 )
 
 func reservedCredentialEnvironment(name string) bool {
@@ -123,6 +125,17 @@ func (config SessionOMPConfig) validationFailure() (string, string) {
 	return "", ""
 }
 
+func runtimeImageValidationFailure(image string) (string, string) {
+	if image == "" {
+		return "RuntimeImageMissing", "administrator-owned session runtime image is not configured"
+	}
+	digestSeparator := strings.Index(image, "@sha256:")
+	if digestSeparator <= 0 || digestSeparator > 255 || !runtimeImagePattern.MatchString(image) {
+		return "RuntimeImageInvalid", "administrator-owned session runtime image must be an exact repository@sha256 digest with 64 lowercase hexadecimal characters"
+	}
+	return "", ""
+}
+
 type SessionReconciler struct {
 	client.Client
 	Scheme                    *runtime.Scheme
@@ -156,8 +169,11 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 			return ctrl.Result{}, err
 		}
 	}
-	if r.RuntimeImage == "" {
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, "RuntimeConfigured", "RuntimeImageMissing", "administrator-owned session runtime image is not configured")
+	if reason, message := runtimeImageValidationFailure(r.RuntimeImage); reason != "" {
+		if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, "RuntimeConfigured", reason, message)
 	}
 	if reason, message := r.OMPConfig.validationFailure(); reason != "" {
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, "RuntimeConfigured", reason, message)
@@ -171,7 +187,26 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 		return ctrl.Result{}, err
 	}
 	if !hasString(host.Spec.RuntimeProfiles, session.Spec.RuntimeProfile) {
+		if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, "RuntimeConfigured", "RuntimeProfileNotAllowed", "runtime profile is not allowed by the referenced T4ClusterHost")
+	}
+	var storageClass storagev1.StorageClass
+	if err := r.Get(ctx, types.NamespacedName{Name: host.Spec.StorageClassName}, &storageClass); err != nil {
+		if apierrors.IsNotFound(err) {
+			if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, "WorkspaceReady", ReasonStorageClassNotFound, fmt.Sprintf("StorageClass %q selected by the referenced T4ClusterHost does not exist", host.Spec.StorageClassName))
+		}
+		return ctrl.Result{}, err
+	}
+	if !storageClassAllowsRWX(storageClass.Annotations) {
+		if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, "WorkspaceReady", ReasonStorageClassNotRWX, fmt.Sprintf("StorageClass %q selected by the referenced T4ClusterHost is not administrator-declared ReadWriteMany", host.Spec.StorageClassName))
 	}
 	var workspace clusterv1alpha1.T4Workspace
 	if err := r.Get(ctx, types.NamespacedName{Namespace: session.Namespace, Name: session.Spec.WorkspaceRef}, &workspace); err != nil {
@@ -201,7 +236,7 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 		return ctrl.Result{}, err
 	}
 	if reason != "" {
-		if err := r.deleteOwnedSessionPod(ctx, &session); err != nil {
+		if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, "RuntimeConfigured", reason, message)
@@ -370,7 +405,8 @@ func (r *SessionReconciler) desiredPod(session *clusterv1alpha1.T4Session, pvcNa
 			{Name: "T4_KUBERNETES_CA_PATH", Value: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"},
 			{Name: "T4_KUBERNETES_NAMESPACE_PATH", Value: "/var/run/secrets/kubernetes.io/serviceaccount/namespace"},
 			{Name: "T4_KUBERNETES_API_AUDIENCE", Value: kubernetesAPIAudience},
-			{Name: "T4_SESSION_NAME", Value: session.Name},
+			{Name: "T4_SESSION_NAME", Value: stateID},
+			{Name: "T4_SESSION_STATE_ID", Value: stateID},
 			{Name: "T4_WORKSPACE_ROOT", Value: "/workspace"},
 			{Name: "T4_SESSION_STATE_ROOT", Value: "/workspace/.t4/sessions/" + stateID},
 			{Name: "T4_AUTHORITY_STATE_DIR", Value: "/workspace/.t4/sessions/" + stateID + "/authority"},
@@ -534,16 +570,26 @@ func (r *SessionReconciler) reconcileDelete(ctx context.Context, session *cluste
 	return ctrl.Result{}, r.Update(ctx, session)
 }
 
-func (r *SessionReconciler) deleteOwnedSessionPod(ctx context.Context, session *clusterv1alpha1.T4Session) error {
-	var pod corev1.Pod
-	key := types.NamespacedName{Namespace: session.Namespace, Name: SessionPodName(session)}
-	if err := r.Get(ctx, key, &pod); err != nil {
-		return client.IgnoreNotFound(err)
+func (r *SessionReconciler) deleteOwnedSessionResources(ctx context.Context, session *clusterv1alpha1.T4Session) error {
+	objects := []client.Object{
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: SessionPodName(session), Namespace: session.Namespace}},
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: SessionServiceName(session), Namespace: session.Namespace}},
 	}
-	if !metav1.IsControlledBy(&pod, session) {
-		return nil
+	for _, object := range objects {
+		if err := r.Get(ctx, client.ObjectKeyFromObject(object), object); err != nil {
+			if err := client.IgnoreNotFound(err); err != nil {
+				return err
+			}
+			continue
+		}
+		if !metav1.IsControlledBy(object, session) {
+			continue
+		}
+		if err := r.Delete(ctx, object); err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
 	}
-	return client.IgnoreNotFound(r.Delete(ctx, &pod))
+	return nil
 }
 
 func (r *SessionReconciler) updateSessionFailure(ctx context.Context, session *clusterv1alpha1.T4Session, conditionType, reason, message string) error {
@@ -556,6 +602,9 @@ func (r *SessionReconciler) updateSessionFailure(ctx context.Context, session *c
 	session.Status.ServiceName = ""
 	session.Status.Phase = clusterv1alpha1.InfrastructureFailed
 	meta.SetStatusCondition(&session.Status.Conditions, condition(conditionType, metav1.ConditionFalse, reason, message, session.Generation))
+	if conditionType != "Available" {
+		meta.SetStatusCondition(&session.Status.Conditions, condition("Available", metav1.ConditionFalse, reason, message, session.Generation))
+	}
 	if reflect.DeepEqual(original, session.Status) {
 		return nil
 	}

@@ -45,13 +45,14 @@
       "additionalProperties": false,
       "required": ["repository", "commit", "woodpecker"],
       "properties": {
-        "repository": { "const": "z-peterson/t4-code" },
+        "repository": { "const": "usr-bin-roygbiv/t4-code" },
         "commit": { "$ref": "#/$defs/commit" },
         "woodpecker": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["repositoryId", "pipelineId", "pipelineNumber", "url"],
+          "required": ["repository", "repositoryId", "pipelineId", "pipelineNumber", "url"],
           "properties": {
+            "repository": { "const": "z-peterson/t4-code" },
             "repositoryId": { "type": "integer", "minimum": 1 },
             "pipelineId": { "type": "integer", "minimum": 1 },
             "pipelineNumber": { "type": "integer", "minimum": 1 },

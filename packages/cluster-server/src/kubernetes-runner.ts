@@ -1,5 +1,5 @@
 import { KubernetesApiClient, KubernetesApiError } from "./kubernetes-client.ts";
-import { ClusterInfrastructureProjection } from "./kubernetes-projection.ts";
+import { ClusterInfrastructureProjection, KubernetesAuthorityInvalidatedError } from "./kubernetes-projection.ts";
 
 export interface KubernetesProjectionRunnerOptions {
 	readonly client: KubernetesApiClient;
@@ -90,13 +90,12 @@ export class KubernetesProjectionRunner {
 				if (generation.signal.aborted || rootSignal.aborted) return;
 				this.#synchronized.delete(resource);
 				this.#options.onError?.(error);
-				if (error instanceof KubernetesApiError && error.status === 410) {
+				const requiresRelist = error instanceof KubernetesAuthorityInvalidatedError
+					|| error instanceof KubernetesApiError && error.status === 410;
+				if (requiresRelist) {
 					try { await this.#restartGeneration(generation, rootSignal); }
 					catch (relistError) {
-						if (rootSignal.aborted) return;
-						this.#options.onError?.(relistError);
-						try { await delay(this.#options.retryMs ?? 1_000, generation.signal); } catch { return; }
-						continue;
+						if (!rootSignal.aborted) this.#options.onError?.(relistError);
 					}
 					return;
 				}
@@ -108,11 +107,21 @@ export class KubernetesProjectionRunner {
 
 	async #restartGeneration(generation: AbortController, signal: AbortSignal): Promise<void> {
 		if (!this.#relist) {
+			this.#synchronized.clear();
+			generation.abort(new Error("Kubernetes watch generation relisting"));
 			this.#relist = (async () => {
-				const snapshot = await this.#options.client.listInfrastructure(this.#options.hostName, signal);
-				this.#options.projection.replace(snapshot);
-				this.#synchronized.clear();
-				generation.abort(new Error("Kubernetes watch generation relisted"));
+				while (!signal.aborted) {
+					try {
+						const snapshot = await this.#options.client.listInfrastructure(this.#options.hostName, signal);
+						this.#options.projection.replace(snapshot);
+						return;
+					} catch (error) {
+						if (signal.aborted) throw error;
+						this.#options.onError?.(error);
+						await delay(this.#options.retryMs ?? 1_000, signal);
+					}
+				}
+				throw signal.reason;
 			})().finally(() => { this.#relist = undefined; });
 		}
 		await this.#relist;

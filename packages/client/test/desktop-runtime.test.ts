@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { CLUSTER_OPERATOR_FEATURE, hostId, operationId, revision, sessionId, type WelcomeFrame, type WorkspaceInfrastructureProjection } from "@t4-code/protocol";
+import { CLUSTER_OPERATOR_FEATURE, hostId, operationId, revision, sessionId, type SessionRef, type WelcomeFrame, type WorkspaceInfrastructureProjection, type WorkspaceStateFrame } from "@t4-code/protocol";
 import { rendererServerEventFromFrame } from "@t4-code/protocol/desktop-ipc";
 import type {
   BootstrapResult,
@@ -81,6 +81,50 @@ const workspaceInfrastructure = (workspaceId = "workspace-a"): WorkspaceInfrastr
   accessMode: "ReadWriteMany",
   revision: revision("workspace-r1"),
 });
+const workspaceState = (workspaceId = "workspace-event"): WorkspaceStateFrame => ({
+  v: "omp-app/1",
+  type: "workspace.state",
+  hostId: hostId("host-a"),
+  workspaceId,
+  cursor: { epoch: "workspace-event-epoch", seq: 1 },
+  revision: revision("workspace-event-r1"),
+  upsert: { ...workspaceInfrastructure(workspaceId), revision: revision("workspace-event-r1") },
+});
+const sessionClusterState = Object.freeze({
+  workspaceId: "workspace-session-a",
+  phase: "Running" as const,
+  gui: Object.freeze({ state: "Ready" as const, previewId: "preview-session-a" }),
+});
+const sessionCiState = Object.freeze({
+  provider: "woodpecker" as const,
+  correlation: "exact" as const,
+  repositoryId: "repository-a",
+  branch: "main",
+  ref: "refs/heads/main",
+  commit: "deadbeef",
+  pipelineNumber: 42,
+  status: "running" as const,
+  currentStage: "test",
+});
+const sessionWithInfrastructure = (
+  revisionValue: string,
+  title: string,
+  phase: string,
+): SessionRef => Object.freeze({
+  hostId: hostId("host-a"),
+  project: Object.freeze({ projectId: "project-a" as never, name: "Project A" }),
+  sessionId: sessionId("session-a"),
+  revision: revision(revisionValue),
+  title,
+  status: "active",
+  updatedAt: "2026-07-21T00:00:00Z",
+  liveState: Object.freeze({
+    phase,
+    cluster: sessionClusterState,
+    ci: sessionCiState,
+  }),
+  model: "model-a",
+});
 class FakeTimerScheduler {
   readonly timers = new Map<number, { readonly callback: () => void; readonly delayMs: number }>();
   private nextHandle = 1;
@@ -124,6 +168,7 @@ class FakeShell implements DesktopShellPort {
   sessionListError: Error | undefined;
   sessionListResultMissing = false;
   sessionListGate: Promise<void> | undefined;
+  workspaceListGate: Promise<void> | undefined;
   catalogResult: unknown = { revision: "catalog-1", items: [] };
   settingsResult: unknown = { revision: "settings-1", settings: {} };
   workspaceListResult: unknown = {
@@ -131,12 +176,21 @@ class FakeShell implements DesktopShellPort {
     workspaces: [workspaceInfrastructure()],
   };
   private sessionListGateResolve: (() => void) | undefined;
+  private workspaceListGateResolve: (() => void) | undefined;
   deferNextSessionList(): void {
     this.sessionListGate = new Promise<void>((resolve) => { this.sessionListGateResolve = resolve; });
   }
   resolveSessionList(): void {
     const resolve = this.sessionListGateResolve;
     this.sessionListGateResolve = undefined;
+    resolve?.();
+  }
+  deferNextWorkspaceList(): void {
+    this.workspaceListGate = new Promise<void>((resolve) => { this.workspaceListGateResolve = resolve; });
+  }
+  resolveWorkspaceList(): void {
+    const resolve = this.workspaceListGateResolve;
+    this.workspaceListGateResolve = undefined;
     resolve?.();
   }
   async bootstrap(): Promise<BootstrapResult> { this.bootstrapCalls += 1; if (this.emitWelcomeOnBootstrap !== undefined) this.emitFrame(this.emitWelcomeOnBootstrap); return { platform: "linux", version: "omp-app/1", connected: false }; }
@@ -184,7 +238,12 @@ class FakeShell implements DesktopShellPort {
     }
     if (request.intent.command === "catalog.get") return { ...base, result: this.catalogResult };
     if (request.intent.command === "settings.read") return { ...base, result: this.settingsResult };
-    if (request.intent.command === "workspace.list") return { ...base, result: this.workspaceListResult };
+    if (request.intent.command === "workspace.list") {
+      const gate = this.workspaceListGate;
+      this.workspaceListGate = undefined;
+      if (gate !== undefined) await gate;
+      return { ...base, result: this.workspaceListResult };
+    }
     return base;
   }
   async pair(request: PairRequest): Promise<PairResult> { return { targetId: request.targetId, paired: true }; }
@@ -364,6 +423,93 @@ describe("desktop runtime projection", () => {
     expect(runtime.getSnapshot().targetHosts.get("local")).toBe("host-a");
   });
   it.each([
+    { authority: "the feature is default-off and unnegotiated", enabled: false, capabilities: [], features: [], granted: false },
+    { authority: "only the host claim is present", enabled: false, capabilities: ["sessions.read"], features: [CLUSTER_OPERATOR_FEATURE], granted: false },
+    { authority: "cluster.operator was not negotiated", enabled: true, capabilities: ["sessions.read"], features: [], granted: false },
+    { authority: "sessions.read was not negotiated", enabled: true, capabilities: [], features: [CLUSTER_OPERATOR_FEATURE], granted: false },
+    { authority: "the effective cluster projection grant is present", enabled: true, capabilities: ["sessions.read"], features: [CLUSTER_OPERATOR_FEATURE], granted: true },
+  ])("normalizes sessions and session.delta infrastructure metadata when $authority", async ({ enabled, capabilities, features, granted }) => {
+    const shell = new FakeShell();
+    const runtime = createDesktopRuntimeController({ shell, clusterOperatorEnabled: enabled });
+    await runtime.start();
+    shell.emitFrame({ targetId: "local", frame: welcome("host-a", capabilities, features) });
+    for (let index = 0; index < 8; index += 1) await Promise.resolve();
+    const delivered: RendererServerEventEnvelope[] = [];
+    runtime.subscribeEvents(
+      { targetId: "local", kinds: ["sessions", "session.delta"] },
+      (event) => delivered.push(event),
+    );
+
+    const listed = sessionWithInfrastructure("revision-listed", "Listed session", "idle");
+    const sessionsFrame = Object.freeze({
+      v: "omp-app/1" as const,
+      type: "sessions" as const,
+      hostId: hostId("host-a"),
+      cursor: Object.freeze({ epoch: "epoch-1", seq: 8 }),
+      sessions: Object.freeze([listed]),
+      totalCount: 1,
+      truncated: false,
+    });
+    shell.emitFrame({ targetId: "local", frame: sessionsFrame as unknown as RendererServerFrame });
+
+    const listedProjection = runtime.getSnapshot().projection.sessionIndex.get("host-a\u0000session-a");
+    expect(listedProjection).toMatchObject({
+      hostId: hostId("host-a"),
+      sessionId: sessionId("session-a"),
+      project: { projectId: "project-a", name: "Project A" },
+      revision: revision("revision-listed"),
+      title: "Listed session",
+      status: "active",
+      liveState: { phase: "idle" },
+      model: "model-a",
+    });
+    expect(listedProjection?.liveState).toEqual(granted ? listed.liveState : { phase: "idle" });
+
+    const changed = sessionWithInfrastructure("revision-delta", "Updated session", "running");
+    const deltaFrame = Object.freeze({
+      v: "omp-app/1" as const,
+      type: "session.delta" as const,
+      hostId: hostId("host-a"),
+      sessionId: sessionId("session-a"),
+      cursor: Object.freeze({ epoch: "delta-epoch", seq: 1 }),
+      revision: revision("revision-delta"),
+      upsert: changed,
+    });
+    shell.emitFrame({ targetId: "local", frame: deltaFrame as unknown as RendererServerFrame });
+
+    const changedProjection = runtime.getSnapshot().projection.sessionIndex.get("host-a\u0000session-a");
+    expect(changedProjection).toMatchObject({
+      hostId: hostId("host-a"),
+      sessionId: sessionId("session-a"),
+      revision: revision("revision-delta"),
+      title: "Updated session",
+      status: "active",
+      liveState: { phase: "running" },
+      model: "model-a",
+    });
+    expect(changedProjection?.liveState).toEqual(granted ? changed.liveState : { phase: "running" });
+    expect(delivered.map((event) => event.event.kind)).toEqual(["sessions", "session.delta"]);
+    const listedEvent = delivered[0]?.event;
+    const deltaEvent = delivered[1]?.event;
+    if (listedEvent?.kind !== "sessions" || deltaEvent?.kind !== "session.delta") throw new Error("expected session inventory events");
+    expect(listedEvent.payload.sessions[0]).toMatchObject({
+      hostId: hostId("host-a"),
+      sessionId: sessionId("session-a"),
+      title: "Listed session",
+      liveState: { phase: "idle" },
+    });
+    expect(listedEvent.payload.sessions[0]?.liveState).toEqual(granted ? listed.liveState : { phase: "idle" });
+    expect(deltaEvent.payload.upsert).toMatchObject({
+      hostId: hostId("host-a"),
+      sessionId: sessionId("session-a"),
+      title: "Updated session",
+      liveState: { phase: "running" },
+    });
+    expect(deltaEvent.payload.upsert?.liveState).toEqual(granted ? changed.liveState : { phase: "running" });
+    expect(listed.liveState).toEqual({ phase: "idle", cluster: sessionClusterState, ci: sessionCiState });
+    expect(changed.liveState).toEqual({ phase: "running", cluster: sessionClusterState, ci: sessionCiState });
+  });
+  it.each([
     { enabled: false, capabilities: ["sessions.read"], features: [CLUSTER_OPERATOR_FEATURE] },
     { enabled: true, capabilities: ["sessions.read"], features: [] },
     { enabled: true, capabilities: [], features: [CLUSTER_OPERATOR_FEATURE] },
@@ -386,14 +532,75 @@ describe("desktop runtime projection", () => {
     await runtime.start();
     shell.emitFrame({ targetId: "local", frame: welcome("host-a", capabilities, features) });
     for (let index = 0; index < 8; index += 1) await Promise.resolve();
-    await runtime.command("local", {
+    await expect(runtime.command("local", {
+      hostId: hostId("host-a"),
+      command: "workspace.list",
+      args: {},
+    })).rejects.toMatchObject({ code: "stale" });
+
+    expect(runtime.getSnapshot().projection.workspaces.size).toBe(0);
+    expect(runtime.getSnapshot().projection.workspaceCursors.size).toBe(0);
+  });
+  it.each([
+    { authority: "the feature flag is off", enabled: false, capabilities: ["sessions.read"], features: [CLUSTER_OPERATOR_FEATURE], granted: false },
+    { authority: "cluster.operator was not negotiated", enabled: true, capabilities: ["sessions.read"], features: [], granted: false },
+    { authority: "the effective cluster projection grant is present", enabled: true, capabilities: ["sessions.read"], features: [CLUSTER_OPERATOR_FEATURE], granted: true },
+  ])("gates workspace.state projection and renderer delivery when $authority", async ({ enabled, capabilities, features, granted }) => {
+    const shell = new FakeShell();
+    const runtime = createDesktopRuntimeController({ shell, clusterOperatorEnabled: enabled });
+    await runtime.start();
+    shell.emitFrame({ targetId: "local", frame: welcome("host-a", capabilities, features) });
+    const deliveredKinds: string[] = [];
+    runtime.subscribeEvents((event) => deliveredKinds.push(event.event.kind));
+
+    shell.emitFrame({ targetId: "local", frame: workspaceState() });
+    shell.emitFrame({ targetId: "local", frame: { v: "omp-app/1", type: "catalog", hostId: hostId("host-a"), revision: revision("catalog-event-r1"), items: [] } });
+
+    expect(runtime.getSnapshot().projection.workspaces.has("host-a\u0000workspace-event")).toBe(granted);
+    expect(deliveredKinds).toEqual(granted ? ["workspace.state", "catalog"] : ["catalog"]);
+  });
+  it("rejects an in-flight workspace.list result after same-epoch authority withdrawal", async () => {
+    const shell = new FakeShell();
+    const runtime = createDesktopRuntimeController({ shell, clusterOperatorEnabled: true });
+    await runtime.start();
+    shell.emitFrame({
+      targetId: "local",
+      frame: welcome("host-a", ["sessions.read"], [CLUSTER_OPERATOR_FEATURE]),
+    });
+    for (let index = 0; index < 12; index += 1) await Promise.resolve();
+
+    const responses: RendererServerEventEnvelope[] = [];
+    runtime.subscribeEvents((event) => { if (event.event.kind === "response") responses.push(event); });
+    const authorized = await runtime.command("local", {
       hostId: hostId("host-a"),
       command: "workspace.list",
       args: {},
     });
+    expect(authorized.result).toEqual(shell.workspaceListResult);
+    expect(responses).toHaveLength(1);
 
+    shell.deferNextWorkspaceList();
+    const pending = runtime.command("local", {
+      hostId: hostId("host-a"),
+      command: "workspace.list",
+      args: {},
+    });
+    await Promise.resolve();
+    shell.emitFrame({
+      targetId: "local",
+      frame: welcome("host-a", ["sessions.read"], [], "epoch-1"),
+    });
+    shell.resolveWorkspaceList();
+
+    await expect(pending).rejects.toMatchObject({ code: "stale" });
+    expect(responses).toHaveLength(1);
     expect(runtime.getSnapshot().projection.workspaces.size).toBe(0);
-    expect(runtime.getSnapshot().projection.workspaceCursors.size).toBe(0);
+    const ordinary = await runtime.command("local", {
+      hostId: hostId("host-a"),
+      command: "session.prompt",
+      args: { prompt: "hello" },
+    });
+    expect(ordinary.accepted).toBe(true);
   });
   it("purges retained workspace cache before any current host grant", async () => {
     const saves: string[] = [];
@@ -1314,6 +1521,18 @@ describe("desktop runtime projection", () => {
         ok: true,
         command: "session.list",
         result: sessionInventory("host-remote", "epoch-1", "old-frame"),
+      } as unknown as RendererServerFrame),
+    });
+    shell.emitFrame({
+      targetId: "remote",
+      frame: ({
+        v: "omp-app/1",
+        type: "response",
+        requestId: "old-workspace-request",
+        hostId: hostId("host-remote"),
+        ok: true,
+        command: "workspace.list",
+        result: shell.workspaceListResult,
       } as unknown as RendererServerFrame),
     });
     expect(responses).toHaveLength(0);

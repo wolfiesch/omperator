@@ -37,30 +37,56 @@ func stableName(prefix, name string, uid types.UID) string {
 	identity := name + ":" + string(uid)
 	sum := sha256.Sum256([]byte(identity))
 	suffix := hex.EncodeToString(sum[:6])
+	var body strings.Builder
+	body.Grow(len(name))
+	lastWasSeparator := false
+	for i := range len(name) {
+		character := name[i]
+		if character >= 'A' && character <= 'Z' {
+			character += 'a' - 'A'
+		}
+		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' {
+			body.WriteByte(character)
+			lastWasSeparator = false
+		} else if body.Len() > 0 && !lastWasSeparator {
+			body.WriteByte('-')
+			lastWasSeparator = true
+		}
+	}
+	name = strings.Trim(body.String(), "-")
 	maxName := 63 - len(prefix) - 1 - len(suffix)
-	if len(name) > maxName { name = name[:maxName] }
-	name = strings.Trim(name, "-.")
-	if name == "" { name = "resource" }
+	if len(name) > maxName {
+		name = strings.TrimRight(name[:maxName], "-")
+	}
+	if name == "" {
+		name = "resource"
+	}
 	return prefix + name + "-" + suffix
 }
 
 func storageClassAllowsRWX(annotations map[string]string) bool {
 	for _, mode := range strings.Split(annotations[clusterv1alpha1.RWXStorageClassAnnotation], ",") {
-		if strings.TrimSpace(mode) == string(corev1.ReadWriteMany) { return true }
+		if strings.TrimSpace(mode) == string(corev1.ReadWriteMany) {
+			return true
+		}
 	}
 	return false
 }
 
 func pvcHasRWX(pvc *corev1.PersistentVolumeClaim) bool {
 	for _, mode := range pvc.Spec.AccessModes {
-		if mode == corev1.ReadWriteMany { return true }
+		if mode == corev1.ReadWriteMany {
+			return true
+		}
 	}
 	return false
 }
 
 func hasString(values []string, wanted string) bool {
 	for _, value := range values {
-		if value == wanted { return true }
+		if value == wanted {
+			return true
+		}
 	}
 	return false
 }
@@ -68,7 +94,9 @@ func hasString(values []string, wanted string) bool {
 func removeString(values []string, unwanted string) []string {
 	result := values[:0]
 	for _, value := range values {
-		if value != unwanted { result = append(result, value) }
+		if value != unwanted {
+			result = append(result, value)
+		}
 	}
 	return result
 }

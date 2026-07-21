@@ -4,6 +4,7 @@ import {
 	CLUSTER_MAX_SESSIONS,
 	CLUSTER_MAX_WORKSPACES,
 	ClusterInfrastructureProjection,
+	KubernetesAuthorityInvalidatedError,
 	clusterHostIdFromUid,
 } from "../src/kubernetes-projection.ts";
 
@@ -169,6 +170,36 @@ describe("Kubernetes infrastructure projection", () => {
 			object: { ...workspace, metadata: { ...workspace.metadata, resourceVersion: "107" }, spec: { ...workspace.spec, hostRef: "another-host" } },
 		});
 		expect(projection.workspaceList(PRINCIPAL).workspaces).toEqual([]);
+	});
+
+	it.each([
+		["deletion", { type: "DELETED" as const, object: host }],
+		["UID replacement", {
+			type: "MODIFIED" as const,
+			object: { ...host, metadata: { ...host.metadata, uid: "replacement-host-uid", resourceVersion: "108" } },
+		}],
+	])("invalidates all selected authority immediately on host %s", (_name, event) => {
+		const projection = new ClusterInfrastructureProjection({ epoch: "replica-uid-1", namespace: "development" });
+		projection.replace({ host, workspaces: [workspace], sessions: [session], resourceVersion: "102" });
+		projection.setSessionAuthority("session-one", authority("omp-session-private"));
+		const workspaceSequence = projection.workspaceCursor.seq;
+		expect(() => projection.applyWatch(event)).toThrow(KubernetesAuthorityInvalidatedError);
+		expect(() => projection.hostId).toThrow("not synchronized");
+		expect(projection.workspaceList().workspaces).toEqual([]);
+		expect(projection.workspaceCursor.seq).toBeGreaterThan(workspaceSequence);
+		expect(projection.sessionRefs()).toEqual([]);
+		expect(projection.sessionRoute("session-one")).toBeUndefined();
+
+		const replacementHost = { ...host, metadata: { ...host.metadata, uid: "replacement-host-uid", resourceVersion: "200" } };
+		projection.replace({
+			host: replacementHost,
+			workspaces: [{ ...workspace, metadata: { ...workspace.metadata, resourceVersion: "201" } }],
+			sessions: [{ ...session, metadata: { ...session.metadata, resourceVersion: "202" } }],
+			resourceVersion: "202",
+			resourceVersions: { t4clusterhosts: "200", t4workspaces: "201", t4sessions: "202" },
+		});
+		expect(projection.hostId).toBe(clusterHostIdFromUid("replacement-host-uid"));
+		expect(projection.sessionRoute("session-one")).toBeUndefined();
 	});
 
 	it("fails closed at explicit projection limits", () => {
