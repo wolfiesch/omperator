@@ -705,7 +705,7 @@ export interface operations {
             };
         };
         responses: {
-            200: components["responses"]["Session"];
+            200: components["responses"]["SessionReplay"];
             400: components["responses"]["Error400"];
             401: components["responses"]["Error401"];
             403: components["responses"]["Error403"];
@@ -964,7 +964,7 @@ export interface operations {
             };
         };
         responses: {
-            200: components["responses"]["Workspace"];
+            200: components["responses"]["WorkspaceReplay"];
             400: components["responses"]["Error400"];
             401: components["responses"]["Error401"];
             403: components["responses"]["Error403"];
