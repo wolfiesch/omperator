@@ -121,6 +121,12 @@ export class T4ApiV1ConformanceService {
     if (workspaceMatch) {
       const id = decodeURIComponent(workspaceMatch[1]!);
       const workspace = this.#workspaces.get(id);
+      if (request.method === "DELETE") {
+        return this.#idempotent(request, tenant, "deleteWorkspace", [id], null, 204, 204, () => {
+          this.#workspaces.delete(id);
+          return null;
+        }, () => workspace?.tenant === tenant ? undefined : problem(404, "not_found", "Workspace not found"));
+      }
       if (workspace?.tenant !== tenant) return problem(404, "not_found", "Workspace not found");
       if (request.method === "GET") return json(200, this.#payload("workspace", this.#visible(workspace)));
       if (request.method === "PATCH") {
@@ -132,12 +138,6 @@ export class T4ApiV1ConformanceService {
           this.#workspaces.set(id, updated);
           return updated;
         }, () => request.headers.get("If-Match") === String(workspace.revision) ? undefined : problem(409, "revision_conflict", "Workspace revision changed"));
-      }
-      if (request.method === "DELETE") {
-        return this.#idempotent(request, tenant, "deleteWorkspace", [id], null, 204, 204, () => {
-          this.#workspaces.delete(id);
-          return null;
-        });
       }
     }
 
@@ -173,6 +173,12 @@ export class T4ApiV1ConformanceService {
     if (sessionMatch) {
       const id = decodeURIComponent(sessionMatch[1]!);
       const session = this.#sessions.get(id);
+      if (request.method === "DELETE") {
+        return this.#idempotent(request, tenant, "deleteSession", [id], null, 204, 204, () => {
+          this.#sessions.delete(id);
+          return null;
+        }, () => session?.tenant === tenant ? undefined : problem(404, "not_found", "Session not found"));
+      }
       if (session?.tenant !== tenant) return problem(404, "not_found", "Session not found");
       if (request.method === "GET") return json(200, this.#payload("session", this.#visible(session)));
       if (request.method === "PATCH") {
@@ -184,12 +190,6 @@ export class T4ApiV1ConformanceService {
           this.#sessions.set(id, updated);
           return updated;
         }, () => request.headers.get("If-Match") === String(session.revision) ? undefined : problem(409, "revision_conflict", "Session revision changed"));
-      }
-      if (request.method === "DELETE") {
-        return this.#idempotent(request, tenant, "deleteSession", [id], null, 204, 204, () => {
-          this.#sessions.delete(id);
-          return null;
-        });
       }
     }
 

@@ -644,15 +644,16 @@ describe("generated T4 API v1 client conformance", () => {
     let progressAttempts = 0;
     const progressFetch: typeof globalThis.fetch = async () => {
       progressAttempts += 1;
-      if (progressAttempts === 1 || progressAttempts === 3) return new Response(null, { headers: { "Content-Type": "text/event-stream" } });
-      const cursor = progressAttempts === 2 ? "progress-1" : "progress-2";
-      return new Response(`data: {"type":"heartbeat","cursor":"${cursor}","observedAt":"2026-07-21T00:00:00Z"}\n\n`, { headers: { "Content-Type": "text/event-stream" } });
+      if (progressAttempts === 2) {
+        return new Response('data: {"type":"heartbeat","cursor":"progress-1","observedAt":"2026-07-21T00:00:00Z"}\n\n', { headers: { "Content-Type": "text/event-stream" } });
+      }
+      return new Response(null, { headers: { "Content-Type": "text/event-stream" } });
     };
     const progressClient = createT4ApiClient({ baseUrl: "https://progress.test", credential: "token-a", majorVersion: 1, fetch: progressFetch });
-    const progressEvents: WatchEvent[] = [];
-    for await (const item of progressClient.watchSession("ses-1", { maxEvents: 2, maxReconnectAttempts: 1, retryBackoffMs: 0 })) progressEvents.push(item);
-    expect(progressEvents.map((item) => item.cursor)).toEqual(["progress-1", "progress-2"]);
-    expect(progressAttempts).toBe(4);
+    const progressWatch = progressClient.watchSession("ses-1", { maxEvents: 2, maxReconnectAttempts: 1, retryBackoffMs: 0 });
+    await expect(progressWatch.next()).resolves.toMatchObject({ value: { cursor: "progress-1" }, done: false });
+    await expect(progressWatch.next()).rejects.toMatchObject({ code: "indeterminate", status: 502 });
+    expect(progressAttempts).toBe(3);
 
     vi.useFakeTimers();
     try {

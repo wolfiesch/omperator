@@ -224,28 +224,32 @@ function retryAfterMilliseconds(response: Response): number | undefined {
   return Math.min(30_000, Math.max(0, timestamp - Date.now()));
 }
 
-async function boundedError(response: Response): Promise<T4ApiError> {
-  const text = await boundedResponseText(response);
-  const retryAfterMs = retryAfterMilliseconds(response);
-  if (text !== undefined) {
-    try {
-      const decoded = apiError(JSON.parse(text), response.status);
-      if (decoded !== undefined) {
-        return retryAfterMs === undefined
-          ? new T4ApiError(response.status, decoded)
-          : new T4ApiError(response.status, decoded, { retryAfterMs });
-      }
-    } catch {
-      // Fall through to the stable indeterminate transport envelope.
-    }
-  }
-  return new T4ApiError(response.status, {
-    code: response.status === 503 ? "unavailable" : "indeterminate",
-    message: "T4 API returned an invalid or oversized error envelope",
+
+function protocolError(status: number, message: string): T4ApiError {
+  return new T4ApiError(status === 503 ? 502 : status, {
+    code: "indeterminate",
+    message,
     requestId: "unavailable",
-    retryable: response.status >= 500,
+    retryable: false,
   });
 }
+
+async function parsedError(response: Response): Promise<T4ApiError | undefined> {
+  if (response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") return undefined;
+  const text = await boundedResponseText(response);
+  if (text === undefined) return undefined;
+  try {
+    const decoded = apiError(JSON.parse(text), response.status);
+    if (decoded === undefined) return undefined;
+    const retryAfterMs = retryAfterMilliseconds(response);
+    return retryAfterMs === undefined
+      ? new T4ApiError(response.status, decoded)
+      : new T4ApiError(response.status, decoded, { retryAfterMs });
+  } catch {
+    return undefined;
+  }
+}
+
 
 function hasOnlyKeys(value: Record<string, unknown>, keys: Readonly<Record<string, true>>): boolean {
   return Object.keys(value).every((key) => keys[key] === true);
@@ -301,30 +305,136 @@ function validDiscovery(value: unknown): boolean {
     Number(limits.pageSizeMax) <= 100 && Number(limits.commandBytesMax) <= 262144 && Number(limits.commandRequestBytesMax) <= 1048576 && Number(limits.commandMetadataValueBytesMax) <= 262144 && Number(limits.watchEventsMax) <= 1000 && Number(limits.heartbeatSeconds) >= 5 && Number(limits.heartbeatSeconds) <= 60;
 }
 
-function validSuccessPayload(request: Request, value: unknown): boolean {
-  const path = new URL(request.url).pathname;
-  if (request.method === "GET" && path === "/v1") return validDiscovery(value);
-  if (/^\/v1\/workspaces\/[A-Za-z0-9._~-]+\/sessions$/u.test(path) && request.method === "GET") {
-    const page = record(value);
-    return page !== undefined && hasOnlyKeys(page, { items: true, nextCursor: true }) && Array.isArray(page.items) && page.items.length <= 100 && page.items.every(validSession) && (page.nextCursor === undefined || validCursor(page.nextCursor));
-  }
-  if (path === "/v1/workspaces" && request.method === "GET") {
-    const page = record(value);
-    return page !== undefined && hasOnlyKeys(page, { items: true, nextCursor: true }) && Array.isArray(page.items) && page.items.length <= 100 && page.items.every(validWorkspace) && (page.nextCursor === undefined || validCursor(page.nextCursor));
-  }
-  if (path === "/v1/workspaces" || /^\/v1\/workspaces\/[A-Za-z0-9._~-]+$/u.test(path)) return validWorkspace(value);
-  if (/^\/v1\/workspaces\/[A-Za-z0-9._~-]+\/sessions$/u.test(path) || /^\/v1\/sessions\/[A-Za-z0-9._~-]+(?:\/cancel)?$/u.test(path)) return validSession(value);
-  if (/^\/v1\/sessions\/[A-Za-z0-9._~-]+\/commands$/u.test(path)) return validCommandResult(value);
-  return true;
+function validSnapshot(value: unknown): boolean {
+  const snapshot = record(value);
+  return snapshot !== undefined && hasOnlyKeys(snapshot, { sessionId: true, cursor: true, state: true, entries: true }) &&
+    validResourceId(snapshot.sessionId) && validCursor(snapshot.cursor) &&
+    typeof snapshot.state === "string" && SESSION_STATES[snapshot.state as components["schemas"]["SessionState"]] === true &&
+    Array.isArray(snapshot.entries) && snapshot.entries.length <= 1000 && snapshot.entries.every((value) => {
+      const entry = record(value);
+      return entry !== undefined && hasOnlyKeys(entry, { sequence: true, kind: true, text: true }) &&
+        Number.isSafeInteger(entry.sequence) && Number(entry.sequence) >= 0 &&
+        (entry.kind === "input" || entry.kind === "output" || entry.kind === "status") &&
+        typeof entry.text === "string" && entry.text.length <= 1_048_576;
+    });
 }
 
-async function validateJsonSuccess(request: Request, response: Response): Promise<void> {
-  if (!response.ok || response.status === 204 || !response.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return;
+type SuccessValidator = ((value: unknown) => boolean) | "empty" | "event-stream";
+
+interface ResponseContract {
+  readonly success: Readonly<Record<number, SuccessValidator>>;
+  readonly errors: readonly number[];
+}
+
+const DISCOVERY_RESPONSE: ResponseContract = { success: { 200: validDiscovery }, errors: [401, 403, 406, 503] };
+const WORKSPACE_LIST_RESPONSE: ResponseContract = { success: { 200: validWorkspacePage }, errors: [400, 401, 403, 406, 422, 503] };
+const WORKSPACE_CREATE_RESPONSE: ResponseContract = { success: { 200: validWorkspace, 202: validWorkspace }, errors: [400, 401, 403, 406, 409, 422, 503] };
+const WORKSPACE_GET_RESPONSE: ResponseContract = { success: { 200: validWorkspace }, errors: [401, 403, 404, 406, 503] };
+const WORKSPACE_MUTATE_RESPONSE: ResponseContract = { success: { 200: validWorkspace }, errors: [400, 401, 403, 404, 406, 409, 422, 503] };
+const DELETE_RESPONSE: ResponseContract = { success: { 204: "empty" }, errors: [400, 401, 403, 404, 406, 409, 503] };
+const SESSION_LIST_RESPONSE: ResponseContract = { success: { 200: validSessionPage }, errors: [401, 403, 404, 406, 422, 503] };
+const SESSION_CREATE_RESPONSE: ResponseContract = { success: { 200: validSession, 202: validSession }, errors: [400, 401, 403, 404, 406, 409, 422, 503] };
+const SESSION_GET_RESPONSE: ResponseContract = { success: { 200: validSession }, errors: [401, 403, 404, 406, 503] };
+const SESSION_MUTATE_RESPONSE: ResponseContract = { success: { 200: validSession }, errors: [400, 401, 403, 404, 406, 409, 422, 503] };
+const SESSION_CANCEL_RESPONSE: ResponseContract = { success: { 200: validSession, 202: validSession }, errors: [400, 401, 403, 404, 406, 409, 503] };
+const COMMAND_RESPONSE: ResponseContract = { success: { 200: validCommandResult, 202: validCommandResult }, errors: [400, 401, 403, 404, 406, 409, 422, 503] };
+const SNAPSHOT_RESPONSE: ResponseContract = { success: { 200: validSnapshot }, errors: [401, 403, 404, 406, 503] };
+const EVENTS_RESPONSE: ResponseContract = { success: { 200: "event-stream" }, errors: [400, 401, 403, 404, 406, 410, 422, 503] };
+
+function validWorkspacePage(value: unknown): boolean {
+  const page = record(value);
+  return page !== undefined && hasOnlyKeys(page, { items: true, nextCursor: true }) &&
+    Array.isArray(page.items) && page.items.length <= 100 && page.items.every(validWorkspace) &&
+    (page.nextCursor === undefined || validCursor(page.nextCursor));
+}
+
+function validSessionPage(value: unknown): boolean {
+  const page = record(value);
+  return page !== undefined && hasOnlyKeys(page, { items: true, nextCursor: true }) &&
+    Array.isArray(page.items) && page.items.length <= 100 && page.items.every(validSession) &&
+    (page.nextCursor === undefined || validCursor(page.nextCursor));
+}
+
+function relativeApiPath(request: Request, baseUrl: string): string | undefined {
+  const requestUrl = new URL(request.url);
+  const base = new URL(baseUrl);
+  if (requestUrl.origin !== base.origin) return undefined;
+  const prefix = base.pathname === "/" ? "" : base.pathname;
+  if (prefix === "") return requestUrl.pathname;
+  if (!requestUrl.pathname.startsWith(`${prefix}/`)) return undefined;
+  return requestUrl.pathname.slice(prefix.length);
+}
+
+function responseContract(method: string, path: string): ResponseContract | undefined {
+  if (path === "/v1" && method === "GET") return DISCOVERY_RESPONSE;
+  if (path === "/v1/workspaces") {
+    if (method === "GET") return WORKSPACE_LIST_RESPONSE;
+    if (method === "POST") return WORKSPACE_CREATE_RESPONSE;
+    return undefined;
+  }
+  if (/^\/v1\/workspaces\/[A-Za-z0-9._~-]+$/u.test(path)) {
+    if (method === "GET") return WORKSPACE_GET_RESPONSE;
+    if (method === "PATCH") return WORKSPACE_MUTATE_RESPONSE;
+    if (method === "DELETE") return DELETE_RESPONSE;
+    return undefined;
+  }
+  if (/^\/v1\/workspaces\/[A-Za-z0-9._~-]+\/sessions$/u.test(path)) {
+    if (method === "GET") return SESSION_LIST_RESPONSE;
+    if (method === "POST") return SESSION_CREATE_RESPONSE;
+    return undefined;
+  }
+  if (/^\/v1\/sessions\/[A-Za-z0-9._~-]+$/u.test(path)) {
+    if (method === "GET") return SESSION_GET_RESPONSE;
+    if (method === "PATCH") return SESSION_MUTATE_RESPONSE;
+    if (method === "DELETE") return DELETE_RESPONSE;
+    return undefined;
+  }
+  if (/^\/v1\/sessions\/[A-Za-z0-9._~-]+\/cancel$/u.test(path) && method === "POST") return SESSION_CANCEL_RESPONSE;
+  if (/^\/v1\/sessions\/[A-Za-z0-9._~-]+\/commands$/u.test(path) && method === "POST") return COMMAND_RESPONSE;
+  if (/^\/v1\/sessions\/[A-Za-z0-9._~-]+\/snapshot$/u.test(path) && method === "GET") return SNAPSHOT_RESPONSE;
+  if (/^\/v1\/sessions\/[A-Za-z0-9._~-]+\/events$/u.test(path) && method === "GET") return EVENTS_RESPONSE;
+  return undefined;
+}
+
+async function validateResponse(request: Request, response: Response, baseUrl: string): Promise<void> {
+  const path = relativeApiPath(request, baseUrl);
+  const contract = path === undefined ? undefined : responseContract(request.method, path);
+  if (contract === undefined) {
+    throw protocolError(response.ok ? 502 : response.status, "T4 API returned a response for an undeclared route");
+  }
+  if (!response.ok) {
+    if (!contract.errors.includes(response.status)) {
+      throw protocolError(response.status, "T4 API returned an undeclared error status");
+    }
+    if (await parsedError(response.clone()) === undefined) {
+      throw protocolError(response.status, "T4 API returned an invalid or oversized error envelope");
+    }
+    return;
+  }
+  const validator = contract.success[response.status];
+  if (validator === undefined) {
+    throw protocolError(502, "T4 API returned an undeclared success status");
+  }
+  if (validator === "empty") {
+    if (response.body !== null || response.headers.has("content-type")) {
+      throw protocolError(502, "T4 API returned content for a bodyless response");
+    }
+    return;
+  }
+  if (validator === "event-stream") {
+    if (response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "text/event-stream") {
+      throw protocolError(502, "T4 API returned an undeclared success media type");
+    }
+    return;
+  }
+  if (response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") {
+    throw protocolError(502, "T4 API returned an undeclared success media type");
+  }
   const text = await boundedResponseText(response.clone(), MAX_JSON_RESPONSE_BYTES);
   let value: unknown;
   try { value = text === undefined ? undefined : JSON.parse(text); } catch { value = undefined; }
-  if (text === undefined || !validSuccessPayload(request, value)) {
-    throw new T4ApiError(502, { code: "indeterminate", message: "T4 API returned an invalid or oversized JSON response", requestId: "unavailable", retryable: true });
+  if (text === undefined || !validator(value)) {
+    throw protocolError(502, "T4 API returned an invalid or oversized JSON response");
   }
 }
 
@@ -338,7 +448,7 @@ function watchEvent(value: unknown, eventId: string | undefined): WatchEvent {
     event.cursor.length > 512 ||
     !CURSOR_PATTERN.test(event.cursor) ||
     (eventId !== undefined && eventId !== event.cursor)
-  ) throw new T4ApiError(502, { code: "indeterminate", message: "T4 API returned an invalid watch event", requestId: "unavailable", retryable: true });
+  ) throw protocolError(502, "T4 API returned an invalid watch event");
   if (
     event.type === "heartbeat" &&
     hasOnlyKeys(event, { type: true, cursor: true, observedAt: true }) &&
@@ -362,7 +472,7 @@ function watchEvent(value: unknown, eventId: string | undefined): WatchEvent {
     typeof event.state === "string" &&
     OPERATION_STATES[event.state as components["schemas"]["OperationState"]] === true
   ) return event as WatchEvent;
-  throw new T4ApiError(502, { code: "indeterminate", message: "T4 API returned an invalid watch event", requestId: "unavailable", retryable: true });
+  throw protocolError(502, "T4 API returned an invalid watch event");
 }
 
 function decodeSseFrame(frame: string): WatchEvent | undefined {
@@ -383,7 +493,7 @@ function decodeSseFrame(frame: string): WatchEvent | undefined {
     return watchEvent(JSON.parse(data.join("\n")), eventId);
   } catch (error) {
     if (error instanceof T4ApiError) throw error;
-    throw new T4ApiError(502, { code: "indeterminate", message: "T4 API returned malformed SSE data", requestId: "unavailable", retryable: true });
+    throw protocolError(502, "T4 API returned malformed SSE data");
   }
 }
 
@@ -451,7 +561,7 @@ class SseFrameParser {
   }
 
   #oversized(): never {
-    throw new T4ApiError(502, { code: "indeterminate", message: "T4 API watch event exceeds the client bound", requestId: "unavailable", retryable: true });
+    throw protocolError(502, "T4 API watch event exceeds the client bound");
   }
 }
 
@@ -460,7 +570,7 @@ function decodedFrames(parser: SseFrameParser, chunk: Uint8Array | undefined): W
   return frames.flatMap((bytes) => {
     let text: string;
     try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch {
-      throw new T4ApiError(502, { code: "indeterminate", message: "T4 API returned malformed SSE data", requestId: "unavailable", retryable: true });
+      throw protocolError(502, "T4 API returned malformed SSE data");
     }
     const event = decodeSseFrame(text);
     return event === undefined ? [] : [event];
@@ -524,11 +634,14 @@ async function* watch(
         });
         if (cursor !== undefined) headers.set("Last-Event-ID", cursor);
         const response = await fetchImpl(url, { method: "GET", headers, signal: controller.signal });
-        if (!response.ok) throw await boundedError(response);
-        if (!response.headers.get("content-type")?.toLowerCase().startsWith("text/event-stream")) {
-          throw new T4ApiError(502, { code: "indeterminate", message: "T4 API watch did not return text/event-stream", requestId: "unavailable", retryable: true });
+        if (!response.ok) {
+          const error = await parsedError(response);
+          throw error ?? protocolError(response.status, "T4 API returned an invalid or oversized error envelope");
         }
-        if (response.body === null) throw new TypeError("T4 API watch response body is unavailable");
+        if (response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "text/event-stream") {
+          throw protocolError(502, "T4 API watch did not return text/event-stream");
+        }
+        if (response.body === null) throw protocolError(502, "T4 API watch response body is unavailable");
         reader = response.body.getReader();
         const parser = new SseFrameParser();
         while (delivered < maxEvents && !controller.signal.aborted) {
@@ -583,7 +696,7 @@ export function createT4ApiClient(options: T4ApiClientOptions): T4ApiClient {
     request.headers.set("T4-API-Version", majorVersion);
     request.headers.set("Accept", "application/json");
     const response = await fetchImpl(request);
-    await validateJsonSuccess(request, response);
+    await validateResponse(request, response, baseUrl);
     return response;
   };
   const http = createClient<paths>({ baseUrl, fetch: authenticatedFetch });

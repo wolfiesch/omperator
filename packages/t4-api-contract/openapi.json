@@ -102,7 +102,7 @@
         },
         "responses": {
           "400": { "$ref": "#/components/responses/Error400" },
-          "200": { "$ref": "#/components/responses/Workspace" },
+          "200": { "$ref": "#/components/responses/WorkspaceReplay" },
           "401": {"$ref": "#/components/responses/Error401"},
           "403": {"$ref": "#/components/responses/Error403"},
           "404": {"$ref": "#/components/responses/Error404"},
@@ -205,7 +205,7 @@
         },
         "responses": {
           "400": { "$ref": "#/components/responses/Error400" },
-          "200": { "$ref": "#/components/responses/Session" },
+          "200": { "$ref": "#/components/responses/SessionReplay" },
           "401": {"$ref": "#/components/responses/Error401"},
           "403": {"$ref": "#/components/responses/Error403"},
           "404": {"$ref": "#/components/responses/Error404"},
