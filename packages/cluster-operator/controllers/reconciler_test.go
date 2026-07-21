@@ -80,8 +80,8 @@ func TestWorkspaceCreateAlreadyExistsRefetchesForeignPVC(t *testing.T) {
 	base := fake.NewClientBuilder().WithScheme(scheme).
 		WithStatusSubresource(&clusterv1alpha1.T4Workspace{}, &corev1.PersistentVolumeClaim{}).
 		WithObjects(testHost(), rwxStorageClass(), workspace).Build()
-	c := &createAlreadyExistsClient{Client: base, raceKind: "PVC"}
-	r := &controllers.WorkspaceReconciler{Client: c, Scheme: scheme}
+	c := &createAlreadyExistsClient{Client: base, raceKind: "PVC", hideWinnerFromCache: true}
+	r := &controllers.WorkspaceReconciler{Client: c, APIReader: base, Scheme: scheme}
 	if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workspace)}); err != nil {
 		t.Fatal(err)
 	}

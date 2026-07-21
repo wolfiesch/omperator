@@ -24,7 +24,8 @@ import (
 
 type WorkspaceReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	APIReader client.Reader
+	Scheme    *runtime.Scheme
 }
 
 const (
@@ -74,8 +75,9 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, request ctrl.Reques
 	}
 
 	pvcName := WorkspacePVCName(&workspace)
+	pvcKey := types.NamespacedName{Namespace: workspace.Namespace, Name: pvcName}
 	var pvc corev1.PersistentVolumeClaim
-	err = r.Get(ctx, types.NamespacedName{Namespace: workspace.Namespace, Name: pvcName}, &pvc)
+	err = r.Get(ctx, pvcKey, &pvc)
 	if apierrors.IsNotFound(err) {
 		volumeMode := corev1.PersistentVolumeFilesystem
 		pvc = corev1.PersistentVolumeClaim{
@@ -99,12 +101,22 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, request ctrl.Reques
 				return ctrl.Result{}, err
 			}
 		}
-		if err := r.Create(ctx, &pvc); err != nil && !apierrors.IsAlreadyExists(err) {
-			return ctrl.Result{}, err
+		if err := r.Create(ctx, &pvc); err != nil {
+			if !apierrors.IsAlreadyExists(err) {
+				return ctrl.Result{}, err
+			}
+			reader := r.APIReader
+			if reader == nil {
+				reader = r.Client
+			}
+			if err := reader.Get(ctx, pvcKey, &pvc); err != nil {
+				return ctrl.Result{}, err
+			}
 		}
 	} else if err != nil {
 		return ctrl.Result{}, err
-	} else if !workspaceOwnsPVC(&workspace, &pvc) {
+	}
+	if !workspaceOwnsPVC(&workspace, &pvc) {
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", "PVCOwnershipConflict", "deterministic workspace PVC does not belong to this workspace")
 	} else if pvcStorageClassName(&pvc) != storageClassName {
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", ReasonStorageClassMismatch, fmt.Sprintf("workspace PVC uses StorageClass %q instead of host-selected %q; data-bearing PVCs are never recreated automatically", pvcStorageClassName(&pvc), storageClassName))
