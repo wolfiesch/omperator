@@ -235,7 +235,10 @@ function protocolError(status: number, message: string): T4ApiError {
 }
 
 async function parsedError(response: Response): Promise<T4ApiError | undefined> {
-  if (response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") return undefined;
+  if (response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") {
+    void response.body?.cancel().catch(() => {});
+    return undefined;
+  }
   const text = await boundedResponseText(response);
   if (text === undefined) return undefined;
   try {
@@ -635,6 +638,7 @@ async function* watch(
   let cursor = options.cursor;
   try {
     while (delivered < maxEvents && !controller.signal.aborted) {
+      const deliveredAtAttemptStart = delivered;
       let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
       let transientFailure: unknown;
       let retryAfterMs = 0;
@@ -698,11 +702,12 @@ async function* watch(
           reader.releaseLock();
         }
       }
-      if (reconnectAttempts >= maxReconnectAttempts) {
+      const madeProgress = delivered > deliveredAtAttemptStart;
+      if (!madeProgress && reconnectAttempts >= maxReconnectAttempts) {
         throw new T4ApiError(502, { code: "indeterminate", message: "T4 API watch reconnect attempts exhausted", requestId: "unavailable", retryable: true }, { cause: transientFailure });
       }
       const delay = Math.min(30_000, Math.max(retryAfterMs, retryBackoffMs * (2 ** reconnectAttempts)));
-      reconnectAttempts += 1;
+      if (!madeProgress) reconnectAttempts += 1;
       if (!await retryDelay(delay, controller.signal)) return;
     }
   } finally {

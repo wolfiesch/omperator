@@ -500,26 +500,20 @@ describe("generated T4 API v1 client conformance", () => {
       params: { header: VERSION_HEADERS, path: { workspaceId: "missing" } },
     })).rejects.toMatchObject({ code: "indeterminate", status: 404 });
 
-    vi.useFakeTimers();
-    try {
+    const streamedChunk = new Uint8Array(600 * 1024);
+    for (const contentType of ["application/json", "text/plain"]) {
       let cancelled = false;
-      const chunk = new Uint8Array(600 * 1024);
       const streamedClient = createT4ApiClient({
         baseUrl: "https://streamed-error.test", credential: "token-a", majorVersion: 1,
         fetch: async () => new Response(new ReadableStream<Uint8Array>({
-          pull(controller) { controller.enqueue(chunk); },
+          pull(controller) { controller.enqueue(streamedChunk); },
           cancel() { cancelled = true; },
-        }), { status: 404, headers: { "Content-Type": "application/json" } }),
+        }), { status: 404, headers: { "Content-Type": contentType } }),
       });
-      const outcome = streamedClient.http.GET("/v1/workspaces/{workspaceId}", {
+      await expect(streamedClient.http.GET("/v1/workspaces/{workspaceId}", {
         params: { header: VERSION_HEADERS, path: { workspaceId: "missing" } },
-      }).then(() => "resolved" as const, () => "rejected" as const);
-      const bounded = Promise.race([outcome, new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 1_000))]);
-      await vi.advanceTimersByTimeAsync(1_000);
-      await expect(bounded).resolves.toBe("rejected");
+      })).rejects.toMatchObject({ code: "indeterminate", status: 404 });
       expect(cancelled).toBe(true);
-    } finally {
-      vi.useRealTimers();
     }
 
     const statusClient = createT4ApiClient({
@@ -644,6 +638,19 @@ describe("generated T4 API v1 client conformance", () => {
       });
       expect(attempts).toBe(1);
     }
+
+    let nonJsonCancelled = false;
+    const nonJsonClient = createT4ApiClient({
+      baseUrl: "https://invalid-503-media.test", credential: "token-a", majorVersion: 1,
+      fetch: async () => new Response(new ReadableStream<Uint8Array>({
+        pull(controller) { controller.enqueue(new Uint8Array(1024)); },
+        cancel() { nonJsonCancelled = true; },
+      }), { status: 503, headers: { "Content-Type": "text/plain" } }),
+    });
+    await expect(nonJsonClient.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 3, retryBackoffMs: 0 }).next()).rejects.toMatchObject({
+      code: "indeterminate", status: 502, retryable: false,
+    });
+    expect(nonJsonCancelled).toBe(true);
   });
 
   it("rejects unknown fields in every public JSON response family", async () => {
@@ -721,16 +728,17 @@ describe("generated T4 API v1 client conformance", () => {
     let progressAttempts = 0;
     const progressFetch: typeof globalThis.fetch = async () => {
       progressAttempts += 1;
-      if (progressAttempts === 2) {
-        return new Response('data: {"type":"heartbeat","cursor":"progress-1","observedAt":"2026-07-21T00:00:00Z"}\n\n', { headers: { "Content-Type": "text/event-stream" } });
+      if (progressAttempts === 2 || progressAttempts === 4) {
+        const cursor = progressAttempts === 2 ? "progress-1" : "progress-2";
+        return new Response(`data: {"type":"heartbeat","cursor":"${cursor}","observedAt":"2026-07-21T00:00:00Z"}\n\n`, { headers: { "Content-Type": "text/event-stream" } });
       }
       return new Response(new ReadableStream<Uint8Array>({ start(controller) { controller.close(); } }), { headers: { "Content-Type": "text/event-stream" } });
     };
     const progressClient = createT4ApiClient({ baseUrl: "https://progress.test", credential: "token-a", majorVersion: 1, fetch: progressFetch });
-    const progressWatch = progressClient.watchSession("ses-1", { maxEvents: 2, maxReconnectAttempts: 1, retryBackoffMs: 0 });
-    await expect(progressWatch.next()).resolves.toMatchObject({ value: { cursor: "progress-1" }, done: false });
-    await expect(progressWatch.next()).rejects.toMatchObject({ code: "indeterminate", status: 502 });
-    expect(progressAttempts).toBe(3);
+    const progressEvents: WatchEvent[] = [];
+    for await (const event of progressClient.watchSession("ses-1", { maxEvents: 2, maxReconnectAttempts: 1, retryBackoffMs: 0 })) progressEvents.push(event);
+    expect(progressEvents.map((event) => event.cursor)).toEqual(["progress-1", "progress-2"]);
+    expect(progressAttempts).toBe(4);
 
     vi.useFakeTimers();
     try {
