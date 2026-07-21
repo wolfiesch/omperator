@@ -10,6 +10,7 @@ import (
 	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/api/meta"
+	apiresource "k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -161,6 +162,11 @@ func workspaceOwnsPVC(workspace *clusterv1alpha1.T4Workspace, pvc *corev1.Persis
 	if pvc.Annotations[clusterv1alpha1.WorkspaceUIDAnnotation] != string(workspace.UID) {
 		return false
 	}
+	for _, reference := range pvc.OwnerReferences {
+		if reference.APIVersion != clusterv1alpha1.GroupVersion.String() || reference.Kind != "T4Workspace" || reference.Name != workspace.Name || reference.UID != workspace.UID {
+			return false
+		}
+	}
 	controller := metav1.GetControllerOf(pvc)
 	if workspace.Spec.RetentionPolicy == clusterv1alpha1.RetentionPolicyDelete {
 		return controller != nil && controller.UID == workspace.UID
@@ -270,15 +276,19 @@ func (r *WorkspaceReconciler) updateWorkspaceFailure(ctx context.Context, worksp
 	if workspace.Status.Conditions != nil {
 		original.Conditions = append([]metav1.Condition(nil), workspace.Status.Conditions...)
 	}
-	if conditionType != "HostReady" {
-		meta.SetStatusCondition(&workspace.Status.Conditions, condition("HostReady", metav1.ConditionTrue, "HostResolved", "referenced T4ClusterHost is available", workspace.Generation))
-	}
 	workspace.Status.ObservedGeneration = workspace.Generation
+	workspace.Status.PVCName = ""
+	workspace.Status.PVCPhase = ""
+	workspace.Status.Capacity = apiresource.Quantity{}
 	workspace.Status.Phase = clusterv1alpha1.InfrastructureFailed
-	meta.SetStatusCondition(&workspace.Status.Conditions, condition(conditionType, metav1.ConditionFalse, reason, message, workspace.Generation))
-	if conditionType != "Ready" {
-		meta.SetStatusCondition(&workspace.Status.Conditions, condition("Ready", metav1.ConditionFalse, reason, message, workspace.Generation))
+	if conditionType == "HostReady" {
+		meta.SetStatusCondition(&workspace.Status.Conditions, condition("HostReady", metav1.ConditionFalse, reason, message, workspace.Generation))
+		meta.SetStatusCondition(&workspace.Status.Conditions, condition("StorageReady", metav1.ConditionUnknown, "NotEvaluated", "storage dependency was not evaluated because the referenced host is unavailable", workspace.Generation))
+	} else {
+		meta.SetStatusCondition(&workspace.Status.Conditions, condition("HostReady", metav1.ConditionTrue, "HostResolved", "referenced T4ClusterHost is available", workspace.Generation))
+		meta.SetStatusCondition(&workspace.Status.Conditions, condition("StorageReady", metav1.ConditionFalse, reason, message, workspace.Generation))
 	}
+	meta.SetStatusCondition(&workspace.Status.Conditions, condition("Ready", metav1.ConditionFalse, reason, message, workspace.Generation))
 	if reflect.DeepEqual(original, workspace.Status) {
 		return nil
 	}

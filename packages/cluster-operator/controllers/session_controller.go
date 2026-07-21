@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"reflect"
@@ -41,6 +42,8 @@ const (
 	sessionHostRefIndexField      = "t4.session.spec.hostRef"
 	sessionWorkspaceRefIndexField = "t4.session.spec.workspaceRef"
 )
+
+var errSessionResourceOwnershipConflict = errors.New("session resource ownership conflict")
 
 var (
 	configMapKeyPattern = regexp.MustCompile(`^[-._A-Za-z0-9]+$`)
@@ -289,6 +292,10 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 	var session clusterv1alpha1.T4Session
 	found := false
 	defer func() {
+		if errors.Is(err, errSessionResourceOwnershipConflict) {
+			result = ctrl.Result{RequeueAfter: 30 * time.Second}
+			err = nil
+		}
 		observeReconcile(metricKindSession, request.NamespacedName, session.Status.Conditions, conditionObjectPresent(&session, found, err), err)
 	}()
 	if err := r.Get(ctx, request.NamespacedName, &session); err != nil {
@@ -307,13 +314,13 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 		if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, false, "RuntimeConfigured", reason, message)
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, false, false, "RuntimeConfigured", reason, message)
 	}
 	if reason, message := r.OMPConfig.validationFailure(); reason != "" {
 		if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, false, "RuntimeConfigured", reason, message)
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, false, false, "RuntimeConfigured", reason, message)
 	}
 
 	var host clusterv1alpha1.T4ClusterHost
@@ -322,7 +329,7 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 			if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
 				return ctrl.Result{}, err
 			}
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, false, "HostReady", "HostNotFound", "referenced T4ClusterHost does not exist")
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, false, false, "HostReady", "HostNotFound", "referenced T4ClusterHost does not exist")
 		}
 		return ctrl.Result{}, err
 	}
@@ -330,7 +337,7 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 		if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, "RuntimeConfigured", "RuntimeProfileNotAllowed", "runtime profile is not allowed by the referenced T4ClusterHost")
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, false, "RuntimeConfigured", "RuntimeProfileNotAllowed", "runtime profile is not allowed by the referenced T4ClusterHost")
 	}
 	var storageClass storagev1.StorageClass
 	if err := r.Get(ctx, types.NamespacedName{Name: host.Spec.StorageClassName}, &storageClass); err != nil {
@@ -338,7 +345,7 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 			if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
 				return ctrl.Result{}, err
 			}
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, "WorkspaceReady", ReasonStorageClassNotFound, fmt.Sprintf("StorageClass %q selected by the referenced T4ClusterHost does not exist", host.Spec.StorageClassName))
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, false, "WorkspaceReady", ReasonStorageClassNotFound, fmt.Sprintf("StorageClass %q selected by the referenced T4ClusterHost does not exist", host.Spec.StorageClassName))
 		}
 		return ctrl.Result{}, err
 	}
@@ -346,7 +353,7 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 		if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, "WorkspaceReady", ReasonStorageClassNotRWX, fmt.Sprintf("StorageClass %q selected by the referenced T4ClusterHost is not administrator-declared ReadWriteMany", host.Spec.StorageClassName))
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, false, "WorkspaceReady", ReasonStorageClassNotRWX, fmt.Sprintf("StorageClass %q selected by the referenced T4ClusterHost is not administrator-declared ReadWriteMany", host.Spec.StorageClassName))
 	}
 	var workspace clusterv1alpha1.T4Workspace
 	if err := r.Get(ctx, types.NamespacedName{Namespace: session.Namespace, Name: session.Spec.WorkspaceRef}, &workspace); err != nil {
@@ -354,7 +361,7 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 			if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
 				return ctrl.Result{}, err
 			}
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, "WorkspaceReady", "WorkspaceNotFound", "referenced T4Workspace does not exist")
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, false, "WorkspaceReady", "WorkspaceNotFound", "referenced T4Workspace does not exist")
 		}
 		return ctrl.Result{}, err
 	}
@@ -362,13 +369,19 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 		if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, "WorkspaceReady", "HostMismatch", "session and workspace must reference the same T4ClusterHost")
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, false, "WorkspaceReady", "HostMismatch", "session and workspace must reference the same T4ClusterHost")
 	}
 	if workspace.Status.PVCName == "" {
 		if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, r.updateSessionFailure(ctx, &session, true, "WorkspaceReady", "PVCNotDeclared", "workspace controller has not declared a PVC")
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, r.updateSessionFailure(ctx, &session, true, false, "WorkspaceReady", "PVCNotDeclared", "workspace controller has not declared a PVC")
+	}
+	if workspace.UID != "" && workspace.Status.PVCName != WorkspacePVCName(&workspace) {
+		if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, false, "WorkspaceReady", "PVCIdentityMismatch", "workspace status does not reference its deterministic PVC")
 	}
 	var pvc corev1.PersistentVolumeClaim
 	if err := r.Get(ctx, types.NamespacedName{Namespace: session.Namespace, Name: workspace.Status.PVCName}, &pvc); err != nil {
@@ -376,21 +389,27 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 			if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
 				return ctrl.Result{}, err
 			}
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, r.updateSessionFailure(ctx, &session, true, "WorkspaceReady", "PVCNotFound", "workspace PVC does not exist")
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, r.updateSessionFailure(ctx, &session, true, false, "WorkspaceReady", "PVCNotFound", "workspace PVC does not exist")
 		}
 		return ctrl.Result{}, err
+	}
+	if workspace.UID != "" && !workspaceOwnsPVC(&workspace, &pvc) {
+		if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, false, "WorkspaceReady", "PVCOwnershipConflict", "workspace PVC identity or ownership is not authoritative")
 	}
 	if pvcStorageClassName(&pvc) != host.Spec.StorageClassName {
 		if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, "WorkspaceReady", ReasonStorageClassMismatch, fmt.Sprintf("workspace PVC uses StorageClass %q instead of host-selected %q", pvcStorageClassName(&pvc), host.Spec.StorageClassName))
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, false, "WorkspaceReady", ReasonStorageClassMismatch, fmt.Sprintf("workspace PVC uses StorageClass %q instead of host-selected %q", pvcStorageClassName(&pvc), host.Spec.StorageClassName))
 	}
 	if pvc.Status.Phase != corev1.ClaimBound || !pvcHasRWX(&pvc) {
 		if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, r.updateSessionFailure(ctx, &session, true, "WorkspaceReady", "PVCNotBoundRWX", "workspace PVC must be Bound and ReadWriteMany before a session starts")
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, r.updateSessionFailure(ctx, &session, true, false, "WorkspaceReady", "PVCNotBoundRWX", "workspace PVC must be Bound and ReadWriteMany before a session starts")
 	}
 	runtimeVersions, reason, message, err := r.loadOMPResourceVersions(ctx, session.Namespace)
 	if err != nil {
@@ -400,7 +419,7 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 		if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, "RuntimeConfigured", reason, message)
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, true, "RuntimeConfigured", reason, message)
 	}
 
 	serviceName := SessionServiceName(&session)
@@ -429,8 +448,8 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 		}
 	} else if err != nil {
 		return ctrl.Result{}, err
-	} else if !metav1.IsControlledBy(&service, &session) {
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, "Available", "ServiceOwnershipConflict", "deterministic session Service is not controlled by this session")
+	} else if !sessionExclusivelyOwnsResource(&service, &session) {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, true, "Available", "ServiceOwnershipConflict", "deterministic session Service has an unexpected owner")
 	} else if !serviceExposureIsInternal(&service) {
 		if err := r.Delete(ctx, &service); err != nil && !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, err
@@ -463,8 +482,8 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 		}
 	} else if err != nil {
 		return ctrl.Result{}, err
-	} else if !metav1.IsControlledBy(&pod, &session) {
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, "Available", "PodOwnershipConflict", "deterministic session Pod is not controlled by this session")
+	} else if !sessionExclusivelyOwnsResource(&pod, &session) {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, true, "Available", "PodOwnershipConflict", "deterministic session Pod has an unexpected owner")
 	} else if !labelsContain(pod.Labels, desiredPod.Labels) {
 		if pod.Labels == nil {
 			pod.Labels = map[string]string{}
@@ -654,6 +673,8 @@ func (r *SessionReconciler) updateSessionPending(ctx context.Context, session *c
 	}
 	session.Status.ObservedGeneration = session.Generation
 	meta.SetStatusCondition(&session.Status.Conditions, condition("HostReady", metav1.ConditionTrue, "HostResolved", "referenced T4ClusterHost is available", session.Generation))
+	meta.SetStatusCondition(&session.Status.Conditions, condition("WorkspaceReady", metav1.ConditionTrue, "PVCBoundRWX", "workspace PVC is Bound and ReadWriteMany", session.Generation))
+	meta.SetStatusCondition(&session.Status.Conditions, condition("RuntimeConfigured", metav1.ConditionTrue, "OMPReferencesReady", "administrator-owned OMP runtime references are configured", session.Generation))
 	session.Status.PodName = podName
 	session.Status.ServiceName = serviceName
 	session.Status.Phase = clusterv1alpha1.InfrastructurePending
@@ -693,7 +714,7 @@ func (r *SessionReconciler) reconcileDelete(ctx context.Context, session *cluste
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		if !metav1.IsControlledBy(object, session) {
+		if !sessionExclusivelyOwnsResource(object, session) {
 			before := session.Status
 			if session.Status.Conditions != nil {
 				before.Conditions = append([]metav1.Condition(nil), session.Status.Conditions...)
@@ -734,8 +755,11 @@ func (r *SessionReconciler) deleteOwnedSessionResources(ctx context.Context, ses
 			}
 			continue
 		}
-		if !metav1.IsControlledBy(object, session) {
-			continue
+		if !sessionExclusivelyOwnsResource(object, session) {
+			if err := r.updateSessionFailure(ctx, session, false, false, "Available", "ResourceOwnershipConflict", fmt.Sprintf("deterministic %T has an unexpected owner", object)); err != nil {
+				return err
+			}
+			return errSessionResourceOwnershipConflict
 		}
 		if err := r.Delete(ctx, object); err != nil && !apierrors.IsNotFound(err) {
 			return err
@@ -744,28 +768,54 @@ func (r *SessionReconciler) deleteOwnedSessionResources(ctx context.Context, ses
 	return nil
 }
 
-func (r *SessionReconciler) updateSessionFailure(ctx context.Context, session *clusterv1alpha1.T4Session, hostReady bool, conditionType, reason, message string) error {
+func (r *SessionReconciler) updateSessionFailure(ctx context.Context, session *clusterv1alpha1.T4Session, hostReady, workspaceReady bool, conditionType, reason, message string) error {
 	original := session.Status
 	if session.Status.Conditions != nil {
 		original.Conditions = append([]metav1.Condition(nil), session.Status.Conditions...)
 	}
-	if hostReady {
+	if conditionType == "HostReady" {
+		meta.SetStatusCondition(&session.Status.Conditions, condition("HostReady", metav1.ConditionFalse, reason, message, session.Generation))
+	} else if hostReady {
 		meta.SetStatusCondition(&session.Status.Conditions, condition("HostReady", metav1.ConditionTrue, "HostResolved", "referenced T4ClusterHost is available", session.Generation))
-	} else if conditionType != "HostReady" {
-		meta.SetStatusCondition(&session.Status.Conditions, condition("HostReady", metav1.ConditionUnknown, "NotEvaluated", "host dependency was not evaluated because static runtime configuration is invalid", session.Generation))
+	} else {
+		meta.SetStatusCondition(&session.Status.Conditions, condition("HostReady", metav1.ConditionUnknown, "NotEvaluated", "host dependency was not evaluated", session.Generation))
+	}
+	if conditionType == "WorkspaceReady" {
+		meta.SetStatusCondition(&session.Status.Conditions, condition("WorkspaceReady", metav1.ConditionFalse, reason, message, session.Generation))
+	} else if workspaceReady {
+		meta.SetStatusCondition(&session.Status.Conditions, condition("WorkspaceReady", metav1.ConditionTrue, "PVCBoundRWX", "workspace PVC is Bound and ReadWriteMany", session.Generation))
+	} else {
+		meta.SetStatusCondition(&session.Status.Conditions, condition("WorkspaceReady", metav1.ConditionUnknown, "NotEvaluated", "workspace dependency was not evaluated", session.Generation))
+	}
+	if conditionType == "RuntimeConfigured" {
+		meta.SetStatusCondition(&session.Status.Conditions, condition("RuntimeConfigured", metav1.ConditionFalse, reason, message, session.Generation))
+	} else if workspaceReady {
+		meta.SetStatusCondition(&session.Status.Conditions, condition("RuntimeConfigured", metav1.ConditionTrue, "OMPReferencesReady", "administrator-owned OMP runtime references are configured", session.Generation))
+	} else {
+		meta.SetStatusCondition(&session.Status.Conditions, condition("RuntimeConfigured", metav1.ConditionUnknown, "NotEvaluated", "runtime configuration was not evaluated", session.Generation))
 	}
 	session.Status.ObservedGeneration = session.Generation
 	session.Status.PodName = ""
 	session.Status.ServiceName = ""
 	session.Status.Phase = clusterv1alpha1.InfrastructureFailed
-	meta.SetStatusCondition(&session.Status.Conditions, condition(conditionType, metav1.ConditionFalse, reason, message, session.Generation))
-	if conditionType != "Available" {
-		meta.SetStatusCondition(&session.Status.Conditions, condition("Available", metav1.ConditionFalse, reason, message, session.Generation))
-	}
+	meta.SetStatusCondition(&session.Status.Conditions, condition("Available", metav1.ConditionFalse, reason, message, session.Generation))
 	if reflect.DeepEqual(original, session.Status) {
 		return nil
 	}
 	return r.Status().Update(ctx, session)
+}
+
+func sessionExclusivelyOwnsResource(object metav1.Object, session *clusterv1alpha1.T4Session) bool {
+	controller := metav1.GetControllerOf(object)
+	if controller == nil || controller.APIVersion != clusterv1alpha1.GroupVersion.String() || controller.Kind != "T4Session" || controller.Name != session.Name || controller.UID != session.UID {
+		return false
+	}
+	for _, reference := range object.GetOwnerReferences() {
+		if reference.APIVersion != clusterv1alpha1.GroupVersion.String() || reference.Kind != "T4Session" || reference.Name != session.Name || reference.UID != session.UID {
+			return false
+		}
+	}
+	return true
 }
 
 func serviceExposureIsInternal(service *corev1.Service) bool {
