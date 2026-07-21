@@ -55,9 +55,9 @@ steps:
     commands:
       - export PATH="$PWD/.ci:$PATH"
       - corepack enable
-      - pnpm check
-      - VP_RUN_CONCURRENCY_LIMIT=1 pnpm test
-      - pnpm build
+      - pnpm check:release && pnpm check:provenance && pnpm lint && pnpm --filter '!@t4-code/flutter' -r typecheck
+      - VP_RUN_CONCURRENCY_LIMIT=1 pnpm --filter '!@t4-code/flutter' -r test
+      - pnpm --filter '!@t4-code/flutter' -r build
       - pnpm exec playwright install --with-deps chromium
       - pnpm test:e2e
       - pnpm test:packaging

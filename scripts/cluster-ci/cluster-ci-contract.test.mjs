@@ -245,14 +245,23 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
   assert.equal(typeof pipeline, "object");
   const steps = pipeline.steps;
   const coreCommands = steps["upstream-core"].commands;
-  for (const command of [
-    "pnpm check",
-    "VP_RUN_CONCURRENCY_LIMIT=1 pnpm test",
-    "pnpm build",
+  assert.deepEqual(coreCommands, [
+    'export PATH="$PWD/.ci:$PATH"',
+    "corepack enable",
+    "pnpm check:release && pnpm check:provenance && pnpm lint && pnpm --filter '!@t4-code/flutter' -r typecheck",
+    "VP_RUN_CONCURRENCY_LIMIT=1 pnpm --filter '!@t4-code/flutter' -r test",
+    "pnpm --filter '!@t4-code/flutter' -r build",
+    "pnpm exec playwright install --with-deps chromium",
     "pnpm test:e2e",
     "pnpm test:packaging",
-  ]) {
-    assert.ok(coreCommands.includes(command), `upstream-core must run ${command}`);
+  ]);
+  const unfilteredSdkCommand = /(?:^|\s)pnpm(?:\s+-r)?\s+(?:check|typecheck|test|build)(?:\s|$)/u;
+  for (const command of coreCommands) {
+    assert.doesNotMatch(
+      command,
+      unfilteredSdkCommand,
+      `pipeline 38:64 reproduced unfiltered core workspace traversal as "Failed to find executable flutter": ${command}`,
+    );
   }
   assert.ok(steps["legacy-bridge-continuity"].commands.includes("pnpm test:legacy-bridge-continuity"));
   assert.equal(steps["legacy-bridge-continuity"].environment.T4_OMP_SOURCE_DIR, ".continuity/omp");
