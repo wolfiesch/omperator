@@ -167,6 +167,41 @@ func TestWorkspaceDeletionUsesAuthoritativePVCReader(t *testing.T) {
 	}
 }
 
+func TestWorkspaceDeletionUsesAuthoritativeSessionReader(t *testing.T) {
+	ctx := context.Background()
+	scheme := testScheme(t)
+	workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
+	workspace.UID = "workspace-uid"
+	workspace.Finalizers = []string{clusterv1alpha1.WorkspaceFinalizer}
+	pvc := ownedWorkspacePVC(workspace)
+	session := testSession()
+	session.Spec.WorkspaceRef = workspace.Name
+	cacheClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&clusterv1alpha1.T4Workspace{}).WithObjects(workspace, pvc).Build()
+	apiReader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pvc, session).Build()
+	if err := cacheClient.Delete(ctx, workspace); err != nil {
+		t.Fatal(err)
+	}
+	r := &controllers.WorkspaceReconciler{Client: cacheClient, APIReader: apiReader, Scheme: scheme}
+	if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workspace)}); err != nil {
+		t.Fatal(err)
+	}
+	var waiting clusterv1alpha1.T4Workspace
+	if err := cacheClient.Get(ctx, client.ObjectKeyFromObject(workspace), &waiting); err != nil {
+		t.Fatalf("workspace finalizer ignored authoritative session: %v", err)
+	}
+	ready := findCondition(waiting.Status.Conditions, "Ready")
+	if ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != "SessionsRemain" || ready.ObservedGeneration != waiting.Generation {
+		t.Fatalf("Ready = %#v, want current-generation False/SessionsRemain", ready)
+	}
+	if !contains(waiting.Finalizers, clusterv1alpha1.WorkspaceFinalizer) {
+		t.Fatal("workspace finalizer was removed while authoritative session remains")
+	}
+	var remainingPVC corev1.PersistentVolumeClaim
+	if err := cacheClient.Get(ctx, client.ObjectKeyFromObject(pvc), &remainingPVC); err != nil {
+		t.Fatalf("workspace PVC was deleted while authoritative session remains: %v", err)
+	}
+}
+
 func TestRetainWorkspaceCreatesPVCWithoutGarbageCollectableOwner(t *testing.T) {
 	scheme := testScheme(t)
 	workspace := testWorkspace(clusterv1alpha1.RetentionPolicyRetain)
