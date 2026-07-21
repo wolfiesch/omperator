@@ -97,7 +97,10 @@ func TestWorkspaceStorageFailsClosedWhenClassMissingOrNotRWX(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			scheme := testScheme(t)
-			objects := []client.Object{testHost(), testWorkspace(clusterv1alpha1.RetentionPolicyDelete)}
+			workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
+			workspace.Status.Phase = clusterv1alpha1.InfrastructureReady
+			workspace.Status.Conditions = []metav1.Condition{{Type: "Ready", Status: metav1.ConditionTrue, Reason: "PVCBound", ObservedGeneration: workspace.Generation}}
+			objects := []client.Object{testHost(), workspace}
 			if test.class != nil {
 				objects = append(objects, test.class)
 			}
@@ -121,6 +124,10 @@ func TestWorkspaceStorageFailsClosedWhenClassMissingOrNotRWX(t *testing.T) {
 			condition := findCondition(got.Status.Conditions, "StorageReady")
 			if condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != test.reason {
 				t.Fatalf("StorageReady = %#v, want False/%s", condition, test.reason)
+			}
+			ready := findCondition(got.Status.Conditions, "Ready")
+			if got.Status.Phase != clusterv1alpha1.InfrastructureFailed || ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != test.reason {
+				t.Fatalf("revoked workspace status = %#v, Ready = %#v, want Failed and False/%s", got.Status, ready, test.reason)
 			}
 		})
 	}

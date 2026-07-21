@@ -16,6 +16,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 
 	clusterv1alpha1 "github.com/LycaonLLC/t4-code/packages/cluster-operator/api/v1alpha1"
 )
@@ -24,6 +25,14 @@ type WorkspaceReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 }
+
+const (
+	workspacePVCPartOfLabel         = "app.kubernetes.io/part-of"
+	workspacePVCPartOfValue         = "t4-cluster"
+	workspacePVCWorkspaceLabel      = "cluster.t4.dev/workspace"
+	hostStorageClassIndexField      = "t4.workspace.host.storageClassName"
+	workspaceHostRefIndexField      = "t4.workspace.spec.hostRef"
+)
 
 func (r *WorkspaceReconciler) Reconcile(ctx context.Context, request ctrl.Request) (result ctrl.Result, err error) {
 	var workspace clusterv1alpha1.T4Workspace
@@ -72,8 +81,8 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, request ctrl.Reques
 			ObjectMeta: metav1.ObjectMeta{
 				Name: pvcName, Namespace: workspace.Namespace,
 				Labels: map[string]string{
-					"app.kubernetes.io/part-of": "t4-cluster",
-					"cluster.t4.dev/workspace":  workspace.Name,
+					workspacePVCPartOfLabel:    workspacePVCPartOfValue,
+					workspacePVCWorkspaceLabel: workspace.Name,
 				},
 				Annotations: map[string]string{clusterv1alpha1.WorkspaceUIDAnnotation: string(workspace.UID)},
 			},
@@ -261,15 +270,83 @@ func (r *WorkspaceReconciler) updateWorkspaceFailure(ctx context.Context, worksp
 	workspace.Status.ObservedGeneration = workspace.Generation
 	workspace.Status.Phase = clusterv1alpha1.InfrastructureFailed
 	meta.SetStatusCondition(&workspace.Status.Conditions, condition(conditionType, metav1.ConditionFalse, reason, message, workspace.Generation))
+	if conditionType != "Ready" {
+		meta.SetStatusCondition(&workspace.Status.Conditions, condition("Ready", metav1.ConditionFalse, reason, message, workspace.Generation))
+	}
 	if reflect.DeepEqual(original, workspace.Status) {
 		return nil
 	}
 	return r.Status().Update(ctx, workspace)
 }
 
+func workspaceRequestsForPVC(_ context.Context, object client.Object) []ctrl.Request {
+	pvc, ok := object.(*corev1.PersistentVolumeClaim)
+	if !ok || pvc.Namespace == "" || pvc.Labels[workspacePVCPartOfLabel] != workspacePVCPartOfValue {
+		return nil
+	}
+	workspaceName := pvc.Labels[workspacePVCWorkspaceLabel]
+	workspaceUID := pvc.Annotations[clusterv1alpha1.WorkspaceUIDAnnotation]
+	if workspaceName == "" || workspaceUID == "" {
+		return nil
+	}
+	workspaceIdentity := &clusterv1alpha1.T4Workspace{ObjectMeta: metav1.ObjectMeta{Name: workspaceName, UID: types.UID(workspaceUID)}}
+	if pvc.Name != WorkspacePVCName(workspaceIdentity) {
+		return nil
+	}
+	return []ctrl.Request{{NamespacedName: types.NamespacedName{Namespace: pvc.Namespace, Name: workspaceName}}}
+}
+
+func indexHostByStorageClass(object client.Object) []string {
+	host, ok := object.(*clusterv1alpha1.T4ClusterHost)
+	if !ok || host.Spec.StorageClassName == "" {
+		return nil
+	}
+	return []string{host.Spec.StorageClassName}
+}
+
+func indexWorkspaceByHostRef(object client.Object) []string {
+	workspace, ok := object.(*clusterv1alpha1.T4Workspace)
+	if !ok || workspace.Spec.HostRef == "" {
+		return nil
+	}
+	return []string{workspace.Spec.HostRef}
+}
+
+func (r *WorkspaceReconciler) workspaceRequestsForStorageClass(ctx context.Context, object client.Object) []ctrl.Request {
+	storageClass, ok := object.(*storagev1.StorageClass)
+	if !ok || storageClass.Name == "" {
+		return nil
+	}
+	var hosts clusterv1alpha1.T4ClusterHostList
+	if err := r.List(ctx, &hosts, client.MatchingFields{hostStorageClassIndexField: storageClass.Name}); err != nil {
+		ctrl.LoggerFrom(ctx).Error(err, "unable to map StorageClass to cluster hosts", "storageClass", storageClass.Name)
+		return nil
+	}
+	requests := make([]ctrl.Request, 0)
+	for i := range hosts.Items {
+		host := &hosts.Items[i]
+		var workspaces clusterv1alpha1.T4WorkspaceList
+		if err := r.List(ctx, &workspaces, client.InNamespace(host.Namespace), client.MatchingFields{workspaceHostRefIndexField: host.Name}); err != nil {
+			ctrl.LoggerFrom(ctx).Error(err, "unable to map cluster host to workspaces", "clusterHost", client.ObjectKeyFromObject(host))
+			continue
+		}
+		for j := range workspaces.Items {
+			requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&workspaces.Items[j])})
+		}
+	}
+	return requests
+}
+
 func (r *WorkspaceReconciler) SetupWithManager(manager ctrl.Manager) error {
+	if err := manager.GetFieldIndexer().IndexField(context.Background(), &clusterv1alpha1.T4ClusterHost{}, hostStorageClassIndexField, indexHostByStorageClass); err != nil {
+		return fmt.Errorf("index T4ClusterHost by StorageClass: %w", err)
+	}
+	if err := manager.GetFieldIndexer().IndexField(context.Background(), &clusterv1alpha1.T4Workspace{}, workspaceHostRefIndexField, indexWorkspaceByHostRef); err != nil {
+		return fmt.Errorf("index T4Workspace by host reference: %w", err)
+	}
 	return ctrl.NewControllerManagedBy(manager).
 		For(&clusterv1alpha1.T4Workspace{}).
-		Owns(&corev1.PersistentVolumeClaim{}).
+		Watches(&corev1.PersistentVolumeClaim{}, handler.EnqueueRequestsFromMapFunc(workspaceRequestsForPVC)).
+		Watches(&storagev1.StorageClass{}, handler.EnqueueRequestsFromMapFunc(r.workspaceRequestsForStorageClass)).
 		Complete(r)
 }
