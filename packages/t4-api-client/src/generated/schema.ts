@@ -799,7 +799,7 @@ export interface operations {
             /** @description Bounded SSE event stream. Every non-empty SSE data field is one JSON value conforming to WatchEvent; clients MUST reject unknown fields and schema-invalid event payloads before delivery. Transport chunk boundaries do not delimit frames. */
             200: {
                 headers: {
-                    "Cache-Control"?: "no-store";
+                    "Cache-Control": "no-store";
                     "T4-API-Version": components["headers"]["SelectedVersion"];
                     [name: string]: unknown;
                 };
