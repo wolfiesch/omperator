@@ -19,8 +19,10 @@ settings, and local or remote execution easier to operate without reimplementing
   availability and behavior do not diverge.
 - Quick Open searches through bounded authorized operations. Flutter never receives or chooses an
   absolute path it does not already own.
-- A visible text preview may be staged as reviewed context for a prompt. It does not become a second
-  runtime authority.
+- The Universal Working Set lets a user deliberately stage exact material from a file preview,
+  transcript message, review diff, selected terminal text, or browser accessibility snapshot. The
+  user can inspect and remove each item before it joins one ordinary OMP prompt; it does not become
+  a second runtime authority.
 - Light and dark themes use neutral surfaces with minimal semantic accent.
 - OMP identity uses the existing pi/connector mark and Pi Pink `#e83174` accent.
 

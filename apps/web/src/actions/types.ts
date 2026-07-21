@@ -1,6 +1,8 @@
 import type { SessionStatus } from "@t4-code/ui";
 
 import type { FileRefEntry } from "../features/composer/file-refs.ts";
+import type { ComposerStoreApi } from "../features/composer/composer-store.ts";
+import type { ContextPacketItem } from "../features/context-packet/context-packet.ts";
 import type { InspectorStoreApi } from "../features/panes/inspector-store.ts";
 import type { ProjectGroup } from "../lib/session-tree.ts";
 import type { WorkspaceData } from "../lib/workspace-data.ts";
@@ -17,6 +19,9 @@ export type ActionId =
   | "session.open"
   | "surface.toggle"
   | "file.open"
+  | "context.capture"
+  | "context.remove"
+  | "context.clear"
   | "agent.open"
   | "review.open"
   | "preview.open"
@@ -46,6 +51,9 @@ export interface ActionArguments {
     readonly path: string;
     readonly source?: "loaded" | "project-search";
   };
+  readonly "context.capture": { readonly sessionId: string; readonly item: ContextPacketItem };
+  readonly "context.remove": { readonly sessionId: string; readonly itemId: string };
+  readonly "context.clear": { readonly sessionId: string };
   readonly "agent.open": { readonly sessionId: string; readonly agentId: string };
   readonly "review.open": { readonly sessionId: string; readonly turnId: string };
   readonly "preview.open": { readonly sessionId: string };
@@ -72,7 +80,12 @@ export const ACTION_COMPLETED = Object.freeze({ completed: true as const });
 export type ActionRunResult = typeof ACTION_COMPLETED;
 
 export type ActionGroup = "workspace" | "navigate" | "app";
-export type ActionSurface = "quick-open" | "shortcut" | "workspace-menu" | "tool-link";
+export type ActionSurface =
+  | "quick-open"
+  | "shortcut"
+  | "workspace-menu"
+  | "tool-link"
+  | "context-source";
 export type ActionIcon = "search" | "terminal" | ActionSessionSurface;
 
 export interface ActionPresentation {
@@ -103,6 +116,7 @@ export type ActionDestination =
  */
 export interface ActionEnvironment {
   readonly workspace: WorkspaceStoreApi;
+  readonly composer: ComposerStoreApi;
   readonly platform: RendererPlatform;
   readonly railOverlaid: () => boolean;
   readonly shellData: () => WorkspaceData;

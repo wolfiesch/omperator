@@ -5,7 +5,7 @@
 // MessagesTimeline `WorkingTimer`, MIT, T3 Tools Inc., commit
 // f61fa9499d96fee825492aba204593c37b27e0cb) so a running clock never
 // re-renders the list.
-import { AnimatedHeight, cn, Spinner } from "@t4-code/ui";
+import { AnimatedHeight, cn, IconButton, Spinner } from "@t4-code/ui";
 import {
   AlertTriangle,
   Archive,
@@ -17,6 +17,7 @@ import {
   FileJson,
   Globe,
   LoaderCircle,
+  Layers3,
   MessageCircle,
   RotateCcw,
   SearchIcon,
@@ -118,8 +119,12 @@ function ReasoningDisclosure({ reasoning }: { readonly reasoning: string }) {
  */
 function AssistantMessageActions({
   row,
+  onCaptureContext,
 }: {
   readonly row: Extract<TranscriptRow, { kind: "message" }>;
+  readonly onCaptureContext?:
+    | ((row: Extract<TranscriptRow, { kind: "message" }>) => void)
+    | undefined;
 }) {
   const { controller, state } = useReadAloud();
   const speaking = state.speakingId === row.id;
@@ -134,6 +139,16 @@ function AssistantMessageActions({
       )}
     >
       <CopyButton label="Copy response" text={row.text} />
+      {onCaptureContext !== undefined && row.text.trim().length > 0 && (
+        <IconButton
+          aria-label="Add response to working set"
+          onClick={() => onCaptureContext(row)}
+          size="icon-xs"
+          title="Add this exact response to the next new message"
+        >
+          <Layers3 aria-hidden="true" />
+        </IconButton>
+      )}
       {showReadAloud && (
         <ReadAloudButton
           messageId={row.id}
@@ -154,9 +169,13 @@ function AssistantMessageActions({
 function MessageRow({
   row,
   imageSource,
+  onCaptureContext,
 }: {
   readonly row: Extract<TranscriptRow, { kind: "message" }>;
   readonly imageSource: TranscriptImageSource;
+  readonly onCaptureContext?:
+    | ((row: Extract<TranscriptRow, { kind: "message" }>) => void)
+    | undefined;
 }) {
   if (row.role === "user") {
     return (
@@ -175,8 +194,18 @@ function MessageRow({
             label="Attached"
             source={imageSource}
           />
-          <span className="mt-1 flex justify-end opacity-100 transition-opacity duration-(--motion-duration-fast) sm:absolute sm:-left-8 sm:top-1.5 sm:mt-0 sm:block sm:opacity-0 sm:focus-within:opacity-100 sm:group-hover/message:opacity-100">
+          <span className="mt-1 flex justify-end opacity-100 gap-1 transition-opacity duration-(--motion-duration-fast) sm:absolute sm:-left-15 sm:top-1.5 sm:mt-0 sm:flex sm:opacity-0 sm:focus-within:opacity-100 sm:group-hover/message:opacity-100">
             <CopyButton label="Copy message" text={row.text} />
+            {onCaptureContext !== undefined && row.text.trim().length > 0 && (
+              <IconButton
+                aria-label="Add message to working set"
+                onClick={() => onCaptureContext(row)}
+                size="icon-xs"
+                title="Add this exact message to the next new message"
+              >
+                <Layers3 aria-hidden="true" />
+              </IconButton>
+            )}
           </span>
         </div>
       </div>
@@ -198,7 +227,7 @@ function MessageRow({
         label="Response"
         source={imageSource}
       />
-      <AssistantMessageActions row={row} />
+      <AssistantMessageActions onCaptureContext={onCaptureContext} row={row} />
     </div>
   );
 }
@@ -716,12 +745,16 @@ export const TranscriptRowContent = memo(function TranscriptRowContent({
   imageSource,
   toolHost,
   ghost = false,
+  onCaptureMessage,
 }: {
   readonly row: TranscriptRow;
   /** Elapsed-label time base from the session runtime snapshot. */
   readonly nowMs: number;
   readonly imageSource: TranscriptImageSource;
   readonly toolHost?: ToolRenderHost | undefined;
+  readonly onCaptureMessage?:
+    | ((row: Extract<TranscriptRow, { kind: "message" }>) => void)
+    | undefined;
   /**
    * Paint-only duplicate of a row (the cold-mount overlay's warm copy).
    * A ghost renders pixel-identical but never carries singleton semantic
@@ -731,7 +764,7 @@ export const TranscriptRowContent = memo(function TranscriptRowContent({
 }) {
   switch (row.kind) {
     case "message":
-      return <MessageRow imageSource={imageSource} row={row} />;
+      return <MessageRow imageSource={imageSource} onCaptureContext={onCaptureMessage} row={row} />;
     case "collaboration":
       return <CollaborationMessageRow row={row} />;
     case "tool-group":

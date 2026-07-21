@@ -22,6 +22,7 @@ interface SnapshotElement {
   readonly ref: string;
   readonly role: string;
   readonly name: string;
+  readonly visible: true;
   readonly text?: string;
   readonly value?: string;
   readonly bounds?: { x: number; y: number; width: number; height: number };
@@ -97,7 +98,15 @@ function accessibleName(element: Element): string {
     if (placeholder) return bound(placeholder);
   }
   if (element instanceof HTMLImageElement && element.alt) return bound(element.alt);
-  return bound((element.textContent ?? "").replace(/\s+/gu, " ").trim(), 8_192);
+  const tag = element.tagName.toLowerCase();
+  const textNamedElement =
+    tag === "a" ||
+    tag === "button" ||
+    /^h[1-6]$/u.test(tag) ||
+    element.children.length === 0;
+  return textNamedElement
+    ? bound((element.textContent ?? "").replace(/\s+/gu, " ").trim(), 8_192)
+    : "";
 }
 function elementRef(element: Element): string {
   const old = elements.get(element);
@@ -139,21 +148,43 @@ function boundsOf(element: Element): { x: number; y: number; width: number; heig
 }
 function isVisible(element: Element): boolean {
   if (!element.isConnected) return false;
-  const style = (element.ownerDocument.defaultView ?? window).getComputedStyle(element);
+  const view = element.ownerDocument.defaultView ?? window;
+  let current: Element | null = element;
+  while (current !== null) {
+    const style = view.getComputedStyle(current);
+    if (
+      current.hasAttribute("hidden") ||
+      current.getAttribute("aria-hidden") === "true" ||
+      style.display === "none" ||
+      style.visibility === "hidden" ||
+      style.visibility === "collapse" ||
+      Number(style.opacity) === 0
+    ) {
+      return false;
+    }
+    current = current.parentElement;
+  }
   const rect = element.getBoundingClientRect();
-  return style.display !== "none" && style.visibility !== "hidden" && style.visibility !== "collapse" && Number(style.opacity) !== 0 && rect.width > 0 && rect.height > 0;
+  return rect.width > 0 && rect.height > 0;
 }
 function isDisabled(element: Element): boolean {
   return (element as HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement).disabled === true || element.getAttribute("aria-disabled") === "true" || element.closest("fieldset[disabled]") !== null;
 }
 function snapshotNode(element: Element, depth: number, budget: { count: number }): SnapshotElement {
-  if (budget.count >= MAX_SNAPSHOT_ELEMENTS) return { ref: elementRef(element), role: roleFor(element), name: accessibleName(element) };
+  if (budget.count >= MAX_SNAPSHOT_ELEMENTS) {
+    return {
+      ref: elementRef(element),
+      role: roleFor(element),
+      name: accessibleName(element),
+      visible: true,
+    };
+  }
   budget.count += 1;
   const result: SnapshotElement = {
-    ref: elementRef(element), role: roleFor(element), name: accessibleName(element),
+    ref: elementRef(element), role: roleFor(element), name: accessibleName(element), visible: true,
     ...(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement ? { value: bound(element.value) } : {}),
     ...(element.children.length === 0 && element.textContent?.trim() ? { text: bound(element.textContent.trim(), 8_192) } : {}),
-    ...(isVisible(element) ? { bounds: boundsOf(element) } : {}),
+    bounds: boundsOf(element),
     ...(isDisabled(element) ? { disabled: true } : {}),
     ...(element instanceof HTMLInputElement && (element.type === "checkbox" || element.type === "radio") ? { checked: element.checked } : {}),
     ...(element.getAttribute("aria-expanded") !== null ? { expanded: element.getAttribute("aria-expanded") === "true" } : {}),
@@ -162,6 +193,7 @@ function snapshotNode(element: Element, depth: number, budget: { count: number }
   const children: SnapshotElement[] = [];
   for (const child of Array.from(element.children).slice(0, MAX_SNAPSHOT_ELEMENTS)) {
     if (budget.count >= MAX_SNAPSHOT_ELEMENTS) break;
+    if (!isVisible(child)) continue;
     children.push(snapshotNode(child, depth + 1, budget));
   }
   return children.length ? { ...result, children } : result;
@@ -172,14 +204,15 @@ function snapshot(): JsonValue {
   const flat: SnapshotElement[] = [];
   const visit = (element: Element): void => {
     if (flat.length >= MAX_SNAPSHOT_ELEMENTS) return;
-    flat.push(snapshotNode(element, MAX_DEPTH, { count: 0 }));
+    if (isVisible(element)) flat.push(snapshotNode(element, MAX_DEPTH, { count: 0 }));
     for (const child of Array.from(element.children)) visit(child);
   };
   visit(body);
+  const tree = isVisible(body) ? snapshotNode(body, 0, { count: 0 }) : null;
   return json({
     url: bound(doc.URL), title: bound(doc.title), readyState: doc.readyState,
     viewport: { x: 0, y: 0, width: Math.max(0, window.innerWidth), height: Math.max(0, window.innerHeight) },
-    tree: snapshotNode(body, 0, { count: 0 }), elements: flat, capturedAt: Date.now(), truncated: flat.length >= MAX_SNAPSHOT_ELEMENTS,
+    tree, elements: flat, capturedAt: Date.now(), truncated: flat.length >= MAX_SNAPSHOT_ELEMENTS,
   });
 }
 function postAction(params: Record<string, unknown>): Record<string, JsonValue> {

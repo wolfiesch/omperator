@@ -24,6 +24,7 @@ import {
 } from "react";
 
 import { useActionRegistry } from "../../actions/index.ts";
+import { captureTranscriptContext } from "../context-packet/context-packet.ts";
 import type { WorkspaceProject, WorkspaceSession } from "../../lib/workspace-data.ts";
 import { useDesktopRuntimeSnapshot } from "../../platform/desktop-runtime.ts";
 import { resolveLiveSession } from "../../platform/live-workspace.ts";
@@ -521,6 +522,15 @@ export function SessionMain({
     [projection, snapshot.pendingPrompts, snapshot.sessionActive],
   );
   const rows = useStableTranscriptRows(rawRows);
+  const captureMessageContext = useCallback(
+    (row: Extract<(typeof rows)[number], { kind: "message" }>) => {
+      const item = captureTranscriptContext(sessionId, row);
+      if (item !== null) {
+        actionRegistry.execute({ id: "context.capture", args: { sessionId, item } });
+      }
+    },
+    [actionRegistry, sessionId],
+  );
   // The export menu lives in the header; rows live here. Hand the menu a
   // getter instead of subscribing to the runtime a second time.
   useEffect(() => {
@@ -670,6 +680,7 @@ export function SessionMain({
             key={sessionId}
             nowMs={snapshot.nowMs}
             onLoadEarlier={runtime.loadEarlierTranscript}
+            onCaptureMessage={archived ? undefined : captureMessageContext}
             rows={rows}
             sessionId={sessionId}
             streaming={snapshot.sessionActive}

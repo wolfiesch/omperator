@@ -19,6 +19,7 @@ import {
   useReducedMotion,
 } from "@t4-code/ui";
 import {
+  Layers3,
   Plus,
   SquareSplitHorizontal,
   SquareSplitVertical,
@@ -26,6 +27,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -33,6 +35,8 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 
+import { useActionRegistry } from "../../actions/index.ts";
+import { captureTerminalContext } from "../context-packet/context-packet.ts";
 import { workspaceStore } from "../../state/store-instance.ts";
 import { pastePreview } from "./paste-guard.ts";
 import {
@@ -46,7 +50,7 @@ import {
   type TerminalDrawerStoreApi,
   type TerminalTabState,
 } from "./terminal-store.ts";
-import { TerminalViewport } from "./TerminalViewport.tsx";
+import { TerminalViewport, type TerminalSelectionChange } from "./TerminalViewport.tsx";
 
 export interface TerminalDrawerProps {
   readonly sessionId: string;
@@ -359,6 +363,7 @@ function DrawerBody({
   readonly closing: boolean;
   readonly onExited: () => void;
 }) {
+  const actionRegistry = useActionRegistry();
   const tabs = useTerminalDrawer(api, (state) => state.tabs);
   const groups = useTerminalDrawer(api, (state) => state.groups);
   const activeId = useTerminalDrawer(api, (state) => state.activeTerminalId);
@@ -370,6 +375,22 @@ function DrawerBody({
   const pendingPaste = useTerminalDrawer(api, (state) => state.pendingPaste);
   const [previewHeight, setPreviewHeight] = useState<number | null>(null);
   const [resizeEpoch, setResizeEpoch] = useState(0);
+  const [terminalSelection, setTerminalSelection] = useState<{
+    readonly terminalId: string;
+    readonly title: string;
+    readonly text: string;
+  } | null>(null);
+  const handleSelectionChange = useCallback(
+    (selection: TerminalSelectionChange) =>
+      setTerminalSelection((current) =>
+        selection.text.trim().length > 0
+          ? selection
+          : current?.terminalId === selection.terminalId
+            ? null
+            : current,
+      ),
+    [],
+  );
 
   // Sample-mode QA handle for deterministic screenshots and manual state
   // checks (connection flips, host overrides). Never present off-fixture.
@@ -382,6 +403,15 @@ function DrawerBody({
       delete registry[sessionId];
     };
   }, [sampleMode, api, sessionId]);
+
+  useEffect(() => {
+    if (
+      terminalSelection !== null &&
+      !tabs.some((tab) => tab.id === terminalSelection.terminalId)
+    ) {
+      setTerminalSelection(null);
+    }
+  }, [tabs, terminalSelection]);
 
   const activeGroup =
     groups.find((group) => activeId !== null && group.terminalIds.includes(activeId)) ??
@@ -424,6 +454,23 @@ function DrawerBody({
             Sample shell
           </Badge>
         )}
+        <Button
+          aria-label="Add terminal selection to working set"
+          disabled={terminalSelection === null}
+          onClick={() => {
+            if (terminalSelection === null) return;
+            const item = captureTerminalContext(sessionId, terminalSelection);
+            if (item !== null) {
+              actionRegistry.execute({ id: "context.capture", args: { sessionId, item } });
+            }
+          }}
+          size="xs"
+          title="Add only the selected terminal text to the next new message"
+          variant="outline"
+        >
+          <Layers3 aria-hidden="true" />
+          <span className="hidden sm:inline">Add selection</span>
+        </Button>
         <IconButton
           aria-label={
             splitDisabled
@@ -501,6 +548,7 @@ function DrawerBody({
                 <TerminalViewport
                   active={terminalId === activeId}
                   api={api}
+                  onSelectionChange={handleSelectionChange}
                   resizeEpoch={resizeEpoch + (previewHeight ?? height)}
                   terminalId={terminalId}
                 />

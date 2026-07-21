@@ -54,6 +54,9 @@ export interface TranscriptTimelineProps {
   readonly toolHost?: ToolRenderHost | undefined;
   readonly history?: TranscriptHistoryPageState | undefined;
   readonly onLoadEarlier?: (() => Promise<void>) | undefined;
+  readonly onCaptureMessage?:
+    | ((row: Extract<TranscriptRow, { kind: "message" }>) => void)
+    | undefined;
 }
 
 export const TranscriptTimeline = memo(function TranscriptTimeline({
@@ -66,6 +69,7 @@ export const TranscriptTimeline = memo(function TranscriptTimeline({
   toolHost,
   history,
   onLoadEarlier,
+  onCaptureMessage,
 }: TranscriptTimelineProps) {
   const listRef = useRef<LegendListRef | null>(null);
   // null anchor = the user was following the tail when they left. Read the
@@ -217,12 +221,13 @@ export const TranscriptTimeline = memo(function TranscriptTimeline({
         <TranscriptRowContent
           imageSource={imageSource}
           nowMs={nowMs}
+          onCaptureMessage={onCaptureMessage}
           row={item}
           toolHost={toolHost}
         />
       </div>
     ),
-    [imageSource, nowMs, toolHost],
+    [imageSource, nowMs, onCaptureMessage, toolHost],
   );
 
   const maintainScrollAtEnd = useMemo(

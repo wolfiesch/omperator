@@ -1,4 +1,5 @@
 import { flattenFileIndex } from "../features/composer/file-refs.ts";
+import { contextSourceDescription } from "../features/context-packet/context-packet.ts";
 import { selectSessionView } from "../state/workspace-store.ts";
 import { resolveTheme } from "../theme/theme.ts";
 import type {
@@ -247,6 +248,65 @@ const fileOpen = defineAction({
   },
 });
 
+const contextCapture = defineAction({
+  id: "context.capture",
+  group: "workspace",
+  surfaces: ["context-source"],
+  label: () => "Add to working set",
+  description: (_environment, args) => contextSourceDescription(args.item.source),
+  availability: (environment, args) => {
+    if (args.item.sessionId !== args.sessionId) {
+      return { status: "disabled", reason: "This context belongs to a different session." };
+    }
+    return activeCurrentSessionAvailability(environment, args.sessionId);
+  },
+  run: (environment, args) => {
+    environment.composer.getState().addContextItem(args.sessionId, args.item);
+    return ACTION_COMPLETED;
+  },
+});
+
+const contextRemove = defineAction({
+  id: "context.remove",
+  group: "workspace",
+  surfaces: ["context-source"],
+  label: () => "Remove from working set",
+  description: () => "Context for the next new message",
+  availability: (environment, args) => {
+    const active = activeCurrentSessionAvailability(environment, args.sessionId);
+    if (active.status !== "enabled") return active;
+    return environment.composer
+      .getState()
+      .contextItemsBySessionId[args.sessionId]?.some((item) => item.id === args.itemId)
+      ? ACTION_ENABLED
+      : { status: "disabled", reason: "This context item is no longer in the working set." };
+  },
+  run: (environment, args) => {
+    environment.composer.getState().removeContextItem(args.sessionId, args.itemId);
+    return ACTION_COMPLETED;
+  },
+});
+
+const contextClear = defineAction({
+  id: "context.clear",
+  group: "workspace",
+  surfaces: ["context-source"],
+  label: () => "Clear working set",
+  description: () => "Context for the next new message",
+  availability: (environment, args) => {
+    const active = activeCurrentSessionAvailability(environment, args.sessionId);
+    if (active.status !== "enabled") return active;
+    return (environment.composer.getState().contextItemsBySessionId[args.sessionId]?.length ?? 0) >
+      0
+      ? ACTION_ENABLED
+      : { status: "disabled", reason: "The working set is already empty." };
+  },
+  run: (environment, args) => {
+    environment.composer.getState().clearContextItems(args.sessionId);
+    return ACTION_COMPLETED;
+  },
+});
+
 const agentOpen = defineAction({
   id: "agent.open",
   group: "workspace",
@@ -363,6 +423,9 @@ export const CORE_ACTIONS: readonly AnyActionDefinition[] = Object.freeze([
   sessionOpen,
   surfaceToggle,
   fileOpen,
+  contextCapture,
+  contextRemove,
+  contextClear,
   agentOpen,
   reviewOpen,
   previewOpen,

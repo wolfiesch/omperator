@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
+import type { SurfaceId } from "@t4-code/protocol/browser-ipc";
 
 import {
   admitContextItem,
+  captureBrowserSnapshotContext,
   captureFileContext,
+  captureReviewContext,
+  captureTerminalContext,
+  captureTranscriptContext,
   compilePromptWithContext,
   MAX_COMPILED_PROMPT_BYTES,
   MAX_CONTEXT_ITEM_BYTES,
@@ -10,6 +15,9 @@ import {
 } from "../src/features/context-packet/context-packet.ts";
 import { createComposerStore } from "../src/features/composer/composer-store.ts";
 import { createSubmissionGate } from "../src/features/composer/submission.ts";
+
+const FIRST_SURFACE_ID = "12345678-1234-4abc-8def-1234567890ab" as SurfaceId;
+const SECOND_SURFACE_ID = "87654321-4321-4cba-9fed-ba0987654321" as SurfaceId;
 
 function capture(path: string, text: string, id = path) {
   const item = captureFileContext(
@@ -92,6 +100,140 @@ describe("context packets", () => {
     const first = capture("src/a.ts", "one", "first");
     const refreshed = capture("src/a.ts", "two", "second");
     expect(admitContextItem([first], refreshed)).toEqual({ accepted: true, items: [refreshed] });
+  });
+
+  it("captures transcript, review, terminal, and browser sources with exact provenance", () => {
+    const transcript = captureTranscriptContext(
+      "session-a",
+      { id: "message-7", role: "assistant", text: "The response text" },
+      { id: "transcript", capturedAt: "2026-07-20T12:00:00.000Z" },
+    );
+    const review = captureReviewContext(
+      "session-a",
+      { path: "src/app.ts", patch: "@@ -1 +1 @@\n-old\n+new" },
+      { id: "review", capturedAt: "2026-07-20T12:00:00.000Z" },
+    );
+    const terminal = captureTerminalContext(
+      "session-a",
+      { terminalId: "terminal-2", title: "Tests", text: "3 tests passed" },
+      { id: "terminal", capturedAt: "2026-07-20T12:00:00.000Z" },
+    );
+    const browser = captureBrowserSnapshotContext(
+      "session-a",
+      FIRST_SURFACE_ID,
+      {
+        url: "https://user:password@example.com/docs?token=hidden#private",
+        title: "API token=super-secret",
+        elements: [
+          {
+            role: "heading",
+            name: "Architecture",
+            text: "One workspace",
+            visible: true,
+          },
+          {
+            role: "textbox",
+            name: "Password",
+            value: "never-capture-form-values",
+            visible: true,
+          },
+          {
+            role: "generic",
+            name: "hidden secret instructions",
+            visible: false,
+          },
+        ],
+      },
+      { id: "browser", capturedAt: "2026-07-20T12:00:00.000Z" },
+    );
+    expect(transcript?.source).toEqual({
+      kind: "transcript",
+      entryId: "message-7",
+      role: "assistant",
+    });
+    expect(review?.source).toEqual({ kind: "review", path: "src/app.ts" });
+    expect(terminal?.source).toEqual({
+      kind: "terminal",
+      terminalId: "terminal-2",
+      selectionId: "terminal",
+      title: "Tests",
+    });
+    expect(browser?.source).toEqual({
+      kind: "browser",
+      surfaceId: FIRST_SURFACE_ID,
+      title: "API token= [secret redacted]",
+      url: "https://example.com/docs",
+    });
+    expect(browser?.body).toContain("heading: Architecture — One workspace");
+    expect(browser?.body).not.toContain("never-capture-form-values");
+    expect(browser?.body).not.toContain("hidden secret instructions");
+    expect(browser?.redacted).toBe(true);
+
+    const items = [transcript, review, terminal, browser].filter(
+      (item): item is NonNullable<typeof item> => item !== null,
+    );
+    expect(renderContextPacket(items)).toContain("[TRANSCRIPT 1]");
+    expect(renderContextPacket(items)).toContain("[REVIEW DIFF 2]");
+    expect(renderContextPacket(items)).toContain("[TERMINAL 3]");
+    expect(renderContextPacket(items)).toContain("[WEB PAGE 4]");
+  });
+
+  it("refreshes one browser tab without conflating another tab at the same URL", () => {
+    const snapshot = {
+      url: "https://example.com/dashboard",
+      title: "Dashboard",
+      elements: [{ role: "heading", name: "Account dashboard", visible: true }],
+    } as const;
+    const first = captureBrowserSnapshotContext("session-a", FIRST_SURFACE_ID, snapshot, {
+      id: "first-tab",
+    });
+    const refreshed = captureBrowserSnapshotContext("session-a", FIRST_SURFACE_ID, snapshot, {
+      id: "refreshed-tab",
+    });
+    const second = captureBrowserSnapshotContext("session-a", SECOND_SURFACE_ID, snapshot, {
+      id: "second-tab",
+    });
+    if (first === null || refreshed === null || second === null) {
+      throw new Error("expected browser context");
+    }
+
+    expect(admitContextItem([first], refreshed)).toEqual({
+      accepted: true,
+      items: [refreshed],
+    });
+    expect(admitContextItem([refreshed], second)).toEqual({
+      accepted: true,
+      items: [refreshed, second],
+    });
+  });
+
+  it("keeps the same path as separate file and review sources", () => {
+    const file = capture("src/app.ts", "current file", "file");
+    const review = captureReviewContext(
+      "session-a",
+      { path: "src/app.ts", patch: "+proposed change" },
+      { id: "review" },
+    );
+    if (review === null) throw new Error("expected review context");
+    expect(admitContextItem([file], review)).toEqual({ accepted: true, items: [file, review] });
+  });
+
+  it("keeps two deliberate selections from the same terminal", () => {
+    const first = captureTerminalContext(
+      "session-a",
+      { terminalId: "terminal-2", title: "Tests", text: "first failure" },
+      { id: "selection-1" },
+    );
+    const second = captureTerminalContext(
+      "session-a",
+      { terminalId: "terminal-2", title: "Tests", text: "second failure" },
+      { id: "selection-2" },
+    );
+    if (first === null || second === null) throw new Error("expected terminal context");
+    expect(admitContextItem([first], second)).toEqual({
+      accepted: true,
+      items: [first, second],
+    });
   });
 
   it("labels excerpts as untrusted and compiles them into the normal prompt text", () => {

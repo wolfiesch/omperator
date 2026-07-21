@@ -6,11 +6,12 @@ import { ChevronRight, FilePlus2, FileText, Folder, ImageIcon, WifiOff } from "l
 import { useEffect, useMemo } from "react";
 import type * as React from "react";
 
+import { useActionRegistry } from "../../actions/index.ts";
 import { FamilyEmpty } from "./FamilyEmpty.tsx";
 import { PaneHeading } from "./PaneHeading.tsx";
 import { useInspector, type FileDraft, type InspectorStoreApi } from "./inspector-store.ts";
 import type { FilePreview, FileTreeNode } from "./model.ts";
-import { composerStore, useComposer } from "../composer/composer-store.ts";
+import { useComposer } from "../composer/composer-store.ts";
 import { captureFileContext } from "../context-packet/context-packet.ts";
 
 const EMPTY_CONTEXT_ITEMS = [] as const;
@@ -260,6 +261,7 @@ export function FilesPane({
   readonly sessionId: string;
   readonly trailing?: React.ReactNode | undefined;
 }) {
+  const actionRegistry = useActionRegistry();
   const query = useInspector(api, (state) => state.files.query);
   const selectedPath = useInspector(api, (state) => state.files.selectedPath);
   const preview = useInspector(api, (state) => state.files.preview);
@@ -334,7 +336,9 @@ export function FilesPane({
               <Button
                 onClick={() => {
                   const item = captureFileContext(sessionId, contextPreview);
-                  if (item !== null) composerStore.getState().addContextItem(sessionId, item);
+                  if (item !== null) {
+                    actionRegistry.execute({ id: "context.capture", args: { sessionId, item } });
+                  }
                 }}
                 size="xs"
                 title="Add the visible excerpt to the next new message"

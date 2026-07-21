@@ -15,6 +15,7 @@ import {
   type ActionDestination,
 } from "../actions/index.ts";
 import { handoffTranscriptSearchQuery } from "../features/transcript-search/index.ts";
+import { composerStore } from "../features/composer/composer-store.ts";
 import { TRANSCRIPT_SEARCH_ROUTE } from "../features/transcript-search/route.ts";
 import { getInspectorStore } from "../features/panes/inspector-store.ts";
 import { startDesktopRuntime, useDesktopRuntimeSnapshot } from "../platform/desktop-runtime.ts";
@@ -186,6 +187,7 @@ export function AppShell() {
     () =>
       createActionRegistry(CORE_ACTIONS, {
         workspace: workspaceStore,
+        composer: composerStore,
         platform: rendererPlatform,
         railOverlaid: () => railOverlaid,
         shellData: getShellData,

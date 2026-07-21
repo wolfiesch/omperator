@@ -1173,7 +1173,7 @@ test("shows verified session context and groups command-palette actions", async 
   await expect(page.getByRole("button", { name: "Close terminal drawer", exact: true })).toBeVisible();
 });
 
-test("finds loaded files and stages reviewed file context", async ({ page }) => {
+test("builds one reviewed working set from transcript and file sources", async ({ page }) => {
   await page.route("**/*", async (route) => {
     const requestUrl = new URL(route.request().url());
     const appUrl = new URL(web.url);
@@ -1193,6 +1193,7 @@ test("finds loaded files and stages reviewed file context", async ({ page }) => 
   await expect(page.getByText("Sample data", { exact: true })).toBeVisible();
   await page.getByText("Pin protocol fixtures for desktop CI", { exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Message the session" })).toBeVisible();
+  await page.getByRole("button", { name: "Add response to working set" }).first().click();
 
   await page.getByRole("button", { name: "Workspace tools", exact: true }).click();
   await page.getByRole("button", { name: "Open Files panel", exact: true }).click();
@@ -1211,10 +1212,11 @@ test("finds loaded files and stages reviewed file context", async ({ page }) => 
 
   await files.getByRole("treeitem", { name: "README.md", exact: true }).click();
   await files.getByRole("button", { name: "Add context", exact: true }).click();
-  const stagedContext = page.getByLabel("Context for the next new message");
+  const stagedContext = page.getByLabel("Working set for the next new message");
   await expect(stagedContext).toContainText("README.md");
-  await stagedContext.locator("summary").click();
-  const contextPreview = stagedContext.locator("pre");
+  await expect(stagedContext.locator("li")).toHaveCount(2);
+  await stagedContext.locator("summary", { hasText: "README.md" }).click();
+  const contextPreview = stagedContext.locator("li", { hasText: "README.md" }).locator("pre");
   await expect(contextPreview).toBeVisible();
   const previewBounds = await contextPreview.boundingBox();
   expect(previewBounds).not.toBeNull();

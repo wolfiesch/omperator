@@ -32,9 +32,23 @@ export interface TerminalViewportProps {
   readonly active: boolean;
   /** Bumps when layout changed (drawer resize, split change): refit. */
   readonly resizeEpoch: number;
+  readonly onSelectionChange?: ((selection: TerminalSelectionChange) => void) | undefined;
 }
 
-export function TerminalViewport({ api, terminalId, active, resizeEpoch }: TerminalViewportProps) {
+export interface TerminalSelectionChange {
+  readonly terminalId: string;
+  readonly title: string;
+  /** Empty when this exact terminal cleared its selection. */
+  readonly text: string;
+}
+
+export function TerminalViewport({
+  api,
+  terminalId,
+  active,
+  resizeEpoch,
+  onSelectionChange,
+}: TerminalViewportProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -88,6 +102,12 @@ export function TerminalViewport({ api, terminalId, active, resizeEpoch }: Termi
     const resizeDisposable = terminal.onResize(({ cols, rows }) => {
       api.getState().notifyResize(terminalId, cols, rows);
     });
+    const selectionDisposable = terminal.onSelectionChange(() => {
+      const text = terminal.getSelection();
+      const currentTitle =
+        api.getState().tabs.find((tab) => tab.id === terminalId)?.title ?? "Shell";
+      onSelectionChange?.({ terminalId, title: currentTitle, text });
+    });
 
     // Split-pane keyboard navigation: Ctrl+Shift+Arrow moves activation
     // between panes; xterm never sees the chord.
@@ -140,6 +160,7 @@ export function TerminalViewport({ api, terminalId, active, resizeEpoch }: Termi
     return () => {
       inputDisposable.dispose();
       resizeDisposable.dispose();
+      selectionDisposable.dispose();
       mount.removeEventListener("paste", onPaste, true);
       themeObserver.disconnect();
       mountObserver.disconnect();
@@ -147,7 +168,7 @@ export function TerminalViewport({ api, terminalId, active, resizeEpoch }: Termi
       fitRef.current = null;
       terminal.dispose();
     };
-  }, [api, terminalId]);
+  }, [api, onSelectionChange, terminalId]);
 
   // Replay store buffers: append the delta while the buffer only grew in
   // place; a front-trim or rewrite invalidates the prefix and forces a

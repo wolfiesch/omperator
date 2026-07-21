@@ -34,6 +34,7 @@ import {
   Download,
   Focus,
   Globe2,
+  Layers3,
   LoaderCircle,
   Minus,
   PanelRightOpen,
@@ -54,9 +55,16 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 
+import { useActionRegistry } from "../../actions/index.ts";
 import type { WorkspaceProject, WorkspaceSession } from "../../lib/workspace-data.ts";
 import { rendererPlatform, useWorkspace, workspaceStore } from "../../state/store-instance.ts";
 import { selectSessionView } from "../../state/workspace-store.ts";
+import { useComposer } from "../composer/composer-store.ts";
+import {
+  captureBrowserSnapshotContext,
+  type BrowserPageContextSnapshot,
+  type ContextPacketItem,
+} from "../context-packet/context-packet.ts";
 import {
   applyBrowserEvent,
   browserCall,
@@ -85,6 +93,9 @@ import {
 
 const FIELD_CLASS =
   "min-h-11 min-w-0 rounded-md border border-input bg-popover px-3 text-base text-foreground outline-none transition-shadow duration-(--motion-duration-fast) placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 sm:min-h-8 sm:text-sm";
+
+const EMPTY_CONTEXT_ITEMS = [] as const;
+export const BROWSER_CONTEXT_CAPTURE_METHOD = "browser.snapshot" as const;
 
 interface PendingTrustAction {
   readonly option: BrowserProfileOption;
@@ -131,6 +142,53 @@ export function settleBrowserWorkspaceCall<T>(
       },
     )
     .catch(() => undefined);
+}
+
+function browserPageContextSnapshot(value: unknown): BrowserPageContextSnapshot | null {
+  if (typeof value !== "object" || value === null || !("snapshot" in value)) return null;
+  const snapshot = (value as { readonly snapshot?: unknown }).snapshot;
+  if (
+    typeof snapshot !== "object" ||
+    snapshot === null ||
+    !("url" in snapshot) ||
+    typeof snapshot.url !== "string" ||
+    !("title" in snapshot) ||
+    typeof snapshot.title !== "string" ||
+    !("elements" in snapshot) ||
+    !Array.isArray(snapshot.elements)
+  ) {
+    return null;
+  }
+  const elements = snapshot.elements.filter(
+    (element): element is BrowserPageContextSnapshot["elements"][number] =>
+      typeof element === "object" &&
+      element !== null &&
+      "role" in element &&
+      typeof element.role === "string" &&
+      "name" in element &&
+      typeof element.name === "string" &&
+      (!("text" in element) || element.text === undefined || typeof element.text === "string") &&
+      (!("visible" in element) ||
+        element.visible === undefined ||
+        typeof element.visible === "boolean"),
+  );
+  return {
+    url: snapshot.url,
+    title: snapshot.title,
+    elements,
+    ...("truncated" in snapshot && snapshot.truncated === true ? { truncated: true } : {}),
+  };
+}
+
+export function captureBrowserPageResult(
+  sessionId: string,
+  surfaceId: SurfaceId,
+  result: unknown,
+): ContextPacketItem | null {
+  const snapshot = browserPageContextSnapshot(result);
+  return snapshot === null
+    ? null
+    : captureBrowserSnapshotContext(sessionId, surfaceId, snapshot);
 }
 
 
@@ -225,6 +283,7 @@ export function BrowserWorkspace({
   readonly session: WorkspaceSession;
   readonly project: WorkspaceProject;
 }) {
+  const actionRegistry = useActionRegistry();
   const port = rendererPlatform.browser;
   const callBrowser = useCallback(
     (method: BrowserMethod, request: Readonly<Record<string, unknown>>) =>
@@ -252,6 +311,9 @@ export function BrowserWorkspace({
   const [focusMode, setFocusMode] = useState(false);
   const [devtoolsOpen, setDevtoolsOpen] = useState(false);
   const [zoomBySurface, setZoomBySurface] = useState<Readonly<Record<string, number>>>({});
+  const stagedContext = useComposer(
+    (state) => state.contextItemsBySessionId[session.id] ?? EMPTY_CONTEXT_ITEMS,
+  );
   const modelRef = useRef(model);
   const lifecycleRef = useRef(0);
   const boundsLifecycleRef = useRef(0);
@@ -647,6 +709,18 @@ export function BrowserWorkspace({
     return result;
   };
 
+  const capturePageContext = async () => {
+    if (activeSurface === null) return;
+    const result = await runAutomation("Capturing page context", BROWSER_CONTEXT_CAPTURE_METHOD, {});
+    if (result === null) return;
+    const item = captureBrowserPageResult(session.id, activeSurface.surfaceId, result);
+    if (item === null) {
+      setActionError("The browser did not return readable page context.");
+      return;
+    }
+    actionRegistry.execute({ id: "context.capture", args: { sessionId: session.id, item } });
+  };
+
   const setZoom = async (next: number) => {
     if (activeSurface === null) return;
     const generation = lifecycleRef.current;
@@ -678,6 +752,12 @@ export function BrowserWorkspace({
     [activeSurface?.surfaceId, model.runtimeErrors],
   );
   const currentZoom = activeSurface === null ? 1 : (zoomBySurface[activeSurface.surfaceId] ?? 1);
+  const contextAlreadyAdded =
+    activeSurface !== null &&
+    stagedContext.some(
+      (item) =>
+        item.source.kind === "browser" && item.source.surfaceId === activeSurface.surfaceId,
+    );
 
   if (port === null) return <BrowserUnsupported project={project} session={session} />;
 
@@ -1143,6 +1223,15 @@ export function BrowserWorkspace({
           </IconButton>
         </div>
 
+        <Button
+          disabled={activeSurface === null || busyAction !== null}
+          onClick={() => void capturePageContext()}
+          size="xs"
+          variant={contextAlreadyAdded ? "secondary" : "outline"}
+        >
+          <Layers3 aria-hidden="true" />
+          {contextAlreadyAdded ? "Refresh page" : "Add page"}
+        </Button>
         <span className="flex-1" />
         <Button
           onClick={() => {

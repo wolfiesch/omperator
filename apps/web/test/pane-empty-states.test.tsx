@@ -2,6 +2,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 import * as React from "react";
 
+import { ActionRegistryProvider } from "../src/actions/context.tsx";
+import type { ActionRegistry } from "../src/actions/types.ts";
 import { PaneContent } from "../src/features/panes/PaneContent.tsx";
 import { SESSION_SURFACE_RENDERERS } from "../src/features/panes/PaneContent.tsx";
 import { SESSION_SURFACES } from "../src/components/pane-families.tsx";
@@ -9,6 +11,10 @@ import { AgentsPane } from "../src/features/panes/AgentsPane.tsx";
 import { ActivityPane } from "../src/features/panes/ActivityPane.tsx";
 import { ReviewPane } from "../src/features/panes/ReviewPane.tsx";
 import { createInspectorStore, type InspectorStoreApi } from "../src/features/panes/inspector-store.ts";
+
+const TEST_ACTION_REGISTRY = {
+  execute: () => ({ executed: false, availability: { status: "disabled", reason: "test" } }),
+} as unknown as ActionRegistry;
 
 function createEmptyMockStore(): InspectorStoreApi {
   return createInspectorStore({
@@ -86,7 +92,9 @@ describe("Pane empty state headers and close controls", () => {
   it("renders empty ReviewPane with header and close trailing element", () => {
     const store = createEmptyMockStore();
     const html = renderToStaticMarkup(
-      <ReviewPane api={store} trailing={mockTrailing} />
+      <ActionRegistryProvider registry={TEST_ACTION_REGISTRY}>
+        <ReviewPane api={store} sessionId="test" trailing={mockTrailing} />
+      </ActionRegistryProvider>
     );
     expect(html).toContain("Review");
     expect(html).toContain("aria-label=\"Close pane\"");

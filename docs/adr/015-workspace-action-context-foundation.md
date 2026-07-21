@@ -92,9 +92,10 @@ item added while the network request is in flight survives.
 
 ## Follow-up
 
-Future context sources can use the same capture, review, and settlement rules after their authority
-and redaction behavior are explicit. Multiple simultaneous docked panes would require a new layout
-decision and a versioned persistence migration rather than silently changing this model.
+ADR 018 extends the reviewed-context foundation into the Universal Working Set with explicit
+transcript, review, terminal-selection, and browser-page capture. Multiple simultaneous docked panes
+would still require a new layout decision and a versioned persistence migration rather than silently
+changing this model.
 
 ## Verification
 

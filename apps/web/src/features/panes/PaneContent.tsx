@@ -100,7 +100,9 @@ export const SESSION_SURFACE_RENDERERS = Object.freeze({
     );
   },
   activity: ({ store, trailing }) => <ActivityPane api={store} trailing={trailing} />,
-  review: ({ store, trailing }) => <ReviewPane api={store} trailing={trailing} />,
+  review: ({ sessionId, store, trailing }) => (
+    <ReviewPane api={store} sessionId={sessionId} trailing={trailing} />
+  ),
   files: ({ sessionId, store, trailing }) => (
     <FilesPane api={store} sessionId={sessionId} trailing={trailing} />
   ),

@@ -9,7 +9,7 @@
       "sourceBlobSha": "1641bb6b109b44f2c7b0f2576fcf0750a96da88f",
       "targetPath": "apps/web/src/features/terminal/TerminalViewport.tsx",
       "classification": "adapted",
-      "checksum": "sha256:106836945aecde2621f9a40a80ce0a57afd9a322b536ec05acb9dd829ab828bc"
+      "checksum": "sha256:40eeb5fc91c99b1f3f0c221037f6056f703837181f3cf5cd95b3e9110fac61a7"
     },
     {
       "sourcePath": "apps/web/src/components/ThreadTerminalDrawer.tsx",
@@ -23,7 +23,7 @@
       "sourceBlobSha": "1641bb6b109b44f2c7b0f2576fcf0750a96da88f",
       "targetPath": "apps/web/src/features/terminal/TerminalDrawer.tsx",
       "classification": "reference-only",
-      "checksum": "sha256:9e9b0e8d463326f4217a4c4dedad016a987406d83ee627997842241b6cfc9617"
+      "checksum": "sha256:fd8104d1b49b483b52f4bfe533a2e9d2a03fb54cfa09a8833afd333bb73d6abc"
     },
     {
       "sourcePath": "apps/web/src/components/DiffPanel.tsx;apps/web/src/diffPanelStore.ts",

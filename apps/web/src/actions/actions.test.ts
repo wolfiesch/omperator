@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { createMemoryPersistence } from "../state/persistence.ts";
+import { createComposerStore } from "../features/composer/composer-store.ts";
+import {
+  captureReviewContext,
+  captureTerminalContext,
+  captureTranscriptContext,
+} from "../features/context-packet/context-packet.ts";
 import { createWorkspaceStore } from "../state/workspace-store.ts";
 import { createInspectorStore, type InspectorStoreApi } from "../features/panes/inspector-store.ts";
 import type { ProjectGroup } from "../lib/session-tree.ts";
@@ -106,8 +112,10 @@ function setup() {
     shell: null,
     browser: null,
   };
+  const composer = createComposerStore();
   const environment: ActionEnvironment = {
     workspace,
+    composer,
     platform,
     railOverlaid: () => false,
     shellData: () => shellData,
@@ -117,6 +125,7 @@ function setup() {
   };
   return {
     workspace,
+    composer,
     inspector,
     destinations,
     registry: createActionRegistry(CORE_ACTIONS, environment),
@@ -189,6 +198,110 @@ describe("typed action registry", () => {
       "review.open",
       "preview.open",
     ]);
+  });
+
+  it("captures, removes, and clears the working set through shared actions", () => {
+    const { composer, registry } = setup();
+    const first = captureTranscriptContext(firstSession.id, {
+      id: "message-1",
+      role: "assistant",
+      text: "First response",
+    });
+    const second = captureTranscriptContext(firstSession.id, {
+      id: "message-2",
+      role: "user",
+      text: "Second message",
+    });
+    if (first === null || second === null) throw new Error("expected context items");
+
+    expect(
+      registry.execute({
+        id: "context.capture",
+        args: { sessionId: firstSession.id, item: first },
+      }).executed,
+    ).toBe(true);
+    expect(composer.getState().contextItemsBySessionId[firstSession.id]).toEqual([first]);
+
+    expect(
+      registry.execute({
+        id: "context.remove",
+        args: { sessionId: firstSession.id, itemId: first.id },
+      }).executed,
+    ).toBe(true);
+    expect(composer.getState().contextItemsBySessionId[firstSession.id]).toBeUndefined();
+
+    registry.execute({
+      id: "context.capture",
+      args: { sessionId: firstSession.id, item: first },
+    });
+    registry.execute({
+      id: "context.capture",
+      args: { sessionId: firstSession.id, item: second },
+    });
+    expect(
+      registry.execute({ id: "context.clear", args: { sessionId: firstSession.id } }).executed,
+    ).toBe(true);
+    expect(composer.getState().contextItemsBySessionId[firstSession.id]).toBeUndefined();
+  });
+
+  it("stages terminal selections and review patches through the shared capture action", () => {
+    const { composer, registry } = setup();
+    const terminal = captureTerminalContext(
+      firstSession.id,
+      { terminalId: "terminal-1", title: "Tests", text: "selected failure only" },
+      { id: "terminal-selection" },
+    );
+    const review = captureReviewContext(
+      firstSession.id,
+      { path: "src/app.ts", patch: "@@ -1 +1 @@\n-old\n+new" },
+      { id: "review-patch" },
+    );
+    if (terminal === null || review === null) throw new Error("expected source context");
+
+    for (const item of [terminal, review]) {
+      expect(
+        registry.execute({
+          id: "context.capture",
+          args: { sessionId: firstSession.id, item },
+        }).executed,
+      ).toBe(true);
+    }
+
+    expect(composer.getState().contextItemsBySessionId[firstSession.id]).toEqual([
+      terminal,
+      review,
+    ]);
+  });
+
+  it("refuses working-set capture for another or inactive session", () => {
+    const { composer, registry } = setup();
+    const item = captureTranscriptContext(firstSession.id, {
+      id: "message-1",
+      role: "assistant",
+      text: "Response",
+    });
+    if (item === null) throw new Error("expected context item");
+
+    expect(
+      registry.execute({
+        id: "context.capture",
+        args: { sessionId: secondSession.id, item },
+      }).availability,
+    ).toEqual({ status: "disabled", reason: "This context belongs to a different session." });
+
+    const inactiveItem = captureTranscriptContext(secondSession.id, {
+      id: "message-2",
+      role: "assistant",
+      text: "Inactive response",
+    });
+    if (inactiveItem === null) throw new Error("expected inactive context item");
+    expect(
+      registry.execute({
+        id: "context.capture",
+        args: { sessionId: secondSession.id, item: inactiveItem },
+      }).availability,
+    ).toEqual({ status: "hidden" });
+    expect(composer.getState().contextItemsBySessionId).toEqual({});
   });
 
   it("selects a transcript-linked agent and opens the shared Agents surface", () => {

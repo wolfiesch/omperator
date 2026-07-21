@@ -11,6 +11,7 @@ import { Button, cn, IconButton, Tooltip, TooltipPopup, TooltipTrigger } from "@
 import { ArrowUp, FileText, Folder, ListTodo, Paperclip, Square, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { useActionRegistry } from "../../actions/index.ts";
 import type { PromptOutcome } from "../session-runtime/controller.ts";
 import {
   IMAGE_PROMPTS_UNSUPPORTED_REASON,
@@ -132,6 +133,7 @@ export function Composer({
   submitPrompt,
   onIntent,
 }: ComposerProps) {
+  const actionRegistry = useActionRegistry();
   const draft = useWorkspace((state) => selectSessionView(state, sessionId).draft);
   // Select primitives/stable references only — a fresh object per selector
   // call would loop useSyncExternalStore (React max-update-depth error 185).
@@ -660,13 +662,16 @@ export function Composer({
               contextItems.length === 0
                 ? null
                 : revisingPlanId !== null
-                  ? "Saved for the next new message; plan revisions do not include file context yet."
+                  ? "Saved for the next new message; plan revisions do not include the working set yet."
                   : turnActive
-                    ? "Saved for the next new message; steering and queued follow-ups do not include file context yet."
+                    ? "Saved for the next new message; steering and queued follow-ups do not include the working set yet."
                     : null
             }
             items={contextItems}
-            onRemove={(id) => composerStore.getState().removeContextItem(sessionId, id)}
+            onClear={() => actionRegistry.execute({ id: "context.clear", args: { sessionId } })}
+            onRemove={(itemId) =>
+              actionRegistry.execute({ id: "context.remove", args: { sessionId, itemId } })
+            }
           />
           <AttachmentChips
             attachments={attachments}

@@ -141,7 +141,7 @@ async function settleBackgroundWork(): Promise<void> {
 }
 
 describe("BrowserRuntime native view lifecycle", () => {
-  it("routes design mode through the exact owner-scoped browser surface", async () => {
+  it("routes accessibility snapshots and design mode through the exact owner-scoped surface", async () => {
     electron.reset();
     const calls: unknown[] = [];
     const runtime = new BrowserRuntime({
@@ -166,6 +166,15 @@ describe("BrowserRuntime native view lifecycle", () => {
       automationCoordinator: {
         call: async (call) => {
           calls.push(call);
+          if (call.method === "browser.snapshot") {
+            return {
+              snapshot: {
+                url: "https://example.test/",
+                title: "Example",
+                elements: [{ role: "heading", name: "Visible heading", visible: true }],
+              },
+            };
+          }
           return { enabled: true, selection: "Heading" };
         },
         dispose: () => {},
@@ -180,9 +189,19 @@ describe("BrowserRuntime native view lifecycle", () => {
       surfaceId: created.surface.surfaceId,
       enabled: true,
     }));
+    const snapshot = await runtime.call(browserCall("browser.snapshot", {
+      surfaceId: created.surface.surfaceId,
+    }));
 
     expect(result).toEqual({ enabled: true, selection: "Heading" });
-    expect(calls).toHaveLength(1);
+    expect(snapshot).toEqual({
+      snapshot: {
+        url: "https://example.test/",
+        title: "Example",
+        elements: [{ role: "heading", name: "Visible heading", visible: true }],
+      },
+    });
+    expect(calls).toHaveLength(2);
     expect(calls[0]).toMatchObject({
       method: "browser.design_mode.set",
       ownerSessionId: OWNER_A,
@@ -190,6 +209,11 @@ describe("BrowserRuntime native view lifecycle", () => {
         surfaceId: created.surface.surfaceId,
         enabled: true,
       },
+    });
+    expect(calls[1]).toMatchObject({
+      method: "browser.snapshot",
+      ownerSessionId: OWNER_A,
+      request: { surfaceId: created.surface.surfaceId },
     });
     await runtime.dispose();
   });

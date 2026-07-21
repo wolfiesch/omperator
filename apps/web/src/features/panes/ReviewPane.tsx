@@ -12,14 +12,19 @@ import {
   DialogPopup,
   DialogTitle,
 } from "@t4-code/ui";
-import { Check, MessageSquarePlus, WrapText, X } from "lucide-react";
+import { Check, Layers3, MessageSquarePlus, WrapText, X } from "lucide-react";
 import { Fragment, useMemo, useState } from "react";
 import type * as React from "react";
 
+import { useActionRegistry } from "../../actions/index.ts";
+import { useComposer } from "../composer/composer-store.ts";
+import { captureReviewContext } from "../context-packet/context-packet.ts";
 import { PaneHeading } from "./PaneHeading.tsx";
 import { useInspector, type InspectorStoreApi } from "./inspector-store.ts";
 import type { ReviewComment, ReviewFile, ReviewFileStatus } from "./model.ts";
 import { buildSplitRows, parseUnifiedPatch, type DiffRow } from "./review-model.ts";
+
+const EMPTY_CONTEXT_ITEMS = [] as const;
 
 const STATUS_BADGES: Readonly<
   Record<ReviewFileStatus, { letter: string; className: string; label: string }>
@@ -387,11 +392,14 @@ function FileBody({ api, file }: { readonly api: InspectorStoreApi; readonly fil
 
 export function ReviewPane({
   api,
+  sessionId,
   trailing,
 }: {
   readonly api: InspectorStoreApi;
+  readonly sessionId: string;
   readonly trailing?: React.ReactNode | undefined;
 }) {
+  const actionRegistry = useActionRegistry();
   const files = useInspector(api, (state) => state.review.files);
   const selectedPath = useInspector(api, (state) => state.review.selectedPath);
   const view = useInspector(api, (state) => state.review.view);
@@ -403,6 +411,9 @@ export function ReviewPane({
   const error = useInspector(api, (state) => state.review.error ?? null);
   const source = useInspector(api, (state) => state.review.source ?? "legacy");
   const pendingAction = useInspector(api, (state) => state.review.pendingAction ?? null);
+  const stagedContext = useComposer(
+    (state) => state.contextItemsBySessionId[sessionId] ?? EMPTY_CONTEXT_ITEMS,
+  );
   const [confirm, setConfirm] = useState<{ action: "apply" | "discard"; path: string } | null>(
     null,
   );
@@ -431,6 +442,11 @@ export function ReviewPane({
   const additions = files.reduce((sum, file) => sum + file.additions, 0);
   const deletions = files.reduce((sum, file) => sum + file.deletions, 0);
   const viewedCount = files.filter((file) => viewedByPath[file.path] === true).length;
+  const contextAlreadyAdded =
+    selected !== undefined &&
+    stagedContext.some(
+      (item) => item.source.kind === "review" && item.source.path === selected.path,
+    );
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -498,6 +514,21 @@ export function ReviewPane({
               <WrapText aria-hidden="true" className="size-3.5" />
               Wrap
             </button>
+            {selected.kind === "text" && selected.patch !== null && (
+              <Button
+                onClick={() => {
+                  const item = captureReviewContext(sessionId, selected);
+                  if (item !== null) {
+                    actionRegistry.execute({ id: "context.capture", args: { sessionId, item } });
+                  }
+                }}
+                size="xs"
+                variant={contextAlreadyAdded ? "secondary" : "outline"}
+              >
+                <Layers3 aria-hidden="true" />
+                {contextAlreadyAdded ? "Refresh context" : "Add change"}
+              </Button>
+            )}
             <span className="flex-1" />
             {selected.applyState === "pending" ? (
               <>

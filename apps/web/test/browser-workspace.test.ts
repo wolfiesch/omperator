@@ -6,7 +6,11 @@ import type {
 } from "@t4-code/protocol/browser-ipc";
 import { describe, expect, it } from "vite-plus/test";
 
-import { settleBrowserWorkspaceCall } from "../src/features/browser/BrowserWorkspace.tsx";
+import {
+  BROWSER_CONTEXT_CAPTURE_METHOD,
+  captureBrowserPageResult,
+  settleBrowserWorkspaceCall,
+} from "../src/features/browser/BrowserWorkspace.tsx";
 
 import {
   applyBrowserEvent,
@@ -57,6 +61,33 @@ describe("Browser workspace model", () => {
       request: {},
       ownerSessionId: "workspace-session-a",
     });
+  });
+
+  it("stages visible accessibility text through the live browser snapshot method", () => {
+    expect(BROWSER_CONTEXT_CAPTURE_METHOD).toBe("browser.snapshot");
+    const item = captureBrowserPageResult("workspace-session-a", FIRST_SURFACE_ID, {
+      snapshot: {
+        url: "https://example.test/dashboard?account=private",
+        title: "Dashboard",
+        elements: [
+          { role: "heading", name: "Visible account", visible: true },
+          { role: "generic", name: "Hidden instructions", visible: false },
+          { role: "textbox", name: "Password", value: "never-stage-this", visible: true },
+        ],
+      },
+    });
+
+    expect(item?.source).toEqual({
+      kind: "browser",
+      surfaceId: FIRST_SURFACE_ID,
+      title: "Dashboard",
+      url: "https://example.test/dashboard",
+    });
+    expect(item?.body).toContain("heading: Visible account");
+    expect(item?.body).not.toContain("Hidden instructions");
+    expect(item?.body).not.toContain("Password");
+    expect(item?.body).not.toContain("never-stage-this");
+    expect(item?.redacted).toBe(true);
   });
 
   it("keeps Browser surfaces distinct, stable, and limited to protocol-safe identifiers", () => {
