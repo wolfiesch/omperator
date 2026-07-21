@@ -337,6 +337,23 @@ func (r *WorkspaceReconciler) workspaceRequestsForStorageClass(ctx context.Conte
 	return requests
 }
 
+func (r *WorkspaceReconciler) workspaceRequestsForHost(ctx context.Context, object client.Object) []ctrl.Request {
+	host, ok := object.(*clusterv1alpha1.T4ClusterHost)
+	if !ok || host.Name == "" || host.Namespace == "" {
+		return nil
+	}
+	var workspaces clusterv1alpha1.T4WorkspaceList
+	if err := r.List(ctx, &workspaces, client.InNamespace(host.Namespace), client.MatchingFields{workspaceHostRefIndexField: host.Name}); err != nil {
+		ctrl.LoggerFrom(ctx).Error(err, "unable to map cluster host to workspaces", "clusterHost", client.ObjectKeyFromObject(host))
+		return nil
+	}
+	requests := make([]ctrl.Request, 0, len(workspaces.Items))
+	for i := range workspaces.Items {
+		requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&workspaces.Items[i])})
+	}
+	return requests
+}
+
 func (r *WorkspaceReconciler) SetupWithManager(manager ctrl.Manager) error {
 	if err := manager.GetFieldIndexer().IndexField(context.Background(), &clusterv1alpha1.T4ClusterHost{}, hostStorageClassIndexField, indexHostByStorageClass); err != nil {
 		return fmt.Errorf("index T4ClusterHost by StorageClass: %w", err)
@@ -346,6 +363,7 @@ func (r *WorkspaceReconciler) SetupWithManager(manager ctrl.Manager) error {
 	}
 	return ctrl.NewControllerManagedBy(manager).
 		For(&clusterv1alpha1.T4Workspace{}).
+		Watches(&clusterv1alpha1.T4ClusterHost{}, handler.EnqueueRequestsFromMapFunc(r.workspaceRequestsForHost)).
 		Watches(&corev1.PersistentVolumeClaim{}, handler.EnqueueRequestsFromMapFunc(workspaceRequestsForPVC)).
 		Watches(&storagev1.StorageClass{}, handler.EnqueueRequestsFromMapFunc(r.workspaceRequestsForStorageClass)).
 		Complete(r)

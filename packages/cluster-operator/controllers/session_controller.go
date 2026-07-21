@@ -25,6 +25,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 
 	clusterv1alpha1 "github.com/LycaonLLC/t4-code/packages/cluster-operator/api/v1alpha1"
 )
@@ -34,6 +35,11 @@ const (
 	DefaultServerServiceAccount                 = "t4-cluster-server"
 	DefaultKubernetesAPIAudience                = "https://kubernetes.default.svc"
 	SessionReviewerTokenExpirationSeconds int64 = 3600
+)
+
+const (
+	sessionHostRefIndexField      = "t4.session.spec.hostRef"
+	sessionWorkspaceRefIndexField = "t4.session.spec.workspaceRef"
 )
 
 var (
@@ -313,6 +319,9 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 	var host clusterv1alpha1.T4ClusterHost
 	if err := r.Get(ctx, types.NamespacedName{Namespace: session.Namespace, Name: session.Spec.HostRef}, &host); err != nil {
 		if apierrors.IsNotFound(err) {
+			if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
+				return ctrl.Result{}, err
+			}
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, "HostReady", "HostNotFound", "referenced T4ClusterHost does not exist")
 		}
 		return ctrl.Result{}, err
@@ -342,24 +351,39 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 	var workspace clusterv1alpha1.T4Workspace
 	if err := r.Get(ctx, types.NamespacedName{Namespace: session.Namespace, Name: session.Spec.WorkspaceRef}, &workspace); err != nil {
 		if apierrors.IsNotFound(err) {
+			if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
+				return ctrl.Result{}, err
+			}
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, "WorkspaceReady", "WorkspaceNotFound", "referenced T4Workspace does not exist")
 		}
 		return ctrl.Result{}, err
 	}
 	if workspace.Spec.HostRef != session.Spec.HostRef {
+		if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, "WorkspaceReady", "HostMismatch", "session and workspace must reference the same T4ClusterHost")
 	}
 	if workspace.Status.PVCName == "" {
+		if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, r.updateSessionFailure(ctx, &session, "WorkspaceReady", "PVCNotDeclared", "workspace controller has not declared a PVC")
 	}
 	var pvc corev1.PersistentVolumeClaim
 	if err := r.Get(ctx, types.NamespacedName{Namespace: session.Namespace, Name: workspace.Status.PVCName}, &pvc); err != nil {
 		if apierrors.IsNotFound(err) {
+			if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
+				return ctrl.Result{}, err
+			}
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, r.updateSessionFailure(ctx, &session, "WorkspaceReady", "PVCNotFound", "workspace PVC does not exist")
 		}
 		return ctrl.Result{}, err
 	}
 	if pvc.Status.Phase != corev1.ClaimBound || !pvcHasRWX(&pvc) {
+		if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, r.updateSessionFailure(ctx, &session, "WorkspaceReady", "PVCNotBoundRWX", "workspace PVC must be Bound and ReadWriteMany before a session starts")
 	}
 	runtimeVersions, reason, message, err := r.loadOMPResourceVersions(ctx, session.Namespace)
@@ -754,9 +778,62 @@ func labelsContain(actual, required map[string]string) bool {
 	return true
 }
 
+func indexSessionByHostRef(object client.Object) []string {
+	session, ok := object.(*clusterv1alpha1.T4Session)
+	if !ok || session.Spec.HostRef == "" {
+		return nil
+	}
+	return []string{session.Spec.HostRef}
+}
+
+func indexSessionByWorkspaceRef(object client.Object) []string {
+	session, ok := object.(*clusterv1alpha1.T4Session)
+	if !ok || session.Spec.WorkspaceRef == "" {
+		return nil
+	}
+	return []string{session.Spec.WorkspaceRef}
+}
+
+func (r *SessionReconciler) sessionRequestsForHost(ctx context.Context, object client.Object) []ctrl.Request {
+	host, ok := object.(*clusterv1alpha1.T4ClusterHost)
+	if !ok || host.Name == "" || host.Namespace == "" {
+		return nil
+	}
+	return r.sessionRequestsForReference(ctx, host.Namespace, sessionHostRefIndexField, host.Name, "clusterHost", client.ObjectKeyFromObject(host))
+}
+
+func (r *SessionReconciler) sessionRequestsForWorkspace(ctx context.Context, object client.Object) []ctrl.Request {
+	workspace, ok := object.(*clusterv1alpha1.T4Workspace)
+	if !ok || workspace.Name == "" || workspace.Namespace == "" {
+		return nil
+	}
+	return r.sessionRequestsForReference(ctx, workspace.Namespace, sessionWorkspaceRefIndexField, workspace.Name, "workspace", client.ObjectKeyFromObject(workspace))
+}
+
+func (r *SessionReconciler) sessionRequestsForReference(ctx context.Context, namespace, field, value, dependencyKind string, dependencyKey types.NamespacedName) []ctrl.Request {
+	var sessions clusterv1alpha1.T4SessionList
+	if err := r.List(ctx, &sessions, client.InNamespace(namespace), client.MatchingFields{field: value}); err != nil {
+		ctrl.LoggerFrom(ctx).Error(err, "unable to map dependency to sessions", dependencyKind, dependencyKey)
+		return nil
+	}
+	requests := make([]ctrl.Request, 0, len(sessions.Items))
+	for i := range sessions.Items {
+		requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&sessions.Items[i])})
+	}
+	return requests
+}
+
 func (r *SessionReconciler) SetupWithManager(manager ctrl.Manager) error {
+	if err := manager.GetFieldIndexer().IndexField(context.Background(), &clusterv1alpha1.T4Session{}, sessionHostRefIndexField, indexSessionByHostRef); err != nil {
+		return fmt.Errorf("index T4Session by host reference: %w", err)
+	}
+	if err := manager.GetFieldIndexer().IndexField(context.Background(), &clusterv1alpha1.T4Session{}, sessionWorkspaceRefIndexField, indexSessionByWorkspaceRef); err != nil {
+		return fmt.Errorf("index T4Session by workspace reference: %w", err)
+	}
 	return ctrl.NewControllerManagedBy(manager).
 		For(&clusterv1alpha1.T4Session{}).
+		Watches(&clusterv1alpha1.T4ClusterHost{}, handler.EnqueueRequestsFromMapFunc(r.sessionRequestsForHost)).
+		Watches(&clusterv1alpha1.T4Workspace{}, handler.EnqueueRequestsFromMapFunc(r.sessionRequestsForWorkspace)).
 		Owns(&corev1.Pod{}).
 		Owns(&corev1.Service{}).
 		Complete(r)
