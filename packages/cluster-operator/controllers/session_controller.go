@@ -449,7 +449,10 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 	} else if err != nil {
 		return ctrl.Result{}, err
 	} else if !sessionExclusivelyOwnsResource(&service, &session) {
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, true, "Available", "ServiceOwnershipConflict", "deterministic session Service has an unexpected owner")
+		if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	} else if !serviceExposureIsInternal(&service) {
 		if err := r.Delete(ctx, &service); err != nil && !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, err
@@ -483,7 +486,10 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 	} else if err != nil {
 		return ctrl.Result{}, err
 	} else if !sessionExclusivelyOwnsResource(&pod, &session) {
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, true, "Available", "PodOwnershipConflict", "deterministic session Pod has an unexpected owner")
+		if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	} else if !labelsContain(pod.Labels, desiredPod.Labels) {
 		if pod.Labels == nil {
 			pod.Labels = map[string]string{}
