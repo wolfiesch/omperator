@@ -118,6 +118,8 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, request ctrl.Reques
 	}
 	if !workspaceOwnsPVC(&workspace, &pvc) {
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", "PVCOwnershipConflict", "deterministic workspace PVC does not belong to this workspace")
+	} else if !pvcHasRWX(&pvc) {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", "PVCNotRWX", "workspace PVC does not request ReadWriteMany")
 	} else if pvcStorageClassName(&pvc) != storageClassName {
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", ReasonStorageClassMismatch, fmt.Sprintf("workspace PVC uses StorageClass %q instead of host-selected %q; data-bearing PVCs are never recreated automatically", pvcStorageClassName(&pvc), storageClassName))
 	} else if workspace.Spec.RetentionPolicy == clusterv1alpha1.RetentionPolicyRetain && metav1.IsControlledBy(&pvc, &workspace) {
@@ -129,9 +131,6 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, request ctrl.Reques
 			}
 			return ctrl.Result{Requeue: true}, nil
 		}
-	}
-	if pvc.Status.Phase == corev1.ClaimBound && !pvcHasRWX(&pvc) {
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", "PVCNotRWX", "bound workspace PVC does not request ReadWriteMany")
 	}
 	if pvc.Status.Phase == corev1.ClaimLost {
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", "PVCLost", "workspace PVC lost its volume")
@@ -235,7 +234,11 @@ func (r *WorkspaceReconciler) reconcileDelete(ctx context.Context, workspace *cl
 	}
 	pvcKey := types.NamespacedName{Namespace: workspace.Namespace, Name: WorkspacePVCName(workspace)}
 	var pvc corev1.PersistentVolumeClaim
-	err := r.Get(ctx, pvcKey, &pvc)
+	reader := r.APIReader
+	if reader == nil {
+		reader = r.Client
+	}
+	err := reader.Get(ctx, pvcKey, &pvc)
 	if err == nil && !workspaceOwnsPVC(workspace, &pvc) {
 		before := workspace.Status
 		if workspace.Status.Conditions != nil {
@@ -267,7 +270,7 @@ func (r *WorkspaceReconciler) reconcileDelete(ctx context.Context, workspace *cl
 		}
 	} else {
 		if err == nil {
-			if err := r.Delete(ctx, &pvc); err != nil && !apierrors.IsNotFound(err) {
+			if err := deleteWithPreconditions(ctx, r.Client, &pvc); err != nil && !apierrors.IsNotFound(err) {
 				return ctrl.Result{}, err
 			}
 			return ctrl.Result{RequeueAfter: time.Second}, nil

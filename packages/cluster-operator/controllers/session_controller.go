@@ -465,7 +465,7 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	} else if !serviceExposureIsInternal(&service) {
-		if err := r.Delete(ctx, &service); err != nil && !apierrors.IsNotFound(err) {
+		if err := deleteWithPreconditions(ctx, r.Client, &service); err != nil && !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
 		if err := r.updateSessionPending(ctx, &session, podName, serviceName, "ServiceExposureChanged", "session Service is being recreated with ClusterIP-only exposure"); err != nil {
@@ -527,7 +527,7 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 		}
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	} else if pod.Annotations[clusterv1alpha1.SessionPodSpecHashAnnotation] != desiredPod.Annotations[clusterv1alpha1.SessionPodSpecHashAnnotation] {
-		if err := r.Delete(ctx, &pod); err != nil && !apierrors.IsNotFound(err) {
+		if err := deleteWithPreconditions(ctx, r.Client, &pod); err != nil && !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
 		if err := r.updateSessionPending(ctx, &session, podName, serviceName, "PodSpecChanged", "session Pod is being recreated to apply immutable desired state"); err != nil {
@@ -735,8 +735,12 @@ func (r *SessionReconciler) reconcileDelete(ctx context.Context, session *cluste
 	}
 	existing := make([]client.Object, 0, len(objects))
 	var ownershipConflict client.Object
+	reader := r.APIReader
+	if reader == nil {
+		reader = r.Client
+	}
 	for _, object := range objects {
-		err := r.Get(ctx, client.ObjectKeyFromObject(object), object)
+		err := reader.Get(ctx, client.ObjectKeyFromObject(object), object)
 		if apierrors.IsNotFound(err) {
 			continue
 		}
@@ -753,7 +757,7 @@ func (r *SessionReconciler) reconcileDelete(ctx context.Context, session *cluste
 	}
 	for _, object := range existing {
 		if object.GetDeletionTimestamp().IsZero() {
-			if err := r.Delete(ctx, object); err != nil && !apierrors.IsNotFound(err) {
+			if err := deleteWithPreconditions(ctx, r.Client, object); err != nil && !apierrors.IsNotFound(err) {
 				return ctrl.Result{}, err
 			}
 		}
@@ -779,7 +783,7 @@ func (r *SessionReconciler) reconcileDelete(ctx context.Context, session *cluste
 }
 
 func (r *SessionReconciler) deleteOwnedSessionResources(ctx context.Context, session *clusterv1alpha1.T4Session) error {
-	return r.deleteOwnedSessionResourcesWithFailure(ctx, r.Client, session, false, false, "ResourceOwnershipConflict", "one or more deterministic session resources have an unexpected owner")
+	return r.deleteOwnedSessionResourcesWithFailure(ctx, r.Client, session, true, false, false, "ResourceOwnershipConflict", "one or more deterministic session resources have an unexpected owner")
 }
 
 func (r *SessionReconciler) deleteOwnedSessionResourcesAfterVerifiedDependencies(ctx context.Context, session *clusterv1alpha1.T4Session, reason, message string) error {
@@ -787,14 +791,15 @@ func (r *SessionReconciler) deleteOwnedSessionResourcesAfterVerifiedDependencies
 	if reader == nil {
 		reader = r.Client
 	}
-	return r.deleteOwnedSessionResourcesWithFailure(ctx, reader, session, true, true, reason, message)
+	return r.deleteOwnedSessionResourcesWithFailure(ctx, reader, session, false, true, true, reason, message)
 }
 
-func (r *SessionReconciler) deleteOwnedSessionResourcesWithFailure(ctx context.Context, reader client.Reader, session *clusterv1alpha1.T4Session, hostReady, workspaceReady bool, reason, message string) error {
+func (r *SessionReconciler) deleteOwnedSessionResourcesWithFailure(ctx context.Context, reader client.Reader, session *clusterv1alpha1.T4Session, deleteWithoutConflict, hostReady, workspaceReady bool, reason, message string) error {
 	objects := []client.Object{
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: SessionPodName(session), Namespace: session.Namespace}},
 		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: SessionServiceName(session), Namespace: session.Namespace}},
 	}
+	owned := make([]client.Object, 0, len(objects))
 	ownershipConflict := false
 	for _, object := range objects {
 		if err := reader.Get(ctx, client.ObjectKeyFromObject(object), object); err != nil {
@@ -807,8 +812,13 @@ func (r *SessionReconciler) deleteOwnedSessionResourcesWithFailure(ctx context.C
 			ownershipConflict = true
 			continue
 		}
-		if err := r.Delete(ctx, object); err != nil && !apierrors.IsNotFound(err) {
-			return err
+		owned = append(owned, object)
+	}
+	if ownershipConflict || deleteWithoutConflict {
+		for _, object := range owned {
+			if err := deleteWithPreconditions(ctx, r.Client, object); err != nil && !apierrors.IsNotFound(err) {
+				return err
+			}
 		}
 	}
 	if ownershipConflict {
@@ -818,6 +828,21 @@ func (r *SessionReconciler) deleteOwnedSessionResourcesWithFailure(ctx context.C
 		return errSessionResourceOwnershipConflict
 	}
 	return nil
+}
+
+func deleteWithPreconditions(ctx context.Context, writer client.Client, object client.Object) error {
+	preconditions := metav1.Preconditions{}
+	if uid := object.GetUID(); uid != "" {
+		preconditions.UID = &uid
+	}
+	if resourceVersion := object.GetResourceVersion(); resourceVersion != "" {
+		preconditions.ResourceVersion = &resourceVersion
+	}
+	options := &client.DeleteOptions{}
+	if preconditions.UID != nil || preconditions.ResourceVersion != nil {
+		options.Preconditions = &preconditions
+	}
+	return writer.Delete(ctx, object, options)
 }
 
 func (r *SessionReconciler) updateSessionFailure(ctx context.Context, session *clusterv1alpha1.T4Session, hostReady, workspaceReady bool, conditionType, reason, message string) error {
