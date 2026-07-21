@@ -76,13 +76,13 @@ jobs:
         with:
           node-version: 24.13.1
 
-      - name: Resolve lockfile and generation dependencies for artifact recovery
-        run: pnpm install --no-frozen-lockfile
+      - name: Install generation dependencies from the recovered lockfile
+        run: pnpm install --frozen-lockfile
 
-      - name: Validate and generate the T4 API contract artifact
+      - name: Generate and validate the T4 API contract artifact
         run: |
-          pnpm --filter @t4-code/t4-api-contract validate
           pnpm --filter @t4-code/t4-api-contract generate:ci
+          pnpm --filter @t4-code/t4-api-contract validate
 
       - name: Upload deterministic T4 API generation inputs
         if: ${{ always() }}
