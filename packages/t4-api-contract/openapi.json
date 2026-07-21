@@ -603,7 +603,7 @@
         "properties": {
           "type": { "type": "string", "const": "heartbeat" },
           "cursor": { "$ref": "#/components/schemas/Cursor" },
-          "observedAt": { "type": "string", "format": "date-time" }
+          "observedAt": { "type": "string", "format": "date-time", "maxLength": 64 }
         }
       },
       "SessionWatchEvent": {

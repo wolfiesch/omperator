@@ -13,7 +13,7 @@ if (!new Set(["--write", "--check", "--ci-artifact"]).has(mode)) {
   throw new Error("usage: node scripts/generate.mjs --write|--check|--ci-artifact");
 }
 
-const generated = `${astToString(await openapiTS(schemaUrl, { alphabetize: true }))}\n`;
+const generated = `${astToString(await openapiTS(schemaUrl, { alphabetize: true, defaultNonNullable: false }))}\n`;
 const digest = createHash("sha256").update(generated).digest("hex");
 
 if (mode === "--write") {

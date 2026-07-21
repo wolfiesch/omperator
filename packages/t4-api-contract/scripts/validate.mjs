@@ -29,6 +29,9 @@ for (const [schema, property] of [["Discovery", "supportedMajors"], ["Discovery"
 
 const selectedVersion = document.components?.headers?.SelectedVersion?.schema;
 if (selectedVersion?.pattern !== "^1\\.[0-9]+$" || selectedVersion?.maxLength !== 16) throw new Error("SelectedVersion must remain a bounded v1 minor");
+const replayHeader = document.components?.headers?.IdempotencyReplayed?.schema;
+if (replayHeader?.type !== "string" || JSON.stringify(replayHeader.enum) !== '["true","false"]') throw new Error("IdempotencyReplayed must remain the exact true|false string enum");
+if (schemas.HeartbeatWatchEvent?.properties?.observedAt?.maxLength !== 64) throw new Error("HeartbeatWatchEvent.observedAt must remain bounded to 64 characters");
 const selectedVersionRef = "#/components/headers/SelectedVersion";
 const replayRef = "#/components/headers/IdempotencyReplayed";
 const selectedVersionResponses = ["Discovery", "Workspace", "WorkspaceAccepted", "WorkspaceReplay", "WorkspacePage", "Session", "SessionAccepted", "SessionReplay", "SessionPage", "CommandAccepted", "CommandReplay", "Snapshot", "Deleted", "Error400", "Error403", "Error404", "Error406", "Error409", "Error410", "Error422", "Error503"];
