@@ -259,7 +259,7 @@ export class T4ApiV1ConformanceService {
         payload = encoder.encode(Array.from({ length: maxEvents }, (_, index) => `: ${"x".repeat(1010)}\ndata: {"type":"heartbeat","cursor":"bulk-${index}","observedAt":"2026-07-21T00:00:00Z"}\n\n`).join(""));
       } else {
         const prefix = this.options.watchTransport === "bytewise" ? ": 💚\n" : "";
-        payload = encoder.encode(prefix + frames.join(""));
+        payload = encoder.encode(prefix + allFrames.slice(0, maxEvents).join(""));
       }
       const stream = new ReadableStream<Uint8Array>({
         start: (controller) => {
