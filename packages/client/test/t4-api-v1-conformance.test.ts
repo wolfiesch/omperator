@@ -456,12 +456,12 @@ describe("generated T4 API v1 client conformance", () => {
     for (const [status, code] of [[410, "cursor_expired"], [406, "incompatible_version"], [422, "invalid_request"]] as const) {
       const fetch: typeof globalThis.fetch = async () => Response.json({ error: { code, message: "incomplete", requestId: "r", retryable: false } }, { status });
       const client = createT4ApiClient({ baseUrl: "https://errors.test", credential: "token-a", majorVersion: 1, fetch });
-      await expect(client.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({ code: "indeterminate", status });
+      await expect(client.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({ code: "indeterminate", status: 502, retryable: false });
     }
     for (const [status, code] of [[401, "not_found"], [403, "unauthenticated"], [404, "forbidden"], [409, "unavailable"], [503, "revision_conflict"]] as const) {
       const fetch: typeof globalThis.fetch = async () => Response.json({ error: { code, message: "wrong status class", requestId: "r", retryable: false } }, { status });
       const client = createT4ApiClient({ baseUrl: "https://status-errors.test", credential: "token-a", majorVersion: 1, fetch });
-      await expect(client.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({ code: "indeterminate", status: status === 503 ? 502 : status });
+      await expect(client.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({ code: "indeterminate", status: 502, retryable: false });
     }
   });
 
