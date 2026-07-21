@@ -447,6 +447,19 @@ describe("generated T4 API v1 client conformance", () => {
     const oversizedService = new T4ApiV1ConformanceService({ watchTransport: "oversized" });
     const oversizedClient = await seededClient(oversizedService, "oversized");
     await expect(oversizedClient.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({ code: "indeterminate", status: 502 });
+
+    let ongoingOversizedCancelled = false;
+    const ongoingOversizedClient = createT4ApiClient({
+      baseUrl: "https://ongoing-oversized-event.test", credential: "token-a", majorVersion: 1,
+      fetch: async () => new Response(new ReadableStream<Uint8Array>({
+        pull(controller) { controller.enqueue(new Uint8Array(600 * 1024)); },
+        cancel() { ongoingOversizedCancelled = true; },
+      }), { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+    });
+    await expect(ongoingOversizedClient.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({
+      code: "indeterminate", status: 502, retryable: false,
+    });
+    expect(ongoingOversizedCancelled).toBe(true);
   });
 
   it("fails closed on unknown watch fields and incomplete typed errors", async () => {
@@ -557,6 +570,41 @@ describe("generated T4 API v1 client conformance", () => {
       params: { header: VERSION_HEADERS, path: { sessionId: "ses-1" } },
     }));
     expect(unicode.entries[0]?.text).toBe(astralText);
+
+    const astral128 = "😀".repeat(128);
+    const unicodeWorkspace = createT4ApiClient({
+      baseUrl: "https://unicode-workspace.test", credential: "token-a", majorVersion: 1,
+      fetch: async () => Response.json({ id: "wsp-1", name: astral128, state: "ready", revision: 1, labels: { team: astral128 } }),
+    });
+    const workspace = requireData(await unicodeWorkspace.http.GET("/v1/workspaces/{workspaceId}", {
+      params: { header: VERSION_HEADERS, path: { workspaceId: "wsp-1" } },
+    }));
+    expect(workspace).toMatchObject({ name: astral128, labels: { team: astral128 } });
+
+    const unicodeSession = createT4ApiClient({
+      baseUrl: "https://unicode-session.test", credential: "token-a", majorVersion: 1,
+      fetch: async () => Response.json({ id: "ses-1", workspaceId: "wsp-1", title: astral128, state: "ready", revision: 1, labels: { team: astral128 } }),
+    });
+    const session = requireData(await unicodeSession.http.GET("/v1/sessions/{sessionId}", {
+      params: { header: VERSION_HEADERS, path: { sessionId: "ses-1" } },
+    }));
+    expect(session).toMatchObject({ title: astral128, labels: { team: astral128 } });
+
+    const errorMessage = "😀".repeat(1024);
+    const errorRequestId = "😀".repeat(128);
+    const violationField = "😀".repeat(256);
+    const violationMessage = "😀".repeat(512);
+    const unicodeError = createT4ApiClient({
+      baseUrl: "https://unicode-error.test", credential: "token-a", majorVersion: 1,
+      fetch: async () => Response.json({ error: {
+        code: "invalid_request", message: errorMessage, requestId: errorRequestId, retryable: false,
+        violations: [{ field: violationField, rule: "range", message: violationMessage }],
+      } }, { status: 422 }),
+    });
+    await expect(unicodeError.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({
+      code: "invalid_request", status: 422, message: errorMessage, requestId: errorRequestId,
+      violations: [{ field: violationField, rule: "range", message: violationMessage }],
+    });
 
     for (const response of [
       new Response(JSON.stringify(discovery), { status: 200, headers: { "Content-Type": "text/plain" } }),
