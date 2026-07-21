@@ -2,8 +2,10 @@ package controllers_test
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
@@ -1251,6 +1253,121 @@ func TestSessionDeletionCleansResourcesBeforeFinalizer(t *testing.T) {
 	var gone clusterv1alpha1.T4Session
 	if err := c.Get(context.Background(), client.ObjectKeyFromObject(session), &gone); !apierrors.IsNotFound(err) {
 		t.Fatalf("session finalizer removed before cleanup completed: %v", err)
+	}
+}
+
+func TestSessionDependencyRevocationCleansOwnedResourcesAndConvergesAfterRestart(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		conditionType string
+		wantReason    string
+		revoke        func(context.Context, client.Client) error
+	}{
+		{name: "missing Host", conditionType: "HostReady", wantReason: "HostNotFound", revoke: func(ctx context.Context, c client.Client) error {
+			return c.Delete(ctx, &clusterv1alpha1.T4ClusterHost{ObjectMeta: metav1.ObjectMeta{Name: "host-a", Namespace: "team"}})
+		}},
+		{name: "invalid Host runtime profile", conditionType: "RuntimeConfigured", wantReason: "RuntimeProfileNotAllowed", revoke: func(ctx context.Context, c client.Client) error {
+			var host clusterv1alpha1.T4ClusterHost
+			if err := c.Get(ctx, types.NamespacedName{Namespace: "team", Name: "host-a"}, &host); err != nil {
+				return err
+			}
+			host.Spec.RuntimeProfiles = nil
+			return c.Update(ctx, &host)
+		}},
+		{name: "missing Workspace", conditionType: "WorkspaceReady", wantReason: "WorkspaceNotFound", revoke: func(ctx context.Context, c client.Client) error {
+			return c.Delete(ctx, &clusterv1alpha1.T4Workspace{ObjectMeta: metav1.ObjectMeta{Name: "workspace-a", Namespace: "team"}})
+		}},
+		{name: "mismatched Workspace Host", conditionType: "WorkspaceReady", wantReason: "HostMismatch", revoke: func(ctx context.Context, c client.Client) error {
+			var workspace clusterv1alpha1.T4Workspace
+			if err := c.Get(ctx, types.NamespacedName{Namespace: "team", Name: "workspace-a"}, &workspace); err != nil {
+				return err
+			}
+			workspace.Spec.HostRef = "host-b"
+			return c.Update(ctx, &workspace)
+		}},
+		{name: "missing OMP ConfigMap", conditionType: "RuntimeConfigured", wantReason: "OMPConfigMapNotFound", revoke: func(ctx context.Context, c client.Client) error {
+			return c.Delete(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "omp-runtime-config", Namespace: "team"}})
+		}},
+		{name: "invalid OMP credential Secret", conditionType: "RuntimeConfigured", wantReason: "OMPCredentialSecretInvalid", revoke: func(ctx context.Context, c client.Client) error {
+			var secret corev1.Secret
+			if err := c.Get(ctx, types.NamespacedName{Namespace: "team", Name: "omp-runtime-credential"}, &secret); err != nil {
+				return err
+			}
+			delete(secret.Data, "MODEL_API_KEY")
+			return c.Update(ctx, &secret)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			scheme := testScheme(t)
+			workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
+			workspace.Status.PVCName = "workspace-a-data"
+			pvc := &corev1.PersistentVolumeClaim{
+				ObjectMeta: metav1.ObjectMeta{Name: workspace.Status.PVCName, Namespace: "team"},
+				Spec:       corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
+				Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
+			}
+			session := testSession()
+			session.UID = "session-uid"
+			foreignPod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "foreign-pod", Namespace: "team"}}
+			foreignService := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "foreign-service", Namespace: "team"}}
+			c := fake.NewClientBuilder().WithScheme(scheme).
+				WithStatusSubresource(&clusterv1alpha1.T4Session{}, &corev1.PersistentVolumeClaim{}, &corev1.Pod{}).
+				WithObjects(testHost(), workspace, pvc, session, foreignPod, foreignService).Build()
+			r := configuredSessionReconciler(c, scheme)
+			reconcileMany(t, 2, func() error {
+				_, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)})
+				return err
+			})
+			if err := test.revoke(ctx, c); err != nil {
+				t.Fatal(err)
+			}
+
+			result, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.RequeueAfter <= 0 || result.RequeueAfter > 30*time.Second {
+				t.Fatalf("revoked dependency requeue = %s, want bounded positive retry", result.RequeueAfter)
+			}
+			for _, object := range []client.Object{
+				&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: controllers.SessionPodName(session), Namespace: session.Namespace}},
+				&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: controllers.SessionServiceName(session), Namespace: session.Namespace}},
+			} {
+				if err := c.Get(ctx, client.ObjectKeyFromObject(object), object); !apierrors.IsNotFound(err) {
+					t.Fatalf("owned stale %T remained after dependency revocation: %v", object, err)
+				}
+			}
+			for _, object := range []client.Object{foreignPod.DeepCopy(), foreignService.DeepCopy()} {
+				if err := c.Get(ctx, client.ObjectKeyFromObject(object), object); err != nil {
+					t.Fatalf("unowned %T was removed: %v", object, err)
+				}
+			}
+
+			var failed clusterv1alpha1.T4Session
+			if err := c.Get(ctx, client.ObjectKeyFromObject(session), &failed); err != nil {
+				t.Fatal(err)
+			}
+			condition := findCondition(failed.Status.Conditions, test.conditionType)
+			available := findCondition(failed.Status.Conditions, "Available")
+			if failed.Status.ObservedGeneration != failed.Generation || failed.Status.PodName != "" || failed.Status.ServiceName != "" || failed.Status.Phase != clusterv1alpha1.InfrastructureFailed ||
+				condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != test.wantReason || condition.ObservedGeneration != failed.Generation ||
+				available == nil || available.Status != metav1.ConditionFalse || available.Reason != test.wantReason || available.ObservedGeneration != failed.Generation {
+				t.Fatalf("revoked session did not converge: status=%#v condition=%#v available=%#v", failed.Status, condition, available)
+			}
+			stableStatus := failed.Status
+			restarted := *r
+			reconcileMany(t, 2, func() error {
+				_, err := restarted.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)})
+				return err
+			})
+			if err := c.Get(ctx, client.ObjectKeyFromObject(session), &failed); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(failed.Status, stableStatus) {
+				t.Fatalf("duplicate/restart reconciliation changed converged status: got %#v, want %#v", failed.Status, stableStatus)
+			}
+		})
 	}
 }
 
