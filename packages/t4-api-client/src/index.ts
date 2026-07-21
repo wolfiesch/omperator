@@ -154,16 +154,16 @@ function validViolation(value: unknown): boolean {
   const violation = record(value);
   return violation !== undefined &&
     Object.keys(violation).every((key) => key === "field" || key === "rule" || key === "message") &&
-    typeof violation.field === "string" && violation.field.length >= 1 && violation.field.length <= 256 &&
-    typeof violation.rule === "string" && /^[A-Za-z][A-Za-z0-9._-]{0,63}$/u.test(violation.rule) &&
-    typeof violation.message === "string" && violation.message.length >= 1 && violation.message.length <= 512;
+    typeof violation.field === "string" && violation.field !== "" && hasAtMostCodePoints(violation.field, 256) &&
+    typeof violation.rule === "string" && hasAtMostCodePoints(violation.rule, 64) && /^[A-Za-z][A-Za-z0-9._-]{0,63}$/u.test(violation.rule) &&
+    typeof violation.message === "string" && violation.message !== "" && hasAtMostCodePoints(violation.message, 512);
 }
 
 function validResync(value: unknown): value is Resync {
   const resync = record(value);
   return resync !== undefined && Object.keys(resync).every((key) => key === "snapshotUrl" || key === "cursor") &&
-    typeof resync.snapshotUrl === "string" && /^\/v1\/sessions\/[A-Za-z0-9._~-]+\/snapshot$/u.test(resync.snapshotUrl) &&
-    typeof resync.cursor === "string" && resync.cursor.length <= 512 && CURSOR_PATTERN.test(resync.cursor);
+    typeof resync.snapshotUrl === "string" && hasAtMostCodePoints(resync.snapshotUrl, 512) && /^\/v1\/sessions\/[A-Za-z0-9._~-]+\/snapshot$/u.test(resync.snapshotUrl) &&
+    typeof resync.cursor === "string" && hasAtMostCodePoints(resync.cursor, 512) && CURSOR_PATTERN.test(resync.cursor);
 }
 
 function apiError(value: unknown, status: number): ApiError | undefined {
@@ -174,8 +174,8 @@ function apiError(value: unknown, status: number): ApiError | undefined {
     error === undefined || Object.keys(error).some((key) => ERROR_FIELDS[key] !== true) ||
     typeof error.code !== "string" || ERROR_CODES[error.code as ApiError["code"]] !== true ||
     ERROR_CODES_BY_STATUS[status]?.[error.code] !== true ||
-    typeof error.message !== "string" || error.message.length < 1 || error.message.length > 1024 ||
-    typeof error.requestId !== "string" || error.requestId.length < 1 || error.requestId.length > 128 ||
+    typeof error.message !== "string" || error.message === "" || !hasAtMostCodePoints(error.message, 1024) ||
+    typeof error.requestId !== "string" || error.requestId === "" || !hasAtMostCodePoints(error.requestId, 128) ||
     typeof error.retryable !== "boolean" ||
     (error.violations !== undefined && (!Array.isArray(error.violations) || error.violations.length > 64 || !error.violations.every(validViolation))) ||
     (error.supportedMajors !== undefined && (!Array.isArray(error.supportedMajors) || error.supportedMajors.length > 8 || !error.supportedMajors.every((major) => Number.isSafeInteger(major) && Number(major) >= 1))) ||
@@ -259,7 +259,7 @@ function hasOnlyKeys(value: Record<string, unknown>, keys: Readonly<Record<strin
 }
 
 function validResourceId(value: unknown): value is string {
-  return typeof value === "string" && value.length >= 1 && value.length <= 128 && /^[A-Za-z0-9][A-Za-z0-9._~-]*$/u.test(value);
+  return typeof value === "string" && value !== "" && hasAtMostCodePoints(value, 128) && /^[A-Za-z0-9][A-Za-z0-9._~-]*$/u.test(value);
 }
 
 function hasAtMostCodePoints(value: string, maximum: number): boolean {
@@ -272,20 +272,20 @@ function hasAtMostCodePoints(value: string, maximum: number): boolean {
 }
 
 function validCursor(value: unknown): value is string {
-  return typeof value === "string" && value.length >= 1 && value.length <= 512 && CURSOR_PATTERN.test(value);
+  return typeof value === "string" && value !== "" && hasAtMostCodePoints(value, 512) && CURSOR_PATTERN.test(value);
 }
 
 function validLabels(value: unknown): boolean {
   if (value === undefined) return true;
   const labels = record(value);
   return labels !== undefined && Object.keys(labels).length <= 32 && Object.entries(labels).every(([key, item]) =>
-    /^[a-z][a-z0-9.-]{0,62}$/u.test(key) && typeof item === "string" && item.length <= 128);
+    /^[a-z][a-z0-9.-]{0,62}$/u.test(key) && typeof item === "string" && hasAtMostCodePoints(item, 128));
 }
 
 function validWorkspace(value: unknown): boolean {
   const item = record(value);
   return item !== undefined && hasOnlyKeys(item, { id: true, name: true, state: true, revision: true, labels: true }) &&
-    validResourceId(item.id) && typeof item.name === "string" && item.name.length >= 1 && item.name.length <= 128 &&
+    validResourceId(item.id) && typeof item.name === "string" && item.name !== "" && hasAtMostCodePoints(item.name, 128) &&
     typeof item.state === "string" && WORKSPACE_STATES[item.state as components["schemas"]["WorkspaceState"]] === true &&
     Number.isSafeInteger(item.revision) && Number(item.revision) >= 1 && validLabels(item.labels);
 }
@@ -293,7 +293,7 @@ function validWorkspace(value: unknown): boolean {
 function validSession(value: unknown): boolean {
   const item = record(value);
   return item !== undefined && hasOnlyKeys(item, { id: true, workspaceId: true, title: true, state: true, revision: true, labels: true }) &&
-    validResourceId(item.id) && validResourceId(item.workspaceId) && typeof item.title === "string" && item.title.length >= 1 && item.title.length <= 128 &&
+    validResourceId(item.id) && validResourceId(item.workspaceId) && typeof item.title === "string" && item.title !== "" && hasAtMostCodePoints(item.title, 128) &&
     typeof item.state === "string" && SESSION_STATES[item.state as components["schemas"]["SessionState"]] === true &&
     Number.isSafeInteger(item.revision) && Number(item.revision) >= 1 && validLabels(item.labels);
 }
@@ -464,15 +464,15 @@ function watchEvent(value: unknown, eventId: string | undefined): WatchEvent {
     event === undefined ||
     typeof event.type !== "string" ||
     typeof event.cursor !== "string" ||
-    event.cursor.length < 1 ||
-    event.cursor.length > 512 ||
+    event.cursor === "" ||
+    !hasAtMostCodePoints(event.cursor, 512) ||
     !CURSOR_PATTERN.test(event.cursor) ||
     (eventId !== undefined && eventId !== event.cursor)
   ) throw protocolError(502, "T4 API returned an invalid watch event");
   if (
     event.type === "heartbeat" &&
     hasOnlyKeys(event, { type: true, cursor: true, observedAt: true }) &&
-    typeof event.observedAt === "string" && event.observedAt.length <= 64 &&
+    typeof event.observedAt === "string" && hasAtMostCodePoints(event.observedAt, 64) &&
     /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u.test(event.observedAt) &&
     Number.isFinite(Date.parse(event.observedAt))
   ) return event as WatchEvent;
@@ -487,7 +487,7 @@ function watchEvent(value: unknown, eventId: string | undefined): WatchEvent {
     event.type === "command" &&
     hasOnlyKeys(event, { type: true, cursor: true, commandId: true, state: true }) &&
     typeof event.commandId === "string" &&
-    event.commandId.length >= 1 && event.commandId.length <= 128 &&
+    event.commandId !== "" && hasAtMostCodePoints(event.commandId, 128) &&
     /^[A-Za-z0-9][A-Za-z0-9._~-]*$/u.test(event.commandId) &&
     typeof event.state === "string" &&
     OPERATION_STATES[event.state as components["schemas"]["OperationState"]] === true
