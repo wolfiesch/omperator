@@ -7,6 +7,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"sigs.k8s.io/yaml"
 )
 
 const fakeDigest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -413,6 +416,53 @@ func TestCRDsRemainExplicitAcrossUpgradeAndUninstall(t *testing.T) {
 			t.Fatalf("operator guide lacks upgrade/uninstall contract %q", required)
 		}
 	}
+}
+
+func TestWorkspaceRetentionPolicyIsImmutable(t *testing.T) {
+	root := repoRoot(t)
+	raw := mustRead(t, filepath.Join(root, "deploy", "charts", "t4-cluster", "crds", "t4workspaces.cluster.t4.dev.yaml"))
+	var crd apiextensionsv1.CustomResourceDefinition
+	if err := yaml.Unmarshal([]byte(raw), &crd); err != nil {
+		t.Fatalf("decode workspace CRD: %v", err)
+	}
+	if len(crd.Spec.Versions) != 1 || crd.Spec.Versions[0].Schema == nil || crd.Spec.Versions[0].Schema.OpenAPIV3Schema == nil {
+		t.Fatal("workspace CRD lacks its single versioned OpenAPI schema")
+	}
+	retentionPolicy, ok := crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"].Properties["retentionPolicy"]
+	if !ok {
+		t.Fatal("workspace CRD lacks spec.retentionPolicy")
+	}
+	if len(retentionPolicy.Enum) != 2 {
+		t.Fatalf("retention policy enum = %v, want exactly Retain and Delete", retentionPolicy.Enum)
+	}
+	allowed := map[string]bool{`"Retain"`: false, `"Delete"`: false}
+	for _, value := range retentionPolicy.Enum {
+		if _, expected := allowed[string(value.Raw)]; !expected {
+			t.Fatalf("retention policy permits unexpected initial value %s", value.Raw)
+		}
+		allowed[string(value.Raw)] = true
+	}
+	for value, found := range allowed {
+		if !found {
+			t.Fatalf("retention policy rejects initial value %s", value)
+		}
+	}
+
+	immutable := false
+	for _, validation := range retentionPolicy.XValidations {
+		if validation.Rule == "self == oldSelf" && validation.Message == "retentionPolicy is immutable" {
+			immutable = true
+		}
+	}
+	if !immutable {
+		t.Fatal("spec.retentionPolicy lacks the immutable CEL transition rule and clear message")
+	}
+
+	api := mustRead(t, filepath.Join(root, "packages", "cluster-operator", "api", "v1alpha1", "types.go"))
+	assertContains(t, api,
+		"// +kubebuilder:validation:Enum=Retain;Delete\ntype RetentionPolicy string",
+		"// +kubebuilder:validation:XValidation:rule=\"self == oldSelf\",message=\"retentionPolicy is immutable\"\n\tRetentionPolicy RetentionPolicy",
+	)
 }
 
 func TestImageContractsArePinnedAndAuthorityCompatible(t *testing.T) {

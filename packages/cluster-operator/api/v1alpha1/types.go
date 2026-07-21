@@ -15,6 +15,7 @@ const (
 	SessionPodSpecHashAnnotation = "cluster.t4.dev/pod-spec-hash"
 )
 
+// +kubebuilder:validation:Enum=Retain;Delete
 type RetentionPolicy string
 
 const (
@@ -101,6 +102,7 @@ type T4WorkspaceSpec struct {
 	Owner           string              `json:"owner"`
 	Repository      *RepositoryMetadata `json:"repository,omitempty"`
 	Size            resource.Quantity   `json:"size"`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="retentionPolicy is immutable"
 	RetentionPolicy RetentionPolicy     `json:"retentionPolicy"`
 }
 
