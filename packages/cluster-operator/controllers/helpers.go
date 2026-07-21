@@ -37,10 +37,30 @@ func stableName(prefix, name string, uid types.UID) string {
 	identity := name + ":" + string(uid)
 	sum := sha256.Sum256([]byte(identity))
 	suffix := hex.EncodeToString(sum[:6])
+	var body strings.Builder
+	body.Grow(len(name))
+	lastWasSeparator := false
+	for i := range len(name) {
+		character := name[i]
+		if character >= 'A' && character <= 'Z' {
+			character += 'a' - 'A'
+		}
+		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' {
+			body.WriteByte(character)
+			lastWasSeparator = false
+		} else if body.Len() > 0 && !lastWasSeparator {
+			body.WriteByte('-')
+			lastWasSeparator = true
+		}
+	}
+	name = strings.Trim(body.String(), "-")
 	maxName := 63 - len(prefix) - 1 - len(suffix)
-	if len(name) > maxName { name = name[:maxName] }
-	name = strings.Trim(name, "-.")
-	if name == "" { name = "resource" }
+	if len(name) > maxName {
+		name = strings.TrimRight(name[:maxName], "-")
+	}
+	if name == "" {
+		name = "resource"
+	}
 	return prefix + name + "-" + suffix
 }
 
