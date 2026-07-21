@@ -21,6 +21,14 @@ function validLabels(value: unknown): boolean {
     /^[a-z][a-z0-9.-]{0,62}$/u.test(key) && typeof item === "string" && hasAtMostCodePoints(item, 128));
 }
 
+function validCreate(body: Record<string, unknown>, textField: "name" | "title"): boolean {
+  const keys = Object.keys(body);
+  if (keys.some((key) => key !== textField && key !== "labels")) return false;
+  const text = body[textField];
+  return typeof text === "string" && text !== "" && hasAtMostCodePoints(text, 128) &&
+    (body.labels === undefined || validLabels(body.labels));
+}
+
 function validMutation(body: Record<string, unknown>, textField: "name" | "title"): boolean {
   const keys = Object.keys(body);
   if (keys.length < 1 || keys.some((key) => key !== textField && key !== "labels")) return false;
@@ -122,7 +130,7 @@ export class T4ApiV1ConformanceService {
       const parsed = await this.#jsonBody(request);
       if (parsed instanceof Response) return parsed;
       const body = parsed;
-      if (typeof body.name !== "string" || body.name === "" || !hasAtMostCodePoints(body.name, 128)) return this.#invalid("name", "length", "name must contain 1 to 128 characters");
+      if (!validCreate(body, "name")) return this.#invalid("body", "schema", "workspace create must match WorkspaceCreate");
       return this.#idempotent(request, tenant, "createWorkspace", [], body, 202, 200, () => {
         const id = `ws-${++this.#workspaceSequence}`;
         const workspace = { id, name: body.name, ...(body.labels === undefined ? {} : { labels: body.labels }), state: "accepted", revision: 1, tenant };
@@ -154,6 +162,8 @@ export class T4ApiV1ConformanceService {
       if (workspace?.tenant !== tenant) return problem(404, "not_found", "Workspace not found");
       if (request.method === "GET") return json(200, this.#payload("workspace", this.#visible(workspace)));
       if (request.method === "PATCH") {
+        const ifMatch = request.headers.get("If-Match");
+        if (ifMatch === null || !/^[1-9][0-9]{0,18}$/u.test(ifMatch)) return problem(400, "invalid_request", "If-Match is invalid");
         const parsed = await this.#jsonBody(request);
         if (parsed instanceof Response) return parsed;
         const body = parsed;
@@ -175,10 +185,10 @@ export class T4ApiV1ConformanceService {
         const parsed = await this.#jsonBody(request);
         if (parsed instanceof Response) return parsed;
         const body = parsed;
-        if (typeof body.title !== "string" || body.title === "" || !hasAtMostCodePoints(body.title, 128)) return this.#invalid("title", "length", "title must contain 1 to 128 characters");
+        if (!validCreate(body, "title")) return this.#invalid("body", "schema", "session create must match SessionCreate");
         return this.#idempotent(request, tenant, "spawnSession", [workspaceId], body, 202, 200, () => {
           const id = `ses-${++this.#sessionSequence}`;
-          const session = { id, workspaceId, title: body.title, state: "accepted", revision: 1, tenant };
+          const session = { id, workspaceId, title: body.title, ...(body.labels === undefined ? {} : { labels: body.labels }), state: "accepted", revision: 1, tenant };
           this.#sessions.set(id, session);
           return session;
         });
@@ -207,6 +217,8 @@ export class T4ApiV1ConformanceService {
       if (session?.tenant !== tenant) return problem(404, "not_found", "Session not found");
       if (request.method === "GET") return json(200, this.#payload("session", this.#visible(session)));
       if (request.method === "PATCH") {
+        const ifMatch = request.headers.get("If-Match");
+        if (ifMatch === null || !/^[1-9][0-9]{0,18}$/u.test(ifMatch)) return problem(400, "invalid_request", "If-Match is invalid");
         const parsed = await this.#jsonBody(request);
         if (parsed instanceof Response) return parsed;
         const body = parsed;
@@ -238,8 +250,11 @@ export class T4ApiV1ConformanceService {
       if (session?.tenant !== tenant) return problem(404, "not_found", "Session not found");
       const text = await request.text();
       if (encoder.encode(text).byteLength > COMMAND_REQUEST_BYTES_MAX) return this.#invalid("body", "maxBytes", `request must not exceed ${COMMAND_REQUEST_BYTES_MAX} UTF-8 bytes`);
-      let body: Record<string, unknown>;
-      try { body = JSON.parse(text) as Record<string, unknown>; } catch { return problem(400, "invalid_request", "Malformed JSON request"); }
+      let decoded: unknown;
+      try { decoded = JSON.parse(text); } catch { return problem(400, "invalid_request", "Malformed JSON request"); }
+      if (decoded === null || typeof decoded !== "object" || Array.isArray(decoded)) return this.#invalid("body", "schema", "command create must match CommandCreate");
+      const body = decoded as Record<string, unknown>;
+      if (Object.keys(body).some((key) => key !== "command" && key !== "metadata")) return this.#invalid("body", "schema", "command create must match CommandCreate");
       if (typeof body.command !== "string" || body.command.length < 1 || encoder.encode(body.command).byteLength > COMMAND_BYTES_MAX) return this.#invalid("command", "maxBytes", `command must contain 1 to ${COMMAND_BYTES_MAX} UTF-8 bytes`);
       if (!this.#validMetadata(body.metadata)) return this.#invalid("metadata", "bounds", "metadata keys and values exceed the discovered bounds");
       const states: Record<string, true> = { accepted: true, rejected: true, conflict: true, unavailable: true, indeterminate: true };

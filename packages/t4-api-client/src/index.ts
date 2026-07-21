@@ -492,6 +492,25 @@ async function validateResponse(request: Request, response: Response, baseUrl: s
   }
 }
 
+function validRfc3339DateTime(value: string): boolean {
+  if (!hasAtMostCodePoints(value, 64)) return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/u.exec(value);
+  if (match === null) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  if (month < 1 || month > 12 || hour > 23 || minute > 59 || second > 60) return false;
+  let maximumDay = 31;
+  if (month === 2) maximumDay = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28;
+  else if (month === 4 || month === 6 || month === 9 || month === 11) maximumDay = 30;
+  if (day < 1 || day > maximumDay) return false;
+  if (second === 60 && (hour !== 23 || minute !== 59)) return false;
+  return match[7] === undefined || (Number(match[8]) <= 23 && Number(match[9]) <= 59);
+}
+
 function watchEvent(value: unknown, eventId: string | undefined): WatchEvent {
   const event = record(value);
   if (
@@ -506,9 +525,7 @@ function watchEvent(value: unknown, eventId: string | undefined): WatchEvent {
   if (
     event.type === "heartbeat" &&
     hasOnlyKeys(event, { type: true, cursor: true, observedAt: true }) &&
-    typeof event.observedAt === "string" && hasAtMostCodePoints(event.observedAt, 64) &&
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u.test(event.observedAt) &&
-    Number.isFinite(Date.parse(event.observedAt))
+    typeof event.observedAt === "string" && validRfc3339DateTime(event.observedAt)
   ) return event as WatchEvent;
   if (
     event.type === "session" &&
@@ -705,6 +722,10 @@ async function* watch(
         if (!validSelectedVersion(response)) {
           void response.body?.cancel().catch(() => {});
           throw protocolError(502, "T4 API returned a missing or invalid selected version");
+        }
+        if (response.headers.get("Cache-Control") !== "no-store") {
+          void response.body?.cancel().catch(() => {});
+          throw protocolError(502, "T4 API watch did not return Cache-Control: no-store");
         }
         if (response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "text/event-stream") {
           void response.body?.cancel().catch(() => {});

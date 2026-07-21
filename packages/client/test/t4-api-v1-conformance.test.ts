@@ -51,6 +51,7 @@ const VERSION_HEADERS = { "T4-API-Version": "1" } as const;
 function withSelectedVersion(init: ResponseInit = {}): ResponseInit {
   const headers = new Headers(init.headers);
   if (!headers.has("T4-API-Version")) headers.set("T4-API-Version", "1.0");
+  if (headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase() === "text/event-stream" && !headers.has("Cache-Control")) headers.set("Cache-Control", "no-store");
   return { ...init, headers };
 }
 
@@ -490,7 +491,7 @@ describe("generated T4 API v1 client conformance", () => {
     expect(missingOnReplay.status).toBe(400);
   });
 
-  it("rejects invalid declared watch headers and calendar timestamps", async () => {
+  it("rejects an invalid declared watch cache header", async () => {
     let cacheBodyCancelled = false;
     const cacheClient = createT4ApiClient({
       baseUrl: "https://watch-cache.test", credential: "token-a", majorVersion: 1,
@@ -501,6 +502,9 @@ describe("generated T4 API v1 client conformance", () => {
     });
     await expect(cacheClient.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({ status: 502, retryable: false });
     expect(cacheBodyCancelled).toBe(true);
+  });
+
+  it("rejects invalid RFC 3339 calendar timestamps", async () => {
 
     for (const observedAt of [
       "2026-02-31T00:00:00Z", "2026-13-01T00:00:00Z", "2025-02-29T00:00:00Z",
