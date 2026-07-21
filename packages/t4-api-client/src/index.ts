@@ -473,6 +473,10 @@ async function validateResponse(request: Request, response: Response, baseUrl: s
     return;
   }
   if (validator === "event-stream") {
+    if (response.headers.get("Cache-Control") !== "no-store") {
+      void response.body?.cancel().catch(() => {});
+      throw protocolError(502, "T4 API watch did not return Cache-Control: no-store");
+    }
     if (response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "text/event-stream") {
       void response.body?.cancel().catch(() => {});
       throw protocolError(502, "T4 API returned an undeclared success media type");
@@ -507,8 +511,19 @@ function validRfc3339DateTime(value: string): boolean {
   if (month === 2) maximumDay = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28;
   else if (month === 4 || month === 6 || month === 9 || month === 11) maximumDay = 30;
   if (day < 1 || day > maximumDay) return false;
-  if (second === 60 && (hour !== 23 || minute !== 59)) return false;
-  return match[7] === undefined || (Number(match[8]) <= 23 && Number(match[9]) <= 59);
+  let offsetMinutes = 0;
+  if (match[7] !== undefined) {
+    const offsetHour = Number(match[8]);
+    const offsetMinute = Number(match[9]);
+    if (offsetHour > 23 || offsetMinute > 59) return false;
+    offsetMinutes = (match[7] === "+" ? 1 : -1) * (offsetHour * 60 + offsetMinute);
+  }
+  if (second < 60) return true;
+  const utc = new Date(0);
+  utc.setUTCFullYear(year, month - 1, day);
+  utc.setUTCHours(hour, minute - offsetMinutes, 0, 0);
+  return utc.getUTCHours() === 23 && utc.getUTCMinutes() === 59 &&
+    ((utc.getUTCMonth() === 5 && utc.getUTCDate() === 30) || (utc.getUTCMonth() === 11 && utc.getUTCDate() === 31));
 }
 
 function watchEvent(value: unknown, eventId: string | undefined): WatchEvent {

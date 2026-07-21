@@ -21,12 +21,12 @@ function validLabels(value: unknown): boolean {
     /^[a-z][a-z0-9.-]{0,62}$/u.test(key) && typeof item === "string" && hasAtMostCodePoints(item, 128));
 }
 
-function validCreate(body: Record<string, unknown>, textField: "name" | "title"): boolean {
-  const keys = Object.keys(body);
-  if (keys.some((key) => key !== textField && key !== "labels")) return false;
+function createViolation(body: Record<string, unknown>, textField: "name" | "title"): { field: string; rule: string } | undefined {
+  if (Object.keys(body).some((key) => key !== textField && key !== "labels")) return { field: "body", rule: "schema" };
   const text = body[textField];
-  return typeof text === "string" && text !== "" && hasAtMostCodePoints(text, 128) &&
-    (body.labels === undefined || validLabels(body.labels));
+  if (typeof text !== "string" || text === "" || !hasAtMostCodePoints(text, 128)) return { field: textField, rule: "length" };
+  if (body.labels !== undefined && !validLabels(body.labels)) return { field: "labels", rule: "bounds" };
+  return undefined;
 }
 
 function validMutation(body: Record<string, unknown>, textField: "name" | "title"): boolean {
@@ -130,7 +130,8 @@ export class T4ApiV1ConformanceService {
       const parsed = await this.#jsonBody(request);
       if (parsed instanceof Response) return parsed;
       const body = parsed;
-      if (!validCreate(body, "name")) return this.#invalid("body", "schema", "workspace create must match WorkspaceCreate");
+      const violation = createViolation(body, "name");
+      if (violation !== undefined) return this.#invalid(violation.field, violation.rule, "workspace create must match WorkspaceCreate");
       return this.#idempotent(request, tenant, "createWorkspace", [], body, 202, 200, () => {
         const id = `ws-${++this.#workspaceSequence}`;
         const workspace = { id, name: body.name, ...(body.labels === undefined ? {} : { labels: body.labels }), state: "accepted", revision: 1, tenant };
@@ -152,6 +153,10 @@ export class T4ApiV1ConformanceService {
     const workspaceMatch = url.pathname.match(/^\/v1\/workspaces\/([^/]+)$/u);
     if (workspaceMatch) {
       const id = decodeURIComponent(workspaceMatch[1]!);
+      if (request.method === "PATCH") {
+        const ifMatch = request.headers.get("If-Match");
+        if (ifMatch === null || !/^[1-9][0-9]{0,18}$/u.test(ifMatch)) return problem(400, "invalid_request", "If-Match is invalid");
+      }
       const workspace = this.#workspaces.get(id);
       if (request.method === "DELETE") {
         return this.#idempotent(request, tenant, "deleteWorkspace", [id], null, 204, 204, () => {
@@ -162,8 +167,6 @@ export class T4ApiV1ConformanceService {
       if (workspace?.tenant !== tenant) return problem(404, "not_found", "Workspace not found");
       if (request.method === "GET") return json(200, this.#payload("workspace", this.#visible(workspace)));
       if (request.method === "PATCH") {
-        const ifMatch = request.headers.get("If-Match");
-        if (ifMatch === null || !/^[1-9][0-9]{0,18}$/u.test(ifMatch)) return problem(400, "invalid_request", "If-Match is invalid");
         const parsed = await this.#jsonBody(request);
         if (parsed instanceof Response) return parsed;
         const body = parsed;
@@ -185,7 +188,8 @@ export class T4ApiV1ConformanceService {
         const parsed = await this.#jsonBody(request);
         if (parsed instanceof Response) return parsed;
         const body = parsed;
-        if (!validCreate(body, "title")) return this.#invalid("body", "schema", "session create must match SessionCreate");
+        const violation = createViolation(body, "title");
+        if (violation !== undefined) return this.#invalid(violation.field, violation.rule, "session create must match SessionCreate");
         return this.#idempotent(request, tenant, "spawnSession", [workspaceId], body, 202, 200, () => {
           const id = `ses-${++this.#sessionSequence}`;
           const session = { id, workspaceId, title: body.title, ...(body.labels === undefined ? {} : { labels: body.labels }), state: "accepted", revision: 1, tenant };
@@ -207,6 +211,10 @@ export class T4ApiV1ConformanceService {
     const sessionMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)$/u);
     if (sessionMatch) {
       const id = decodeURIComponent(sessionMatch[1]!);
+      if (request.method === "PATCH") {
+        const ifMatch = request.headers.get("If-Match");
+        if (ifMatch === null || !/^[1-9][0-9]{0,18}$/u.test(ifMatch)) return problem(400, "invalid_request", "If-Match is invalid");
+      }
       const session = this.#sessions.get(id);
       if (request.method === "DELETE") {
         return this.#idempotent(request, tenant, "deleteSession", [id], null, 204, 204, () => {
@@ -217,8 +225,6 @@ export class T4ApiV1ConformanceService {
       if (session?.tenant !== tenant) return problem(404, "not_found", "Session not found");
       if (request.method === "GET") return json(200, this.#payload("session", this.#visible(session)));
       if (request.method === "PATCH") {
-        const ifMatch = request.headers.get("If-Match");
-        if (ifMatch === null || !/^[1-9][0-9]{0,18}$/u.test(ifMatch)) return problem(400, "invalid_request", "If-Match is invalid");
         const parsed = await this.#jsonBody(request);
         if (parsed instanceof Response) return parsed;
         const body = parsed;

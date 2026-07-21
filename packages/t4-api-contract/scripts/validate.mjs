@@ -27,6 +27,10 @@ for (const [schema, property] of [["Discovery", "supportedMajors"], ["Discovery"
   if (schemas[schema]?.properties?.[property]?.uniqueItems !== true) throw new Error(`${schema}.${property} must retain uniqueItems`);
 }
 
+const selectedVersionHeader = document.components?.headers?.SelectedVersion;
+const replayHeaderObject = document.components?.headers?.IdempotencyReplayed;
+if (selectedVersionHeader?.required !== true) throw new Error("SelectedVersion must remain required wherever referenced");
+if (replayHeaderObject?.required !== true) throw new Error("IdempotencyReplayed must remain required wherever referenced");
 const selectedVersion = document.components?.headers?.SelectedVersion?.schema;
 if (selectedVersion?.pattern !== "^1\\.[0-9]+$" || selectedVersion?.maxLength !== 16) throw new Error("SelectedVersion must remain a bounded v1 minor");
 const replayHeader = document.components?.headers?.IdempotencyReplayed?.schema;
@@ -42,6 +46,9 @@ for (const responseName of ["WorkspaceAccepted", "WorkspaceReplay", "SessionAcce
   if (document.components?.responses?.[responseName]?.headers?.["Idempotency-Replayed"]?.$ref !== replayRef) throw new Error(`${responseName} must declare IdempotencyReplayed`);
 }
 if (document.paths?.["/v1/sessions/{sessionId}/events"]?.get?.responses?.["200"]?.headers?.["T4-API-Version"]?.$ref !== selectedVersionRef) throw new Error("watch success must declare SelectedVersion");
+const watchCacheControl = document.paths?.["/v1/sessions/{sessionId}/events"]?.get?.responses?.["200"]?.headers?.["Cache-Control"];
+if (watchCacheControl?.required !== true || watchCacheControl?.schema?.const !== "no-store") throw new Error("watch success must require Cache-Control: no-store");
+if (document.components?.responses?.Error401?.headers?.["T4-API-Version"] !== undefined) throw new Error("Error401 must omit SelectedVersion");
 if (document.paths?.["/v1/workspaces/{workspaceId}"]?.patch?.responses?.["200"]?.$ref !== "#/components/responses/WorkspaceReplay") throw new Error("workspace PATCH success must declare replay headers");
 if (document.paths?.["/v1/sessions/{sessionId}"]?.patch?.responses?.["200"]?.$ref !== "#/components/responses/SessionReplay") throw new Error("session PATCH success must declare replay headers");
 const errorResponses = { 400: "Error400", 401: "Error401", 403: "Error403", 404: "Error404", 406: "Error406", 409: "Error409", 410: "Error410", 422: "Error422", 503: "Error503" };

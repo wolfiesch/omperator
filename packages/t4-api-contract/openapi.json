@@ -319,7 +319,7 @@
           "200": {
             "description": "Bounded SSE event stream. Every non-empty SSE data field is one JSON value conforming to WatchEvent; clients MUST reject unknown fields and schema-invalid event payloads before delivery. Transport chunk boundaries do not delimit frames.",
             "headers": {
-              "Cache-Control": { "schema": { "type": "string", "const": "no-store" } },
+              "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } },
               "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }
             },
             "content": {
@@ -420,10 +420,12 @@
     "headers": {
       "SelectedVersion": {
         "description": "Selected compatible T4 API minor version.",
+        "required": true,
         "schema": { "type": "string", "pattern": "^1\\.[0-9]+$", "maxLength": 16 }
       },
       "IdempotencyReplayed": {
         "description": "True when this response replays a prior identical request.",
+        "required": true,
         "schema": { "type": "string", "enum": ["true", "false"] }
       }
     },
