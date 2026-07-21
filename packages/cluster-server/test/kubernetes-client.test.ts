@@ -101,11 +101,14 @@ describe("namespaced Kubernetes client", () => {
 		const directory = await mkdtemp(join(tmpdir(), "t4-kubernetes-client-invalid-token-"));
 		try {
 			const tokenFile = join(directory, "token");
+			const nextTokenFile = join(directory, "token.next");
 			const values = recordingFetch([]);
 			const client = new KubernetesApiClient({ ...common, tokenFile, fetch: values.fetch });
-			await writeFile(tokenFile, "malformed token", { mode: 0o400 });
+			await writeFile(nextTokenFile, "malformed token", { mode: 0o400 });
+			await rename(nextTokenFile, tokenFile);
 			await expect(client.request("/version")).rejects.toThrow("Kubernetes token file is invalid");
-			await writeFile(tokenFile, "x".repeat(16_385), { mode: 0o400 });
+			await writeFile(nextTokenFile, "x".repeat(16_385), { mode: 0o400 });
+			await rename(nextTokenFile, tokenFile);
 			await expect(client.request("/version")).rejects.toThrow("Kubernetes token file is invalid");
 			expect(values.requests).toHaveLength(0);
 		} finally {

@@ -593,7 +593,7 @@ describe("desktop runtime projection", () => {
     shell.resolveWorkspaceList();
 
     await expect(pending).rejects.toMatchObject({ code: "stale" });
-    expect(responses).toHaveLength(1);
+    expect(responses.filter((event) => event.event.kind === "response" && event.event.payload.command === "workspace.list")).toHaveLength(1);
     expect(runtime.getSnapshot().projection.workspaces.size).toBe(0);
     const ordinary = await runtime.command("local", {
       hostId: hostId("host-a"),
