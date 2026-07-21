@@ -441,14 +441,25 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 		return ctrl.Result{}, err
 	}
 	var service corev1.Service
-	if err := r.Get(ctx, types.NamespacedName{Namespace: session.Namespace, Name: serviceName}, &service); apierrors.IsNotFound(err) {
+	serviceKey := types.NamespacedName{Namespace: session.Namespace, Name: serviceName}
+	if err := r.Get(ctx, serviceKey, &service); apierrors.IsNotFound(err) {
 		service = desiredService
-		if err := r.Create(ctx, &service); err != nil && !apierrors.IsAlreadyExists(err) {
-			return ctrl.Result{}, err
+		if err := r.Create(ctx, &service); err != nil {
+			if !apierrors.IsAlreadyExists(err) {
+				return ctrl.Result{}, err
+			}
+			reader := r.APIReader
+			if reader == nil {
+				reader = r.Client
+			}
+			if err := reader.Get(ctx, serviceKey, &service); err != nil {
+				return ctrl.Result{}, err
+			}
 		}
 	} else if err != nil {
 		return ctrl.Result{}, err
-	} else if !sessionExclusivelyOwnsResource(&service, &session) {
+	}
+	if !sessionExclusivelyOwnsResource(&service, &session) {
 		if err := r.deleteOwnedSessionResourcesAfterVerifiedDependencies(ctx, &session, "ServiceOwnershipConflict", "deterministic session Service has an unexpected owner"); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -478,14 +489,25 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 		return ctrl.Result{}, err
 	}
 	var pod corev1.Pod
-	if err := r.Get(ctx, types.NamespacedName{Namespace: session.Namespace, Name: podName}, &pod); apierrors.IsNotFound(err) {
+	podKey := types.NamespacedName{Namespace: session.Namespace, Name: podName}
+	if err := r.Get(ctx, podKey, &pod); apierrors.IsNotFound(err) {
 		pod = desiredPod
-		if err := r.Create(ctx, &pod); err != nil && !apierrors.IsAlreadyExists(err) {
-			return ctrl.Result{}, err
+		if err := r.Create(ctx, &pod); err != nil {
+			if !apierrors.IsAlreadyExists(err) {
+				return ctrl.Result{}, err
+			}
+			reader := r.APIReader
+			if reader == nil {
+				reader = r.Client
+			}
+			if err := reader.Get(ctx, podKey, &pod); err != nil {
+				return ctrl.Result{}, err
+			}
 		}
 	} else if err != nil {
 		return ctrl.Result{}, err
-	} else if !sessionExclusivelyOwnsResource(&pod, &session) {
+	}
+	if !sessionExclusivelyOwnsResource(&pod, &session) {
 		if err := r.deleteOwnedSessionResourcesAfterVerifiedDependencies(ctx, &session, "PodOwnershipConflict", "deterministic session Pod has an unexpected owner"); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -712,6 +734,7 @@ func (r *SessionReconciler) reconcileDelete(ctx context.Context, session *cluste
 		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: SessionServiceName(session), Namespace: session.Namespace}},
 	}
 	existing := make([]client.Object, 0, len(objects))
+	var ownershipConflict client.Object
 	for _, object := range objects {
 		err := r.Get(ctx, client.ObjectKeyFromObject(object), object)
 		if apierrors.IsNotFound(err) {
@@ -721,17 +744,10 @@ func (r *SessionReconciler) reconcileDelete(ctx context.Context, session *cluste
 			return ctrl.Result{}, err
 		}
 		if !sessionExclusivelyOwnsResource(object, session) {
-			before := session.Status
-			if session.Status.Conditions != nil {
-				before.Conditions = append([]metav1.Condition(nil), session.Status.Conditions...)
+			if ownershipConflict == nil {
+				ownershipConflict = object
 			}
-			meta.SetStatusCondition(&session.Status.Conditions, condition("Available", metav1.ConditionFalse, "CleanupOwnershipConflict", fmt.Sprintf("deterministic %T is not controlled by this session", object), session.Generation))
-			if !reflect.DeepEqual(before, session.Status) {
-				if err := r.Status().Update(ctx, session); err != nil {
-					return ctrl.Result{}, err
-				}
-			}
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+			continue
 		}
 		existing = append(existing, object)
 	}
@@ -741,6 +757,19 @@ func (r *SessionReconciler) reconcileDelete(ctx context.Context, session *cluste
 				return ctrl.Result{}, err
 			}
 		}
+	}
+	if ownershipConflict != nil {
+		before := session.Status
+		if session.Status.Conditions != nil {
+			before.Conditions = append([]metav1.Condition(nil), session.Status.Conditions...)
+		}
+		meta.SetStatusCondition(&session.Status.Conditions, condition("Available", metav1.ConditionFalse, "CleanupOwnershipConflict", fmt.Sprintf("deterministic %T is not controlled by this session", ownershipConflict), session.Generation))
+		if !reflect.DeepEqual(before, session.Status) {
+			if err := r.Status().Update(ctx, session); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 	if len(existing) > 0 {
 		return ctrl.Result{RequeueAfter: time.Second}, nil
