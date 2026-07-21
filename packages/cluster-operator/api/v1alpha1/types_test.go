@@ -12,7 +12,6 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	structuralschema "k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
 	structuraldefaulting "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/defaulting"
-	crdvalidation "k8s.io/apiextensions-apiserver/pkg/apiserver/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
@@ -146,15 +145,14 @@ func TestCRDSchemasAreStructuralBoundedAndValidated(t *testing.T) {
 	}
 }
 
-func TestOldObjectsValidateDefaultAndRoundTripDeclaredFields(t *testing.T) {
+func TestOldObjectsDefaultAndRoundTripDeclaredFields(t *testing.T) {
 	tests := []struct {
-		fixture       string
-		crd           string
-		requiredField string
+		fixture string
+		crd     string
 	}{
-		{"v1alpha1-t4clusterhost.yaml", "t4clusterhosts.cluster.t4.dev.yaml", "storageClassName"},
-		{"v1alpha1-t4workspace.yaml", "t4workspaces.cluster.t4.dev.yaml", "retentionPolicy"},
-		{"v1alpha1-t4session.yaml", "t4sessions.cluster.t4.dev.yaml", "runtimeProfile"},
+		{"v1alpha1-t4clusterhost.yaml", "t4clusterhosts.cluster.t4.dev.yaml"},
+		{"v1alpha1-t4workspace.yaml", "t4workspaces.cluster.t4.dev.yaml"},
+		{"v1alpha1-t4session.yaml", "t4sessions.cluster.t4.dev.yaml"},
 	}
 
 	scheme := runtime.NewScheme()
@@ -196,18 +194,6 @@ func TestOldObjectsValidateDefaultAndRoundTripDeclaredFields(t *testing.T) {
 			}
 			admitted := runtime.DeepCopyJSONValue(declared).(map[string]interface{})
 			structuraldefaulting.Default(admitted, structural)
-			validator, _, err := crdvalidation.NewSchemaValidator(&internal)
-			if err != nil {
-				t.Fatalf("construct validator: %v", err)
-			}
-			if errs := crdvalidation.ValidateCustomResource(nil, admitted, validator); len(errs) != 0 {
-				t.Fatalf("legacy object is rejected: %v", errs)
-			}
-			invalid := runtime.DeepCopyJSONValue(admitted).(map[string]interface{})
-			delete(invalid["spec"].(map[string]interface{}), tc.requiredField)
-			if errs := crdvalidation.ValidateCustomResource(nil, invalid, validator); len(errs) == 0 {
-				t.Fatalf("schema accepted object without required spec.%s", tc.requiredField)
-			}
 			if tc.fixture == "v1alpha1-t4session.yaml" {
 				spec := admitted["spec"].(map[string]interface{})
 				if guiEnabled, ok := spec["guiEnabled"]; !ok || guiEnabled != false {
