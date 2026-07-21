@@ -26,7 +26,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: {{ printf "%s-server" (include "t4-cluster.fullname" .) | quote }}
+                name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server") | quote }}
                 port:
                   name: websocket
 {{- end }}

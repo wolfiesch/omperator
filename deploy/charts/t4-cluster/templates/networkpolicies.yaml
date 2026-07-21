@@ -2,7 +2,7 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ printf "%s-default-deny" (include "t4-cluster.fullname" .) | quote }}
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "default-deny") | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 spec:
@@ -14,7 +14,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ printf "%s-dns" (include "t4-cluster.fullname" .) | quote }}
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "dns") | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 spec:
@@ -35,7 +35,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ printf "%s-controller-api" (include "t4-cluster.fullname" .) | quote }}
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "controller-api") | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 spec:
@@ -56,7 +56,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ printf "%s-server-egress" (include "t4-cluster.fullname" .) | quote }}
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server-egress") | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 spec:
@@ -105,7 +105,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ printf "%s-session-host" (include "t4-cluster.fullname" .) | quote }}
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "session-host") | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 spec:
@@ -155,7 +155,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ printf "%s-gateway-ingress" (include "t4-cluster.fullname" .) | quote }}
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "gateway-ingress") | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 spec:
@@ -180,7 +180,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ printf "%s-observability" (include "t4-cluster.fullname" .) | quote }}
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "observability") | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 spec:

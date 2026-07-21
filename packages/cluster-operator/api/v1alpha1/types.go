@@ -47,22 +47,16 @@ func ValidInfrastructurePhase(value InfrastructurePhase) bool {
 	}
 }
 
-type ClusterServerProjectionSpec struct {
-	MaxWorkspaces int32 `json:"maxWorkspaces,omitempty"`
-	ResyncSeconds int32 `json:"resyncSeconds,omitempty"`
-}
-
 type CIProviderReferences struct {
 	SecretRef              *corev1.LocalObjectReference `json:"secretRef,omitempty"`
 	ConfigMapRef           corev1.LocalObjectReference  `json:"configMapRef"`
 	ServiceAccountAudience string                       `json:"serviceAccountAudience,omitempty"`
 }
 type T4ClusterHostSpec struct {
-	StorageClassName string                      `json:"storageClassName"`
-	RuntimeProfiles  []string                    `json:"runtimeProfiles"`
-	Projection       ClusterServerProjectionSpec `json:"projection,omitempty"`
-	CIProvider       *CIProviderReferences       `json:"ciProvider,omitempty"`
-	AllowedOrigins   []string                    `json:"allowedOrigins,omitempty"`
+	StorageClassName string                `json:"storageClassName"`
+	RuntimeProfiles  []string              `json:"runtimeProfiles"`
+	CIProvider       *CIProviderReferences `json:"ciProvider,omitempty"`
+	AllowedOrigins   []string              `json:"allowedOrigins,omitempty"`
 }
 
 type T4ClusterHostStatus struct {

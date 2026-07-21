@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -67,6 +68,55 @@ func TestEnabledChartRendersHARestrictedWorkloads(t *testing.T) {
 	}
 	if strings.Contains(output, "kind: PersistentVolumeClaim") || strings.Contains(output, "nfs:") || strings.Contains(output, "hostPath:") {
 		t.Fatal("portable chart rendered storage backend or workload PVC")
+	}
+}
+
+func TestLongReleaseNamesRenderDNSLabelResourceNames(t *testing.T) {
+	releaseName := strings.Repeat("r", 53)
+	output := helmTemplateRelease(t, releaseName, append(enabledValues(),
+		"--set", "ingress.enabled=true",
+		"--set-string", "ingress.className=tailscale",
+		"--set-string", "ingress.host=operator.example.ts.net",
+		"--set", "observability.serviceMonitor.enabled=true",
+		"--set", "observability.prometheusRule.enabled=true",
+	)...)
+	dnsLabel := regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
+	requiredSuffixes := []string{
+		"controller",
+		"server",
+		"metrics",
+		"controller-metrics",
+		"session",
+		"session-token-reviewer",
+		"storage-reader",
+	}
+	foundSuffixes := make(map[string]bool, len(requiredSuffixes))
+	for _, document := range strings.Split(output, "\n---") {
+		var object struct {
+			Kind     string `json:"kind"`
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+		}
+		if err := yaml.Unmarshal([]byte(document), &object); err != nil {
+			t.Fatalf("decode rendered object: %v\n%s", err, document)
+		}
+		if object.Kind == "" {
+			continue
+		}
+		if len(object.Metadata.Name) > 63 || !dnsLabel.MatchString(object.Metadata.Name) {
+			t.Fatalf("rendered %s metadata.name %q is not a DNS label of at most 63 characters", object.Kind, object.Metadata.Name)
+		}
+		for _, suffix := range requiredSuffixes {
+			if strings.HasSuffix(object.Metadata.Name, "-"+suffix) {
+				foundSuffixes[suffix] = true
+			}
+		}
+	}
+	for _, suffix := range requiredSuffixes {
+		if !foundSuffixes[suffix] {
+			t.Fatalf("long release render lacks a metadata.name preserving suffix %q", suffix)
+		}
 	}
 }
 
@@ -186,6 +236,41 @@ func TestNumericDNSReferencesStayQuoted(t *testing.T) {
 	)...)
 	host := documentContainingKind(t, output, "T4ClusterHost", "name: \"123\"")
 	assertContains(t, host, "storageClassName: \"456\"")
+}
+
+func TestClusterHostDoesNotAdvertiseIgnoredProjectionConfiguration(t *testing.T) {
+	root := repoRoot(t)
+	output := helmTemplate(t, enabledValues()...)
+	host := documentContainingKind(t, output, "T4ClusterHost", "name: \"t4-cluster\"")
+	for _, ignored := range []string{"projection:", "maxWorkspaces", "resyncSeconds"} {
+		if strings.Contains(host, ignored) {
+			t.Fatalf("rendered T4ClusterHost advertises ignored configuration %q", ignored)
+		}
+	}
+
+	crdRaw := mustRead(t, filepath.Join(root, "deploy", "charts", "t4-cluster", "crds", "t4clusterhosts.cluster.t4.dev.yaml"))
+	var crd apiextensionsv1.CustomResourceDefinition
+	if err := yaml.Unmarshal([]byte(crdRaw), &crd); err != nil {
+		t.Fatalf("decode cluster host CRD: %v", err)
+	}
+	spec := crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"]
+	if _, ok := spec.Properties["projection"]; ok {
+		t.Fatal("T4ClusterHost CRD exposes ignored spec.projection")
+	}
+
+	for _, path := range []string{
+		filepath.Join(root, "deploy", "charts", "t4-cluster", "values.yaml"),
+		filepath.Join(root, "deploy", "charts", "t4-cluster", "values.schema.json"),
+		filepath.Join(root, "deploy", "charts", "t4-cluster", "templates", "clusterhost.yaml"),
+		filepath.Join(root, "packages", "cluster-operator", "api", "v1alpha1", "types.go"),
+	} {
+		content := strings.ToLower(mustRead(t, path))
+		for _, name := range []string{"projection", "maxworkspaces", "resyncseconds"} {
+			if strings.Contains(content, name) {
+				t.Fatalf("%s advertises ignored cluster projection configuration %q", path, name)
+			}
+		}
+	}
 }
 
 func TestDNSAndSourceSelectorsAreConfigurableAndReleaseScoped(t *testing.T) {
@@ -605,7 +690,12 @@ func TestSessionEntrypointFailsClosedBeforeGUIWithoutPrivateOMPInputs(t *testing
 
 func helmTemplate(t *testing.T, extra ...string) string {
 	t.Helper()
-	args := []string{"template", "release-name", filepath.Join(repoRoot(t), "deploy", "charts", "t4-cluster"), "--namespace", "t4-system"}
+	return helmTemplateRelease(t, "release-name", extra...)
+}
+
+func helmTemplateRelease(t *testing.T, releaseName string, extra ...string) string {
+	t.Helper()
+	args := []string{"template", releaseName, filepath.Join(repoRoot(t), "deploy", "charts", "t4-cluster"), "--namespace", "t4-system"}
 	args = append(args, extra...)
 	command := exec.Command("helm", args...)
 	output, err := command.CombinedOutput()
