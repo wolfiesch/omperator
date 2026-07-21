@@ -105,6 +105,8 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, request ctrl.Reques
 		return ctrl.Result{}, err
 	} else if !workspaceOwnsPVC(&workspace, &pvc) {
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", "PVCOwnershipConflict", "deterministic workspace PVC does not belong to this workspace")
+	} else if pvc.Spec.StorageClassName != nil && *pvc.Spec.StorageClassName != storageClassName {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", ReasonStorageClassMismatch, fmt.Sprintf("workspace PVC uses StorageClass %q instead of host-selected %q; data-bearing PVCs are never recreated automatically", *pvc.Spec.StorageClassName, storageClassName))
 	} else if workspace.Spec.RetentionPolicy == clusterv1alpha1.RetentionPolicyRetain && metav1.IsControlledBy(&pvc, &workspace) {
 		before := pvc.DeepCopy()
 		pvc.OwnerReferences = removeWorkspaceOwnerReference(pvc.OwnerReferences, workspace.UID)
@@ -126,6 +128,7 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, request ctrl.Reques
 	workspace.Status.PVCPhase = pvc.Status.Phase
 	capacity := pvc.Status.Capacity[corev1.ResourceStorage]
 	workspace.Status.Capacity = capacity.DeepCopy()
+	meta.SetStatusCondition(&workspace.Status.Conditions, condition("HostReady", metav1.ConditionTrue, "HostResolved", "referenced T4ClusterHost is available", workspace.Generation))
 	meta.SetStatusCondition(&workspace.Status.Conditions, condition("StorageReady", metav1.ConditionTrue, ReasonStorageReady, "RWX StorageClass and workspace PVC are accepted", workspace.Generation))
 	switch pvc.Status.Phase {
 	case corev1.ClaimBound:
@@ -266,6 +269,9 @@ func (r *WorkspaceReconciler) updateWorkspaceFailure(ctx context.Context, worksp
 	original.Capacity = workspace.Status.Capacity.DeepCopy()
 	if workspace.Status.Conditions != nil {
 		original.Conditions = append([]metav1.Condition(nil), workspace.Status.Conditions...)
+	}
+	if conditionType != "HostReady" {
+		meta.SetStatusCondition(&workspace.Status.Conditions, condition("HostReady", metav1.ConditionTrue, "HostResolved", "referenced T4ClusterHost is available", workspace.Generation))
 	}
 	workspace.Status.ObservedGeneration = workspace.Generation
 	workspace.Status.Phase = clusterv1alpha1.InfrastructureFailed

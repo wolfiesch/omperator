@@ -1316,7 +1316,7 @@ func TestSessionDependencyRevocationCleansOwnedResourcesAndConvergesAfterRestart
 			workspace.Status.PVCName = "workspace-a-data"
 			pvc := &corev1.PersistentVolumeClaim{
 				ObjectMeta: metav1.ObjectMeta{Name: workspace.Status.PVCName, Namespace: "team"},
-				Spec:       corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
+				Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: ptr("portable-rwx"), AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
 				Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
 			}
 			session := testSession()

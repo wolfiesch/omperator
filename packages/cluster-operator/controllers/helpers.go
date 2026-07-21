@@ -18,6 +18,7 @@ import (
 const (
 	ReasonStorageClassNotFound = "StorageClassNotFound"
 	ReasonStorageClassNotRWX   = "StorageClassNotRWX"
+	ReasonStorageClassMismatch = "StorageClassMismatch"
 	ReasonStorageReady         = "StorageClassSupportsRWX"
 )
 
