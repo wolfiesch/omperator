@@ -24,12 +24,17 @@ OMP owns the authority bridge and runtime behavior described in ADR-013. T4 owns
 wire contract, remote policy, projections, and client experience. A published T4 release still pins
 one exact compatible OMP artifact.
 
+The migration target is one T4-owned OMP runtime-adapter boundary reused by the local T4 Host and
+future T4 Nodes. It operates official pinned OMP through public RPC, SDK, and extension seams and may
+load an optional separately versioned T4 plugin. The released Lycaon bridge remains a compatibility
+implementation while that path is proven, not a reason for local and Node integrations to diverge.
+
 ## Planned Hub paths
 
 | Lane | Reserved scope | Boundary |
 |---|---|---|
 | Hub | Future `apps/hub/**` and `packages/hub-*/**` | Owns durable product state and Hub Wire; does not write workspaces directly. |
-| Node/runtime | Future `apps/node/**`, `packages/runtime-wire/**`, and `packages/omp-runtime-adapter/**` | Owns OMP lifecycle and workspace operations; does not connect to the Hub database. |
+| Node/runtime | Future `apps/node/**`, `packages/runtime-wire/**`, and shared `packages/omp-runtime-adapter/**` | Owns the official OMP seam, capability reporting, optional T4-plugin loading, lifecycle, and workspace operations for local Hosts and Nodes; does not connect to the Hub database or reimplement OMP behavior. |
 | Client | A provider boundary selected during contract work | Consumes Hub Wire; does not consume Runtime Wire or reconstruct OMP truth. |
 | Infrastructure | Future deployment path selected as experiments mature | Packages behavior without quietly redefining command or ownership semantics. |
 
@@ -52,8 +57,10 @@ revisions, and loading, empty, stale, reconnecting, denied, indeterminate, and o
 client does not create a shadow schema or present unavailable capabilities as working.
 
 Runtime-to-Hub handoff includes the pinned OMP version, acceptance and replay behavior, checkpoint
-contents, cancellation behavior, failure ambiguity, and executable contract fixtures. The Hub does
-not infer acceptance from dispatch alone.
+contents, cancellation behavior, failure ambiguity, executable contract fixtures, command execution
+surfaces, plugin reach, plan/goal API availability, settings and lock authority, and the disposition
+of every required fork patch. The Hub does not infer acceptance from dispatch alone. Clients do not
+present a recognized terminal-only command as executable or send it to the model as ordinary text.
 
 Every T3-derived port keeps its import record. Security-sensitive logs and fixtures remain bounded
 and redacted. The active Hub work and evidence links live in

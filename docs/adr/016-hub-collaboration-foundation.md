@@ -42,6 +42,37 @@ should see the same product behavior. A normal remote dev box can run a lightwei
 becoming a Kubernetes cluster. A managed worker pool may add Kubernetes after the runtime behavior
 is proven.
 
+### One official-OMP adapter for local Hosts and Nodes
+
+The OMP runtime adapter is not Hub-only. The existing local T4 Host and a future T4 Node should use
+the same adapter boundary so T4 does not maintain separate local and distributed integrations.
+
+```text
+local T4 Host ---------+
+                       |
+                       v
+                OMP runtime adapter -> official pinned OMP + optional T4 plugin
+                       ^
+                       |
+T4 Hub -> T4 Node -----+
+```
+
+The adapter starts and supervises official OMP, translates public RPC, SDK, and extension behavior,
+and reports exactly which capabilities are available. An optional separately versioned T4 plugin
+may supply host-wide metadata or operations that official OMP exposes through its public extension
+surface. T4 clients continue to speak T4 protocols and do not depend on OMP terminal presentation.
+
+The released Lycaon authority bridge remains a compatible implementation while this official-OMP
+path is proven. It is not the desired permanent reason to maintain a second OMP product. If an
+important operation is not available through public OMP seams, record it as unsupported, prefer a
+small generic upstream API addition, and keep any temporary fork patch narrow and independently
+tracked.
+
+Command discovery must distinguish existence from executability. The adapter reports whether a
+command works through a typed T4 action, a verified headless OMP handler, only the terminal UI, or
+not at all. A recognized terminal-only command is rejected with a clear reason instead of silently
+becoming ordinary model prompt text.
+
 ### Portable sessions with one active owner
 
 A session is not permanently identified by one physical machine. Its durable parts may be restored
@@ -110,7 +141,11 @@ ready to converge or when a behavior is ready to be enabled; they do not require
 until the previous item is complete.
 
 1. **Official OMP seam:** learn the real acceptance identity, event replay, cancellation, checkpoint
-   contents, and restart behavior of an unmodified pinned OMP release.
+   contents, restart behavior, command execution surfaces, extension/plugin reach, plan and goal
+   controls, settings, provider authentication, session discovery, and lock behavior of an
+   unmodified pinned OMP release. Identify what the shared adapter can provide directly, what needs
+   an optional T4 plugin, what needs a small generic upstream seam, and which current fork patches
+   can be retired.
 2. **Contract draft:** keep bounded Hub Wire and Runtime Wire messages, command states, epochs,
    cursors, and failure results in a versioned draft that can change as the OMP evidence arrives.
 3. **Physical vertical slice:** connect the smallest useful pieces early, then grow it until one
@@ -133,8 +168,8 @@ Work is divided by authority rather than by screen. These are coordination defau
 file locks:
 
 - the Hub lane owns durable product state, command and ownership state machines, and Hub Wire;
-- the Node/runtime lane owns the official OMP seam, process lifecycle, workspaces, checkpoints, and
-  Runtime Wire;
+- the Node/runtime lane owns the shared official OMP adapter, process lifecycle, workspaces,
+  checkpoints, and Runtime Wire; the adapter is reusable by the local T4 Host and future Nodes;
 - the client lane consumes Hub Wire through a provider boundary and does not reach into Hub storage
   or Runtime Wire;
 - the infrastructure lane packages proven behavior and does not define command or ownership
@@ -151,6 +186,8 @@ shared change first. The shared work tracker is
   Host path before the Hub is proven.
 - Ordinary remote dev boxes stay lightweight; managed pools can add stronger scheduling and storage
   when users need them.
+- Local and distributed T4 installations converge on one official-OMP adapter instead of growing
+  separate runtime integrations.
 - The hardest uncertainties are tested early while Hub, Node, client, and infrastructure prototypes
   continue in parallel.
 - Portable recovery requires explicit storage fencing and honest treatment of in-flight work.

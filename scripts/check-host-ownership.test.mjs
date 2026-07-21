@@ -42,6 +42,8 @@ test("planning documents describe the released T4-owned host boundary", () => {
   assert.doesNotMatch(brief, /OMP `packages\/appserver`/u);
   assert.match(ownership, /packages\/host-wire/u);
   assert.match(ownership, /packages\/host-service/u);
+  assert.match(brief, /shared OMP runtime adapter/u);
+  assert.match(ownership, /reused by the local T4 Host and\s+future T4 Nodes/u);
   assert.doesNotMatch(ownership, /OMP `packages\/appserver`/u);
 });
 

@@ -42,6 +42,13 @@ checkpoints in [`ADR-016`](docs/adr/016-hub-collaboration-foundation.md). Shared
 The Hub contracts are independent of the client framework and deployment scheduler. A normal remote
 dev box does not require Kubernetes or shared cluster storage merely to participate.
 
+The local T4 Host and future T4 Nodes should converge on one shared OMP runtime adapter that operates
+official pinned OMP through public RPC, SDK, and extension seams. The currently released Lycaon
+authority bridge remains supported while that path is proven, but T4 does not plan to grow separate
+local and distributed OMP integrations. Capabilities unavailable through official OMP are reported
+honestly, supplied by an optional narrow T4 plugin when public extension APIs allow it, or proposed
+as small generic upstream seams.
+
 ## Planned package boundaries
 
 - `apps/desktop`: Electron main/preload, packaging, updates, OS integration.
@@ -54,6 +61,7 @@ dev box does not require Kubernetes or shared cluster storage merely to particip
 - `packages/client`: connection, replay, cache, optimistic-state rules, host/session stores, and strictly decoded host-search coordinators.
 - `packages/remote`: remote target discovery, identity pinning, pairing, and transport helpers.
 - `packages/service-manager`: desktop-side T4 Host installation and lifecycle support.
+- future `packages/omp-runtime-adapter`: shared official-OMP lifecycle, capability, and translation boundary for local T4 Hosts and T4 Nodes.
 - `packages/ui`: T3-derived design primitives, tokens, icons, motion, virtualization.
 - `packages/fixture-server`: deterministic seeded sessions, faults, and load scenarios.
 - OMP authority bridge: versioned runtime boundary for session persistence, project roots, locks, workers, configuration, credentials, tools, and execution.

@@ -47,11 +47,11 @@ H8 standard Node    H9 managed pool proof
 
 | ID | Status | Scope | Useful finish signal | Converges with | Lead | Branch/PR |
 |---|---|---|---|---|---|---|
-| H1 | Ready | Explore the official pinned OMP seam: prompt acceptance identity, replay cursor, cancellation, checkpoint contents, restart, and ambiguous disconnect behavior. | Reproducible harness, useful protocol fixtures, and a short supported/unsupported note. | H2, H4 | Unassigned | — |
-| H2 | Ready | Draft the first Hub Wire and Runtime Wire contracts, command state machine, owner epoch rules, cursors, bounds, and version negotiation. | Executable draft decoders and representative frames that can evolve with H1. | H1, H3, H4, H5 | Unassigned | — |
+| H1 | Ready | Explore unmodified official pinned OMP: prompt acceptance identity, replay, cancellation, checkpoints, restart, RPC/SDK/plugin coverage, slash-command execution surfaces, plan/goal controls, settings, provider auth, discovery, locks, and ambiguous disconnects. Classify current fork patches as adapter, optional plugin, small upstream seam, temporary compatibility patch, or removable. | Reproducible harness, protocol fixtures, a capability manifest, and a supported/unsupported report that names the public seam and fork disposition for each audited behavior. | H2, H4 | Unassigned | — |
+| H2 | Ready | Draft the first Hub Wire and Runtime Wire contracts, command state machine, owner epoch rules, cursors, bounds, version negotiation, and normalized capability descriptions including typed, headless, terminal-only, and unavailable execution. | Executable draft decoders and representative frames that can evolve with H1 without presenting unavailable behavior as working. | H1, H3, H4, H5 | Unassigned | — |
 | H3 | Ready | Prototype the Hub command ledger, dispatch queue, session/Node registry, event replay, authentication boundary, and fake runtime. | Focused state-machine tests for the paths implemented so far. | H2, H6 | Unassigned | — |
-| H4 | Ready | Prototype Node registration, pinned OMP lifecycle, command dispatch, checkpoint reporting, workspace operations, epoch rejection, and fake Hub. | Runtime tests against the current draft contract and available OMP behavior. | H1, H2, H6 | Unassigned | — |
-| H5 | Ready | Add a Hub target behind the T4 client provider boundary without coupling UI code to Hub storage or Runtime Wire. | Fixture-driven client states for the behaviors currently implemented. | H2, H6 | Unassigned | — |
+| H4 | Ready | Prototype the shared official-OMP runtime adapter so both the local T4 Host and a Node can reuse pinned OMP lifecycle, command dispatch, capability reporting, optional T4-plugin loading, checkpoints, workspace operations, epoch rejection, and a fake Hub. | Runtime tests prove the same adapter can serve local-Host and Node callers without private OMP source imports or a Hub database dependency. | H1, H2, H6 | Unassigned | — |
+| H5 | Ready | Add a Hub target behind the T4 client provider boundary and consume normalized runtime capabilities without coupling UI code to Hub storage, Runtime Wire, or terminal presentation. | Fixture-driven client states show native, headless, terminal-handoff, and unavailable behaviors with a user-visible reason. | H2, H6 | Unassigned | — |
 | H6 | Waiting | Join the smallest usable Hub, Node, and client pieces early; grow toward reconnecting one official OMP session. | Repeatable end-to-end command and reconnect path with redacted identifiers. | H3, H4, H5 | Unassigned | — |
 | H7 | Ready | Build fault-injection tools for ambiguous failures, ownership transfer, write fencing, backups, and Git recovery as the relevant pieces appear. | Failure notes and regression tests for each implemented recovery behavior. | H3, H4, H6 | Unassigned | — |
 | H8 | Ready | Package an early lightweight Node for an ordinary remote Mac or Linux dev box and iterate on install/update ergonomics. | A repeatable development install and safe stopped-session behavior. | H4, H6 | Unassigned | — |
@@ -63,7 +63,7 @@ H8 standard Node    H9 managed pool proof
 | Lane | Owns | Does not own | Expected path boundary |
 |---|---|---|---|
 | Hub | Durable product state, Hub Wire server, commands, epochs, events, auth decisions | OMP internals, direct workspace writes, client UI | Future `apps/hub/**` and `packages/hub-*/**` |
-| Node/runtime | Runtime Wire, official OMP adapter, process lifecycle, checkpoint reporting, workspace/Git operations | Hub database, product permissions, client UI | Future `apps/node/**`, `packages/runtime-wire/**`, and `packages/omp-runtime-adapter/**` |
+| Node/runtime | Runtime Wire, the shared official OMP adapter used by local Hosts and Nodes, process lifecycle, capability reporting, optional T4-plugin loading, checkpoint reporting, workspace/Git operations | Hub database, product permissions, client UI, or a second OMP product | Future `apps/node/**`, `packages/runtime-wire/**`, and `packages/omp-runtime-adapter/**` |
 | Client | Hub provider, disposable projections, connection and recovery presentation | Hub database, Runtime Wire, OMP reconstruction | Existing client app plus a narrow provider package selected in H2 |
 | Infrastructure | Packaging, scheduler/operator, storage, backups, secrets, diagnostics | Product command semantics and runtime authority rules | Future `deploy/hub/**` or another path selected in H9 |
 | Integration | Shared schemas, root manifests, lockfile, migration allocation, final wiring | Long-running feature implementation inside another lane | Small, reviewed edits across shared paths |
@@ -111,6 +111,8 @@ The first integrated milestone is intentionally narrow:
 5. The client receives the result, disconnects, reconnects, and rebuilds the same view.
 6. Repeating the run with a crash immediately after dispatch produces `indeterminate` unless OMP can
    prove durable acceptance. T4 does not replay the command automatically.
+7. The adapter executes one verified headless OMP command and clearly rejects one recognized
+   terminal-only command without sending it to the model as ordinary prompt text.
 
 ## Not required for early progress
 
@@ -119,4 +121,6 @@ The first integrated milestone is intentionally narrow:
 - mandatory Kubernetes or shared storage for a standard Node;
 - committing the product to CephFS, MinIO, or a full observability stack before comparative spikes;
 - coupling the Hub architecture to one client framework;
+- complete plan, goal, plugin, and extension parity in the first physical slice; truthful capability
+  reporting is required even when the capability itself is not yet implemented;
 - production credentials or broad deployment authority for early CI/CD event prototypes.
