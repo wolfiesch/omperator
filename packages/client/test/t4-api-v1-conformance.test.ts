@@ -405,6 +405,41 @@ describe("generated T4 API v1 client conformance", () => {
     })).response.status).toBe(200);
   });
 
+  it("replays exact PATCH results after an intervening revision", async () => {
+    const workspaceService = new T4ApiV1ConformanceService();
+    const workspaceClient = createT4ApiClient({ baseUrl: workspaceService.origin, credential: "token-a", majorVersion: 1, fetch: workspaceService.fetch });
+    requireData(await workspaceClient.http.POST("/v1/workspaces", {
+      body: { name: "original" }, params: { header: idempotencyHeaders("workspace-replay-setup") },
+    }));
+    const originalWorkspace = requireData(await workspaceClient.http.PATCH("/v1/workspaces/{workspaceId}", {
+      body: { name: "first" }, params: { header: mutationHeaders(1, "workspace-replay-original"), path: { workspaceId: "ws-1" } },
+    }));
+    requireData(await workspaceClient.http.PATCH("/v1/workspaces/{workspaceId}", {
+      body: { name: "second" }, params: { header: mutationHeaders(2, "workspace-replay-intervening"), path: { workspaceId: "ws-1" } },
+    }));
+    const workspaceReplay = await workspaceClient.http.PATCH("/v1/workspaces/{workspaceId}", {
+      body: { name: "first" }, params: { header: mutationHeaders(1, "workspace-replay-original"), path: { workspaceId: "ws-1" } },
+    });
+    expect(workspaceReplay.response.status).toBe(200);
+    expect(workspaceReplay.response.headers.get("Idempotency-Replayed")).toBe("true");
+    expect(workspaceReplay.data).toEqual(originalWorkspace);
+
+    const sessionService = new T4ApiV1ConformanceService();
+    const sessionClient = await seededClient(sessionService, "patch-replay-intervening");
+    const originalSession = requireData(await sessionClient.http.PATCH("/v1/sessions/{sessionId}", {
+      body: { title: "first" }, params: { header: mutationHeaders(1, "session-replay-original"), path: { sessionId: "ses-1" } },
+    }));
+    requireData(await sessionClient.http.PATCH("/v1/sessions/{sessionId}", {
+      body: { title: "second" }, params: { header: mutationHeaders(2, "session-replay-intervening"), path: { sessionId: "ses-1" } },
+    }));
+    const sessionReplay = await sessionClient.http.PATCH("/v1/sessions/{sessionId}", {
+      body: { title: "first" }, params: { header: mutationHeaders(1, "session-replay-original"), path: { sessionId: "ses-1" } },
+    });
+    expect(sessionReplay.response.status).toBe(200);
+    expect(sessionReplay.response.headers.get("Idempotency-Replayed")).toBe("true");
+    expect(sessionReplay.data).toEqual(originalSession);
+  });
+
   it("validates creates before idempotency and round-trips valid labels", async () => {
     const invalidLabels = [
       null, [], Object.fromEntries(Array.from({ length: 33 }, (_, index) => [`key-${index}`, "value"])),
@@ -463,6 +498,20 @@ describe("generated T4 API v1 client conformance", () => {
   it("validates If-Match syntax before PATCH idempotency lookup", async () => {
     const service = new T4ApiV1ConformanceService();
     const client = createT4ApiClient({ baseUrl: service.origin, credential: "token-a", majorVersion: 1, fetch: service.fetch });
+    for (const [index, path] of ["/v1/workspaces/missing", "/v1/sessions/missing"].entries()) {
+      for (const ifMatch of [undefined, "invalid"]) {
+        const response = await service.fetch(`${service.origin}${path}`, {
+          method: "PATCH",
+          headers: {
+            Authorization: "Bearer token-a", "T4-API-Version": "1", "Idempotency-Key": `missing-if-match-${index}-${ifMatch ?? "absent"}`, "Content-Type": "application/json",
+            ...(ifMatch === undefined ? {} : { "If-Match": ifMatch }),
+          },
+          body: path.includes("workspaces") ? '{"name":"updated"}' : '{"title":"updated"}',
+        });
+        expect(response.status).toBe(400);
+        expect((await response.json()) as unknown).toMatchObject({ error: { code: "invalid_request" } });
+      }
+    }
     requireData(await client.http.POST("/v1/workspaces", {
       body: { name: "workspace" }, params: { header: idempotencyHeaders("if-match-workspace-setup") },
     }));
@@ -504,6 +553,20 @@ describe("generated T4 API v1 client conformance", () => {
     expect(cacheBodyCancelled).toBe(true);
   });
 
+  it("requires no-store through the exported HTTP watch operation", async () => {
+    for (const cacheControl of [undefined, "max-age=3600"]) {
+      const client = createT4ApiClient({
+        baseUrl: "https://raw-watch-cache.test", credential: "token-a", majorVersion: 1,
+        fetch: async () => new Response('data: {"type":"heartbeat","cursor":"raw","observedAt":"2026-07-21T00:00:00Z"}\n\n', { headers: {
+          "Content-Type": "text/event-stream", "T4-API-Version": "1.0", ...(cacheControl === undefined ? {} : { "Cache-Control": cacheControl }),
+        } }),
+      });
+      await expect(client.http.GET("/v1/sessions/{sessionId}/events", {
+        params: { header: VERSION_HEADERS, path: { sessionId: "ses-1" }, query: { maxEvents: 1, heartbeatSeconds: 5 } },
+      })).rejects.toMatchObject({ status: 502, retryable: false });
+    }
+  });
+
   it("rejects invalid RFC 3339 calendar timestamps", async () => {
 
     for (const observedAt of [
@@ -517,6 +580,14 @@ describe("generated T4 API v1 client conformance", () => {
       });
       await expect(calendarClient.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({ status: 502, retryable: false });
     }
+  });
+
+  it("accepts an RFC 3339 leap second after applying its offset", async () => {
+    const client = createT4ApiClient({
+      baseUrl: "https://watch-leap-second.test", credential: "token-a", majorVersion: 1,
+      fetch: async () => apiResponse('data: {"type":"heartbeat","cursor":"leap","observedAt":"1990-12-31T15:59:60-08:00"}\n\n', { headers: { "Content-Type": "text/event-stream" } }),
+    });
+    await expect(client.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).resolves.toMatchObject({ value: { cursor: "leap" } });
   });
 
   it("takes a snapshot and watches bounded SSE with heartbeat, reconnect, cancellation, and typed resync", async () => {
@@ -836,12 +907,17 @@ describe("generated T4 API v1 client conformance", () => {
     }
   });
 
-  it("declares the replay response header on both conditional PATCH success responses", () => {
+  it("declares required public response headers while preserving the 401 exception", () => {
     const contract = JSON.parse(readFileSync(new URL("../../t4-api-contract/openapi.json", import.meta.url), "utf8")) as {
-      paths: Record<string, { patch?: { responses: Record<string, { $ref?: string }> } }>;
+      paths: Record<string, { patch?: { responses: Record<string, { $ref?: string }> }; get?: { responses: Record<string, { headers?: Record<string, { required?: boolean }> }> } }>;
+      components: { headers: Record<string, { required?: boolean }>; responses: Record<string, { headers?: Record<string, unknown> }> };
     };
     expect(contract.paths["/v1/workspaces/{workspaceId}"]?.patch?.responses["200"]?.$ref).toBe("#/components/responses/WorkspaceReplay");
     expect(contract.paths["/v1/sessions/{sessionId}"]?.patch?.responses["200"]?.$ref).toBe("#/components/responses/SessionReplay");
+    expect(contract.components.headers.SelectedVersion?.required).toBe(true);
+    expect(contract.components.headers.IdempotencyReplayed?.required).toBe(true);
+    expect(contract.paths["/v1/sessions/{sessionId}/events"]?.get?.responses["200"]?.headers?.["Cache-Control"]?.required).toBe(true);
+    expect(contract.components.responses.Error401?.headers?.["T4-API-Version"]).toBeUndefined();
   });
 
   it("treats malformed and oversized watch 503 envelopes as terminal protocol errors", async () => {
