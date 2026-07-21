@@ -105,12 +105,12 @@ type T4WorkspaceSpec struct {
 }
 
 type T4WorkspaceStatus struct {
-	ObservedGeneration int64               `json:"observedGeneration,omitempty"`
-	PVCName            string              `json:"pvcName,omitempty"`
-	PVCPhase           corev1.ClaimPhase   `json:"pvcPhase,omitempty"`
-	Capacity           resource.Quantity   `json:"capacity,omitempty"`
-	Phase              InfrastructurePhase `json:"phase,omitempty"`
-	Conditions         []metav1.Condition  `json:"conditions,omitempty"`
+	ObservedGeneration int64                             `json:"observedGeneration,omitempty"`
+	PVCName            string                            `json:"pvcName,omitempty"`
+	PVCPhase           corev1.PersistentVolumeClaimPhase `json:"pvcPhase,omitempty"`
+	Capacity           resource.Quantity                 `json:"capacity,omitempty"`
+	Phase              InfrastructurePhase               `json:"phase,omitempty"`
+	Conditions         []metav1.Condition                `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
