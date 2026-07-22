@@ -170,14 +170,15 @@ scripts/cluster-ci/crd-lifecycle.sh upgrade -- \
 The command performs this exact order:
 
 1. Before any cluster access, validate every complete compatibility fixture (including `status`) against the proposed structural OpenAPI schema and CEL programs with the Kubernetes apiextensions validators. The check also rejects declared fields that the structural pruner would remove.
-2. With `get` access to the three exact CRD definitions and `list` access to the corresponding namespaced T4 resources, detect which definitions already exist, enumerate every live CR for each existing definition across namespaces, and validate each complete object, including `status`, against the same proposed OpenAPI, CEL create, CEL unchanged-update, and pruning checks. A denied CRD read, denied or malformed object list, or incompatible object fails closed; an absent definition is safely empty on a fresh install.
-3. Server-side dry-run the reviewed CRDs with strict validation. Upgrades stop before any mutation if a local proposed-schema validation, live-object enumeration, or CRD dry-run fails.
-4. Apply the CRDs server-side without force conflicts.
-5. Wait for all three CRDs to report `Established`.
-6. Fetch the served `cluster.t4.dev/v1alpha1` OpenAPI v3 document three times and require every published resource schema to match the semantics generated from the proposed CRDs. Retained `Established=True` is not readiness when discovery still serves an old schema.
-7. Server-side dry-run the compatibility fixtures against the converged admission path.
-8. Require each CRD's `status.storedVersions` to be exactly `v1alpha1`.
-9. Execute the supplied Helm command, which must use `--skip-crds`.
+2. With `get` access to the three exact CRD definitions and `list` access to the corresponding namespaced T4 resources, save each installed definition, enumerate every live CR for each existing definition across namespaces, and validate each complete object, including `status`, against the same proposed OpenAPI, CEL create, CEL unchanged-update, and pruning checks. A denied CRD read, denied or malformed object list, or incompatible object fails closed; an absent definition is safely empty on a fresh install.
+3. Compare every installed schema with the candidate and enforce the additive-only contract structurally. Existing schema nodes must retain identical validation semantics; properties may only be added when optional. The version-name, served/storage, and conversion contracts must remain exactly unchanged in this lifecycle mode. This rejects removed fields, new required fields, changed defaults, tighter bounds, patterns or enums, new CEL on existing nodes, list/map topology changes, additional versions, and conversion webhooks even if the current object snapshot happens to pass.
+4. Generate a merge patch for each installed CRD from the candidate spec plus the validated object's `metadata.resourceVersion` and UID, then server-side dry-run it. For an absent definition, server-side dry-run an atomic create instead. Upgrades stop before any mutation if a local proposed-schema validation, live-object enumeration, structural compatibility check, patch generation, or server dry-run fails.
+5. Apply each guarded merge patch with field manager `t4-crd-lifecycle`, or create an absent definition. JSON merge patch uses update ownership semantics, so fields initially created by Helm do not block an additive update; the API server returns a conflict rather than overwriting a CRD that changed or was deleted and recreated after validation.
+6. Wait for all three CRDs to report `Established`.
+7. Poll the served `cluster.t4.dev/v1alpha1` OpenAPI v3 document until three consecutive observations match the semantics generated from the proposed CRDs, resetting the counter after any stale or unavailable response and failing after a bounded number of attempts. Each request has its own 10-second client timeout, so a connected but unresponsive API endpoint cannot block an attempt forever. Retained `Established=True` is not readiness when discovery still serves an old schema.
+8. Server-side dry-run the compatibility fixtures against the converged admission path.
+9. Require each CRD's `status.storedVersions` to be exactly `v1alpha1`.
+10. Execute the supplied Helm command, which must use `--skip-crds`.
 
 The corresponding administrative checks are executable independently:
 
@@ -185,33 +186,73 @@ The corresponding administrative checks are executable independently:
 (cd packages/cluster-operator && \
   go run ./cmd/crd-preflight fixtures ../../deploy/charts/t4-cluster/crds api/v1alpha1/testdata/compat)
 live_objects=$(mktemp)
-trap 'rm -f "$live_objects"' EXIT
+installed_crds=$(mktemp -d)
+merge_patches=$(mktemp -d)
+trap 'rm -f "$live_objects"; rm -rf "$installed_crds" "$merge_patches"' EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 for resource in t4clusterhosts.cluster.t4.dev t4workspaces.cluster.t4.dev t4sessions.cluster.t4.dev; do
-  installed_crd=$(kubectl get "crd/$resource" --ignore-not-found -o name)
-  if [ -z "$installed_crd" ]; then
+  installed_crd="$installed_crds/$resource.yaml"
+  kubectl get "crd/$resource" --ignore-not-found -o yaml >"$installed_crd"
+  if [ ! -s "$installed_crd" ]; then
+    rm -f "$installed_crd"
     continue
   fi
   kubectl get "$resource" --all-namespaces -o json >"$live_objects"
   (cd packages/cluster-operator && \
     go run ./cmd/crd-preflight objects ../../deploy/charts/t4-cluster/crds <"$live_objects")
 done
+(cd packages/cluster-operator && \
+  go run ./cmd/crd-preflight compatible ../../deploy/charts/t4-cluster/crds "$installed_crds")
+for resource in t4clusterhosts.cluster.t4.dev t4workspaces.cluster.t4.dev t4sessions.cluster.t4.dev; do
+  if [ -s "$installed_crds/$resource.yaml" ]; then
+    (cd packages/cluster-operator && \
+      go run ./cmd/crd-preflight patch \
+        "../../deploy/charts/t4-cluster/crds/$resource.yaml" \
+        "$installed_crds/$resource.yaml") >"$merge_patches/$resource.json"
+    kubectl patch "crd/$resource" --type=merge --dry-run=server \
+      --field-manager=t4-crd-lifecycle --patch-file="$merge_patches/$resource.json" >/dev/null
+  else
+    kubectl create --dry-run=server --validate=strict \
+      --field-manager=t4-crd-lifecycle \
+      -f "deploy/charts/t4-cluster/crds/$resource.yaml" >/dev/null
+  fi
+done
+for resource in t4clusterhosts.cluster.t4.dev t4workspaces.cluster.t4.dev t4sessions.cluster.t4.dev; do
+  if [ -s "$merge_patches/$resource.json" ]; then
+    kubectl patch "crd/$resource" --type=merge \
+      --field-manager=t4-crd-lifecycle --patch-file="$merge_patches/$resource.json"
+  else
+    kubectl create --validate=strict --field-manager=t4-crd-lifecycle \
+      -f "deploy/charts/t4-cluster/crds/$resource.yaml"
+  fi
+done
 rm -f "$live_objects"
+rm -rf "$installed_crds" "$merge_patches"
 trap - EXIT HUP INT TERM
-kubectl apply --server-side --dry-run=server --validate=strict \
-  --field-manager=t4-crd-lifecycle -f deploy/charts/t4-cluster/crds/
-kubectl apply --server-side --validate=strict \
-  --field-manager=t4-crd-lifecycle -f deploy/charts/t4-cluster/crds/
 kubectl wait --for=condition=Established --timeout=120s \
   crd/t4clusterhosts.cluster.t4.dev \
   crd/t4workspaces.cluster.t4.dev \
   crd/t4sessions.cluster.t4.dev
-for observation in 1 2 3; do
-  kubectl get --raw /openapi/v3/apis/cluster.t4.dev/v1alpha1 | \
-    (cd packages/cluster-operator && go run ./cmd/crd-preflight served ../../deploy/charts/t4-cluster/crds)
+openapi_document=$(mktemp)
+trap 'rm -f "$openapi_document"' EXIT
+observation=0
+attempt=0
+while [ "$observation" -lt 3 ] && [ "$attempt" -lt 30 ]; do
+  attempt=$((attempt + 1))
+  if kubectl get --request-timeout=10s --raw /openapi/v3/apis/cluster.t4.dev/v1alpha1 >"$openapi_document" && \
+    (cd packages/cluster-operator && \
+      go run ./cmd/crd-preflight served ../../deploy/charts/t4-cluster/crds <"$openapi_document"); then
+    observation=$((observation + 1))
+  else
+    observation=0
+  fi
+  if [ "$observation" -lt 3 ]; then sleep 2; fi
 done
+test "$observation" -eq 3
+rm -f "$openapi_document"
+trap - EXIT
 kubectl apply --dry-run=server --validate=strict --namespace default \
   -f packages/cluster-operator/api/v1alpha1/testdata/compat/
 for crd in t4clusterhosts.cluster.t4.dev t4workspaces.cluster.t4.dev t4sessions.cluster.t4.dev; do
@@ -219,7 +260,7 @@ for crd in t4clusterhosts.cluster.t4.dev t4workspaces.cluster.t4.dev t4sessions.
 done
 ```
 
-Do not rely on `helm upgrade` to change CRDs. Never use `kubectl replace --force`, `kubectl apply --force-conflicts`, delete/recreate a CRD, or alter `status.storedVersions` outside the verified migration sequence below. A preflight failure leaves the live CRDs, custom resources, controller/server workloads, and session workloads untouched. A failure after additive CRD apply but before Helm leaves the prior workloads running against the still-backward-compatible schema; investigate and rerun the gates rather than attempting CRD rollback.
+Do not rely on `helm upgrade` to change CRDs. Never use `kubectl replace --force`, delete/recreate a CRD, or apply an unguarded force-conflict update. Do not alter `status.storedVersions` outside the verified migration sequence below. A preflight failure leaves the live CRDs, custom resources, controller/server workloads, and session workloads untouched. A resource-version conflict means the validated snapshot is stale: stop, investigate the concurrent CRD change, and rerun the complete lifecycle rather than retrying only the patch. A failure after an additive CRD patch but before Helm leaves the prior workloads running against the still-backward-compatible schema; investigate and rerun the gates rather than attempting CRD rollback.
 
 ### Future `v1beta1` conversion and storage procedure
 

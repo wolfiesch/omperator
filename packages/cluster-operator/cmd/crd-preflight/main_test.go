@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -180,14 +181,14 @@ func TestValidateObjectsRejectsLiveDataOmittedFromFixtures(t *testing.T) {
 			expectedError: "proposed OpenAPI validation failed",
 		},
 		{
-			name: "status OpenAPI narrowing",
-			candidate: func(crd string) string { return crd },
+			name:        "status OpenAPI narrowing",
+			candidate:   func(crd string) string { return crd },
 			fixtureCode: "ok", fixturePhase: "Ready", liveCode: "ok", livePhase: "Legacy",
 			expectedError: "proposed OpenAPI validation failed",
 		},
 		{
-			name: "spec CEL create semantics",
-			candidate: func(crd string) string { return crd },
+			name:        "spec CEL create semantics",
+			candidate:   func(crd string) string { return crd },
 			fixtureCode: "ok", fixturePhase: "Ready", liveCode: "bad", livePhase: "Ready",
 			expectedError: "proposed CEL create validation failed",
 		},
@@ -217,14 +218,14 @@ func TestValidateObjectsRejectsLiveDataOmittedFromFixtures(t *testing.T) {
 			expectedError: "proposed CEL unchanged-update validation failed",
 		},
 		{
-			name: "spec pruning",
-			candidate: func(crd string) string { return crd },
+			name:        "spec pruning",
+			candidate:   func(crd string) string { return crd },
 			fixtureCode: "ok", fixturePhase: "Ready", liveCode: "ok", livePhase: "Ready", liveExtra: `,"removedSpec":"legacy"`,
 			expectedError: "proposed structural schema would prune declared fields",
 		},
 		{
-			name: "status pruning",
-			candidate: func(crd string) string { return crd },
+			name:        "status pruning",
+			candidate:   func(crd string) string { return crd },
 			fixtureCode: "ok", fixturePhase: "Ready", liveCode: "ok", livePhase: "Ready", liveExtra: `,"removedStatus":"legacy"`,
 			expectedError: "proposed structural schema would prune declared fields",
 		},
@@ -268,6 +269,107 @@ spec:
 	live := strings.NewReader(`{"apiVersion":"v1","kind":"WidgetList","items":[{"apiVersion":"cluster.t4.dev/v1alpha1","kind":"Widget","metadata":{"name":"live","namespace":"tenant-b"},"spec":{"code":"ok","count":9223372036854775807},"status":{"phase":"Ready"}}]}`)
 	if err := validateObjects(crds, live); err != nil {
 		t.Fatalf("ordinary Kubernetes JSON integer was rejected: %v", err)
+	}
+}
+
+func TestValidateCompatibilityRejectsNonAdditiveSchemaChanges(t *testing.T) {
+	addOptionalPhase := func(crd string) string {
+		return strings.Replace(crd, "                  enum: [Ready]", "                  enum: [Ready, Pending]", 1)
+	}
+	addOptionalProperty := func(crd string) string {
+		return strings.Replace(crd, "                code:\n                  type: string", "                legacy:\n                  type: string\n                code:\n                  type: string", 1)
+	}
+	removeRootCEL := func(crd string) string {
+		return strings.Replace(crd, "              x-kubernetes-validations:\n                - rule: self.code.startsWith('ok')\n                  message: code must start with ok\n", "", 1)
+	}
+	for _, test := range []struct {
+		name      string
+		installed string
+		proposed  string
+	}{
+		{name: "removed property", installed: addOptionalProperty(candidateCRD), proposed: candidateCRD},
+		{name: "new required property", installed: candidateCRD, proposed: strings.Replace(candidateCRD, "required: [spec]", "required: [spec, status]", 1)},
+		{name: "tighter bound", installed: strings.Replace(candidateCRD, "maxLength: 3", "maxLength: 8", 1), proposed: candidateCRD},
+		{name: "narrower enum", installed: addOptionalPhase(candidateCRD), proposed: candidateCRD},
+		{name: "changed default", installed: strings.Replace(candidateCRD, "enum: [Ready]", "enum: [Ready, Pending]\n                  default: Ready", 1), proposed: strings.Replace(candidateCRD, "enum: [Ready]", "enum: [Ready, Pending]\n                  default: Pending", 1)},
+		{name: "new CEL", installed: removeRootCEL(candidateCRD), proposed: candidateCRD},
+		{name: "changed map topology", installed: strings.Replace(candidateCRD, "              type: object\n              required: [code]", "              type: object\n              x-kubernetes-map-type: granular\n              required: [code]", 1), proposed: strings.Replace(candidateCRD, "              type: object\n              required: [code]", "              type: object\n              x-kubernetes-map-type: atomic\n              required: [code]", 1)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			proposed, installed := writeCompatibilityCRDs(t, test.proposed, test.installed)
+			if err := validateCompatibility(proposed, installed); err == nil {
+				t.Fatal("non-additive schema change was accepted")
+			}
+		})
+	}
+}
+
+func TestValidateCompatibilityRejectsVersionAndConversionChanges(t *testing.T) {
+	addedVersion := strings.Replace(candidateCRD, "  versions:\n", `  versions:
+    - name: v1beta1
+      served: false
+      storage: false
+`, 1)
+	changedConversion := strings.Replace(candidateCRD, "  versions:\n", "  conversion:\n    strategy: Webhook\n    webhook:\n      conversionReviewVersions: [v1]\n      clientConfig:\n        url: https://conversion.example.test\n  versions:\n", 1)
+	for _, test := range []struct {
+		name     string
+		proposed string
+		expect   string
+	}{
+		{name: "additional version", proposed: addedVersion, expect: "changes its version, served, or storage contract"},
+		{name: "conversion configuration", proposed: changedConversion, expect: "changes conversion configuration"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			proposed, installed := writeCompatibilityCRDs(t, test.proposed, candidateCRD)
+			err := validateCompatibility(proposed, installed)
+			if err == nil || !strings.Contains(err.Error(), test.expect) {
+				t.Fatalf("compatibility error %q does not contain %q", err, test.expect)
+			}
+		})
+	}
+}
+
+func TestValidateCompatibilityTreatsImplicitAndExplicitNoneConversionAsEqual(t *testing.T) {
+	installedCRD := strings.Replace(candidateCRD, "  versions:\n", "  conversion:\n    strategy: None\n  versions:\n", 1)
+	proposed, installed := writeCompatibilityCRDs(t, candidateCRD, installedCRD)
+	if err := validateCompatibility(proposed, installed); err != nil {
+		t.Fatalf("API-server defaulted None conversion was rejected: %v", err)
+	}
+}
+
+func TestWriteMergePatchGuardsTheValidatedInstalledCRD(t *testing.T) {
+	root := t.TempDir()
+	candidatePath := filepath.Join(root, "candidate.yaml")
+	installedPath := filepath.Join(root, "installed.yaml")
+	installed := strings.Replace(candidateCRD, "  name: widgets.cluster.t4.dev\n", "  name: widgets.cluster.t4.dev\n  uid: 11111111-2222-3333-4444-555555555555\n  resourceVersion: \"42\"\n", 1)
+	if err := os.WriteFile(candidatePath, []byte(candidateCRD), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(installedPath, []byte(installed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var output strings.Builder
+	if err := writeMergePatch(candidatePath, installedPath, &output); err != nil {
+		t.Fatal(err)
+	}
+	var patch map[string]interface{}
+	if err := json.Unmarshal([]byte(output.String()), &patch); err != nil {
+		t.Fatal(err)
+	}
+	metadata, ok := patch["metadata"].(map[string]interface{})
+	if !ok || metadata["resourceVersion"] != "42" || metadata["uid"] != "11111111-2222-3333-4444-555555555555" {
+		t.Fatalf("merge patch lacks the installed-object preconditions: %#v", patch["metadata"])
+	}
+	if _, ok := patch["spec"].(map[string]interface{}); !ok {
+		t.Fatalf("merge patch lacks the candidate spec: %#v", patch)
+	}
+}
+
+func TestValidateCompatibilityAcceptsNewOptionalProperty(t *testing.T) {
+	proposedCRD := strings.Replace(candidateCRD, "                code:\n                  type: string", "                note:\n                  type: string\n                  default: safe\n                code:\n                  type: string", 1)
+	proposed, installed := writeCompatibilityCRDs(t, proposedCRD, candidateCRD)
+	if err := validateCompatibility(proposed, installed); err != nil {
+		t.Fatalf("optional additive field was rejected: %v", err)
 	}
 }
 
@@ -358,4 +460,23 @@ func writeCandidate(t *testing.T, fixture string) (string, string) {
 		t.Fatal(err)
 	}
 	return crds, fixtures
+}
+
+func writeCompatibilityCRDs(t *testing.T, proposed, installed string) (string, string) {
+	t.Helper()
+	root := t.TempDir()
+	proposedDirectory := filepath.Join(root, "proposed")
+	installedDirectory := filepath.Join(root, "installed")
+	for _, directory := range []string{proposedDirectory, installedDirectory} {
+		if err := os.Mkdir(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(proposedDirectory, "widget.yaml"), []byte(proposed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(installedDirectory, "widget.yaml"), []byte(installed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return proposedDirectory, installedDirectory
 }
