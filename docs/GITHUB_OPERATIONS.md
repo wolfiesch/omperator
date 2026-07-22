@@ -62,10 +62,15 @@ only after ordinary review and moderation become a repeated burden.
 ## Dependencies
 
 Dependabot checks the pnpm workspace, Go cluster operator, and pinned GitHub
-Actions each week. Routine minor and patch updates are grouped by ecosystem to
-control pull-request volume. Security updates remain eligible immediately and
-must pass the same `verify` gate as product changes. Major upgrades are reviewed
-individually because they may change runtime, packaging, or protocol contracts.
+Actions. Scheduled version-update pull requests are temporarily disabled with
+`open-pull-requests-limit: 0`; GitHub's separate security-update allowance stays
+active. This prevents broad mechanical upgrades from violating toolchain,
+release-consistency, or minimum-package-age contracts while the inherited
+dependency baseline is repaired deliberately.
+
+Security updates must pass the same `verify` gate as product changes. Re-enable
+scheduled version updates one ecosystem at a time only after its current update
+set passes locally, and keep major upgrades in individual pull requests.
 
 ## CI and merges
 
