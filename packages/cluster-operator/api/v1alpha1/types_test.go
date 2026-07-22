@@ -1,8 +1,10 @@
 package v1alpha1_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -11,6 +13,7 @@ import (
 	structuralschema "k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"sigs.k8s.io/yaml"
 
 	clusterv1alpha1 "github.com/LycaonLLC/t4-code/packages/cluster-operator/api/v1alpha1"
@@ -137,6 +140,107 @@ func TestCRDSchemasAreStructuralBoundedAndValidated(t *testing.T) {
 			if !immutable {
 				t.Fatalf("%s hostRef is mutable", crd.Name)
 			}
+		}
+	}
+}
+
+func TestOldObjectsDefaultAndRoundTripDeclaredFields(t *testing.T) {
+	tests := []struct {
+		fixture string
+		crd     string
+	}{
+		{"v1alpha1-t4clusterhost.yaml", "t4clusterhosts.cluster.t4.dev.yaml"},
+		{"v1alpha1-t4workspace.yaml", "t4workspaces.cluster.t4.dev.yaml"},
+		{"v1alpha1-t4session.yaml", "t4sessions.cluster.t4.dev.yaml"},
+	}
+
+	scheme := runtime.NewScheme()
+	if err := clusterv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	decoder := serializer.NewCodecFactory(scheme).UniversalDeserializer()
+
+	for _, tc := range tests {
+		t.Run(tc.fixture, func(t *testing.T) {
+			fixtureRaw, err := os.ReadFile(filepath.Join("testdata", "compat", tc.fixture))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var declared map[string]interface{}
+			if err := yaml.Unmarshal(fixtureRaw, &declared); err != nil {
+				t.Fatalf("decode fixture: %v", err)
+			}
+
+			crdRaw, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "deploy", "charts", "t4-cluster", "crds", tc.crd))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var crd apiextensionsv1.CustomResourceDefinition
+			if err := yaml.Unmarshal(crdRaw, &crd); err != nil {
+				t.Fatalf("decode CRD: %v", err)
+			}
+			if len(crd.Spec.Versions) != 1 || crd.Spec.Versions[0].Name != "v1alpha1" || !crd.Spec.Versions[0].Served || !crd.Spec.Versions[0].Storage {
+				t.Fatalf("storage contract changed: %#v", crd.Spec.Versions)
+			}
+
+			if tc.fixture == "v1alpha1-t4session.yaml" {
+				specSchema := crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"]
+				guiSchema := specSchema.Properties["guiEnabled"]
+				if guiSchema.Default == nil || string(guiSchema.Default.Raw) != "false" {
+					t.Fatalf("guiEnabled schema default = %#v, want false", guiSchema.Default)
+				}
+			}
+
+			admittedJSON, err := json.Marshal(declared)
+			if err != nil {
+				t.Fatal(err)
+			}
+			object, gvk, err := decoder.Decode(admittedJSON, nil, nil)
+			if err != nil {
+				t.Fatalf("decode through registered v1alpha1 API: %v", err)
+			}
+			if gvk.GroupVersion() != clusterv1alpha1.GroupVersion {
+				t.Fatalf("decoded version = %s", gvk.GroupVersion())
+			}
+			roundTripJSON, err := json.Marshal(object)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var roundTripped map[string]interface{}
+			if err := json.Unmarshal(roundTripJSON, &roundTripped); err != nil {
+				t.Fatal(err)
+			}
+			assertDeclaredFieldsPreserved(t, "$", declared, roundTripped)
+		})
+	}
+}
+
+func assertDeclaredFieldsPreserved(t *testing.T, path string, declared, roundTripped interface{}) {
+	t.Helper()
+	switch expected := declared.(type) {
+	case map[string]interface{}:
+		actual, ok := roundTripped.(map[string]interface{})
+		if !ok {
+			t.Fatalf("%s changed type: got %T", path, roundTripped)
+		}
+		for key, expectedValue := range expected {
+			actualValue, found := actual[key]
+			if !found {
+				t.Fatalf("%s.%s was lost", path, key)
+			}
+			assertDeclaredFieldsPreserved(t, path+"."+key, expectedValue, actualValue)
+		}
+	case []interface{}:
+		actual, ok := roundTripped.([]interface{})
+		if !ok || len(actual) != len(expected) {
+			t.Fatalf("%s changed array shape: got %#v", path, roundTripped)
+		}
+		for index := range expected {
+			assertDeclaredFieldsPreserved(t, path, expected[index], actual[index])
+		}
+	default:
+		if !reflect.DeepEqual(declared, roundTripped) {
+			t.Fatalf("%s changed from %#v to %#v", path, declared, roundTripped)
 		}
 	}
 }

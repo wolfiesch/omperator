@@ -302,9 +302,9 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
   );
   assert.ok(steps["cluster-ci-contracts"].commands.includes("pnpm test:cluster:ci"));
   assert.deepEqual(steps["cluster-operator-tests"].commands, [
-    "GOMAXPROCS=1 GOFLAGS=-p=1 go test ./api/... ./controllers/... ./cmd/...",
+    "GOMAXPROCS=1 GOFLAGS='-mod=readonly -p=1' go test ./api/... ./controllers/... ./cmd/...",
     "mkdir -p ../../artifacts/cluster-proof",
-    "CGO_ENABLED=0 GOMAXPROCS=1 GOFLAGS=-p=1 go test -c ./charttests -o ../../artifacts/cluster-proof/chart-contract.test",
+    "CGO_ENABLED=0 GOMAXPROCS=1 GOFLAGS='-mod=readonly -p=1' go test -c ./charttests -o ../../artifacts/cluster-proof/chart-contract.test",
   ]);
   assert.equal(
     steps["cluster-operator-tests"].backend_options.kubernetes.resources.limits.memory,

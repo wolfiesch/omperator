@@ -545,7 +545,25 @@ func TestCRDsRemainExplicitAcrossUpgradeAndUninstall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"helm upgrade", "helm rollback", "helm uninstall", "kubectl apply --server-side -f deploy/charts/t4-cluster/crds/", "condition=Established", "Do not rely on `helm upgrade` to change CRDs", "Retain", "Delete", "CRDs are not removed"} {
+	for _, required := range []string{
+		"scripts/cluster-ci/crd-lifecycle.sh upgrade",
+		"helm upgrade",
+		"--skip-crds",
+		"helm rollback",
+		"helm uninstall",
+		"kubectl patch \"crd/$resource\" --type=merge --dry-run=server",
+		"metadata.resourceVersion",
+		"crd-preflight compatible",
+		"crd-preflight patch",
+		"--request-timeout=10s",
+		"condition=Established",
+		"status.storedVersions",
+		"Do not rely on `helm upgrade` to change CRDs",
+		"Future `v1beta1` conversion and storage procedure",
+		"Retain",
+		"Delete",
+		"CRDs are not removed",
+	} {
 		if !strings.Contains(string(docs), required) {
 			t.Fatalf("operator guide lacks upgrade/uninstall contract %q", required)
 		}

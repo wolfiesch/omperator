@@ -18,6 +18,7 @@ import (
 const (
 	ReasonStorageClassNotFound = "StorageClassNotFound"
 	ReasonStorageClassNotRWX   = "StorageClassNotRWX"
+	ReasonStorageClassMismatch = "StorageClassMismatch"
 	ReasonStorageReady         = "StorageClassSupportsRWX"
 )
 
@@ -80,6 +81,13 @@ func pvcHasRWX(pvc *corev1.PersistentVolumeClaim) bool {
 		}
 	}
 	return false
+}
+
+func pvcStorageClassName(pvc *corev1.PersistentVolumeClaim) string {
+	if pvc.Spec.StorageClassName == nil {
+		return ""
+	}
+	return *pvc.Spec.StorageClassName
 }
 
 func hasString(values []string, wanted string) bool {
