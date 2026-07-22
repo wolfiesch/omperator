@@ -124,6 +124,21 @@ test("freezes the legacy OMP host-migration provenance literals", () => {
   }
 });
 
+test("rejects the retired OMP fork in the active Woodpecker workflow", () => {
+  const staleWorkflow = changed(".woodpecker.yml", (text) =>
+    replaceRequired(
+      text,
+      "https://github.com/wolfiesch/oh-my-pi.git",
+      "https://github.com/lyc-aon/oh-my-pi.git",
+    ),
+  );
+  assert.ok(
+    collectReleaseConsistencyErrors(staleWorkflow).some((error) =>
+      error.includes("retired Lycaon OMP integration fork"),
+    ),
+  );
+});
+
 test("pins official OMP artifacts and the Gate 0 proof contract", () => {
   const officialDrift = changedRuntime("officialRuntime", (runtime) => {
     runtime.artifacts["linux-arm64"].sha256 = "invalid";

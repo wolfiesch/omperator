@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { load as parseYaml } from "js-yaml";
 
 export const RELEASE_CONTRACT_PATHS = [
+  ".woodpecker.yml",
   ".github/android-release-identity.json",
   ".github/macos-release-identity.json",
   ".github/ISSUE_TEMPLATE/bug_report.yml",
@@ -882,6 +883,16 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
 
   const releaseWorkflow = files.get(".github/workflows/release.yml") ?? "";
   const ciWorkflow = files.get(".github/workflows/ci.yml") ?? "";
+  const woodpeckerWorkflow = files.get(".woodpecker.yml") ?? "";
+  requireText(
+    woodpeckerWorkflow,
+    "https://github.com/wolfiesch/oh-my-pi.git",
+    ".woodpecker.yml",
+    errors,
+  );
+  if (woodpeckerWorkflow.includes("https://github.com/lyc-aon/oh-my-pi.git")) {
+    errors.push(".woodpecker.yml must not use the retired Lycaon OMP integration fork");
+  }
   try {
     const workflow = parseYaml(ciWorkflow);
     const continuityJob = workflow?.jobs?.["legacy-bridge-continuity"];

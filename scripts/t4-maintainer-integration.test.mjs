@@ -140,19 +140,24 @@ case $tool in
       repos/can1357/oh-my-pi)
         official_id=1125856365
         official_node=R_kgDOQxs0bQ
+        official_clone=https://github.com/can1357/oh-my-pi.git
         [[ \${MOCK_OMP_OFFICIAL_ID_MISMATCH:-0} != 1 ]] || official_id=1
-        printf '{"id":%s,"node_id":"%s","full_name":"can1357/oh-my-pi"}\n' "$official_id" "$official_node"
+        [[ \${MOCK_OMP_OFFICIAL_CLONE_MISMATCH:-0} != 1 ]] || official_clone=https://example.invalid/oh-my-pi.git
+        printf '{"id":%s,"node_id":"%s","full_name":"can1357/oh-my-pi","clone_url":"%s"}\n' \
+          "$official_id" "$official_node" "$official_clone"
         ;;
       repos/wolfiesch/oh-my-pi)
         fork_id=1271775475
         fork_node=R_kgDOS83A8w
         parent_id=1125856365
         parent_node=R_kgDOQxs0bQ
+        fork_clone=https://github.com/wolfiesch/oh-my-pi.git
         [[ \${MOCK_OMP_FORK_ID_MISMATCH:-0} != 1 ]] || fork_id=1
         [[ \${MOCK_OMP_FORK_NODE_MISMATCH:-0} != 1 ]] || fork_node=wrong
         [[ \${MOCK_OMP_FORK_PARENT_MISMATCH:-0} != 1 ]] || parent_id=1
-        printf '{"id":%s,"node_id":"%s","full_name":"wolfiesch/oh-my-pi","fork":true,"parent":{"id":%s,"node_id":"%s","full_name":"can1357/oh-my-pi"}}\n' \
-          "$fork_id" "$fork_node" "$parent_id" "$parent_node"
+        [[ \${MOCK_OMP_FORK_CLONE_MISMATCH:-0} != 1 ]] || fork_clone=https://example.invalid/oh-my-pi.git
+        printf '{"id":%s,"node_id":"%s","full_name":"wolfiesch/oh-my-pi","clone_url":"%s","fork":true,"parent":{"id":%s,"node_id":"%s","full_name":"can1357/oh-my-pi"}}\n' \
+          "$fork_id" "$fork_node" "$fork_clone" "$parent_id" "$parent_node"
         ;;
       'repos/LycaonLLC/t4-code/pulls?state=open&base=main&per_page=100')
         count=$(read_state t4-pr-queries 0)
@@ -1545,9 +1550,11 @@ exec "$@"
     ...(options.forkBaseTagMissing ? { MOCK_FORK_BASE_TAG_MISSING: "1" } : {}),
     ...(options.forkBaseTagMismatch ? { MOCK_FORK_BASE_TAG_MISMATCH: "1" } : {}),
     ...(options.ompOfficialIdMismatch ? { MOCK_OMP_OFFICIAL_ID_MISMATCH: "1" } : {}),
+    ...(options.ompOfficialCloneMismatch ? { MOCK_OMP_OFFICIAL_CLONE_MISMATCH: "1" } : {}),
     ...(options.ompForkIdMismatch ? { MOCK_OMP_FORK_ID_MISMATCH: "1" } : {}),
     ...(options.ompForkNodeMismatch ? { MOCK_OMP_FORK_NODE_MISMATCH: "1" } : {}),
     ...(options.ompForkParentMismatch ? { MOCK_OMP_FORK_PARENT_MISMATCH: "1" } : {}),
+    ...(options.ompForkCloneMismatch ? { MOCK_OMP_FORK_CLONE_MISMATCH: "1" } : {}),
     ...(options.staleLoopbackIdentity ? { MOCK_STALE_LOOPBACK_IDENTITY: "1" } : {}),
     ...(options.staleTailnetIdentity ? { MOCK_STALE_TAILNET_IDENTITY: "1" } : {}),
     ...(options.gatewayDisableFailAfterFirst
@@ -1638,9 +1645,11 @@ async function createRunnerFixture(options = {}) {
     forkBaseTagMissing: options.forkBaseTagMissing,
     forkBaseTagMismatch: options.forkBaseTagMismatch,
     ompOfficialIdMismatch: options.ompOfficialIdMismatch,
+    ompOfficialCloneMismatch: options.ompOfficialCloneMismatch,
     ompForkIdMismatch: options.ompForkIdMismatch,
     ompForkNodeMismatch: options.ompForkNodeMismatch,
     ompForkParentMismatch: options.ompForkParentMismatch,
+    ompForkCloneMismatch: options.ompForkCloneMismatch,
     staleLoopbackIdentity: options.staleLoopbackIdentity,
     staleTailnetIdentity: options.staleTailnetIdentity,
     ompWorkflowMissing: options.ompWorkflowMissing,
@@ -2627,9 +2636,11 @@ test("legacy atomic receipts remain valid only through the exact transfer proof"
 test("fork repository identity drift blocks every fork-main mutation", async (t) => {
   for (const option of [
     "ompOfficialIdMismatch",
+    "ompOfficialCloneMismatch",
     "ompForkIdMismatch",
     "ompForkNodeMismatch",
     "ompForkParentMismatch",
+    "ompForkCloneMismatch",
   ]) {
     await t.test(option, async (subtest) => {
       const fixture = await createRunnerFixture({

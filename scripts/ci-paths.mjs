@@ -11,13 +11,16 @@ const FORCE_ALL = [
 
 const GROUP_PATTERNS = Object.freeze({
   continuity: [
+    /^\.github\/workflows\/ci\.yml$/u,
     /^\.woodpecker\.yml$/u,
+    /^compat\/omp-app-matrix\.json$/u,
     /^packages\/host-service\/src\//u,
     /^packages\/host-service\/package\.json$/u,
     /^packages\/host-wire\/src\//u,
     /^packages\/host-wire\/package\.json$/u,
     /^provenance\/omp-host-migration\.json$/u,
     /^scripts\/legacy-bridge-continuity(?:\.test)?\.mjs$/u,
+    /^scripts\/ci-paths(?:\.test)?\.mjs$/u,
   ],
   cluster: [
     /^\.github\/workflows\/ci\.yml$/u,

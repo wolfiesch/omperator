@@ -386,7 +386,8 @@ omp_fork_identity_is_exact() {
     --argjson id "$OMP_UPSTREAM_REPOSITORY_ID" \
     --arg node_id "$OMP_UPSTREAM_REPOSITORY_NODE_ID" '
       .id == $id and .node_id == $node_id and
-      .full_name == "can1357/oh-my-pi"
+      .full_name == "can1357/oh-my-pi" and
+      .clone_url == "https://github.com/can1357/oh-my-pi.git"
     ' >/dev/null || return 1
   printf '%s' "$fork" | $JQ -e \
     --argjson id "$OMP_INTEGRATION_REPOSITORY_ID" \
@@ -394,7 +395,8 @@ omp_fork_identity_is_exact() {
     --argjson parent_id "$OMP_UPSTREAM_REPOSITORY_ID" \
     --arg parent_node_id "$OMP_UPSTREAM_REPOSITORY_NODE_ID" '
       .id == $id and .node_id == $node_id and
-      .full_name == "wolfiesch/oh-my-pi" and .fork == true and
+      .full_name == "wolfiesch/oh-my-pi" and
+      .clone_url == "https://github.com/wolfiesch/oh-my-pi.git" and .fork == true and
       .parent.id == $parent_id and .parent.node_id == $parent_node_id and
       .parent.full_name == "can1357/oh-my-pi"
     ' >/dev/null
