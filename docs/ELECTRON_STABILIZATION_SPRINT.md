@@ -33,13 +33,16 @@ planning resumes only after the Electron release and rollback are stable.
   build commands, and demo deployment were removed; the historical migration material is archived.
 - The public demo builds from the same React renderer used by Electron and validates its `/demo/`
   containment contract.
+- Exact-head CI for `59f1926b3e800eaf692ebaefcd790655a814dc04` passed core, Android debug,
+  tooling, cluster, official OMP proof on Linux x64, Linux arm64, and macOS arm64, legacy bridge
+  continuity, and the aggregate verifier.
 - The unsigned arm64 v0.1.31 candidate produced a 189 MB DMG and 184 MB ZIP, passed ZIP package
   inspection with 956 ASAR entries, and bundled executable arm64 `t4-host` and `omp` binaries.
   Its exact app bundle reports v0.1.31, launched with native macOS window chrome, connected to
   Local OMP, and loaded the live 1,000-session inventory and host controls.
-- Remaining evidence is release-bound: exact-head CI on the sprint PR, protected signed artifacts,
-  a real prompt round trip, Linux package launch, Android native smoke, and physical Tailnet Safari
-  proof. No release or tag is authorized by this document.
+- Remaining evidence is release-bound: protected signed artifacts, a real prompt round trip, Linux
+  package launch, Android native smoke, and physical Tailnet Safari proof. No release or tag is
+  authorized by this document.
 
 ## Current state at planning time
 
