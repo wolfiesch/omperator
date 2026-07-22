@@ -497,8 +497,9 @@ describe("generated T4 API v1 client conformance", () => {
 
   it("rejects undeclared JSON request media before mutation and idempotency", async () => {
     for (const contentType of [undefined, "text/plain"]) {
+      const mediaName = contentType === undefined ? "missing" : "plain";
       const service = new T4ApiV1ConformanceService();
-      await seededClient(service, `request-media-${contentType ?? "missing"}`);
+      await seededClient(service, `request-media-${mediaName}`);
       const cases = [
         ["POST", "/v1/workspaces", '{"name":"media-workspace"}', {}, 202, { id: "ws-2" }],
         ["POST", "/v1/workspaces/ws-1/sessions", '{"title":"media-session"}', {}, 202, { id: "ses-2" }],
@@ -507,7 +508,7 @@ describe("generated T4 API v1 client conformance", () => {
         ["POST", "/v1/sessions/ses-1/commands", '{"command":"ok"}', {}, 202, { commandId: "cmd-1" }],
       ] as const;
       for (const [index, [method, path, body, routeHeaders, successStatus, successBody]] of cases.entries()) {
-        const key = `request-media-${contentType ?? "missing"}-${index}`;
+        const key = `request-media-${mediaName}-${index}`;
         const headers = { Authorization: "Bearer token-a", "T4-API-Version": "1", "Idempotency-Key": key, ...routeHeaders };
         const invalid = await service.fetch(`${service.origin}${path}`, {
           method, headers: { ...headers, ...(contentType === undefined ? {} : { "Content-Type": contentType }) }, body,
