@@ -754,6 +754,34 @@ describe("generated T4 API v1 client conformance", () => {
     } satisfies Partial<T4ApiError>);
   });
 
+  it("enforces the ResourceId bound in cursor-expired resync snapshot URLs", async () => {
+    const resourceId128 = `s${"a".repeat(127)}`;
+    const resourceId129 = `s${"a".repeat(128)}`;
+    const cursorExpired = (sessionId: string) => ({ error: {
+      code: "cursor_expired", message: "expired", requestId: "r", retryable: false,
+      resync: { snapshotUrl: `/v1/sessions/${sessionId}/snapshot`, cursor: "cursor-1" },
+    } });
+
+    for (const [sessionId, expected] of [[resourceId128, "cursor_expired"], [resourceId129, "indeterminate"]] as const) {
+      const client = createT4ApiClient({
+        baseUrl: "https://resync-bound.test", credential: "token-a", majorVersion: 1,
+        fetch: async () => jsonResponse(cursorExpired(sessionId), { status: 410 }),
+      });
+      await expect(client.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({
+        code: expected, status: expected === "cursor_expired" ? 410 : 502,
+      });
+    }
+
+    const contract = JSON.parse(readFileSync(new URL("../../t4-api-contract/openapi.json", import.meta.url), "utf8")) as {
+      components: { schemas: { Resync: { properties: { snapshotUrl: { pattern: string; maxLength: number } } } } };
+    };
+    const snapshotUrlSchema = contract.components.schemas.Resync.properties.snapshotUrl;
+    const pattern = new RegExp(snapshotUrlSchema.pattern, "u");
+    expect(pattern.test(`/v1/sessions/${resourceId128}/snapshot`)).toBe(true);
+    expect(pattern.test(`/v1/sessions/${resourceId129}/snapshot`)).toBe(false);
+    expect(`/v1/sessions/${resourceId128}/snapshot`.length).toBeLessThanOrEqual(snapshotUrlSchema.maxLength);
+  });
+
   it("rejects malformed mutation idempotency and watch query contracts", async () => {
     const service = new T4ApiV1ConformanceService();
     const baseHeaders = { Authorization: "Bearer token-a", "T4-API-Version": "1", "Content-Type": "application/json" };
