@@ -957,6 +957,23 @@ describe("generated T4 API v1 client conformance", () => {
       expect(response.status, `${path} accepted unissued cursor ${cursor}`).toBe(422);
       expect(await response.json()).toMatchObject({ error: { code: "invalid_request", violations: [{ field: "cursor", rule: "issued" }] } });
     }
+
+    const laterWorkspacePage = await service.fetch(`${service.origin}/v1/workspaces?pageSize=2`, { headers });
+    const staleWorkspaceCursor = (await laterWorkspacePage.json() as { nextCursor: string }).nextCursor;
+    expect((await service.fetch(`${service.origin}/v1/workspaces/ws-3`, {
+      method: "DELETE", headers: { ...headers, "Idempotency-Key": "shrink-workspace-3" },
+    })).status).toBe(204);
+    expect((await service.fetch(`${service.origin}/v1/sessions/ses-2`, {
+      method: "DELETE", headers: { ...headers, "Idempotency-Key": "shrink-session-02" },
+    })).status).toBe(204);
+    for (const [path, cursor] of [
+      ["/v1/workspaces", staleWorkspaceCursor],
+      ["/v1/workspaces/ws-1/sessions", sessionCursor],
+    ]) {
+      const response = await service.fetch(`${service.origin}${path}?pageSize=1&cursor=${cursor}`, { headers });
+      expect(response.status, `${path} accepted a cursor past the shrunken collection`).toBe(422);
+      expect(await response.json()).toMatchObject({ error: { code: "invalid_request", violations: [{ field: "cursor", rule: "issued" }] } });
+    }
   });
 
   it("parses service frames incrementally across split UTF-8 and per-frame bounds", async () => {
