@@ -943,9 +943,11 @@ describe("generated T4 API v1 client conformance", () => {
     const workspacePage = await service.fetch(`${service.origin}/v1/workspaces?pageSize=1`, { headers });
     const workspaceCursor = (await workspacePage.json() as { nextCursor: string }).nextCursor;
     expect((await service.fetch(`${service.origin}/v1/workspaces?pageSize=1&cursor=${workspaceCursor}`, { headers })).status).toBe(200);
-    const signatureAlias = ({ A: "B", Q: "R", g: "h", w: "x" } as const)[workspaceCursor.at(-1) as "A" | "Q" | "g" | "w"];
-    expect(signatureAlias).toBeDefined();
-    const noncanonicalCursor = `${workspaceCursor.slice(0, -1)}${signatureAlias}`;
+    const base64UrlAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const terminalIndex = base64UrlAlphabet.indexOf(workspaceCursor.at(-1)!);
+    expect(terminalIndex).toBeGreaterThanOrEqual(0);
+    expect(terminalIndex % 4).toBe(0);
+    const noncanonicalCursor = `${workspaceCursor.slice(0, -1)}${base64UrlAlphabet[terminalIndex + 1]}`;
     const noncanonical = await service.fetch(`${service.origin}/v1/workspaces?pageSize=1&cursor=${noncanonicalCursor}`, { headers });
     expect(noncanonical.status).toBe(422);
     expect(await noncanonical.json()).toMatchObject({ error: { code: "invalid_request" } });
