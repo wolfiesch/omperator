@@ -1726,7 +1726,7 @@ verify_result_once() {
   local actual_upstream_commit actual_integration_commit actual_t4_commit release_json expected_release_url
   local omp_release_json
   local official_main_commit fork_main_commit official_base_tag_object fork_base_tag_object
-  local fork_base_commit
+  local fork_base_commit receipt_file legacy_receipt=false
 
   atomic_publication_receipt_is_valid "$result_file" || return 1
   $JQ -e '
@@ -1752,6 +1752,11 @@ verify_result_once() {
   release_url=$($JQ -r '.release.url' "$result_file")
   site_url=$($JQ -r '.site.url' "$result_file")
   site_tag=$($JQ -r '.site.releaseTag' "$result_file")
+  receipt_file="$ATOMIC_PUBLICATION_STATE_DIR/$integration_tag/receipt.json"
+  if [[ $($JQ -r '.forkRepository' "$receipt_file") == "$OMP_LEGACY_INTEGRATION_REPOSITORY" ]]; then
+    legacy_omp_authority_transfer_is_valid "$result_file" "$receipt_file" || return 1
+    legacy_receipt=true
+  fi
 
   [[ $upstream_tag == "$($JQ -r '.tag' <<<"$target")" ]] || return 1
   [[ $upstream_commit == "$($JQ -r '.commit' <<<"$target")" ]] || return 1
@@ -1766,10 +1771,17 @@ verify_result_once() {
   official_base_tag_object=$(resolve_public_tag_object "$OMP_UPSTREAM_REPOSITORY" "$upstream_tag") \
     || return 1
   fork_base_tag_object=$(resolve_public_tag_object "$OMP_INTEGRATION_REPOSITORY" "$upstream_tag") \
-    || return 1
-  [[ $official_base_tag_object =~ ^[0-9a-f]{40}$ \
-    && $fork_base_tag_object == "$official_base_tag_object" ]] || return 1
-  fork_base_commit=$(resolve_public_commit "$OMP_INTEGRATION_REPOSITORY" "$upstream_tag") || return 1
+    || fork_base_tag_object=
+  [[ $official_base_tag_object =~ ^[0-9a-f]{40}$ ]] || return 1
+  if [[ $legacy_receipt == true ]]; then
+    [[ -z $fork_base_tag_object || $fork_base_tag_object == "$official_base_tag_object" ]] || return 1
+    fork_base_commit=$(resolve_public_commit "$OMP_INTEGRATION_REPOSITORY" "$upstream_commit") \
+      || return 1
+  else
+    [[ $fork_base_tag_object == "$official_base_tag_object" ]] || return 1
+    fork_base_commit=$(resolve_public_commit "$OMP_INTEGRATION_REPOSITORY" "$upstream_tag") \
+      || return 1
+  fi
   [[ $fork_base_commit == "$upstream_commit" ]] || return 1
   official_main_commit=$(resolve_public_commit "$OMP_UPSTREAM_REPOSITORY" main) || return 1
   fork_main_commit=$(resolve_public_commit "$OMP_INTEGRATION_REPOSITORY" main) || return 1

@@ -2633,6 +2633,18 @@ test("legacy atomic receipts remain valid only through the exact transfer proof"
   assert.equal(receipt.forkRepository, "lyc-aon/oh-my-pi");
 });
 
+test("legacy transfer proof accepts the exact base commit without recreating the fork tag", async (t) => {
+  const fixture = await createRunnerFixture({
+    legacyAtomicReceipt: true,
+    forkBaseTagMissing: true,
+  });
+  t.after(() => fixture.cleanup());
+  const result = fixture.runRunner();
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const calls = await fixture.callsText();
+  assert.match(calls, /repos\/wolfiesch\/oh-my-pi\/commits\/[0-9a-f]{40}/mu);
+});
+
 test("fork repository identity drift blocks every fork-main mutation", async (t) => {
   for (const option of [
     "ompOfficialIdMismatch",
