@@ -590,6 +590,48 @@ describe("generated T4 API v1 client conformance", () => {
     await expect(client.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).resolves.toMatchObject({ value: { cursor: "leap" } });
   });
 
+  it("accepts lowercase RFC 3339 delimiters", async () => {
+    const client = createT4ApiClient({
+      baseUrl: "https://watch-lowercase-time.test", credential: "token-a", majorVersion: 1,
+      fetch: async () => apiResponse('data: {"type":"heartbeat","cursor":"lowercase","observedAt":"2026-07-21t00:00:00z"}\n\n', { headers: { "Content-Type": "text/event-stream" } }),
+    });
+    await expect(client.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).resolves.toMatchObject({ value: { cursor: "lowercase" } });
+  });
+
+  it("uses typed low-level stream parsing and the SSE Accept header", async () => {
+    const service = new T4ApiV1ConformanceService();
+    const client = await seededClient(service, "raw-stream");
+    const wrongAccept = await service.fetch(`${service.origin}/v1/sessions/ses-1/events?maxEvents=1&heartbeatSeconds=5`, {
+      headers: { Authorization: "Bearer token-a", "T4-API-Version": "1", Accept: "application/json" },
+    });
+    expect(wrongAccept.status).toBe(406);
+    const streamed = await client.http.GET("/v1/sessions/{sessionId}/events", {
+      params: { header: VERSION_HEADERS, path: { sessionId: "ses-1" }, query: { maxEvents: 1, heartbeatSeconds: 5 } },
+      parseAs: "stream",
+    });
+    expect(streamed.response.headers.get("Content-Type")).toBe("text/event-stream");
+    expect(streamed.response.headers.get("Cache-Control")).toBe("no-store");
+    expect(streamed.data).toBeInstanceOf(ReadableStream);
+    await streamed.data?.cancel();
+  });
+
+  it("rejects malformed present Retry-After on ordinary and watch 503 responses", async () => {
+    for (const retryAfter of ["", "not-a-date", "-1", "x".repeat(129)]) {
+      const body = { error: { code: "unavailable", message: "later", requestId: "r", retryable: true } };
+      const ordinary = createT4ApiClient({
+        baseUrl: "https://ordinary-retry-after.test", credential: "token-a", majorVersion: 1,
+        fetch: async () => jsonResponse(body, { status: 503, headers: { "Retry-After": retryAfter } }),
+      });
+      await expect(ordinary.http.GET("/v1", { params: { header: VERSION_HEADERS } })).rejects.toMatchObject({ status: 502, retryable: false });
+
+      const watch = createT4ApiClient({
+        baseUrl: "https://watch-retry-after.test", credential: "token-a", majorVersion: 1,
+        fetch: async () => jsonResponse(body, { status: 503, headers: { "Retry-After": retryAfter } }),
+      });
+      await expect(watch.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0, retryBackoffMs: 0 }).next()).rejects.toMatchObject({ status: 502, retryable: false });
+    }
+  });
+
   it("takes a snapshot and watches bounded SSE with heartbeat, reconnect, cancellation, and typed resync", async () => {
     const service = new T4ApiV1ConformanceService();
     const client = createT4ApiClient({ baseUrl: service.origin, credential: "token-a", majorVersion: 1, fetch: service.fetch });
