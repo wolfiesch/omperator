@@ -1,6 +1,6 @@
 {
   "name": "@t4-code/host-wire",
-  "version": "0.1.30",
+  "version": "0.1.31",
   "type": "module",
   "description": "Dependency-free T4 host protocol frames and bounded decoders",
   "license": "MIT",

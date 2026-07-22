@@ -1,6 +1,6 @@
 {
   "name": "@t4-code/remote",
-  "version": "0.1.30",
+  "version": "0.1.31",
   "private": true,
   "type": "module",
   "exports": {

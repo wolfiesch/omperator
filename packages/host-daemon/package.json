@@ -1,6 +1,6 @@
 {
   "name": "@t4-code/host-daemon",
-  "version": "0.1.30",
+  "version": "0.1.31",
   "private": true,
   "type": "module",
   "description": "Standalone T4-owned host daemon with a thin OMP authority bridge",

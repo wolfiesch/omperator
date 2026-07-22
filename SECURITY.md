@@ -26,5 +26,5 @@ We read every report and will reply to tell you what happens next. This is a sma
 
 - T4 Code is a desktop client. The OMP runtime is a separate project; runtime vulnerabilities belong at <https://github.com/can1357/oh-my-pi>.
 - Pairing credentials are encrypted with the OS keychain via Electron `safeStorage`. Reports about credential handling, the pairing flow, or the `t4-code://` deep-link handler are especially welcome.
-- The macOS v0.1.30 build is signed with Apple Developer ID and notarized by Apple. Reports of certificate, Team ID, hardened-runtime, timestamp, Gatekeeper, or stapled-ticket drift are security-relevant.
+- Published macOS builds are signed with Apple Developer ID and notarized by Apple. Reports of certificate, Team ID, hardened-runtime, timestamp, Gatekeeper, or stapled-ticket drift are security-relevant.
 - Starting with v0.1.24, the release workflow requires the pinned Developer ID identity, hardened runtime, Apple notarization, a stapled ticket, and a successful Gatekeeper assessment before publishing macOS artifacts.

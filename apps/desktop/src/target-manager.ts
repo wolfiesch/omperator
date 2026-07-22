@@ -406,7 +406,7 @@ export class DesktopTargetManager {
       capabilities: requestedCapabilities,
       requestedFeatures: this.requestedFeatures,
       compatibilityRequestedFeatures: this.compatibilityRequestedFeatures,
-      client: { name: "T4 Code", version: "0.1.30", build: "desktop", platform: process.platform },
+      client: { name: "T4 Code", version: "0.1.31", build: "desktop", platform: process.platform },
       reconnect: { baseMs: 250, maxMs: 10_000 },
     };
     const client = createOmpClient(clientOptions);

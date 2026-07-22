@@ -61,7 +61,7 @@ export class WebSocketPodHostConnector implements PodHostConnector {
 					socket.send(JSON.stringify({
 						v: "omp-app/1", type: "hello",
 						protocol: { min: "omp-app/1", max: "omp-app/1" },
-						client: { name: "cluster-server", version: "0.1.30", build: "cluster", platform: "linux" },
+						client: { name: "cluster-server", version: "0.1.31", build: "cluster", platform: "linux" },
 						requestedFeatures: PROTOCOL_FEATURES.filter(feature => feature !== "cluster.operator"),
 						savedCursors: [],
 						capabilities: { client: DEVICE_CAPABILITIES.filter(capability => capability !== "ci.trigger") },

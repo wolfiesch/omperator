@@ -13,9 +13,9 @@ import { WoodpeckerProvider } from "./woodpecker.ts";
 
 export async function runClusterServer(env: Readonly<Record<string, string | undefined>> = process.env): Promise<void> {
 	const config = clusterServerConfigFromEnv(env);
-	const logger = new JsonLogger(undefined, { component: "cluster-server", version: "0.1.30", namespace: config.namespace });
+	const logger = new JsonLogger(undefined, { component: "cluster-server", version: "0.1.31", namespace: config.namespace });
 	const health = new ClusterServerHealth();
-	const metrics = new ClusterMetrics({ component: "cluster-server", version: "0.1.30", namespace: config.namespace });
+	const metrics = new ClusterMetrics({ component: "cluster-server", version: "0.1.31", namespace: config.namespace });
 	const ca = await loadKubernetesCa(config);
 	const kubernetes = new KubernetesApiClient({
 		baseUrl: config.kubernetesBaseUrl,
@@ -109,7 +109,7 @@ export async function runClusterServer(env: Readonly<Record<string, string | und
 async function main(): Promise<void> {
 	try { await runClusterServer(); }
 	catch (error) {
-		const logger = new JsonLogger(undefined, { component: "cluster-server", version: "0.1.30" });
+		const logger = new JsonLogger(undefined, { component: "cluster-server", version: "0.1.31" });
 		logger.error("cluster server failed", { condition: error instanceof Error ? error.name : "unknown", result: "failure" });
 		process.exitCode = 1;
 	}

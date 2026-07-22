@@ -77,7 +77,7 @@ test("compatibility metadata records the artifact-backed OMP bridge", () => {
   assert.equal(matrix.t4Host.deploymentState, "standalone-t4-host-thin-omp-bridge");
   assert.equal(matrix.t4Host.wireSchemaVersion, "0.7.0");
   assert.equal(matrix.t4Host.daemonPackage, "@t4-code/host-daemon");
-  assert.equal(matrix.t4Host.daemonPackageVersion, "0.1.30");
+  assert.equal(matrix.t4Host.daemonPackageVersion, "0.1.31");
   assert.equal(matrix.t4Host.authorityBridgeProtocol, "t4-omp-authority/1");
   assert.equal(matrix.verifiedRuntime.artifacts["darwin-arm64"].releaseCodeSignature, "adhoc");
   assert.equal(
