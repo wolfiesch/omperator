@@ -54,6 +54,46 @@ jobs:
           [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
           git diff --name-only -z "$BASE_SHA...$HEAD_SHA" | node scripts/ci-paths.mjs >> "$GITHUB_OUTPUT"
 
+  t4-api-generation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install pinned pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.10.0
+
+      - name: Install pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.13.1
+
+      - name: Install dependencies from the committed lockfile
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate OpenAPI and deterministic generation
+        run: |
+          pnpm --filter @t4-code/t4-api-contract validate
+          pnpm --filter @t4-code/t4-api-contract generate:ci
+          pnpm --filter @t4-code/t4-api-contract check:generated
+          pnpm --filter @t4-code/t4-api-client typecheck
+          pnpm --filter @t4-code/client typecheck
+          pnpm --filter @t4-code/client exec vp test run test/t4-api-v1-conformance.test.ts
+      - name: Upload deterministic T4 API client
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: t4-api-generated-${{ github.run_id }}
+          path: artifacts/t4-api/generated/schema.ts
+          if-no-files-found: error
+
+
+
   core:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -373,7 +413,7 @@ jobs:
   verify:
     name: verify
     if: ${{ always() }}
-    needs: [changes, core, legacy-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]
+    needs: [changes, t4-api-generation, core, legacy-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -381,6 +421,7 @@ jobs:
         shell: bash
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
+          T4_API_GENERATION_RESULT: ${{ needs.t4-api-generation.result }}
           CORE_RESULT: ${{ needs.core.result }}
           CONTINUITY_RESULT: ${{ needs.legacy-bridge-continuity.result }}
           OFFICIAL_OMP_GATE0_RESULT: ${{ needs.official-omp-gate0.result }}
@@ -390,6 +431,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$CHANGES_RESULT" = success
+          test "$T4_API_GENERATION_RESULT" = success
           test "$CORE_RESULT" = success
           for result in \
             "$CONTINUITY_RESULT" \

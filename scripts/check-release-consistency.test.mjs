@@ -275,7 +275,7 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "needs: [changes, core, legacy-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]",
+          "needs: [changes, t4-api-generation, core, legacy-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]",
           "needs: [changes, core, tooling, android-debug]",
         ),
     ],
@@ -563,10 +563,11 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("if: ${{ always() }}"));
   assert.ok(
     ciWorkflow.includes(
-      "needs: [changes, core, legacy-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]",
+      "needs: [changes, t4-api-generation, core, legacy-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]",
     ),
   );
   assert.ok(ciWorkflow.includes('test "$CHANGES_RESULT" = success'));
+  assert.ok(ciWorkflow.includes('test "$T4_API_GENERATION_RESULT" = success'));
   assert.ok(ciWorkflow.includes('test "$CORE_RESULT" = success'));
   assert.ok(ciWorkflow.includes("for result in \\"));
   assert.ok(ciWorkflow.includes("success|skipped) ;;"));

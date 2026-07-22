@@ -1,0 +1,23 @@
+{
+  "name": "@t4-code/t4-api-client",
+  "version": "0.1.31",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./generated": "./src/generated/schema.ts"
+  },
+  "scripts": {
+    "build": "tsgo --noEmit",
+    "typecheck": "tsgo --noEmit",
+    "test": "vp test run --passWithNoTests"
+  },
+  "dependencies": {
+    "openapi-fetch": "0.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

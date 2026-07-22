@@ -1,0 +1,22 @@
+{
+  "name": "@t4-code/t4-api-contract",
+  "version": "0.1.31",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./openapi.json": "./openapi.json"
+  },
+  "scripts": {
+    "build": "pnpm validate && pnpm check:generated",
+    "typecheck": "pnpm validate && pnpm check:generated",
+    "test": "pnpm validate && pnpm check:generated",
+    "validate": "node scripts/validate.mjs",
+    "generate": "node scripts/generate.mjs --write",
+    "generate:ci": "node scripts/generate.mjs --ci-artifact",
+    "check:generated": "node scripts/generate.mjs --check"
+  },
+  "devDependencies": {
+    "@readme/openapi-parser": "6.3.0",
+    "openapi-typescript": "7.13.0"
+  }
+}
