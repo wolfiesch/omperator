@@ -8,14 +8,10 @@ updates:
       day: monday
       time: "09:00"
       timezone: America/Los_Angeles
-    open-pull-requests-limit: 5
-    groups:
-      production-dependencies:
-        dependency-type: production
-        update-types: [minor, patch]
-      development-dependencies:
-        dependency-type: development
-        update-types: [minor, patch]
+    # Keep security updates enabled while the inherited dependency baseline is
+    # repaired deliberately. GitHub applies a separate PR limit to security
+    # updates, so zero disables only scheduled version-update PRs.
+    open-pull-requests-limit: 0
     commit-message:
       prefix: "chore(deps)"
 
@@ -26,10 +22,7 @@ updates:
       day: monday
       time: "09:15"
       timezone: America/Los_Angeles
-    open-pull-requests-limit: 3
-    groups:
-      go-dependencies:
-        update-types: [minor, patch]
+    open-pull-requests-limit: 0
     commit-message:
       prefix: "chore(deps-go)"
 
@@ -40,9 +33,6 @@ updates:
       day: monday
       time: "09:30"
       timezone: America/Los_Angeles
-    open-pull-requests-limit: 3
-    groups:
-      github-actions:
-        patterns: ["*"]
+    open-pull-requests-limit: 0
     commit-message:
       prefix: "chore(actions)"
