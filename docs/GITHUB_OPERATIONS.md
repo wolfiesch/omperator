@@ -33,16 +33,19 @@ not grant Admin for ordinary development.
 The GitHub protection rule for `main` should enforce:
 
 - pull requests for non-admin collaborators;
-- one approving review, with stale approvals dismissed after new commits;
-- CODEOWNER review for protected product, release, security, and provenance
-  paths;
+- one approval from someone other than the author, with stale approvals
+  dismissed after new commits;
+- CODEOWNER review requests for protected product, release, security, and
+  provenance paths, without making CODEOWNER approval a branch-protection gate;
 - the aggregate `verify` CI check;
 - resolved review conversations;
 - no force pushes or branch deletion.
 
 The product owner retains the admin bypass for releases and emergency recovery.
-Routine owner changes should still use pull requests so CI and review history
-remain visible.
+Routine owner changes still use pull requests and independent maintainer review
+so CI and review history remain visible. A product-owner-authored change to a
+CODEOWNERS path therefore needs another maintainer's approval, not an admin
+bypass or an impossible self-approval.
 
 ## Issues, proposals, and labels
 

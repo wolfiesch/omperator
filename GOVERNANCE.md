@@ -32,8 +32,11 @@ and product-owner approval.
 1. Work happens on a branch and lands through a pull request.
 2. Each pull request represents one coherent, independently explainable outcome.
 3. The `verify` CI check must pass and review conversations must be resolved.
-4. Ordinary changes require one maintainer approval. CODEOWNERS identify areas
-   that require product-owner review.
+4. Every change requires one approval from someone other than its author.
+   CODEOWNERS route sensitive paths to the product owner, but GitHub does not
+   require a CODEOWNER approval because that would deadlock product-owner-authored
+   changes. Product-owner authorship satisfies the policy approval for those
+   sensitive paths; the independent maintainer review still applies.
 5. Direct pushes to `main` are reserved for the product owner during release or
    emergency recovery. Any emergency change gets a follow-up issue or pull
    request with the missing evidence.
