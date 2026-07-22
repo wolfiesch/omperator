@@ -381,18 +381,18 @@ export class T4ApiV1ConformanceService {
       const cursor = queryCursor ?? headerCursor;
       if (cursor === "expired") return problem(410, "cursor_expired", "Watch cursor is no longer retained", { resync: { snapshotUrl: `/v1/sessions/${id}/snapshot`, cursor: "cursor-2" } });
       const allFrames = cursor === "cursor-4"
-        ? [`id: cursor-5\r\nevent: heartbeat\r\ndata: {"type":"heartbeat","cursor":"cursor-5","observedAt":"2026-07-21T00:00:15Z"}\r\n\r\n`]
+        ? [`id: cursor-4\r\nevent: heartbeat\r\ndata: {"type":"heartbeat","cursor":"cursor-4","observedAt":"2026-07-21T00:00:15Z"}\r\n\r\n`]
         : cursor === "cursor-5"
           ? [`id: cursor-6\nevent: command\ndata: {"type":"command","cursor":"cursor-6","commandId":"cmd-1","state":"accepted"}\n\n`]
           : [
-              `id: cursor-3\r\nevent: heartbeat\r\ndata: {"type":"heartbeat","cursor":"cursor-3","observedAt":"2026-07-21T00:00:00Z"}\r\n\r\n`,
+              `id: ${cursor ?? "cursor-3"}\r\nevent: heartbeat\r\ndata: {"type":"heartbeat","cursor":"${cursor ?? "cursor-3"}","observedAt":"2026-07-21T00:00:00Z"}\r\n\r\n`,
               `id: cursor-4\r\nevent: session\r\ndata: {"type":"session","cursor":"cursor-4","state":"accepted","revision":2}\r\n\r\n`,
             ];
       let payload: Uint8Array;
       if (this.options.watchTransport === "oversized") {
         payload = encoder.encode(`: ${"x".repeat(1024 * 1024)}\ndata: {"type":"heartbeat","cursor":"large-1","observedAt":"2026-07-21T00:00:00Z"}\n\n`);
       } else if (this.options.watchTransport === "many-small") {
-        payload = encoder.encode(Array.from({ length: maxEvents }, (_, index) => `: ${"x".repeat(1010)}\ndata: {"type":"heartbeat","cursor":"bulk-${index}","observedAt":"2026-07-21T00:00:00Z"}\n\n`).join(""));
+        payload = encoder.encode(Array.from({ length: maxEvents }, () => `: ${"x".repeat(1010)}\ndata: {"type":"heartbeat","cursor":"bulk-0","observedAt":"2026-07-21T00:00:00Z"}\n\n`).join(""));
       } else {
         const prefix = this.options.watchTransport === "bytewise" ? ": 💚\n" : "";
         payload = encoder.encode(prefix + allFrames.slice(0, maxEvents).join(""));

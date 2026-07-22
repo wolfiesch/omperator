@@ -797,9 +797,9 @@ describe("generated T4 API v1 client conformance", () => {
       received.push(event);
     }
     expect(received).toEqual([
-      expect.objectContaining({ type: "heartbeat", cursor: "cursor-3" }),
+      expect.objectContaining({ type: "heartbeat", cursor: "cursor-2" }),
       expect.objectContaining({ type: "session", cursor: "cursor-4", state: "accepted" }),
-      expect.objectContaining({ type: "heartbeat", cursor: "cursor-5" }),
+      expect.objectContaining({ type: "heartbeat", cursor: "cursor-4" }),
     ]);
     expect(received.map(exhaustWatchEvent)).toEqual(["2026-07-21T00:00:00Z", "accepted:2", "2026-07-21T00:00:15Z"]);
     expect(service.watchCursors[0]).toEqual({ query: "cursor-2", header: "cursor-2" });
@@ -1621,7 +1621,7 @@ describe("generated T4 API v1 client conformance", () => {
       progressAttempts += 1;
       if (progressAttempts === 2 || progressAttempts === 4) {
         const cursor = progressAttempts === 2 ? "progress-1" : "progress-2";
-        return apiResponse(`data: {"type":"heartbeat","cursor":"${cursor}","observedAt":"2026-07-21T00:00:00Z"}\n\n`, { headers: { "Content-Type": "text/event-stream" } });
+        return apiResponse(`data: {"type":"session","cursor":"${cursor}","state":"ready","revision":${progressAttempts / 2}}\n\n`, { headers: { "Content-Type": "text/event-stream" } });
       }
       return apiResponse(new ReadableStream<Uint8Array>({ start(controller) { controller.close(); } }), { headers: { "Content-Type": "text/event-stream" } });
     };
