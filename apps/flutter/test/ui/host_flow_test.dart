@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:t4code/src/client/app_state.dart';
@@ -963,6 +964,39 @@ void main() {
 
     expect(scrollable.position.pixels, closeTo(positionAfterDrag, 0.5));
     await gesture.up();
+  });
+
+  testWidgets('a desktop wheel scroll cancels bottom follow', (tester) async {
+    await pumpApp(
+      tester,
+      state: keyboardTranscriptState(),
+      actions: _FakeActions(),
+      size: compactDesktop,
+    );
+    await tester.pumpAndSettle();
+
+    final list = transcriptList();
+    final scrollable = tester.state<ScrollableState>(
+      find.descendant(of: list, matching: find.byType(Scrollable)).first,
+    );
+    await tester.sendEventToBinding(
+      PointerScrollEvent(
+        position: tester.getCenter(list),
+        scrollDelta: const Offset(0, -320),
+      ),
+    );
+    await tester.pump();
+    final positionAfterWheel = scrollable.position.pixels;
+    expect(
+      scrollable.position.maxScrollExtent - positionAfterWheel,
+      greaterThan(96),
+    );
+
+    tester.view.viewInsets = const FakeViewPadding(bottom: 80);
+    await tester.pump();
+    await tester.pump();
+
+    expect(scrollable.position.pixels, closeTo(positionAfterWheel, 0.5));
   });
 
   testWidgets('preserves transcript history position when the keyboard opens', (

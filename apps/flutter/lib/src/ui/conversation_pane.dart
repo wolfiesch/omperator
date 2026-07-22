@@ -339,7 +339,15 @@ final class _TranscriptViewState extends State<_TranscriptView> {
   }
 
   bool _trackScroll(ScrollNotification notification) {
-    if (notification is ScrollStartNotification &&
+    if (notification is UserScrollNotification) {
+      if (notification.direction == ScrollDirection.idle) {
+        _followEnd = _isNearEnd;
+        _userScrolling = false;
+      } else {
+        _userScrolling = true;
+        _followEnd = false;
+      }
+    } else if (notification is ScrollStartNotification &&
         notification.dragDetails != null) {
       _userScrolling = true;
       _followEnd = false;
