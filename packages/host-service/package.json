@@ -15,12 +15,12 @@
 		"verify:official-omp-lifecycle": "node ../../scripts/stage-omp-runtime.mjs --runtime official && bun run bin/official-omp-gate0.ts",
 	"typecheck": "tsgo -p tsconfig.json --noEmit"
   },
-  "dependencies": { "@agentclientprotocol/sdk": "1.2.1", "@t4-code/host-wire": "workspace:*" },
+  "dependencies": { "@agentclientprotocol/sdk": "1.3.0", "@t4-code/host-wire": "workspace:*" },
   "devDependencies": {
     "@types/bun": "1.3.5",
     "@types/node": "24.12.4",
     "typescript": "~6.0.3",
-    "vite-plus": "0.2.2"
+    "vite-plus": "0.2.5"
   },
   "engines": { "bun": ">=1.3.14" }
 }

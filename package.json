@@ -48,7 +48,7 @@
     "perf:vps": "bash ops/perf/run-vps.sh"
   },
   "dependencies": {
-    "ws": "^8.18.3"
+    "ws": "^8.21.1"
   },
   "devDependencies": {
     "@electron/asar": "3.4.1",

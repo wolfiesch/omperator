@@ -17,13 +17,13 @@
     "@t4-code/service-manager": "workspace:*",
     "electron-store": "^8.2.0",
     "electron-updater": "^6.6.2",
-    "ws": "^8.18.0"
+    "ws": "^8.21.1"
   },
   "devDependencies": {
     "electron": "catalog:",
     "@t4-code/fixture-server": "workspace:*",
     "@types/node": "catalog:",
-    "@types/ws": "^8.5.13",
+    "@types/ws": "^8.18.1",
     "electron-builder": "catalog:",
     "vite-plus": "catalog:"
   },

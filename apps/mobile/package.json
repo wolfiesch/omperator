@@ -12,7 +12,7 @@
     "test": "node --test ./scripts/*.test.mjs"
   },
   "dependencies": {
-    "@capacitor/core": "8.4.1"
+    "@capacitor/core": "8.4.2"
   },
   "devDependencies": {
     "@capacitor/android": "8.4.1",

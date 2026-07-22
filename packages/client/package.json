@@ -18,8 +18,8 @@
     "@t4-code/fixture-server": "workspace:*",
     "@t4-code/host-wire": "workspace:*",
     "@types/node": "catalog:",
-    "@types/ws": "8.5.13",
+    "@types/ws": "8.18.1",
     "vite-plus": "catalog:",
-    "ws": "8.18.3"
+    "ws": "8.21.1"
   }
 }

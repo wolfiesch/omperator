@@ -11,8 +11,8 @@
     "test": "vp test run --passWithNoTests"
   },
   "dependencies": {
-    "@fontsource-variable/dm-sans": "^5.2.8",
-    "@fontsource/jetbrains-mono": "^5.2.8",
+    "@fontsource-variable/dm-sans": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
     "react": "catalog:",
     "react-dom": "catalog:"
   },

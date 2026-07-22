@@ -19,7 +19,7 @@ catalog:
   react-dom: 19.2.6
   typescript: ~6.0.3
   vite: npm:@voidzero-dev/vite-plus-core@0.2.2
-  vite-plus: 0.2.2
+  vite-plus: 0.2.5
 
 overrides:
   vite: "catalog:"
