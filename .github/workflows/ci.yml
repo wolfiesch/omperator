@@ -297,6 +297,8 @@ jobs:
 
       - name: Run operator tests
         working-directory: packages/cluster-operator
+        env:
+          GOFLAGS: -mod=readonly
         run: go test ./...
 
       - name: Lint cluster chart
