@@ -132,6 +132,28 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, request ctrl.Reques
 			return ctrl.Result{Requeue: true}, nil
 		}
 	}
+	reader := r.APIReader
+	if reader == nil {
+		reader = r.Client
+	}
+	var authoritativePVC corev1.PersistentVolumeClaim
+	if err := reader.Get(ctx, pvcKey, &authoritativePVC); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", "PVCNotFound", "workspace PVC does not exist in authoritative API state")
+		}
+		return ctrl.Result{}, err
+	}
+	if authoritativePVC.UID != pvc.UID || !workspaceOwnsPVC(&workspace, &authoritativePVC) {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", "PVCOwnershipConflict", "authoritative workspace PVC identity or ownership does not belong to this workspace")
+	}
+	if !pvcHasRWX(&authoritativePVC) {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", "PVCNotRWX", "authoritative workspace PVC does not request ReadWriteMany")
+	}
+	if pvcStorageClassName(&authoritativePVC) != storageClassName {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", ReasonStorageClassMismatch, fmt.Sprintf("authoritative workspace PVC uses StorageClass %q instead of host-selected %q; data-bearing PVCs are never recreated automatically", pvcStorageClassName(&authoritativePVC), storageClassName))
+	}
+	pvc = authoritativePVC
+
 	if pvc.Status.Phase == corev1.ClaimLost {
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", "PVCLost", "workspace PVC lost its volume")
 	}

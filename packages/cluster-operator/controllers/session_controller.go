@@ -491,6 +491,16 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 	var pod corev1.Pod
 	podKey := types.NamespacedName{Namespace: session.Namespace, Name: podName}
 	if err := r.Get(ctx, podKey, &pod); apierrors.IsNotFound(err) {
+		reason, message, err := r.authoritativePVCValidation(ctx, &workspace, &pvc, host.Spec.StorageClassName)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if reason != "" {
+			if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, false, "WorkspaceReady", reason, message)
+		}
 		pod = desiredPod
 		if err := r.Create(ctx, &pod); err != nil {
 			if !apierrors.IsAlreadyExists(err) {
@@ -536,6 +546,17 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 
+	reason, message, err = r.authoritativePVCValidation(ctx, &workspace, &pvc, host.Spec.StorageClassName)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if reason != "" {
+		if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, false, "WorkspaceReady", reason, message)
+	}
+
 	original := session.Status
 	if session.Status.Conditions != nil {
 		original.Conditions = append([]metav1.Condition(nil), session.Status.Conditions...)
@@ -565,6 +586,36 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+}
+
+func (r *SessionReconciler) authoritativePVCValidation(ctx context.Context, workspace *clusterv1alpha1.T4Workspace, cachedPVC *corev1.PersistentVolumeClaim, storageClassName string) (string, string, error) {
+	reader := r.APIReader
+	if reader == nil {
+		reader = r.Client
+	}
+	var authoritativePVC corev1.PersistentVolumeClaim
+	if err := reader.Get(ctx, client.ObjectKeyFromObject(cachedPVC), &authoritativePVC); err != nil {
+		if apierrors.IsNotFound(err) {
+			return "PVCAuthorityChanged", "workspace PVC does not exist in authoritative API state", nil
+		}
+		return "", "", err
+	}
+	if authoritativePVC.UID != cachedPVC.UID {
+		return "PVCAuthorityChanged", "authoritative workspace PVC UID differs from the validated cached PVC", nil
+	}
+	if workspace.UID != "" && !workspaceOwnsPVC(workspace, &authoritativePVC) {
+		return "PVCAuthorityChanged", "authoritative workspace PVC owner reference does not belong to the workspace", nil
+	}
+	if pvcStorageClassName(&authoritativePVC) != storageClassName {
+		return "PVCAuthorityChanged", fmt.Sprintf("authoritative workspace PVC uses StorageClass %q instead of host-selected %q", pvcStorageClassName(&authoritativePVC), storageClassName), nil
+	}
+	if !pvcHasRWX(&authoritativePVC) {
+		return "PVCAuthorityChanged", "authoritative workspace PVC does not request ReadWriteMany", nil
+	}
+	if authoritativePVC.Status.Phase != corev1.ClaimBound {
+		return "PVCAuthorityChanged", "authoritative workspace PVC is not Bound", nil
+	}
+	return "", "", nil
 }
 
 func (r *SessionReconciler) desiredPod(session *clusterv1alpha1.T4Session, pvcName, podName string, labels map[string]string, runtimeVersions ompResourceVersions) (corev1.Pod, error) {
