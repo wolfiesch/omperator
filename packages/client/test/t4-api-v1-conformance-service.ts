@@ -99,6 +99,7 @@ export class T4ApiV1ConformanceService {
   readonly #workspaces = new Map<string, Record<string, unknown>>();
   readonly #sessions = new Map<string, Record<string, unknown>>();
   readonly #replays = new Map<string, ReplayRecord>();
+  readonly #pageCursors = new Set<string>();
 
   constructor(readonly options: T4ApiV1ConformanceOptions = {}) {}
 
@@ -162,11 +163,16 @@ export class T4ApiV1ConformanceService {
     if (request.method === "GET" && url.pathname === "/v1/workspaces") {
       const pageSize = Number(url.searchParams.get("pageSize") ?? "2");
       if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 3) return this.#invalid("pageSize", "range", "pageSize must be between 1 and 3");
-      const start = pageOffset(url.searchParams.get("cursor"));
+      const cursor = url.searchParams.get("cursor");
+      const start = pageOffset(cursor);
       if (start === undefined) return this.#invalid("cursor", "format", "cursor must be a canonical bounded page offset");
+      if (cursor !== null && !this.#pageCursors.has(canonicalJson({ principal: tenant, collection: "workspaces", cursor }))) {
+        return this.#invalid("cursor", "issued", "cursor was not issued for this principal and collection");
+      }
       const visible = [...this.#workspaces.values()].filter((item) => item.tenant === tenant);
       const items = visible.slice(start, start + pageSize).map(({ tenant: _tenant, ...item }) => item);
       const next = start + items.length < visible.length ? `page-${start + items.length}` : undefined;
+      if (next !== undefined) this.#pageCursors.add(canonicalJson({ principal: tenant, collection: "workspaces", cursor: next }));
       return json(200, { items, ...(next === undefined ? {} : { nextCursor: next }) });
     }
 
@@ -220,11 +226,17 @@ export class T4ApiV1ConformanceService {
       if (request.method === "GET") {
         const pageSize = Number(url.searchParams.get("pageSize") ?? "2");
         if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 3) return this.#invalid("pageSize", "range", "pageSize must be between 1 and 3");
-        const start = pageOffset(url.searchParams.get("cursor"));
+        const cursor = url.searchParams.get("cursor");
+        const start = pageOffset(cursor);
         if (start === undefined) return this.#invalid("cursor", "format", "cursor must be a canonical bounded page offset");
+        const collection = `workspaces/${workspaceId}/sessions`;
+        if (cursor !== null && !this.#pageCursors.has(canonicalJson({ principal: tenant, collection, cursor }))) {
+          return this.#invalid("cursor", "issued", "cursor was not issued for this principal and collection");
+        }
         const visible = [...this.#sessions.values()].filter((item) => item.workspaceId === workspaceId && item.tenant === tenant);
         const items = visible.slice(start, start + pageSize).map((item) => this.#visible(item));
         const next = start + items.length < visible.length ? `page-${start + items.length}` : undefined;
+        if (next !== undefined) this.#pageCursors.add(canonicalJson({ principal: tenant, collection, cursor: next }));
         return json(200, { items, ...(next === undefined ? {} : { nextCursor: next }) });
       }
     }
