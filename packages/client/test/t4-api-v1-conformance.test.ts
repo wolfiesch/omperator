@@ -943,6 +943,12 @@ describe("generated T4 API v1 client conformance", () => {
     const workspacePage = await service.fetch(`${service.origin}/v1/workspaces?pageSize=1`, { headers });
     const workspaceCursor = (await workspacePage.json() as { nextCursor: string }).nextCursor;
     expect((await service.fetch(`${service.origin}/v1/workspaces?pageSize=1&cursor=${workspaceCursor}`, { headers })).status).toBe(200);
+    const signatureAlias = ({ A: "B", Q: "R", g: "h", w: "x" } as const)[workspaceCursor.at(-1) as "A" | "Q" | "g" | "w"];
+    expect(signatureAlias).toBeDefined();
+    const noncanonicalCursor = `${workspaceCursor.slice(0, -1)}${signatureAlias}`;
+    const noncanonical = await service.fetch(`${service.origin}/v1/workspaces?pageSize=1&cursor=${noncanonicalCursor}`, { headers });
+    expect(noncanonical.status).toBe(422);
+    expect(await noncanonical.json()).toMatchObject({ error: { code: "invalid_request" } });
     const sessionPage = await service.fetch(`${service.origin}/v1/workspaces/ws-1/sessions?pageSize=1`, { headers });
     const sessionCursor = (await sessionPage.json() as { nextCursor: string }).nextCursor;
 
