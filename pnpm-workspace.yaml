@@ -17,7 +17,7 @@ catalog:
   electron-builder: 26.15.6
   react: 19.2.6
   react-dom: 19.2.6
-  typescript: ~6.0.3
+  typescript: ~7.0.2
   vite: npm:@voidzero-dev/vite-plus-core@0.2.2
   vite-plus: 0.2.2
 
