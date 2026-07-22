@@ -1,6 +1,3 @@
-# Repository-wide product and release ownership.
-* @wolfiesch
-
 # Changes to governance, automation, releases, signing, and provenance require
 # explicit owner review even after additional maintainers are added.
 /.github/ @wolfiesch
