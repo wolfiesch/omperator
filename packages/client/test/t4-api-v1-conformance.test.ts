@@ -48,6 +48,25 @@ function exhaustWatchEvent(event: WatchEvent): string {
 
 const VERSION_HEADERS = { "T4-API-Version": "1" } as const;
 
+const COMMAND_STATES = [
+  "accepted", "projected", "dispatching", "running", "succeeded", "failed",
+  "cancelling", "cancelled", "rejected", "unavailable", "indeterminate",
+] as const;
+
+const DISCOVERY = {
+  apiVersion: "1.0",
+  serverBuild: { version: "0.1.30", revision: "fixture-revision-1" },
+  supportedMajors: [1],
+  capabilities: {
+    "workspace.lifecycle": { supported: true, enabled: true, authorized: true, available: true },
+    "optional.preview": {
+      supported: true, enabled: false, authorized: false, available: false,
+      deprecation: { message: "Use workspace.lifecycle", sinceVersion: "1.0", sunsetAt: "2027-01-01T00:00:00Z", replacement: "workspace.lifecycle" },
+    },
+  },
+  limits: { pageSizeDefault: 1, pageSizeMax: 1, commandBytesMax: 1, commandRequestBytesMax: 1, commandMetadataValueBytesMax: 1, watchEventsMax: 1, heartbeatSeconds: 5 },
+} as const;
+
 function withSelectedVersion(init: ResponseInit = {}): ResponseInit {
   const headers = new Headers(init.headers);
   if (!headers.has("T4-API-Version")) headers.set("T4-API-Version", "1.0");
@@ -71,6 +90,12 @@ function mutationHeaders(revision: number, key: string): Readonly<{ "T4-API-Vers
   return { ...VERSION_HEADERS, "If-Match": String(revision), "Idempotency-Key": key };
 }
 
+function requireEventCursor(response: Response): string {
+  const cursor = response.headers.get("T4-Event-Cursor");
+  expect(cursor).toMatch(/^[A-Za-z0-9._~-]+$/u);
+  return cursor ?? "";
+}
+
 function requireData<T>(result: { data?: T; error?: unknown }): T {
   expect(result.error).toBeUndefined();
   expect(result.data).toBeDefined();
@@ -89,14 +114,18 @@ async function seededClient(service: T4ApiV1ConformanceService, key: string) {
 }
 
 describe("generated T4 API v1 client conformance", () => {
-  it("negotiates discovery, capabilities, bounds, and rejects an incompatible major", async () => {
+  it("negotiates truthful discovery metadata and rejects an incompatible major", async () => {
     const service = new T4ApiV1ConformanceService();
     const client = createT4ApiClient({ baseUrl: service.origin, credential: "token-a", majorVersion: 1, fetch: service.fetch });
     const discovery = requireData(await client.http.GET("/v1", { params: { header: VERSION_HEADERS } }));
     expect(discovery).toMatchObject({
       apiVersion: "1.0",
+      serverBuild: { version: "0.1.30", revision: "fixture-revision-1" },
       supportedMajors: [1],
-      capabilities: expect.arrayContaining(["workspace.lifecycle", "session.watch.sse"]),
+      capabilities: {
+        "workspace.lifecycle": { supported: true, enabled: true, authorized: true, available: true },
+        "optional.preview": { supported: true, enabled: false, authorized: false, available: false },
+      },
       limits: { pageSizeMax: 3, commandBytesMax: 32, watchEventsMax: 4, heartbeatSeconds: 15 },
     });
 
@@ -104,7 +133,10 @@ describe("generated T4 API v1 client conformance", () => {
     const rejected = await incompatible.http.GET("/v1", { params: { header: VERSION_HEADERS } });
     expect(rejected.response.status).toBe(406);
     expect(rejected.error).toMatchObject({ error: { code: "incompatible_version", retryable: false, supportedMajors: [1] } });
-    expect(typedErrors.unauthorized.error.code).toBe("unauthenticated");
+
+    const unauthenticated = await service.fetch(`${service.origin}/v1`, { headers: { "T4-API-Version": "1" } });
+    expect(unauthenticated.status).toBe(401);
+    expect(await unauthenticated.json()).toMatchObject({ error: { code: "unauthenticated", retryable: false } });
 
     const denied = createT4ApiClient({ baseUrl: service.origin, credential: "token-denied", majorVersion: 1, fetch: service.fetch });
     const forbidden = await denied.http.GET("/v1", { params: { header: VERSION_HEADERS } });
@@ -291,7 +323,7 @@ describe("generated T4 API v1 client conformance", () => {
     expect(stale.response.status).toBe(409);
     expect(stale.error).toMatchObject({ error: { code: "revision_conflict" } });
 
-    for (const state of ["accepted", "rejected", "conflict", "unavailable", "indeterminate"] as const) {
+    for (const state of COMMAND_STATES) {
       const command = { command: state, metadata: {} } satisfies CommandCreate;
       const result = await client.http.POST("/v1/sessions/{sessionId}/commands", {
         params: { header: idempotencyHeaders(`command-${state}-0001`), path: { sessionId: "ses-1" } }, body: command,
@@ -336,6 +368,53 @@ describe("generated T4 API v1 client conformance", () => {
     });
     expect(cancelled.response.status).toBe(202);
     expect(cancelled.data).toMatchObject({ state: "cancelled" });
+  });
+
+  it("returns one durable event cursor for each committed mutation and its replay", async () => {
+    const service = new T4ApiV1ConformanceService();
+    const client = createT4ApiClient({ baseUrl: service.origin, credential: "token-a", majorVersion: 1, fetch: service.fetch });
+
+    const workspaceFirst = await client.http.POST("/v1/workspaces", {
+      body: { name: "workspace" }, params: { header: idempotencyHeaders("cursor-workspace-create") },
+    });
+    const workspaceReplay = await client.http.POST("/v1/workspaces", {
+      body: { name: "workspace" }, params: { header: idempotencyHeaders("cursor-workspace-create") },
+    });
+    expect(requireEventCursor(workspaceReplay.response)).toBe(requireEventCursor(workspaceFirst.response));
+
+    const workspacePatchFirst = await client.http.PATCH("/v1/workspaces/{workspaceId}", {
+      body: { name: "renamed" }, params: { header: mutationHeaders(1, "cursor-workspace-patch"), path: { workspaceId: "ws-1" } },
+    });
+    const workspacePatchReplay = await client.http.PATCH("/v1/workspaces/{workspaceId}", {
+      body: { name: "renamed" }, params: { header: mutationHeaders(1, "cursor-workspace-patch"), path: { workspaceId: "ws-1" } },
+    });
+    expect(requireEventCursor(workspacePatchReplay.response)).toBe(requireEventCursor(workspacePatchFirst.response));
+
+    const sessionFirst = await client.http.POST("/v1/workspaces/{workspaceId}/sessions", {
+      body: { title: "session" }, params: { header: idempotencyHeaders("cursor-session-create"), path: { workspaceId: "ws-1" } },
+    });
+    const sessionReplay = await client.http.POST("/v1/workspaces/{workspaceId}/sessions", {
+      body: { title: "session" }, params: { header: idempotencyHeaders("cursor-session-create"), path: { workspaceId: "ws-1" } },
+    });
+    expect(requireEventCursor(sessionReplay.response)).toBe(requireEventCursor(sessionFirst.response));
+
+    const sessionPatchFirst = await client.http.PATCH("/v1/sessions/{sessionId}", {
+      body: { title: "retitled" }, params: { header: mutationHeaders(1, "cursor-session-patch"), path: { sessionId: "ses-1" } },
+    });
+    const sessionPatchReplay = await client.http.PATCH("/v1/sessions/{sessionId}", {
+      body: { title: "retitled" }, params: { header: mutationHeaders(1, "cursor-session-patch"), path: { sessionId: "ses-1" } },
+    });
+    expect(requireEventCursor(sessionPatchReplay.response)).toBe(requireEventCursor(sessionPatchFirst.response));
+
+    for (const [operation, invoke] of [
+      ["cancel", () => client.http.POST("/v1/sessions/{sessionId}/cancel", { params: { header: idempotencyHeaders("cursor-session-cancel"), path: { sessionId: "ses-1" } } })],
+      ["command", () => client.http.POST("/v1/sessions/{sessionId}/commands", { body: { command: "run" }, params: { header: idempotencyHeaders("cursor-session-command"), path: { sessionId: "ses-1" } } })],
+      ["delete", () => client.http.DELETE("/v1/sessions/{sessionId}", { params: { header: idempotencyHeaders("cursor-session-delete"), path: { sessionId: "ses-1" } } })],
+    ] as const) {
+      const first = await invoke();
+      const replay = await invoke();
+      expect(requireEventCursor(replay.response), operation).toBe(requireEventCursor(first.response));
+    }
   });
 
   it("replays successful session deletion only within the original principal and request scope", async () => {
@@ -782,6 +861,23 @@ describe("generated T4 API v1 client conformance", () => {
     expect(`/v1/sessions/${resourceId128}/snapshot`.length).toBeLessThanOrEqual(snapshotUrlSchema.maxLength);
   });
 
+  it("accepts every command lifecycle watch state and rejects removed states", async () => {
+    for (const [index, state] of COMMAND_STATES.entries()) {
+      const cursor = `command-state-${index}`;
+      const client = createT4ApiClient({
+        baseUrl: "https://command-states.test", credential: "token-a", majorVersion: 1,
+        fetch: async () => apiResponse(`data: ${JSON.stringify({ type: "command", cursor, commandId: "cmd-1", state })}\n\n`, { headers: { "Content-Type": "text/event-stream" } }),
+      });
+      await expect(client.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).resolves.toMatchObject({ value: { state } });
+    }
+
+    const removed = createT4ApiClient({
+      baseUrl: "https://removed-command-state.test", credential: "token-a", majorVersion: 1,
+      fetch: async () => apiResponse('data: {"type":"command","cursor":"removed-1","commandId":"cmd-1","state":"conflict"}\n\n', { headers: { "Content-Type": "text/event-stream" } }),
+    });
+    await expect(removed.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({ code: "indeterminate", status: 502 });
+  });
+
   it("rejects malformed mutation idempotency and watch query contracts", async () => {
     const service = new T4ApiV1ConformanceService();
     const baseHeaders = { Authorization: "Bearer token-a", "T4-API-Version": "1", "Content-Type": "application/json" };
@@ -929,10 +1025,7 @@ describe("generated T4 API v1 client conformance", () => {
   });
 
   it("validates successful JSON routes relative to the base path and rejects undeclared media and statuses", async () => {
-    const discovery = {
-      apiVersion: "1.0", supportedMajors: [1], capabilities: [],
-      limits: { pageSizeDefault: 1, pageSizeMax: 1, commandBytesMax: 1, commandRequestBytesMax: 1, commandMetadataValueBytesMax: 1, watchEventsMax: 1, heartbeatSeconds: 5 },
-    };
+    const discovery = DISCOVERY;
     const prefixed = createT4ApiClient({
       baseUrl: "https://prefixed.test/api", credential: "token-a", majorVersion: 1,
       fetch: async (input) => {
@@ -1056,17 +1149,37 @@ describe("generated T4 API v1 client conformance", () => {
     }
   });
 
-  it("declares required public response headers while preserving the 401 exception", () => {
+  it("declares truthful discovery and required public response headers while preserving the 401 exception", () => {
     const contract = JSON.parse(readFileSync(new URL("../../t4-api-contract/openapi.json", import.meta.url), "utf8")) as {
       paths: Record<string, { patch?: { responses: Record<string, { $ref?: string }> }; get?: { responses: Record<string, { headers?: Record<string, { required?: boolean }> }> } }>;
-      components: { headers: Record<string, { required?: boolean }>; responses: Record<string, { headers?: Record<string, unknown> }> };
+      components: {
+        headers: Record<string, { required?: boolean }>;
+        responses: Record<string, { headers?: Record<string, { $ref?: string }> }>;
+        schemas: Record<string, { required?: string[]; additionalProperties?: boolean; properties?: Record<string, { type?: string; maxProperties?: number; propertyNames?: { pattern?: string; maxLength?: number }; additionalProperties?: { $ref?: string } }> }>;
+      };
     };
     expect(contract.paths["/v1/workspaces/{workspaceId}"]?.patch?.responses["200"]?.$ref).toBe("#/components/responses/WorkspaceReplay");
     expect(contract.paths["/v1/sessions/{sessionId}"]?.patch?.responses["200"]?.$ref).toBe("#/components/responses/SessionReplay");
     expect(contract.components.headers.SelectedVersion?.required).toBe(true);
     expect(contract.components.headers.IdempotencyReplayed?.required).toBe(true);
+    expect(contract.components.headers.EventCursor?.required).toBe(true);
+    for (const response of ["WorkspaceAccepted", "WorkspaceReplay", "SessionAccepted", "SessionReplay", "CommandAccepted", "CommandReplay", "Deleted"]) {
+      expect(contract.components.responses[response]?.headers?.["T4-Event-Cursor"]?.$ref).toBe("#/components/headers/EventCursor");
+    }
     expect(contract.paths["/v1/sessions/{sessionId}/events"]?.get?.responses["200"]?.headers?.["Cache-Control"]?.required).toBe(true);
     expect(contract.components.responses.Error401?.headers?.["T4-API-Version"]).toBeUndefined();
+
+    const discovery = contract.components.schemas.Discovery!;
+    expect(discovery.required).toContain("serverBuild");
+    expect(discovery.properties?.capabilities).toMatchObject({
+      type: "object", maxProperties: 128,
+      propertyNames: { pattern: "^[a-z][a-z0-9.-]*$", maxLength: 128 },
+      additionalProperties: { $ref: "#/components/schemas/CapabilityStatus" },
+    });
+    expect(contract.components.schemas.CapabilityStatus).toMatchObject({
+      additionalProperties: false,
+      required: ["supported", "enabled", "authorized", "available"],
+    });
   });
 
   it("treats malformed and oversized watch 503 envelopes as terminal protocol errors", async () => {
@@ -1141,10 +1254,7 @@ describe("generated T4 API v1 client conformance", () => {
   });
 
   it("requires declared selected-version and replay response headers", async () => {
-    const discovery = {
-      apiVersion: "1.0", supportedMajors: [1], capabilities: [],
-      limits: { pageSizeDefault: 1, pageSizeMax: 1, commandBytesMax: 1, commandRequestBytesMax: 1, commandMetadataValueBytesMax: 1, watchEventsMax: 1, heartbeatSeconds: 5 },
-    };
+    const discovery = DISCOVERY;
     for (const selectedVersion of [undefined, "1", "2.0", `1.${"0".repeat(15)}`]) {
       const client = createT4ApiClient({
         baseUrl: "https://response-version.test", credential: "token-a", majorVersion: 1,
@@ -1166,6 +1276,14 @@ describe("generated T4 API v1 client conformance", () => {
     });
     await expect(missingReplay.http.PATCH("/v1/workspaces/{workspaceId}", {
       params: { header: mutationHeaders(1, "response-replay-patch"), path: { workspaceId: "wsp-1" } }, body: { name: "workspace" },
+    })).rejects.toMatchObject({ status: 502, retryable: false });
+
+    const missingEventCursor = createT4ApiClient({
+      baseUrl: "https://response-event-cursor.test", credential: "token-a", majorVersion: 1,
+      fetch: async () => jsonResponse(workspace, { headers: { "T4-API-Version": "1.0", "Idempotency-Replayed": "false" } }),
+    });
+    await expect(missingEventCursor.http.PATCH("/v1/workspaces/{workspaceId}", {
+      params: { header: mutationHeaders(1, "response-event-cursor"), path: { workspaceId: "wsp-1" } }, body: { name: "workspace" },
     })).rejects.toMatchObject({ status: 502, retryable: false });
 
     for (const replayed of [undefined, "TRUE", "0"]) {
@@ -1193,14 +1311,15 @@ describe("generated T4 API v1 client conformance", () => {
     await expect(missingWatchErrorVersion.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0, retryBackoffMs: 0 }).next()).rejects.toMatchObject({ status: 502, retryable: false });
   });
 
-  it("rejects duplicate unique response arrays", async () => {
-    const limits = { pageSizeDefault: 1, pageSizeMax: 1, commandBytesMax: 1, commandRequestBytesMax: 1, commandMetadataValueBytesMax: 1, watchEventsMax: 1, heartbeatSeconds: 5 };
+  it("rejects duplicate version entries and malformed capability maps", async () => {
+    const status = { supported: true, enabled: true, authorized: true, available: true };
     for (const discovery of [
-      { apiVersion: "1.0", supportedMajors: [1, 1], capabilities: [], limits },
-      { apiVersion: "1.0", supportedMajors: [1], capabilities: ["session.watch.sse", "session.watch.sse"], limits },
+      { ...DISCOVERY, supportedMajors: [1, 1] },
+      { ...DISCOVERY, capabilities: { Invalid: status } },
+      { ...DISCOVERY, capabilities: { "session.watch.sse": { ...status, unknown: true } } },
     ]) {
       const client = createT4ApiClient({
-        baseUrl: "https://duplicate-discovery.test", credential: "token-a", majorVersion: 1,
+        baseUrl: "https://invalid-discovery.test", credential: "token-a", majorVersion: 1,
         fetch: async () => jsonResponse(discovery, { headers: { "T4-API-Version": "1.0" } }),
       });
       await expect(client.http.GET("/v1", { params: { header: VERSION_HEADERS } })).rejects.toMatchObject({ status: 502, retryable: false });
