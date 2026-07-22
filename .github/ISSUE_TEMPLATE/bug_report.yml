@@ -1,15 +1,16 @@
 name: Bug report
-description: Something in T4 Code is broken or behaves wrong.
+description: Something in Omperator is broken or behaves incorrectly.
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Security problem? **Stop. Do not file a public issue.** Follow [SECURITY.md](https://github.com/LycaonLLC/t4-code/blob/main/SECURITY.md) instead.
+        Security problem? **Stop. Do not file a public issue.** Follow [SECURITY.md](https://github.com/wolfiesch/omperator/blob/main/SECURITY.md) instead.
   - type: input
     id: version
     attributes:
-      label: T4 Code version
+      label: Omperator version
+      description: Use the displayed T4 Code version while the application rebrand is in progress.
       placeholder: "0.1.31"
     validations:
       required: true

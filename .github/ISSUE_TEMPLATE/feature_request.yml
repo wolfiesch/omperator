@@ -1,5 +1,5 @@
 name: Feature request
-description: Suggest something T4 Code should do.
+description: Suggest something Omperator should do.
 labels: ["enhancement"]
 body:
   - type: textarea

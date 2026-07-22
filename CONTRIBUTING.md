@@ -1,4 +1,4 @@
-# Contributing to T4 Code
+# Contributing to Omperator
 
 Thanks for helping. This page covers setup, checks, and what a good report or PR looks like.
 
@@ -7,8 +7,8 @@ Thanks for helping. This page covers setup, checks, and what a good report or PR
 Needs Node `^24.13.1` and pnpm `11.10.0`.
 
 ```sh
-git clone https://github.com/LycaonLLC/t4-code.git
-cd t4-code
+git clone https://github.com/wolfiesch/omperator.git
+cd omperator
 pnpm install --frozen-lockfile
 node scripts/t4-doctor.mjs
 pnpm dev
@@ -50,7 +50,7 @@ We will close reports containing live secrets and ask you to rotate them.
 
 ## Reporting bugs
 
-Use the [bug report template](https://github.com/LycaonLLC/t4-code/issues/new/choose). Version, OS, install method, and steps to reproduce matter more than prose.
+Use the [bug report template](https://github.com/wolfiesch/omperator/issues/new/choose). Version, OS, install method, and steps to reproduce matter more than prose.
 
 **Security problems are different: never open a public issue.** See [SECURITY.md](SECURITY.md).
 
