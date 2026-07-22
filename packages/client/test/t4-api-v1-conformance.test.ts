@@ -724,7 +724,7 @@ describe("generated T4 API v1 client conformance", () => {
       expect(await response.json()).toMatchObject({ error: { code: "invalid_request" } });
     }
     for (const query of ["maxEvents=0", "maxEvents=5", "heartbeatSeconds=4", "heartbeatSeconds=61"]) {
-      const response = await service.fetch(`${service.origin}/v1/sessions/ses-1/events?${query}`, { headers: baseHeaders });
+      const response = await service.fetch(`${service.origin}/v1/sessions/ses-1/events?${query}`, { headers: { ...baseHeaders, Accept: "text/event-stream" } });
       expect(response.status).toBe(422);
       expect(await response.json()).toMatchObject({ error: { code: "invalid_request", violations: expect.any(Array) } });
     }
