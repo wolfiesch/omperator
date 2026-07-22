@@ -2,6 +2,7 @@ package controllers_test
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -1503,6 +1504,55 @@ func TestSessionDeletionUsesAuthoritativeChildReader(t *testing.T) {
 	}
 }
 
+func TestSessionDeletionPreconditionsProtectSameNameReplacement(t *testing.T) {
+	ctx := context.Background()
+	scheme := testScheme(t)
+	session := testSession()
+	session.UID = "session-uid"
+	session.Finalizers = []string{clusterv1alpha1.SessionFinalizer}
+	pod, service := ownedSessionResources(session)
+	pod.UID = "pod-uid-a"
+	pod.ResourceVersion = "7"
+	service.UID = "service-uid-a"
+	service.ResourceVersion = "8"
+	base := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&clusterv1alpha1.T4Session{}).
+		WithObjects(session, pod, service).Build()
+	var observedPod corev1.Pod
+	if err := base.Get(ctx, client.ObjectKeyFromObject(pod), &observedPod); err != nil {
+		t.Fatal(err)
+	}
+	if observedPod.UID == "" || observedPod.ResourceVersion == "" {
+		t.Fatalf("fake client discarded delete precondition identity: %#v", observedPod.ObjectMeta)
+	}
+	if err := base.Delete(ctx, session); err != nil {
+		t.Fatal(err)
+	}
+	racingClient := &replaceBeforeDeleteClient{Client: base, raceKind: "Pod", replacementUID: "pod-uid-b"}
+	r := configuredSessionReconciler(racingClient, scheme)
+	if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); !apierrors.IsConflict(err) {
+		t.Fatalf("same-name replacement did not conflict with the stale delete: %v", err)
+	}
+	if !racingClient.raced || racingClient.observedUID != observedPod.UID || racingClient.observedResourceVersion != observedPod.ResourceVersion {
+		t.Fatalf("delete did not carry both observed preconditions: raced=%t uid=%q resourceVersion=%q", racingClient.raced, racingClient.observedUID, racingClient.observedResourceVersion)
+	}
+	var replacement corev1.Pod
+	if err := base.Get(ctx, client.ObjectKeyFromObject(pod), &replacement); err != nil {
+		t.Fatalf("same-name replacement Pod did not survive stale delete: %v", err)
+	}
+	if replacement.UID != racingClient.replacementUID {
+		t.Fatalf("surviving Pod UID = %q, want replacement %q", replacement.UID, racingClient.replacementUID)
+	}
+	var waiting clusterv1alpha1.T4Session
+	if err := base.Get(ctx, client.ObjectKeyFromObject(session), &waiting); err != nil {
+		t.Fatalf("session finalizer advanced after stale child delete: %v", err)
+	}
+	available := findCondition(waiting.Status.Conditions, "Available")
+	if !contains(waiting.Finalizers, clusterv1alpha1.SessionFinalizer) || waiting.Status.Phase != clusterv1alpha1.InfrastructureTerminating || available == nil || available.Reason != "Terminating" {
+		t.Fatalf("session advanced after stale child delete: %#v", waiting)
+	}
+}
+
 func TestSessionDependencyCleanupUsesAuthoritativeChildReader(t *testing.T) {
 	ctx := context.Background()
 	scheme := testScheme(t)
@@ -2394,6 +2444,47 @@ type createAlreadyExistsClient struct {
 	raceKind            string
 	winner              client.Object
 	hideWinnerFromCache bool
+}
+
+type replaceBeforeDeleteClient struct {
+	client.Client
+	raceKind                string
+	replacementUID          types.UID
+	raced                   bool
+	observedUID             types.UID
+	observedResourceVersion string
+}
+
+func (c *replaceBeforeDeleteClient) Delete(ctx context.Context, object client.Object, options ...client.DeleteOption) error {
+	if c.raced {
+		return c.Client.Delete(ctx, object, options...)
+	}
+	if _, isPod := object.(*corev1.Pod); !isPod || c.raceKind != "Pod" {
+		return c.Client.Delete(ctx, object, options...)
+	}
+	deleteOptions := (&client.DeleteOptions{}).ApplyOptions(options)
+	if deleteOptions.Preconditions != nil {
+		if deleteOptions.Preconditions.UID != nil {
+			c.observedUID = *deleteOptions.Preconditions.UID
+		}
+		if deleteOptions.Preconditions.ResourceVersion != nil {
+			c.observedResourceVersion = *deleteOptions.Preconditions.ResourceVersion
+		}
+	}
+	c.raced = true
+	if err := c.Client.Delete(ctx, object); err != nil {
+		return err
+	}
+	replacement := object.DeepCopyObject().(client.Object)
+	replacement.SetUID(c.replacementUID)
+	replacement.SetResourceVersion("")
+	replacement.SetDeletionTimestamp(nil)
+	replacement.SetFinalizers(nil)
+	replacement.SetOwnerReferences(nil)
+	if err := c.Client.Create(ctx, replacement); err != nil {
+		return err
+	}
+	return apierrors.NewConflict(schema.GroupResource{Resource: "pods"}, object.GetName(), errors.New("delete preconditions no longer match replacement"))
 }
 
 func (c *createAlreadyExistsClient) Get(ctx context.Context, key client.ObjectKey, object client.Object, options ...client.GetOption) error {
