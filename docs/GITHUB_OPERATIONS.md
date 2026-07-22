@@ -59,6 +59,14 @@ OMP's vouch gate is intentionally not copied. It is useful for a mature project
 with sustained untrusted pull-request volume. Omperator should add such a gate
 only after ordinary review and moderation become a repeated burden.
 
+## Dependencies
+
+Dependabot checks the pnpm workspace, Go cluster operator, and pinned GitHub
+Actions each week. Routine minor and patch updates are grouped by ecosystem to
+control pull-request volume. Security updates remain eligible immediately and
+must pass the same `verify` gate as product changes. Major upgrades are reviewed
+individually because they may change runtime, packaging, or protocol contracts.
+
 ## CI and merges
 
 The `verify` job is the stable required check. It aggregates core, OMP
