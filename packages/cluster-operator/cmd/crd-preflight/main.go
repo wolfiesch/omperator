@@ -19,6 +19,7 @@ import (
 	apiservervalidation "k8s.io/apiextensions-apiserver/pkg/apiserver/validation"
 	"k8s.io/apiextensions-apiserver/pkg/controller/openapi/builder"
 	"k8s.io/apimachinery/pkg/runtime"
+	kubejson "k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/yaml"
 )
@@ -52,6 +53,11 @@ func main() {
 			usage()
 		}
 		err = validateFixtures(os.Args[2], os.Args[3])
+	case "objects":
+		if len(os.Args) != 3 {
+			usage()
+		}
+		err = validateObjects(os.Args[2], os.Stdin)
 	case "served":
 		if len(os.Args) != 3 {
 			usage()
@@ -67,7 +73,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: crd-preflight fixtures CRD_DIRECTORY FIXTURE_DIRECTORY | served CRD_DIRECTORY")
+	fmt.Fprintln(os.Stderr, "usage: crd-preflight fixtures CRD_DIRECTORY FIXTURE_DIRECTORY | objects CRD_DIRECTORY | served CRD_DIRECTORY")
 	os.Exit(64)
 }
 
@@ -87,40 +93,101 @@ func validateFixtures(crdDirectory, fixtureDirectory string) error {
 			validationErrors = append(validationErrors, err)
 			continue
 		}
-		apiVersion, _ := object["apiVersion"].(string)
-		kind, _ := object["kind"].(string)
-		group, version, ok := strings.Cut(apiVersion, "/")
-		if !ok || group == "" || version == "" || kind == "" {
-			validationErrors = append(validationErrors, fmt.Errorf("%s: apiVersion and kind must identify a grouped resource", path))
-			continue
-		}
-		candidate, found := candidates[groupVersionKind{Group: group, Version: version, Kind: kind}]
-		if !found {
-			validationErrors = append(validationErrors, fmt.Errorf("%s: no proposed schema for %s %s", path, apiVersion, kind))
-			continue
-		}
-		validationErrors = append(validationErrors, validateObject(path, object, candidate)...)
+		validationErrors = append(validationErrors, validateCandidateObject(path, "fixture", object, candidates)...)
 	}
 	return errors.Join(validationErrors...)
 }
 
-func validateObject(path string, object map[string]interface{}, candidate *candidateSchema) []error {
+func validateObjects(crdDirectory string, input io.Reader) error {
+	candidates, err := loadCandidates(crdDirectory)
+	if err != nil {
+		return err
+	}
+	var list map[string]interface{}
+	decoder := json.NewDecoder(input)
+	decoder.UseNumber()
+	if err := decoder.Decode(&list); err != nil {
+		return fmt.Errorf("decode live object list: %w", err)
+	}
+	if err := kubejson.ConvertMapNumbers(list, 0); err != nil {
+		return fmt.Errorf("decode live object list numbers: %w", err)
+	}
+	var trailing interface{}
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("decode live object list: multiple JSON documents")
+		}
+		return fmt.Errorf("decode live object list trailing data: %w", err)
+	}
+	rawItems, found := list["items"]
+	if !found {
+		return errors.New("decode live object list: missing items")
+	}
+	items, ok := rawItems.([]interface{})
+	if !ok {
+		return errors.New("decode live object list: items is not an array")
+	}
+	var validationErrors []error
+	for index, rawItem := range items {
+		object, ok := rawItem.(map[string]interface{})
+		if !ok {
+			validationErrors = append(validationErrors, fmt.Errorf("live object item %d is not an object", index))
+			continue
+		}
+		path, err := liveObjectPath(index, object)
+		if err != nil {
+			validationErrors = append(validationErrors, err)
+			continue
+		}
+		validationErrors = append(validationErrors, validateCandidateObject(path, "object", object, candidates)...)
+	}
+	return errors.Join(validationErrors...)
+}
+
+func liveObjectPath(index int, object map[string]interface{}) (string, error) {
+	metadata, ok := object["metadata"].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("live object item %d has no metadata", index)
+	}
+	name, _ := metadata["name"].(string)
+	namespace, _ := metadata["namespace"].(string)
+	if name == "" || namespace == "" {
+		return "", fmt.Errorf("live object item %d must have namespace and name", index)
+	}
+	return fmt.Sprintf("live object %s/%s", namespace, name), nil
+}
+
+func validateCandidateObject(path, fieldRoot string, object map[string]interface{}, candidates map[groupVersionKind]*candidateSchema) []error {
+	apiVersion, _ := object["apiVersion"].(string)
+	kind, _ := object["kind"].(string)
+	group, version, ok := strings.Cut(apiVersion, "/")
+	if !ok || group == "" || version == "" || kind == "" {
+		return []error{fmt.Errorf("%s: apiVersion and kind must identify a grouped resource", path)}
+	}
+	candidate, found := candidates[groupVersionKind{Group: group, Version: version, Kind: kind}]
+	if !found {
+		return []error{fmt.Errorf("%s: no proposed schema for %s %s", path, apiVersion, kind)}
+	}
+	return validateObject(path, fieldRoot, object, candidate)
+}
+
+func validateObject(path, fieldRoot string, object map[string]interface{}, candidate *candidateSchema) []error {
 	var result []error
 	validator, _, err := apiservervalidation.NewSchemaValidator(candidate.internal)
 	if err != nil {
 		return []error{fmt.Errorf("%s: build OpenAPI validator: %w", path, err)}
 	}
-	if errs := apiservervalidation.ValidateCustomResource(field.NewPath("fixture"), object, validator); len(errs) > 0 {
+	if errs := apiservervalidation.ValidateCustomResource(field.NewPath(fieldRoot), object, validator); len(errs) > 0 {
 		result = append(result, fmt.Errorf("%s: proposed OpenAPI validation failed: %w", path, errs.ToAggregate()))
 	}
 	celValidator := cel.NewValidator(candidate.structural, true, perCallCELCostLimit)
 	if celValidator != nil {
-		fixturePath := field.NewPath("fixture")
-		createErrors, _ := celValidator.Validate(context.Background(), fixturePath, candidate.structural, object, nil, runtimeCELCostBudget)
+		objectPath := field.NewPath(fieldRoot)
+		createErrors, _ := celValidator.Validate(context.Background(), objectPath, candidate.structural, object, nil, runtimeCELCostBudget)
 		if len(createErrors) > 0 {
 			result = append(result, fmt.Errorf("%s: proposed CEL create validation failed: %w", path, createErrors.ToAggregate()))
 		}
-		updateErrors, _ := celValidator.Validate(context.Background(), fixturePath, candidate.structural, object, object, runtimeCELCostBudget)
+		updateErrors, _ := celValidator.Validate(context.Background(), objectPath, candidate.structural, object, object, runtimeCELCostBudget)
 		if len(updateErrors) > 0 {
 			result = append(result, fmt.Errorf("%s: proposed CEL unchanged-update validation failed: %w", path, updateErrors.ToAggregate()))
 		}

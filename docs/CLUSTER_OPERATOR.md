@@ -23,7 +23,7 @@ That declaration does not make a non-RWX backend safe. Missing classes, classes 
 
 ## Install
 
-Installing with defaults creates no controller, gateway, session workload, RBAC, Secret, or network policy. Use the lifecycle runner even for a fresh install so the CRDs are server-validated, established, fixture-checked, and storage-version-checked before Helm runs:
+Installing with defaults creates no controller, gateway, session workload, RBAC, Secret, or network policy. Use the lifecycle runner even for a fresh install so existing live objects and compatibility fixtures are checked against the proposed schemas before the CRDs are server-validated, established, and storage-version-checked and before Helm runs:
 
 ```sh
 scripts/cluster-ci/crd-lifecycle.sh install -- \
@@ -163,19 +163,36 @@ scripts/cluster-ci/crd-lifecycle.sh upgrade -- \
 The command performs this exact order:
 
 1. Before any cluster access, validate every complete compatibility fixture (including `status`) against the proposed structural OpenAPI schema and CEL programs with the Kubernetes apiextensions validators. The check also rejects declared fields that the structural pruner would remove.
-2. Server-side dry-run the reviewed CRDs with strict validation. Upgrades stop before any mutation if either local proposed-schema validation or the CRD dry-run fails.
-3. Apply the CRDs server-side without force conflicts.
-4. Wait for all three CRDs to report `Established`.
-5. Fetch the served `cluster.t4.dev/v1alpha1` OpenAPI v3 document three times and require every published resource schema to match the semantics generated from the proposed CRDs. Retained `Established=True` is not readiness when discovery still serves an old schema.
-6. Server-side dry-run the compatibility fixtures against the converged admission path.
-7. Require each CRD's `status.storedVersions` to be exactly `v1alpha1`.
-8. Execute the supplied Helm command, which must use `--skip-crds`.
+2. With `get` access to the three exact CRD definitions and `list` access to the corresponding namespaced T4 resources, detect which definitions already exist, enumerate every live CR for each existing definition across namespaces, and validate each complete object, including `status`, against the same proposed OpenAPI, CEL create, CEL unchanged-update, and pruning checks. A denied CRD read, denied or malformed object list, or incompatible object fails closed; an absent definition is safely empty on a fresh install.
+3. Server-side dry-run the reviewed CRDs with strict validation. Upgrades stop before any mutation if a local proposed-schema validation, live-object enumeration, or CRD dry-run fails.
+4. Apply the CRDs server-side without force conflicts.
+5. Wait for all three CRDs to report `Established`.
+6. Fetch the served `cluster.t4.dev/v1alpha1` OpenAPI v3 document three times and require every published resource schema to match the semantics generated from the proposed CRDs. Retained `Established=True` is not readiness when discovery still serves an old schema.
+7. Server-side dry-run the compatibility fixtures against the converged admission path.
+8. Require each CRD's `status.storedVersions` to be exactly `v1alpha1`.
+9. Execute the supplied Helm command, which must use `--skip-crds`.
 
 The corresponding administrative checks are executable independently:
 
 ```sh
 (cd packages/cluster-operator && \
   go run ./cmd/crd-preflight fixtures ../../deploy/charts/t4-cluster/crds api/v1alpha1/testdata/compat)
+live_objects=$(mktemp)
+trap 'rm -f "$live_objects"' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+for resource in t4clusterhosts.cluster.t4.dev t4workspaces.cluster.t4.dev t4sessions.cluster.t4.dev; do
+  installed_crd=$(kubectl get "crd/$resource" --ignore-not-found -o name)
+  if [ -z "$installed_crd" ]; then
+    continue
+  fi
+  kubectl get "$resource" --all-namespaces -o json >"$live_objects"
+  (cd packages/cluster-operator && \
+    go run ./cmd/crd-preflight objects ../../deploy/charts/t4-cluster/crds <"$live_objects")
+done
+rm -f "$live_objects"
+trap - EXIT HUP INT TERM
 kubectl apply --server-side --dry-run=server --validate=strict \
   --field-manager=t4-crd-lifecycle -f deploy/charts/t4-cluster/crds/
 kubectl apply --server-side --validate=strict \

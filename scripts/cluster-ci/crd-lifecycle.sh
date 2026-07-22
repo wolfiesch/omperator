@@ -50,6 +50,7 @@ compat_directory=${T4_COMPAT_DIRECTORY:-$repo_root/packages/cluster-operator/api
 validation_namespace=${T4_VALIDATION_NAMESPACE:-default}
 field_manager=t4-crd-lifecycle
 crds="crd/t4clusterhosts.cluster.t4.dev crd/t4workspaces.cluster.t4.dev crd/t4sessions.cluster.t4.dev"
+live_resources="t4clusterhosts.cluster.t4.dev t4workspaces.cluster.t4.dev t4sessions.cluster.t4.dev"
 discovery_observations=${T4_DISCOVERY_OBSERVATIONS:-3}
 
 case "$discovery_observations" in
@@ -72,6 +73,27 @@ run_validator() {
 # first operation: current-cluster admission cannot prove candidate compatibility.
 run_validator fixtures "$crd_directory" "$compat_directory"
 
+# Curated fixtures cannot prove that every value currently persisted in the
+# cluster remains valid. Enumerate only the three namespaced T4 resources and
+# run each complete live object, including status, through the same proposed-
+# schema engine before a CRD or workload can be mutated. A denied or malformed
+# list fails closed under set -e.
+live_objects=$(mktemp)
+trap 'rm -f "$live_objects"' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+for resource in $live_resources; do
+  installed_crd=$("$kubectl" get "crd/$resource" --ignore-not-found -o name)
+  if [ -z "$installed_crd" ]; then
+    continue
+  fi
+  "$kubectl" get "$resource" --all-namespaces -o json >"$live_objects"
+  run_validator objects "$crd_directory" <"$live_objects"
+done
+rm -f "$live_objects"
+trap - EXIT HUP INT TERM
+
 # Every kubectl operation before the first non-dry-run apply is read-only.
 "$kubectl" apply --server-side --dry-run=server --validate=strict \
   --field-manager="$field_manager" -f "$crd_directory" >/dev/null
@@ -87,7 +109,10 @@ run_validator fixtures "$crd_directory" "$compat_directory"
 # fetched discovery documents to expose exactly the candidate OpenAPI semantics
 # before trusting admission or starting a workload rollout.
 openapi_document=$(mktemp)
-trap 'rm -f "$openapi_document"' EXIT HUP INT TERM
+trap 'rm -f "$openapi_document"' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 observation=0
 while [ "$observation" -lt "$discovery_observations" ]; do
   "$kubectl" get --raw /openapi/v3/apis/cluster.t4.dev/v1alpha1 >"$openapi_document"

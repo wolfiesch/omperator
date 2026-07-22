@@ -252,6 +252,25 @@ func TestValidateObjectsRejectsLiveDataOmittedFromFixtures(t *testing.T) {
 	}
 }
 
+func TestValidateObjectsAcceptsKubernetesJSONNumbers(t *testing.T) {
+	crds, _ := writeCandidate(t, `apiVersion: cluster.t4.dev/v1alpha1
+kind: Widget
+metadata:
+  name: curated
+spec:
+  code: ok
+`)
+	candidate := strings.Replace(candidateCRD, "              required: [code]", "              required: [code, count]", 1)
+	candidate = strings.Replace(candidate, "                  maxLength: 3", "                  maxLength: 3\n                count:\n                  type: integer\n                  x-kubernetes-validations:\n                    - rule: self == 9223372036854775807", 1)
+	if err := os.WriteFile(filepath.Join(crds, "widget.yaml"), []byte(candidate), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	live := strings.NewReader(`{"apiVersion":"v1","kind":"WidgetList","items":[{"apiVersion":"cluster.t4.dev/v1alpha1","kind":"Widget","metadata":{"name":"live","namespace":"tenant-b"},"spec":{"code":"ok","count":9223372036854775807},"status":{"phase":"Ready"}}]}`)
+	if err := validateObjects(crds, live); err != nil {
+		t.Fatalf("ordinary Kubernetes JSON integer was rejected: %v", err)
+	}
+}
+
 func TestVerifyServedSchemasRejectsRetainedEstablishedWithStaleSchema(t *testing.T) {
 	crds, _ := writeCandidate(t, `apiVersion: cluster.t4.dev/v1alpha1
 kind: Widget
