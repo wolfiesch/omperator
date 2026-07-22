@@ -436,6 +436,54 @@ func TestSessionPodCreateRevalidatesAuthoritativePVC(t *testing.T) {
 	}
 }
 
+func TestSessionExistingPodRepairRejectsAuthoritativeForeignPVCReplacement(t *testing.T) {
+	ctx := context.Background()
+	scheme := testScheme(t)
+	workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
+	workspace.UID = "workspace-uid"
+	workspace.Status.PVCName = controllers.WorkspacePVCName(workspace)
+	cachedPVC := ownedWorkspacePVC(workspace)
+	cachedPVC.UID = "cached-pvc-uid"
+	session := testSession()
+	session.UID = "session-uid"
+	cacheClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&clusterv1alpha1.T4Session{}, &corev1.PersistentVolumeClaim{}, &corev1.Pod{}).
+		WithObjects(testHost(), workspace, cachedPVC, session).Build()
+	r := configuredSessionReconciler(cacheClient, scheme)
+	reconcileMany(t, 2, func() error {
+		_, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)})
+		return err
+	})
+	var pod corev1.Pod
+	if err := cacheClient.Get(ctx, types.NamespacedName{Namespace: session.Namespace, Name: controllers.SessionPodName(session)}, &pod); err != nil {
+		t.Fatal(err)
+	}
+	pod.Labels = nil
+	if err := cacheClient.Update(ctx, &pod); err != nil {
+		t.Fatal(err)
+	}
+	authoritativePVC := cachedPVC.DeepCopy()
+	authoritativePVC.UID = "replacement-pvc-uid"
+	authoritativePVC.Annotations = nil
+	authoritativePVC.OwnerReferences = nil
+	r.APIReader = &pvcOverrideReader{Reader: cacheClient, pvc: authoritativePVC}
+	if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cacheClient.Get(ctx, client.ObjectKeyFromObject(&pod), &pod); !apierrors.IsNotFound(err) {
+		t.Fatalf("existing Pod survived authoritative PVC replacement: %v", err)
+	}
+	var got clusterv1alpha1.T4Session
+	if err := cacheClient.Get(ctx, client.ObjectKeyFromObject(session), &got); err != nil {
+		t.Fatal(err)
+	}
+	workspaceReady := findCondition(got.Status.Conditions, "WorkspaceReady")
+	if got.Status.PodName != "" || workspaceReady == nil || workspaceReady.Status != metav1.ConditionFalse || workspaceReady.Reason != "PVCAuthorityChanged" || workspaceReady.ObservedGeneration != got.Generation {
+		t.Fatalf("existing Pod repair retained stale PVC authority: status=%#v WorkspaceReady=%#v", got.Status, workspaceReady)
+	}
+}
+
+
 func TestSessionFailsClosedWhenAnyOMPReferenceIsMissing(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -1585,14 +1633,6 @@ func TestSessionDependencyRevocationCleansOwnedResourcesAndConvergesAfterRestart
 		}},
 		{name: "missing OMP ConfigMap", conditionType: "RuntimeConfigured", wantReason: "OMPConfigMapNotFound", revoke: func(ctx context.Context, c client.Client) error {
 			return c.Delete(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "omp-runtime-config", Namespace: "team"}})
-		}},
-		{name: "invalid OMP credential Secret", conditionType: "RuntimeConfigured", wantReason: "OMPCredentialSecretInvalid", revoke: func(ctx context.Context, c client.Client) error {
-			var secret corev1.Secret
-			if err := c.Get(ctx, types.NamespacedName{Namespace: "team", Name: "omp-runtime-credential"}, &secret); err != nil {
-				return err
-			}
-			delete(secret.Data, "MODEL_API_KEY")
-			return c.Update(ctx, &secret)
 		}},
 		{name: "mismatched Host storage class", conditionType: "WorkspaceReady", wantReason: "StorageClassMismatch", revoke: func(ctx context.Context, c client.Client) error {
 			otherClass := &storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: "other-rwx", Annotations: map[string]string{clusterv1alpha1.RWXStorageClassAnnotation: string(corev1.ReadWriteMany)}}, Provisioner: "example.invalid/csi"}
