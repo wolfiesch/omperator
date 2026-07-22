@@ -2460,6 +2460,33 @@ describe("session lifecycle", () => {
     expect(shell.commandCount("session.attach")).toBe(1);
   });
 
+  it("replaces a startup fallback runtime when a named target binds the restored host", async () => {
+    const shell = new FakeShell();
+    const controller = createDesktopRuntimeController({ shell });
+    await controller.start();
+    const cache = new Map<string, SessionRuntime>();
+    const viewId = sessionViewId(HOST, SESSION);
+
+    const fallback = obtainLiveRuntime(controller, viewId, cache);
+    expect(shell.commandCount("session.attach")).toBe(0);
+
+    shell.emitState({ targetId: "local:candidate", state: "connected" });
+    shell.emitFrame({
+      targetId: "local:candidate",
+      frame: makeWelcome(HOST, ["sessions.read", "sessions.prompt"]),
+    });
+    const rebound = obtainLiveRuntime(controller, viewId, cache);
+
+    expect(rebound).not.toBe(fallback);
+    await Promise.resolve();
+    expect(shell.commands.find((request) => request.intent.command === "session.attach")?.targetId)
+      .toBe("local:candidate");
+
+    fallback.dispose();
+    rebound.dispose();
+    await controller.stop();
+  });
+
   it("paints a bounded cold tail before starting the full live attach", async () => {
     const shell = new FakeShell();
     shell.commandResult = (request) =>

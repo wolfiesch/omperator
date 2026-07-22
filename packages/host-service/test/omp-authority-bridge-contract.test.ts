@@ -91,4 +91,27 @@ describe("OMP authority bridge contract", () => {
 			params: { invalid: undefined },
 		})).toThrow("non-JSON");
 	});
+
+	test("accepts a bounded catalog response larger than the client request text budget", () => {
+		const item = { kind: "model", description: "x".repeat(420) };
+		const catalog = Array.from({ length: 791 }, (_, index) => ({ ...item, id: `model-${index}` }));
+		expect(
+			decodeOmpAuthorityBridgeServerFrame({
+				v: OMP_AUTHORITY_BRIDGE_PROTOCOL,
+				type: "response",
+				id: "catalog-request",
+				ok: true,
+				result: { items: catalog },
+			}),
+		).toMatchObject({ type: "response", ok: true });
+		expect(() =>
+			decodeOmpAuthorityBridgeServerFrame({
+				v: OMP_AUTHORITY_BRIDGE_PROTOCOL,
+				type: "response",
+				id: "oversized-catalog-request",
+				ok: true,
+				result: { items: [{ description: "x".repeat(600_000) }] },
+			}),
+		).toThrow("text bounds");
+	});
 });

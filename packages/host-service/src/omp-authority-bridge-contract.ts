@@ -93,6 +93,7 @@ const METHOD_SET = new Set<string>(OMP_AUTHORITY_BRIDGE_METHODS);
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const ERROR_CODE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/u;
 const MAX_TEXT_BYTES = 256 * 1024;
+const MAX_RESULT_TEXT_BYTES = 512 * 1024;
 const MAX_VALUE_DEPTH = 32;
 const MAX_VALUE_NODES = 50_000;
 
@@ -124,7 +125,7 @@ function method(value: unknown): OmpAuthorityBridgeMethod {
 	return value as OmpAuthorityBridgeMethod;
 }
 
-function boundedJson(value: unknown, label: string): unknown {
+function boundedJson(value: unknown, label: string, maxTextBytes = MAX_TEXT_BYTES): unknown {
 	let nodes = 0;
 	let textBytes = 0;
 	const visit = (item: unknown, depth: number): void => {
@@ -137,7 +138,7 @@ function boundedJson(value: unknown, label: string): unknown {
 		}
 		if (typeof item === "string") {
 			textBytes += Buffer.byteLength(item, "utf8");
-			if (textBytes > MAX_TEXT_BYTES) throw new Error(`${label} exceeds bridge text bounds`);
+			if (textBytes > maxTextBytes) throw new Error(`${label} exceeds bridge text bounds`);
 			return;
 		}
 		if (Array.isArray(item)) {
@@ -148,7 +149,7 @@ function boundedJson(value: unknown, label: string): unknown {
 			throw new Error(`${label} contains a non-JSON value`);
 		for (const [key, child] of Object.entries(item)) {
 			textBytes += Buffer.byteLength(key, "utf8");
-			if (textBytes > MAX_TEXT_BYTES) throw new Error(`${label} exceeds bridge text bounds`);
+			if (textBytes > maxTextBytes) throw new Error(`${label} exceeds bridge text bounds`);
 			visit(child, depth + 1);
 		}
 	};
@@ -213,7 +214,7 @@ export function decodeOmpAuthorityBridgeServerFrame(value: unknown): OmpAuthorit
 			type: "response",
 			id,
 			ok: true,
-			result: boundedJson(frame.result, "bridge result"),
+			result: boundedJson(frame.result, "bridge result", MAX_RESULT_TEXT_BYTES),
 		};
 	}
 	if (frame.ok !== false) throw new Error("bridge response status is invalid");

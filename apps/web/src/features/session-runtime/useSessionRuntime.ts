@@ -64,21 +64,24 @@ export function obtainLiveRuntime(
   controller: DesktopRuntimeController,
   sessionKey: string,
   cache: Map<string, SessionRuntime> = runtimeCache,
+  targetIdOverride?: string,
 ): SessionRuntime {
-  // Live runtimes key on the session alone: link changes must reuse the
-  // same runtime (and its transcript) instead of recreating it.
-  const cacheKey = `live\u0000${sessionKey}`;
-  const cached = refreshRecency(cache, cacheKey);
-  if (cached !== undefined) return cached;
   const address = resolveLiveSession(controller.getSnapshot(), sessionKey);
   const separator = sessionKey.indexOf("/");
   const hostId =
     address?.hostId ?? decodeURIComponent(separator > 0 ? sessionKey.slice(0, separator) : sessionKey);
   const sessionId =
     address?.sessionId ?? decodeURIComponent(separator > 0 ? sessionKey.slice(separator + 1) : "");
+  const targetId = targetIdOverride ?? address?.targetId ?? "local";
+  // Link changes on one target must reuse the same runtime and transcript.
+  // A restored route may mount before a named profile reconnects, however;
+  // once that host binds to its real target, replace the fallback runtime.
+  const cacheKey = `live\u0000${sessionKey}\u0000${targetId}`;
+  const cached = refreshRecency(cache, cacheKey);
+  if (cached !== undefined) return cached;
   const runtime = createLiveSessionRuntime({
     controller,
-    targetId: address?.targetId ?? "local",
+    targetId,
     hostId,
     sessionId,
   });
@@ -86,9 +89,9 @@ export function obtainLiveRuntime(
   return runtime;
 }
 
-function obtainRuntime(sessionKey: string, link: SessionLink): SessionRuntime {
+function obtainRuntime(sessionKey: string, link: SessionLink, targetId?: string): SessionRuntime {
   const controller = desktopRuntime();
-  if (controller !== null) return obtainLiveRuntime(controller, sessionKey);
+  if (controller !== null) return obtainLiveRuntime(controller, sessionKey, runtimeCache, targetId);
   const variant =
     typeof window !== "undefined" ? parseTranscriptVariant(window.location.search) : "default";
   const cacheKey = `${sessionKey}\u0000${variant}\u0000${link}`;
@@ -105,7 +108,20 @@ export interface UseSessionRuntimeResult {
 }
 
 export function useSessionRuntime(sessionKey: string, link: SessionLink): UseSessionRuntimeResult {
-  const runtime = useMemo(() => obtainRuntime(sessionKey, link), [sessionKey, link]);
+  const controller = desktopRuntime();
+  const controllerSnapshot = useSyncExternalStore(
+    (listener) => controller?.subscribe(listener) ?? (() => undefined),
+    () => controller?.getSnapshot() ?? null,
+    () => null,
+  );
+  const targetId =
+    controller === null || controllerSnapshot === null
+      ? undefined
+      : resolveLiveSession(controllerSnapshot, sessionKey)?.targetId;
+  const runtime = useMemo(
+    () => obtainRuntime(sessionKey, link, targetId),
+    [sessionKey, link, targetId],
+  );
 
   useEffect(() => {
     runtime.resume();
