@@ -11,6 +11,7 @@ const FORCE_ALL = [
 
 const GROUP_PATTERNS = Object.freeze({
   continuity: [
+    /^\.woodpecker\.yml$/u,
     /^packages\/host-service\/src\//u,
     /^packages\/host-service\/package\.json$/u,
     /^packages\/host-wire\/src\//u,

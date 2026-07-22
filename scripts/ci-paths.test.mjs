@@ -93,6 +93,14 @@ test("workflow changes run tooling on the PR and the full matrix after merge", (
   });
 });
 
+test("Woodpecker continuity changes run the equivalent GitHub continuity gate", () => {
+  assert.deepEqual(classifyCiPaths([".woodpecker.yml"]), {
+    ...none,
+    continuity: true,
+    cluster: true,
+  });
+});
+
 test("paths are normalized and GitHub outputs are stable", () => {
   const result = classifyCiPaths(["./apps\\web\\package.json", "./apps/web/package.json"]);
   assert.equal(
