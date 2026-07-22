@@ -186,7 +186,7 @@ func validateCompatibility(candidateDirectory, installedDirectory string) error 
 		if !reflect.DeepEqual(versionContract(current), versionContract(proposed)) {
 			compatibilityErrors = append(compatibilityErrors, fmt.Errorf("CRD %s changes its version, served, or storage contract", name))
 		}
-		if !reflect.DeepEqual(current.Spec.Conversion, proposed.Spec.Conversion) {
+		if !reflect.DeepEqual(conversionContract(current), conversionContract(proposed)) {
 			compatibilityErrors = append(compatibilityErrors, fmt.Errorf("CRD %s changes conversion configuration", name))
 		}
 	}
@@ -232,6 +232,17 @@ func validateCompatibility(candidateDirectory, installedDirectory string) error 
 		compatibilityErrors = append(compatibilityErrors, compareAdditiveSchema(path, currentSchema, proposedSchema)...)
 	}
 	return errors.Join(compatibilityErrors...)
+}
+
+func conversionContract(crd *apiextensionsv1.CustomResourceDefinition) *apiextensionsv1.CustomResourceConversion {
+	if crd.Spec.Conversion == nil {
+		return &apiextensionsv1.CustomResourceConversion{Strategy: apiextensionsv1.NoneConverter}
+	}
+	result := crd.Spec.Conversion.DeepCopy()
+	if result.Strategy == "" {
+		result.Strategy = apiextensionsv1.NoneConverter
+	}
+	return result
 }
 
 type versionContractEntry struct {

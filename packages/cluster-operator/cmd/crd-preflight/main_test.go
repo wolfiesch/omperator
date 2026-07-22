@@ -310,7 +310,7 @@ func TestValidateCompatibilityRejectsVersionAndConversionChanges(t *testing.T) {
       served: false
       storage: false
 `, 1)
-	changedConversion := strings.Replace(candidateCRD, "  versions:\n", "  conversion:\n    strategy: None\n  versions:\n", 1)
+	changedConversion := strings.Replace(candidateCRD, "  versions:\n", "  conversion:\n    strategy: Webhook\n    webhook:\n      conversionReviewVersions: [v1]\n      clientConfig:\n        url: https://conversion.example.test\n  versions:\n", 1)
 	for _, test := range []struct {
 		name     string
 		proposed string
@@ -326,6 +326,14 @@ func TestValidateCompatibilityRejectsVersionAndConversionChanges(t *testing.T) {
 				t.Fatalf("compatibility error %q does not contain %q", err, test.expect)
 			}
 		})
+	}
+}
+
+func TestValidateCompatibilityTreatsImplicitAndExplicitNoneConversionAsEqual(t *testing.T) {
+	installedCRD := strings.Replace(candidateCRD, "  versions:\n", "  conversion:\n    strategy: None\n  versions:\n", 1)
+	proposed, installed := writeCompatibilityCRDs(t, candidateCRD, installedCRD)
+	if err := validateCompatibility(proposed, installed); err != nil {
+		t.Fatalf("API-server defaulted None conversion was rejected: %v", err)
 	}
 }
 
