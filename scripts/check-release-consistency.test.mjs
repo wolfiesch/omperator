@@ -92,6 +92,53 @@ test("promotes the verified runtime into the product release", () => {
   assert.deepEqual(matrix.publishedRuntime, matrix.verifiedRuntime);
 });
 
+test("freezes the legacy OMP host-migration provenance literals", () => {
+  const sourceDrift = changed("provenance/omp-host-migration.json", (text) => {
+    const provenance = JSON.parse(text);
+    provenance.sourceRepository = "https://github.com/wolfiesch/oh-my-pi";
+    return JSON.stringify(provenance);
+  });
+  assert.ok(
+    collectReleaseConsistencyErrors(sourceDrift).some((error) =>
+      error.includes("source repository must remain"),
+    ),
+  );
+
+  for (const field of [
+    "t4codeBase",
+    "operationsContinuity",
+    "artifactAndTurnReview",
+    "runtimeAndWorkspaceAdapters",
+  ]) {
+    const inputDrift = changed("provenance/omp-host-migration.json", (text) => {
+      const provenance = JSON.parse(text);
+      provenance.inputs[field] = "0".repeat(40);
+      return JSON.stringify(provenance);
+    });
+    assert.ok(
+      collectReleaseConsistencyErrors(inputDrift).some((error) =>
+        error.includes("migration inputs must remain"),
+      ),
+      field,
+    );
+  }
+});
+
+test("rejects the retired OMP fork in the active Woodpecker workflow", () => {
+  const staleWorkflow = changed(".woodpecker.yml", (text) =>
+    replaceRequired(
+      text,
+      "https://github.com/wolfiesch/oh-my-pi.git",
+      "https://github.com/lyc-aon/oh-my-pi.git",
+    ),
+  );
+  assert.ok(
+    collectReleaseConsistencyErrors(staleWorkflow).some((error) =>
+      error.includes("retired Lycaon OMP integration fork"),
+    ),
+  );
+});
+
 test("pins official OMP artifacts and the Gate 0 proof contract", () => {
   const officialDrift = changedRuntime("officialRuntime", (runtime) => {
     runtime.artifacts["linux-arm64"].sha256 = "invalid";
@@ -292,7 +339,7 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       (text) =>
         replaceRequired(
           text,
-          'test "$source_repository" = "https://github.com/lyc-aon/oh-my-pi"',
+          'test "$source_repository" = "https://github.com/wolfiesch/oh-my-pi"',
           'test "$source_repository" = "https://github.com/example/other"',
         ),
     ],
@@ -536,17 +583,17 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("ref: ${{ github.event.pull_request.head.sha || github.sha }}"));
   assert.ok(
     ciWorkflow.includes(
-      `source_repository="$(jq -er '.sourceRepository' provenance/omp-host-migration.json)"`,
+      `source_repository="$(jq -er '.verifiedRuntime.sourceRepository' compat/omp-app-matrix.json)"`,
     ),
   );
   assert.ok(
-    ciWorkflow.includes('test "$source_repository" = "https://github.com/lyc-aon/oh-my-pi"'),
+    ciWorkflow.includes('test "$source_repository" = "https://github.com/wolfiesch/oh-my-pi"'),
   );
   assert.ok(
     ciWorkflow.includes("sha=\"$(jq -er '.inputs.operationsContinuity' provenance/omp-host-migration.json)\""),
   );
   assert.ok(ciWorkflow.includes('[[ "$sha" =~ ^[0-9a-f]{40}$ ]]'));
-  assert.ok(ciWorkflow.includes('echo "repository=lyc-aon/oh-my-pi" >> "$GITHUB_OUTPUT"'));
+  assert.ok(ciWorkflow.includes('echo "repository=wolfiesch/oh-my-pi" >> "$GITHUB_OUTPUT"'));
   assert.ok(ciWorkflow.includes("repository: ${{ steps.authority.outputs.repository }}"));
   assert.ok(ciWorkflow.includes("ref: ${{ steps.authority.outputs.sha }}"));
   assert.ok(ciWorkflow.includes("T4_OMP_SOURCE_DIR: ${{ github.workspace }}/.continuity/omp"));

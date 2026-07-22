@@ -176,11 +176,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          source_repository="$(jq -er '.sourceRepository' provenance/omp-host-migration.json)"
-          test "$source_repository" = "https://github.com/lyc-aon/oh-my-pi"
+          source_repository="$(jq -er '.verifiedRuntime.sourceRepository' compat/omp-app-matrix.json)"
+          test "$source_repository" = "https://github.com/wolfiesch/oh-my-pi"
           sha="$(jq -er '.inputs.operationsContinuity' provenance/omp-host-migration.json)"
           [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
-          echo "repository=lyc-aon/oh-my-pi" >> "$GITHUB_OUTPUT"
+          echo "repository=wolfiesch/oh-my-pi" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
       - name: Check out pinned OMP authority source

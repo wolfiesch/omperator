@@ -58,4 +58,4 @@ The standalone OMP release carries an ad-hoc integrity signature because the for
 
 That bridge release moves the running network host into the standalone T4 executable and removes OMP's public legacy launchers. The thin bridge and standalone host pass a compiled-binary end-to-end smoke test. The compatibility matrix records `appserver-10` as both the verified and published pairing for the T4 product build.
 
-This reduces the fork to the OMP-specific authority adapter and protocol glue, but does not remove the fork entirely. T4 still pins the exact Lycaon OMP source and binary because the bridge is not part of ordinary upstream OMP.
+This reduces the fork to the OMP-specific authority adapter and protocol glue, but does not remove the fork entirely. Active runtime tags, releases, and automation are pinned to `wolfiesch/oh-my-pi`. The earlier `lyc-aon/oh-my-pi` repository remains only as frozen provenance for the app-wire package and host-source migration recorded in `provenance/omp-host-migration.json`.

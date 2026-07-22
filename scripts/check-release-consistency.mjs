@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { load as parseYaml } from "js-yaml";
 
 export const RELEASE_CONTRACT_PATHS = [
+  ".woodpecker.yml",
   ".github/android-release-identity.json",
   ".github/macos-release-identity.json",
   ".github/ISSUE_TEMPLATE/bug_report.yml",
@@ -26,6 +27,7 @@ export const RELEASE_CONTRACT_PATHS = [
   "docs/RELEASE_GATE.md",
   "ops/t4-maintainer/README.md",
   "packages/client/src/omp-client-frames.ts",
+  "provenance/omp-host-migration.json",
   "scripts/check-release-publication.mjs",
   "scripts/deploy-site.mjs",
   "scripts/dispatch-site-deployment.mjs",
@@ -39,8 +41,16 @@ export const RELEASE_CONTRACT_PATHS = [
 ];
 
 const REPOSITORY_URL = "https://github.com/LycaonLLC/t4-code";
-const OMP_RUNTIME_REPOSITORY = "https://github.com/lyc-aon/oh-my-pi";
+const OMP_RUNTIME_REPOSITORY = "https://github.com/wolfiesch/oh-my-pi";
+const OMP_APP_WIRE_SOURCE_REPOSITORY = "https://github.com/lyc-aon/oh-my-pi";
 const OMP_UPSTREAM_REPOSITORY = "https://github.com/can1357/oh-my-pi";
+const OMP_HOST_MIGRATION_SOURCE_REPOSITORY = "https://github.com/lyc-aon/oh-my-pi";
+const OMP_HOST_MIGRATION_INPUTS = {
+  t4codeBase: "09835b929cd028e7e3f800b3e4203e3d1f37931c",
+  operationsContinuity: "08504b1281f01d8fb81e27306f7d3f6e6c29c4a6",
+  artifactAndTurnReview: "796bb7dca4f9c0ebba98bafc37dc67359bb6ea39",
+  runtimeAndWorkspaceAdapters: "6ce1d41b35db9a5feaa4743f4a3200d9a8f9ae61",
+};
 const VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
@@ -474,6 +484,16 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
 
   const matrixPath = "compat/omp-app-matrix.json";
   const matrix = parseJson(files, matrixPath, errors);
+  const hostMigrationPath = "provenance/omp-host-migration.json";
+  const hostMigration = parseJson(files, hostMigrationPath, errors);
+  if (hostMigration?.sourceRepository !== OMP_HOST_MIGRATION_SOURCE_REPOSITORY) {
+    errors.push(
+      `${hostMigrationPath} source repository must remain ${OMP_HOST_MIGRATION_SOURCE_REPOSITORY}`,
+    );
+  }
+  if (!isDeepStrictEqual(hostMigration?.inputs, OMP_HOST_MIGRATION_INPUTS)) {
+    errors.push(`${hostMigrationPath} migration inputs must remain the frozen reviewed commits`);
+  }
   validateOfficialRuntimeMetadata(matrix?.officialRuntime, matrixPath, errors);
   const officialGatePath = "compat/official-omp-gate0.json";
   const officialGate = parseJson(files, officialGatePath, errors);
@@ -501,8 +521,8 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   if (typeof appWireVersion !== "string" || !VERSION_PATTERN.test(appWireVersion)) {
     errors.push(`${matrixPath} app-wire version must be a stable x.y.z version`);
   }
-  if (appWire?.sourceRepository !== OMP_RUNTIME_REPOSITORY) {
-    errors.push(`${matrixPath} app-wire repository must be ${OMP_RUNTIME_REPOSITORY}`);
+  if (appWire?.sourceRepository !== OMP_APP_WIRE_SOURCE_REPOSITORY) {
+    errors.push(`${matrixPath} app-wire repository must be ${OMP_APP_WIRE_SOURCE_REPOSITORY}`);
   }
   if (!SHA_PATTERN.test(appWireSourceCommit)) {
     errors.push(`${matrixPath} app-wire commit must be a lowercase 40-character Git SHA`);
@@ -519,8 +539,8 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   ) {
     errors.push(`${matrixPath} published app-wire version must be a stable x.y.z version`);
   }
-  if (publishedAppWire?.sourceRepository !== OMP_RUNTIME_REPOSITORY) {
-    errors.push(`${matrixPath} published app-wire repository must be ${OMP_RUNTIME_REPOSITORY}`);
+  if (publishedAppWire?.sourceRepository !== OMP_APP_WIRE_SOURCE_REPOSITORY) {
+    errors.push(`${matrixPath} published app-wire repository must be ${OMP_APP_WIRE_SOURCE_REPOSITORY}`);
   }
   if (!SHA_PATTERN.test(publishedAppWireSourceCommit)) {
     errors.push(`${matrixPath} published app-wire commit must be a lowercase 40-character Git SHA`);
@@ -721,7 +741,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   );
   requireText(
     site,
-    "export const OMP_RUNTIME_URL = `https://github.com/lyc-aon/oh-my-pi/tree/${OMP_RUNTIME_TAG}`;",
+    "export const OMP_RUNTIME_URL = `https://github.com/wolfiesch/oh-my-pi/tree/${OMP_RUNTIME_TAG}`;",
     "apps/site/src/release.ts",
     errors,
   );
@@ -774,7 +794,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   );
   requireText(
     readme,
-    `T4 Code vendors \`@oh-my-pi/app-wire\` ${publishedAppWireVersion} from integration commit [\`${publishedAppWireSourceCommit.slice(0, 8)}\`](${OMP_RUNTIME_REPOSITORY}/commit/${publishedAppWireSourceCommit}), source tree \`${publishedAppWireSourceTree}\`.`,
+    `T4 Code vendors \`@oh-my-pi/app-wire\` ${publishedAppWireVersion} from integration commit [\`${publishedAppWireSourceCommit.slice(0, 8)}\`](${OMP_APP_WIRE_SOURCE_REPOSITORY}/commit/${publishedAppWireSourceCommit}), source tree \`${publishedAppWireSourceTree}\`.`,
     "README.md",
     errors,
   );
@@ -803,7 +823,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   const releaseNotes = files.get("docs/CURRENT_RELEASE_NOTES.md") ?? "";
   for (const expected of [
     `app-wire ${publishedAppWireVersion}`,
-    `[${publishedAppWireSourceCommit.slice(0, 8)}](${OMP_RUNTIME_REPOSITORY}/commit/${publishedAppWireSourceCommit})`,
+    `[${publishedAppWireSourceCommit.slice(0, 8)}](${OMP_APP_WIRE_SOURCE_REPOSITORY}/commit/${publishedAppWireSourceCommit})`,
     `OMP ${ompRuntimeVersion}`,
     `[${String(ompRuntimeCommit).slice(0, 8)}](${ompRuntimeCommitUrl})`,
     `[${ompRuntimeSourceTag}](${ompRuntimeSourceUrl})`,
@@ -863,6 +883,16 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
 
   const releaseWorkflow = files.get(".github/workflows/release.yml") ?? "";
   const ciWorkflow = files.get(".github/workflows/ci.yml") ?? "";
+  const woodpeckerWorkflow = files.get(".woodpecker.yml") ?? "";
+  requireText(
+    woodpeckerWorkflow,
+    "https://github.com/wolfiesch/oh-my-pi.git",
+    ".woodpecker.yml",
+    errors,
+  );
+  if (woodpeckerWorkflow.includes("https://github.com/lyc-aon/oh-my-pi.git")) {
+    errors.push(".woodpecker.yml must not use the retired Lycaon OMP integration fork");
+  }
   try {
     const workflow = parseYaml(ciWorkflow);
     const continuityJob = workflow?.jobs?.["legacy-bridge-continuity"];
@@ -882,11 +912,11 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
       const continuityStep = namedStep("Run legacy bridge continuity gate");
       const uploadStep = namedStep("Upload continuity evidence");
       const authorityCommands = [
-        `source_repository="$(jq -er '.sourceRepository' provenance/omp-host-migration.json)"`,
-        `test "$source_repository" = "https://github.com/lyc-aon/oh-my-pi"`,
+        `source_repository="$(jq -er '.verifiedRuntime.sourceRepository' compat/omp-app-matrix.json)"`,
+        `test "$source_repository" = "https://github.com/wolfiesch/oh-my-pi"`,
         `sha="$(jq -er '.inputs.operationsContinuity' provenance/omp-host-migration.json)"`,
         '[[ "$sha" =~ ^[0-9a-f]{40}$ ]]',
-        `echo "repository=lyc-aon/oh-my-pi" >> "$GITHUB_OUTPUT"`,
+        `echo "repository=wolfiesch/oh-my-pi" >> "$GITHUB_OUTPUT"`,
         `echo "sha=$sha" >> "$GITHUB_OUTPUT"`,
       ];
       for (const command of authorityCommands) {
@@ -918,11 +948,11 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "core:",
     "legacy-bridge-continuity:",
     'ref: ${{ github.event.pull_request.head.sha || github.sha }}',
-    `source_repository="$(jq -er '.sourceRepository' provenance/omp-host-migration.json)"`,
-    `test "$source_repository" = "https://github.com/lyc-aon/oh-my-pi"`,
+    `source_repository="$(jq -er '.verifiedRuntime.sourceRepository' compat/omp-app-matrix.json)"`,
+    `test "$source_repository" = "https://github.com/wolfiesch/oh-my-pi"`,
     `sha="$(jq -er '.inputs.operationsContinuity' provenance/omp-host-migration.json)"`,
     '[[ "$sha" =~ ^[0-9a-f]{40}$ ]]',
-    `echo "repository=lyc-aon/oh-my-pi" >> "$GITHUB_OUTPUT"`,
+    `echo "repository=wolfiesch/oh-my-pi" >> "$GITHUB_OUTPUT"`,
     "repository: ${{ steps.authority.outputs.repository }}",
     "ref: ${{ steps.authority.outputs.sha }}",
     "T4_OMP_SOURCE_DIR: ${{ github.workspace }}/.continuity/omp",

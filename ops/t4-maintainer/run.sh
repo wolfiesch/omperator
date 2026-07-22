@@ -22,6 +22,7 @@ LOCAL_APPLIED_FILE="$STATE_DIR/local-applied.json"
 BLOCKED_FILE="$STATE_DIR/deployment-blocked.json"
 FORK_SYNC_FILE="$STATE_DIR/fork-main-sync.json"
 ATOMIC_PUBLICATION_STATE_DIR=${T4_MAINTAINER_ATOMIC_STATE_DIR:-"$STATE_DIR/atomic-publication"}
+OMP_AUTHORITY_TRANSFER_FILE=${T4_MAINTAINER_OMP_AUTHORITY_TRANSFER_FILE:-"$SCRIPT_DIR/omp-fork-authority-transfer.json"}
 
 GH=${T4_MAINTAINER_GH:-gh}
 CURL=${T4_MAINTAINER_CURL:-curl}
@@ -71,11 +72,16 @@ FORK_SYNC_RUN_MIN_OBSERVATION_POLLS=${T4_MAINTAINER_FORK_SYNC_RUN_MIN_OBSERVATIO
 SLEEP=${T4_MAINTAINER_SLEEP:-sleep}
 
 readonly OMP_UPSTREAM_REPOSITORY="can1357/oh-my-pi"
-readonly OMP_INTEGRATION_REPOSITORY="lyc-aon/oh-my-pi"
+readonly OMP_INTEGRATION_REPOSITORY="wolfiesch/oh-my-pi"
+readonly OMP_LEGACY_INTEGRATION_REPOSITORY="lyc-aon/oh-my-pi"
+readonly OMP_UPSTREAM_REPOSITORY_ID=1125856365
+readonly OMP_UPSTREAM_REPOSITORY_NODE_ID="R_kgDOQxs0bQ"
+readonly OMP_INTEGRATION_REPOSITORY_ID=1271775475
+readonly OMP_INTEGRATION_REPOSITORY_NODE_ID="R_kgDOS83A8w"
 readonly OMP_PRODUCT_BRANCH="t4code/main"
 readonly OMP_FORK_WORKFLOW="ci.yml"
 readonly OMP_UPSTREAM_URL="https://github.com/can1357/oh-my-pi.git"
-readonly OMP_INTEGRATION_URL="https://github.com/lyc-aon/oh-my-pi.git"
+readonly OMP_INTEGRATION_URL="https://github.com/wolfiesch/oh-my-pi.git"
 readonly T4_REPOSITORY="LycaonLLC/t4-code"
 readonly T4_SITE="https://t4code.net"
 T4_MAIN_GATE_SHA=
@@ -372,9 +378,40 @@ fork_workflow_state() {
   $GH api "repos/$OMP_INTEGRATION_REPOSITORY/actions/workflows/$OMP_FORK_WORKFLOW" --jq .state
 }
 
+omp_fork_identity_is_exact() {
+  local official fork
+  official=$($GH api "repos/$OMP_UPSTREAM_REPOSITORY") || return 1
+  fork=$($GH api "repos/$OMP_INTEGRATION_REPOSITORY") || return 1
+  printf '%s' "$official" | $JQ -e \
+    --argjson id "$OMP_UPSTREAM_REPOSITORY_ID" \
+    --arg node_id "$OMP_UPSTREAM_REPOSITORY_NODE_ID" '
+      .id == $id and .node_id == $node_id and
+      .full_name == "can1357/oh-my-pi" and
+      .clone_url == "https://github.com/can1357/oh-my-pi.git"
+    ' >/dev/null || return 1
+  printf '%s' "$fork" | $JQ -e \
+    --argjson id "$OMP_INTEGRATION_REPOSITORY_ID" \
+    --arg node_id "$OMP_INTEGRATION_REPOSITORY_NODE_ID" \
+    --argjson parent_id "$OMP_UPSTREAM_REPOSITORY_ID" \
+    --arg parent_node_id "$OMP_UPSTREAM_REPOSITORY_NODE_ID" '
+      .id == $id and .node_id == $node_id and
+      .full_name == "wolfiesch/oh-my-pi" and
+      .clone_url == "https://github.com/wolfiesch/oh-my-pi.git" and .fork == true and
+      .parent.id == $parent_id and .parent.node_id == $parent_node_id and
+      .parent.full_name == "can1357/oh-my-pi"
+    ' >/dev/null
+}
+
+require_omp_fork_identity() {
+  omp_fork_identity_is_exact \
+    || fail "OMP fork repository identity does not match the pinned numeric fork and parent; refusing mutation"
+}
+
 enable_fork_workflow_and_prove() {
+  require_omp_fork_identity
   $GH api --method PUT "repos/$OMP_INTEGRATION_REPOSITORY/actions/workflows/$OMP_FORK_WORKFLOW/enable" \
     >/dev/null || return 1
+  require_omp_fork_identity
   [[ $(fork_workflow_state) == active ]]
 }
 
@@ -508,6 +545,7 @@ push_attempted_fork_sync_marker_is_valid() {
 
 recover_fork_sync() {
   [[ -e $FORK_SYNC_FILE ]] || return 0
+  require_omp_fork_identity
   fork_sync_marker_is_valid "$FORK_SYNC_FILE" \
     || fail "fork-main recovery state is invalid: $FORK_SYNC_FILE"
   local official_commit phase preexisting_run_ids
@@ -654,6 +692,7 @@ settle_fork_main_push_runs() {
       quiet_polls=0
       while IFS= read -r run_id; do
         [[ $run_id =~ ^[1-9][0-9]*$ ]] || return 1
+        require_omp_fork_identity
         if $GH api --method POST \
           "repos/$OMP_INTEGRATION_REPOSITORY/actions/runs/$run_id/cancel" >/dev/null; then
           log "Requested cancellation of delayed fork-main CI run $run_id for $official_commit."
@@ -730,6 +769,7 @@ sync_fork_main_once() {
   fi
   write_fork_sync_marker "$official_commit" "$fork_commit" \
     || fail "fork-main recovery state could not be persisted before CI was disabled"
+  require_omp_fork_identity
   if ! $GH api --method PUT \
     "repos/$OMP_INTEGRATION_REPOSITORY/actions/workflows/$OMP_FORK_WORKFLOW/disable" >/dev/null \
     || [[ $(fork_workflow_state) != disabled_manually ]]; then
@@ -755,6 +795,7 @@ sync_fork_main_once() {
     || fail "fork-main recovery state could not advance before the mirror push"
   preexisting_run_ids=$($JQ -ec '.preexistingRunIds' "$FORK_SYNC_FILE") \
     || fail "fork-main recovery state lost its run snapshot before the mirror push"
+  require_omp_fork_identity
   $GIT -C "$push_repo" push "$OMP_INTEGRATION_URL" \
     "$official_commit:refs/heads/main" || push_status=$?
   rm -rf -- "$push_repo"
@@ -1293,10 +1334,80 @@ site_release_manifest_matches() {
   return "$manifest_status"
 }
 
+legacy_omp_authority_transfer_is_valid() {
+  local result_file=$1 receipt_file=$2 proof=$OMP_AUTHORITY_TRANSFER_FILE
+  local upstream_tag upstream_commit integration_tag integration_commit
+  local official_tag_object fork_tag_object integration_tag_object product_commit current_base_commit release
+  [[ -s $proof && -f $proof && ! -L $proof ]] || return 1
+  upstream_tag=$($JQ -er '.upstream.tag' "$result_file") || return 1
+  upstream_commit=$($JQ -er '.upstream.commit' "$result_file") || return 1
+  integration_tag=$($JQ -er '.integration.tag' "$result_file") || return 1
+  integration_commit=$($JQ -er '.integration.commit' "$result_file") || return 1
+  $JQ -e \
+    --arg upstream_tag "$upstream_tag" \
+    --arg upstream_commit "$upstream_commit" \
+    --arg integration_tag "$integration_tag" \
+    --arg integration_commit "$integration_commit" \
+    --slurpfile receipt "$receipt_file" '
+      ($receipt[0]) as $r |
+      .schemaVersion == 1 and
+      .purpose == "one-time-omp-fork-authority-transfer" and
+      .repositories.official == {
+        fullName: "can1357/oh-my-pi", id: 1125856365, nodeId: "R_kgDOQxs0bQ"
+      } and
+      .repositories.legacy == {
+        fullName: "lyc-aon/oh-my-pi", id: 1271877000, nodeId: "R_kgDOS89NiA",
+        parentId: 1125856365, parentNodeId: "R_kgDOQxs0bQ"
+      } and
+      .repositories.current == {
+        fullName: "wolfiesch/oh-my-pi", id: 1271775475, nodeId: "R_kgDOS83A8w",
+        parentId: 1125856365, parentNodeId: "R_kgDOQxs0bQ"
+      } and
+      .publication.upstreamTag == $upstream_tag and
+      .publication.upstreamCommit == $upstream_commit and
+      .publication.upstreamTagObject == $r.upstream.tagObject and
+      .publication.currentBaseTagObject == null and
+      .publication.currentBaseCommitAccessible == true and
+      .publication.productBranch == "t4code/main" and
+      .publication.productCommit == $integration_commit and
+      .publication.integrationTag == $integration_tag and
+      .publication.integrationCommit == $integration_commit and
+      .publication.integrationTagObject == $r.integration.tagObject and
+      (.releaseAssets | type == "array" and length == 5) and
+      all(.releaseAssets[];
+        (.name | type == "string") and
+        (.size | type == "number" and floor == . and . > 0) and
+        (.digest | type == "string" and test("^sha256:[0-9a-f]{64}$")))
+    ' "$proof" >/dev/null || return 1
+  omp_fork_identity_is_exact || return 1
+  official_tag_object=$(resolve_public_tag_object "$OMP_UPSTREAM_REPOSITORY" "$upstream_tag") \
+    || return 1
+  fork_tag_object=$(resolve_public_tag_object "$OMP_INTEGRATION_REPOSITORY" "$upstream_tag") \
+    || fork_tag_object=
+  current_base_commit=$(resolve_public_commit "$OMP_INTEGRATION_REPOSITORY" "$upstream_commit") \
+    || return 1
+  integration_tag_object=$(resolve_public_tag_object "$OMP_INTEGRATION_REPOSITORY" "$integration_tag") \
+    || return 1
+  product_commit=$(resolve_public_commit "$OMP_INTEGRATION_REPOSITORY" "$OMP_PRODUCT_BRANCH") \
+    || return 1
+  [[ $official_tag_object == "$($JQ -r '.publication.upstreamTagObject' "$proof")" ]] || return 1
+  [[ $current_base_commit == "$upstream_commit" ]] || return 1
+  [[ -z $fork_tag_object || $fork_tag_object == "$official_tag_object" ]] || return 1
+  [[ $integration_tag_object == "$($JQ -r '.publication.integrationTagObject' "$proof")" ]] \
+    || return 1
+  [[ $product_commit == "$integration_commit" ]] || return 1
+  release=$($GH api "repos/$OMP_INTEGRATION_REPOSITORY/releases/tags/$integration_tag") \
+    || return 1
+  $JQ -e --argjson release "$release" '
+    ([.releaseAssets[] | {name, size, digest}] | sort_by(.name)) ==
+    ([$release.assets[] | select(.state == "uploaded") | {name, size, digest}] | sort_by(.name))
+  ' "$proof" >/dev/null
+}
+
 atomic_publication_receipt_is_valid() {
   local result_file=$1 integration_tag receipt_file intent_file intent_object embedded
   local upstream_tag upstream_commit integration_commit
-  local official_tag_object fork_tag_object integration_tag_object
+  local official_tag_object fork_tag_object integration_tag_object legacy_receipt=false
   integration_tag=$($JQ -er '.integration.tag | strings | select(test("^t4code-[0-9]+\\.[0-9]+\\.[0-9]+-appserver-[1-9][0-9]*$"))' "$result_file") \
     || return 1
   upstream_tag=$($JQ -er '.upstream.tag' "$result_file") || return 1
@@ -1317,7 +1428,8 @@ atomic_publication_receipt_is_valid() {
       .schemaVersion == 1 and .helperOwned == true and .atomicPush == true and
       .pushedRefCount == 3 and .productionRemoteIdentity == true and
       .officialRepository == "can1357/oh-my-pi" and
-      .forkRepository == "lyc-aon/oh-my-pi" and
+      (.forkRepository == "wolfiesch/oh-my-pi" or
+       .forkRepository == "lyc-aon/oh-my-pi") and
       .upstream.tag == $upstream_tag and .upstream.commit == $upstream_commit and
       (.upstream.tagObject | test("^[0-9a-f]{40}$")) and
       .product.branch == "t4code/main" and .product.commit == $integration_commit and
@@ -1350,14 +1462,22 @@ atomic_publication_receipt_is_valid() {
         "t4code/main",
         "annotated-integration-tag"
       ]
-    ' "$intent_file" >/dev/null || return 1
+  ' "$intent_file" >/dev/null || return 1
+  if [[ $($JQ -r '.forkRepository' "$receipt_file") == "$OMP_LEGACY_INTEGRATION_REPOSITORY" ]]; then
+    legacy_omp_authority_transfer_is_valid "$result_file" "$receipt_file" || return 1
+    legacy_receipt=true
+  else
+    omp_fork_identity_is_exact || return 1
+  fi
   official_tag_object=$(resolve_public_tag_object "$OMP_UPSTREAM_REPOSITORY" "$upstream_tag") \
-    || return 1
-  fork_tag_object=$(resolve_public_tag_object "$OMP_INTEGRATION_REPOSITORY" "$upstream_tag") \
     || return 1
   integration_tag_object=$(resolve_public_tag_object "$OMP_INTEGRATION_REPOSITORY" "$integration_tag") \
     || return 1
-  [[ $official_tag_object == "$fork_tag_object" ]] || return 1
+  if [[ $legacy_receipt == false ]]; then
+    fork_tag_object=$(resolve_public_tag_object "$OMP_INTEGRATION_REPOSITORY" "$upstream_tag") \
+      || return 1
+    [[ $official_tag_object == "$fork_tag_object" ]] || return 1
+  fi
   [[ $($JQ -r '.upstream.tagObject' "$receipt_file") == "$official_tag_object" ]] || return 1
   [[ $($JQ -r '.integration.tagObject' "$receipt_file") == "$integration_tag_object" ]] || return 1
   if $JQ -e 'has("atomicPublication")' "$result_file" >/dev/null; then
@@ -1606,7 +1726,7 @@ verify_result_once() {
   local actual_upstream_commit actual_integration_commit actual_t4_commit release_json expected_release_url
   local omp_release_json
   local official_main_commit fork_main_commit official_base_tag_object fork_base_tag_object
-  local fork_base_commit
+  local fork_base_commit receipt_file legacy_receipt=false
 
   atomic_publication_receipt_is_valid "$result_file" || return 1
   $JQ -e '
@@ -1632,6 +1752,11 @@ verify_result_once() {
   release_url=$($JQ -r '.release.url' "$result_file")
   site_url=$($JQ -r '.site.url' "$result_file")
   site_tag=$($JQ -r '.site.releaseTag' "$result_file")
+  receipt_file="$ATOMIC_PUBLICATION_STATE_DIR/$integration_tag/receipt.json"
+  if [[ $($JQ -r '.forkRepository' "$receipt_file") == "$OMP_LEGACY_INTEGRATION_REPOSITORY" ]]; then
+    legacy_omp_authority_transfer_is_valid "$result_file" "$receipt_file" || return 1
+    legacy_receipt=true
+  fi
 
   [[ $upstream_tag == "$($JQ -r '.tag' <<<"$target")" ]] || return 1
   [[ $upstream_commit == "$($JQ -r '.commit' <<<"$target")" ]] || return 1
@@ -1646,10 +1771,17 @@ verify_result_once() {
   official_base_tag_object=$(resolve_public_tag_object "$OMP_UPSTREAM_REPOSITORY" "$upstream_tag") \
     || return 1
   fork_base_tag_object=$(resolve_public_tag_object "$OMP_INTEGRATION_REPOSITORY" "$upstream_tag") \
-    || return 1
-  [[ $official_base_tag_object =~ ^[0-9a-f]{40}$ \
-    && $fork_base_tag_object == "$official_base_tag_object" ]] || return 1
-  fork_base_commit=$(resolve_public_commit "$OMP_INTEGRATION_REPOSITORY" "$upstream_tag") || return 1
+    || fork_base_tag_object=
+  [[ $official_base_tag_object =~ ^[0-9a-f]{40}$ ]] || return 1
+  if [[ $legacy_receipt == true ]]; then
+    [[ -z $fork_base_tag_object || $fork_base_tag_object == "$official_base_tag_object" ]] || return 1
+    fork_base_commit=$(resolve_public_commit "$OMP_INTEGRATION_REPOSITORY" "$upstream_commit") \
+      || return 1
+  else
+    [[ $fork_base_tag_object == "$official_base_tag_object" ]] || return 1
+    fork_base_commit=$(resolve_public_commit "$OMP_INTEGRATION_REPOSITORY" "$upstream_tag") \
+      || return 1
+  fi
   [[ $fork_base_commit == "$upstream_commit" ]] || return 1
   official_main_commit=$(resolve_public_commit "$OMP_UPSTREAM_REPOSITORY" main) || return 1
   fork_main_commit=$(resolve_public_commit "$OMP_INTEGRATION_REPOSITORY" main) || return 1

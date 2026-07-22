@@ -27,7 +27,7 @@ test("official lifecycle inputs run their native proof and tooling", () => {
       "docs/T4_ARCHITECTURE.html",
       "compat/omp-app-matrix.json",
     ]),
-    { ...none, official_omp_gate0: true, tooling: true },
+    { ...none, continuity: true, official_omp_gate0: true, tooling: true },
   );
   assert.deepEqual(classifyCiPaths(["docs/archive/flutter-migration/OMP_T4_CAPABILITY_TRACKER.csv"]), {
     ...none,
@@ -87,9 +87,18 @@ test("dependency graph changes conservatively run every leg", () => {
 test("workflow changes run tooling on the PR and the full matrix after merge", () => {
   assert.deepEqual(classifyCiPaths([".github/workflows/ci.yml"]), {
     ...none,
+    continuity: true,
     cluster: true,
     official_omp_gate0: true,
     tooling: true,
+  });
+});
+
+test("Woodpecker continuity changes run the equivalent GitHub continuity gate", () => {
+  assert.deepEqual(classifyCiPaths([".woodpecker.yml"]), {
+    ...none,
+    continuity: true,
+    cluster: true,
   });
 });
 
