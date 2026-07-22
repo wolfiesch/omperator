@@ -106,6 +106,42 @@ func TestWorkspaceCreateAlreadyExistsRefetchesForeignPVC(t *testing.T) {
 	}
 }
 
+func TestWorkspaceReadinessRejectsAuthoritativeForeignPVCReplacement(t *testing.T) {
+	ctx := context.Background()
+	scheme := testScheme(t)
+	workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
+	workspace.UID = "workspace-uid"
+	cachedPVC := ownedWorkspacePVC(workspace)
+	cachedPVC.UID = "cached-pvc-uid"
+	authoritativePVC := cachedPVC.DeepCopy()
+	authoritativePVC.UID = "replacement-pvc-uid"
+	authoritativePVC.Annotations = nil
+	authoritativePVC.OwnerReferences = nil
+	cacheClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&clusterv1alpha1.T4Workspace{}, &corev1.PersistentVolumeClaim{}).
+		WithObjects(testHost(), rwxStorageClass(), workspace, cachedPVC).Build()
+	r := &controllers.WorkspaceReconciler{
+		Client:    cacheClient,
+		APIReader: &pvcOverrideReader{Reader: cacheClient, pvc: authoritativePVC},
+		Scheme:    scheme,
+	}
+	if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workspace)}); err != nil {
+		t.Fatal(err)
+	}
+	var got clusterv1alpha1.T4Workspace
+	if err := cacheClient.Get(ctx, client.ObjectKeyFromObject(workspace), &got); err != nil {
+		t.Fatal(err)
+	}
+	storageReady := findCondition(got.Status.Conditions, "StorageReady")
+	ready := findCondition(got.Status.Conditions, "Ready")
+	if got.Status.PVCName != "" || got.Status.PVCPhase != "" || !got.Status.Capacity.IsZero() ||
+		storageReady == nil || storageReady.Status != metav1.ConditionFalse || storageReady.Reason != "PVCOwnershipConflict" || storageReady.ObservedGeneration != got.Generation ||
+		ready == nil || ready.Status != metav1.ConditionFalse || ready.ObservedGeneration != got.Generation {
+		t.Fatalf("stale cached PVC published workspace authority: status=%#v StorageReady=%#v Ready=%#v", got.Status, storageReady, ready)
+	}
+}
+
+
 func TestWorkspacePendingPVCPolicyFailsBeforeAuthority(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -344,6 +380,59 @@ func TestWorkspaceDeletionWaitsForSessionResources(t *testing.T) {
 	}
 	if len(retained.OwnerReferences) != 1 {
 		t.Fatalf("workspace PVC was orphaned before sessions exited: %#v", retained.OwnerReferences)
+	}
+}
+
+func TestSessionPodCreateRevalidatesAuthoritativePVC(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*corev1.PersistentVolumeClaim)
+	}{
+		{name: "replacement UID", mutate: func(pvc *corev1.PersistentVolumeClaim) { pvc.UID = "replacement-pvc-uid" }},
+		{name: "foreign owner", mutate: func(pvc *corev1.PersistentVolumeClaim) {
+			pvc.OwnerReferences = []metav1.OwnerReference{{APIVersion: "v1", Kind: "Secret", Name: "foreign", UID: "foreign-uid", Controller: ptr(true)}}
+		}},
+		{name: "storage class drift", mutate: func(pvc *corev1.PersistentVolumeClaim) { pvc.Spec.StorageClassName = ptr("other-rwx") }},
+		{name: "access mode drift", mutate: func(pvc *corev1.PersistentVolumeClaim) { pvc.Spec.AccessModes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce} }},
+		{name: "unbound replacement", mutate: func(pvc *corev1.PersistentVolumeClaim) { pvc.Status.Phase = corev1.ClaimPending }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			scheme := testScheme(t)
+			workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
+			workspace.UID = "workspace-uid"
+			workspace.Status.PVCName = controllers.WorkspacePVCName(workspace)
+			cachedPVC := ownedWorkspacePVC(workspace)
+			cachedPVC.UID = "cached-pvc-uid"
+			authoritativePVC := cachedPVC.DeepCopy()
+			test.mutate(authoritativePVC)
+			session := testSession()
+			session.UID = "session-uid"
+			cacheClient := fake.NewClientBuilder().WithScheme(scheme).
+				WithStatusSubresource(&clusterv1alpha1.T4Session{}, &corev1.PersistentVolumeClaim{}, &corev1.Pod{}).
+				WithObjects(testHost(), workspace, cachedPVC, session).Build()
+			r := configuredSessionReconciler(cacheClient, scheme)
+			r.APIReader = &pvcOverrideReader{Reader: cacheClient, pvc: authoritativePVC}
+			if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
+				t.Fatal(err)
+			}
+			var pods corev1.PodList
+			if err := cacheClient.List(ctx, &pods, client.InNamespace(session.Namespace)); err != nil {
+				t.Fatal(err)
+			}
+			if len(pods.Items) != 0 {
+				t.Fatalf("created %d Pods after authoritative PVC %s", len(pods.Items), test.name)
+			}
+			var got clusterv1alpha1.T4Session
+			if err := cacheClient.Get(ctx, client.ObjectKeyFromObject(session), &got); err != nil {
+				t.Fatal(err)
+			}
+			workspaceReady := findCondition(got.Status.Conditions, "WorkspaceReady")
+			if got.Status.PodName != "" || workspaceReady == nil || workspaceReady.Status != metav1.ConditionFalse || workspaceReady.Reason != "PVCAuthorityChanged" || workspaceReady.ObservedGeneration != got.Generation {
+				t.Fatalf("authoritative PVC %s published session authority: status=%#v WorkspaceReady=%#v", test.name, got.Status, workspaceReady)
+			}
+		})
 	}
 }
 
@@ -2302,6 +2391,19 @@ func hasReadOnlyMount(mounts []corev1.VolumeMount, name, path string) bool {
 		}
 	}
 	return false
+}
+
+type pvcOverrideReader struct {
+	client.Reader
+	pvc *corev1.PersistentVolumeClaim
+}
+
+func (r *pvcOverrideReader) Get(ctx context.Context, key client.ObjectKey, object client.Object, options ...client.GetOption) error {
+	if pvc, ok := object.(*corev1.PersistentVolumeClaim); ok && key == client.ObjectKeyFromObject(r.pvc) {
+		r.pvc.DeepCopyInto(pvc)
+		return nil
+	}
+	return r.Reader.Get(ctx, key, object, options...)
 }
 
 type createAlreadyExistsClient struct {
