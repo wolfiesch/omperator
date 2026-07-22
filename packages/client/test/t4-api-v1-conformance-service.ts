@@ -46,7 +46,8 @@ function json(status: number, body: unknown, headers: Record<string, string> = {
 }
 
 function problem(status: number, code: string, message: string, extra: Record<string, unknown> = {}): Response {
-  return json(status, { error: { code, message, requestId: `req-${code}`, retryable: status >= 500, ...extra } });
+  return json(status, { error: { code, message, requestId: `req-${code}`, retryable: status >= 500, ...extra } },
+    status === 401 ? { "WWW-Authenticate": 'Bearer realm="t4"' } : {});
 }
 const SNAPSHOT_BYTES_MAX = 16 * 1024 * 1024;
 
@@ -108,6 +109,59 @@ export function canonicalJson(value: unknown): string {
       .join(",")}}`;
   }
   throw new TypeError("JCS identity requires a JSON value");
+}
+
+function hasDuplicateJsonKeys(source: string): boolean {
+  let offset = 0;
+  const whitespace = (): void => {
+    while (/\s/u.test(source[offset] ?? "")) offset += 1;
+  };
+  const string = (): string => {
+    const start = offset;
+    offset += 1;
+    while (offset < source.length) {
+      if (source[offset] === "\\") offset += 2;
+      else if (source[offset++] === '"') break;
+    }
+    return JSON.parse(source.slice(start, offset)) as string;
+  };
+  const value = (): boolean => {
+    whitespace();
+    if (source[offset] === "{") {
+      offset += 1;
+      whitespace();
+      const keys = new Set<string>();
+      if (source[offset] === "}") { offset += 1; return false; }
+      while (offset < source.length) {
+        const key = string();
+        if (keys.has(key)) return true;
+        keys.add(key);
+        whitespace();
+        offset += 1;
+        if (value()) return true;
+        whitespace();
+        if (source[offset] === "}") { offset += 1; return false; }
+        offset += 1;
+        whitespace();
+      }
+    } else if (source[offset] === "[") {
+      offset += 1;
+      whitespace();
+      if (source[offset] === "]") { offset += 1; return false; }
+      while (offset < source.length) {
+        if (value()) return true;
+        whitespace();
+        if (source[offset] === "]") { offset += 1; return false; }
+        offset += 1;
+      }
+    } else if (source[offset] === '"') {
+      string();
+    } else {
+      while (offset < source.length && !/[\s,}\]]/u.test(source[offset]!)) offset += 1;
+    }
+    return false;
+  };
+  return value();
 }
 
 type PageCursorResult = { readonly offset: number } | { readonly error: "format" | "issued" };
@@ -208,6 +262,7 @@ export class T4ApiV1ConformanceService {
           commandBytesMax: COMMAND_BYTES_MAX,
           commandRequestBytesMax: COMMAND_REQUEST_BYTES_MAX,
           commandMetadataValueBytesMax: METADATA_VALUE_BYTES_MAX,
+          watchEventsDefault: 1,
           watchEventsMax: this.options.watchTransport === "many-small" ? 1000 : 4,
           heartbeatSeconds: 15,
         },
@@ -250,8 +305,8 @@ export class T4ApiV1ConformanceService {
     if (workspaceMatch) {
       const id = decodeURIComponent(workspaceMatch[1]!);
       if (request.method === "PATCH") {
-        const ifMatch = request.headers.get("If-Match");
-        if (ifMatch === null || !/^[1-9][0-9]{0,18}$/u.test(ifMatch)) return problem(400, "invalid_request", "If-Match is invalid");
+        const ifRevision = request.headers.get("T4-If-Revision");
+        if (ifRevision === null || !/^[1-9][0-9]{0,18}$/u.test(ifRevision)) return problem(400, "invalid_request", "T4-If-Revision is invalid");
       }
       const workspace = this.#workspaces.get(id);
       if (request.method === "DELETE") {
@@ -267,11 +322,18 @@ export class T4ApiV1ConformanceService {
         if (parsed instanceof Response) return parsed;
         const body = parsed;
         if (!validMutation(body, "name")) return this.#invalid("body", "schema", "workspace mutation must match WorkspaceMutation");
+        let currentWorkspace: Record<string, unknown> | undefined;
         return this.#idempotent(request, tenant, "mutateWorkspace", [id], body, 200, 200, () => {
-          const updated = { ...workspace, ...(body.name === undefined ? {} : { name: body.name }), ...(body.labels === undefined ? {} : { labels: body.labels }), revision: Number(workspace.revision) + 1 };
+          const updated = { ...currentWorkspace!, ...(body.name === undefined ? {} : { name: body.name }), ...(body.labels === undefined ? {} : { labels: body.labels }), revision: Number(currentWorkspace!.revision) + 1 };
           this.#workspaces.set(id, updated);
           return updated;
-        }, () => request.headers.get("If-Match") === String(workspace.revision) ? undefined : problem(409, "revision_conflict", "Workspace revision changed"));
+        }, () => {
+          currentWorkspace = this.#workspaces.get(id);
+          if (currentWorkspace?.tenant !== tenant) return problem(404, "not_found", "Workspace not found");
+          return request.headers.get("T4-If-Revision") === String(currentWorkspace.revision)
+            ? undefined
+            : problem(409, "revision_conflict", "Workspace revision changed");
+        });
       }
     }
 
@@ -316,8 +378,8 @@ export class T4ApiV1ConformanceService {
     if (sessionMatch) {
       const id = decodeURIComponent(sessionMatch[1]!);
       if (request.method === "PATCH") {
-        const ifMatch = request.headers.get("If-Match");
-        if (ifMatch === null || !/^[1-9][0-9]{0,18}$/u.test(ifMatch)) return problem(400, "invalid_request", "If-Match is invalid");
+        const ifRevision = request.headers.get("T4-If-Revision");
+        if (ifRevision === null || !/^[1-9][0-9]{0,18}$/u.test(ifRevision)) return problem(400, "invalid_request", "T4-If-Revision is invalid");
       }
       const session = this.#sessions.get(id);
       if (request.method === "DELETE") {
@@ -333,11 +395,18 @@ export class T4ApiV1ConformanceService {
         if (parsed instanceof Response) return parsed;
         const body = parsed;
         if (!validMutation(body, "title")) return this.#invalid("body", "schema", "session mutation must match SessionMutation");
+        let currentSession: Record<string, unknown> | undefined;
         return this.#idempotent(request, tenant, "mutateSession", [id], body, 200, 200, () => {
-          const updated = { ...session, ...(body.title === undefined ? {} : { title: body.title }), ...(body.labels === undefined ? {} : { labels: body.labels }), revision: Number(session.revision) + 1 };
+          const updated = { ...currentSession!, ...(body.title === undefined ? {} : { title: body.title }), ...(body.labels === undefined ? {} : { labels: body.labels }), revision: Number(currentSession!.revision) + 1 };
           this.#sessions.set(id, updated);
           return updated;
-        }, () => request.headers.get("If-Match") === String(session.revision) ? undefined : problem(409, "revision_conflict", "Session revision changed"));
+        }, () => {
+          currentSession = this.#sessions.get(id);
+          if (currentSession?.tenant !== tenant) return problem(404, "not_found", "Session not found");
+          return request.headers.get("T4-If-Revision") === String(currentSession.revision)
+            ? undefined
+            : problem(409, "revision_conflict", "Session revision changed");
+        });
       }
     }
 
@@ -363,7 +432,10 @@ export class T4ApiV1ConformanceService {
       const text = await request.text();
       if (encoder.encode(text).byteLength > COMMAND_REQUEST_BYTES_MAX) return this.#invalid("body", "maxBytes", `request must not exceed ${COMMAND_REQUEST_BYTES_MAX} UTF-8 bytes`);
       let decoded: unknown;
-      try { decoded = JSON.parse(text); } catch { return problem(400, "invalid_request", "Malformed JSON request"); }
+      try {
+        decoded = JSON.parse(text);
+        if (hasDuplicateJsonKeys(text)) return problem(400, "invalid_request", "JSON request body contains duplicate object members");
+      } catch { return problem(400, "invalid_request", "Malformed JSON request"); }
       if (decoded === null || typeof decoded !== "object" || Array.isArray(decoded)) return this.#invalid("body", "schema", "command create must match CommandCreate");
       const body = decoded as Record<string, unknown>;
       if (Object.keys(body).some((key) => key !== "command" && key !== "metadata")) return this.#invalid("body", "schema", "command create must match CommandCreate");
@@ -450,7 +522,9 @@ export class T4ApiV1ConformanceService {
     const mediaError = this.#jsonMediaError(request);
     if (mediaError !== undefined) return mediaError;
     try {
-      const value: unknown = await request.json();
+      const text = await request.text();
+      const value: unknown = JSON.parse(text);
+      if (hasDuplicateJsonKeys(text)) return problem(400, "invalid_request", "JSON request body contains duplicate object members");
       if (value === null || typeof value !== "object" || Array.isArray(value)) return problem(400, "invalid_request", "JSON request body must be an object");
       return value as Record<string, unknown>;
     } catch {
@@ -497,7 +571,7 @@ export class T4ApiV1ConformanceService {
     const key = request.headers.get("Idempotency-Key");
     if (key === null) return problem(400, "idempotency_key_required", "Idempotency-Key is required");
     if (!/^[A-Za-z0-9._~-]{16,128}$/u.test(key)) return problem(400, "invalid_request", "Idempotency-Key is invalid");
-    const preconditions = request.headers.has("If-Match") ? { "if-match": request.headers.get("If-Match") } : {};
+    const preconditions = request.headers.has("T4-If-Revision") ? { "t4-if-revision": request.headers.get("T4-If-Revision") } : {};
     let identity: string;
     try {
       identity = canonicalJson({ operationId, targets, preconditions, body });

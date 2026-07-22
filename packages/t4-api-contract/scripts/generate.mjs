@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,6 +19,7 @@ const digest = createHash("sha256").update(generated).digest("hex");
 if (mode === "--write") {
   await mkdir(dirname(target), { recursive: true });
   await writeFile(target, generated);
+  await chmod(target, 0o644);
   console.log(`generated ${target} sha256:${digest}`);
   process.exit(0);
 }
@@ -27,6 +28,7 @@ if (mode === "--ci-artifact") {
   const artifact = resolve(contractRoot, "../../artifacts/t4-api/generated/schema.ts");
   await mkdir(dirname(artifact), { recursive: true });
   await writeFile(artifact, generated);
+  await chmod(artifact, 0o644);
   console.log(`T4_API_GENERATED_SHA256=${digest}`);
   console.log(`T4_API_GENERATED_BASE64_BEGIN\n${Buffer.from(generated).toString("base64")}\nT4_API_GENERATED_BASE64_END`);
 }
@@ -40,5 +42,8 @@ try {
 }
 if (checkedIn !== generated) {
   throw new Error(`generated client drift: expected sha256:${digest}; regenerate only with the authorized CI artifact`);
+}
+if (((await stat(target)).mode & 0o111) !== 0) {
+  throw new Error("generated client mode drift: schema.ts must not be executable");
 }
 console.log(`generated client is deterministic (sha256:${digest})`);

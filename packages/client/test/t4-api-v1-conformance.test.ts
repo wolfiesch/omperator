@@ -44,7 +44,7 @@ const DISCOVERY = {
       deprecation: { message: "Use workspace.lifecycle", sinceVersion: "1.0", sunsetAt: "2027-01-01T00:00:00Z", replacement: "workspace.lifecycle" },
     },
   },
-  limits: { pageSizeDefault: 1, pageSizeMax: 1, commandBytesMax: 1, commandRequestBytesMax: 1, commandMetadataValueBytesMax: 1, watchEventsMax: 1, heartbeatSeconds: 5 },
+  limits: { pageSizeDefault: 1, pageSizeMax: 1, commandBytesMax: 1, commandRequestBytesMax: 1, commandMetadataValueBytesMax: 1, watchEventsDefault: 1, watchEventsMax: 1, heartbeatSeconds: 5 },
 } as const;
 
 function withSelectedVersion(init: ResponseInit = {}): ResponseInit {
@@ -66,8 +66,8 @@ function idempotencyHeaders(key: string): Readonly<{ "Idempotency-Key": string }
   return { "Idempotency-Key": key };
 }
 
-function mutationHeaders(revision: number, key: string): Readonly<{ "If-Match": string; "Idempotency-Key": string }> {
-  return { "If-Match": String(revision), "Idempotency-Key": key };
+function mutationHeaders(revision: number, key: string): Readonly<{ "T4-If-Revision": string; "Idempotency-Key": string }> {
+  return { "T4-If-Revision": String(revision), "Idempotency-Key": key };
 }
 
 function requireEventCursor(response: Response): string {
@@ -192,6 +192,49 @@ describe("generated T4 API v1 client conformance", () => {
     await expect(stream.next()).resolves.toMatchObject({ done: false });
     await stream.return(undefined);
     expect(service.watchQueries.at(-1)).toEqual({ maxEvents: "1", heartbeatSeconds: "15" });
+  });
+
+  it("binds successful resource identities to the requested route", async () => {
+    const workspace = { id: "ws-other", name: "workspace", state: "ready", revision: 1 };
+    const session = { id: "ses-other", workspaceId: "ws-other", title: "agent", state: "ready", revision: 1 };
+    const cases = [
+      ["/v1/workspaces/{workspaceId}", { params: { header: VERSION_HEADERS, path: { workspaceId: "ws-1" } } }, workspace],
+      ["/v1/workspaces/{workspaceId}/sessions", { params: { header: VERSION_HEADERS, path: { workspaceId: "ws-1" } } }, { items: [session] }],
+      ["/v1/sessions/{sessionId}", { params: { header: VERSION_HEADERS, path: { sessionId: "ses-1" } } }, session],
+      ["/v1/sessions/{sessionId}/snapshot", { params: { header: VERSION_HEADERS, path: { sessionId: "ses-1" } } }, { sessionId: "ses-other", cursor: "cursor-1", state: "ready", entries: [] }],
+    ] as const;
+    for (const [path, init, body] of cases) {
+      const client = createT4ApiClient({
+        baseUrl: "https://identity-binding.test",
+        credential: "token-a",
+        majorVersion: 1,
+        fetch: async () => jsonResponse(body),
+      });
+      const get = client.http.GET as unknown as (route: string, options: unknown) => Promise<unknown>;
+      await expect(get(path, init)).rejects.toMatchObject({ status: 502, code: "indeterminate" });
+    }
+    const sessionClient = createT4ApiClient({
+      baseUrl: "https://identity-binding.test",
+      credential: "token-a",
+      majorVersion: 1,
+      fetch: async () => jsonResponse(session, {
+        status: 202,
+        headers: { "Idempotency-Replayed": "false", "T4-Event-Cursor": "event-1" },
+      }),
+    });
+    await expect(sessionClient.http.POST("/v1/workspaces/{workspaceId}/sessions", {
+      body: { title: "agent" },
+      params: {
+        header: idempotencyHeaders("identity-session-create"),
+        path: { workspaceId: "ws-1" },
+      },
+    })).rejects.toMatchObject({ status: 502, code: "indeterminate" });
+    await expect(sessionClient.http.POST("/v1/sessions/{sessionId}/cancel", {
+      params: {
+        header: idempotencyHeaders("identity-session-cancel"),
+        path: { sessionId: "ses-1" },
+      },
+    })).rejects.toMatchObject({ status: 502, code: "indeterminate" });
   });
 
   it("creates, canonically replays, conflicts, mutates, paginates, isolates, and deletes workspaces", async () => {
@@ -676,8 +719,8 @@ describe("generated T4 API v1 client conformance", () => {
       const cases = [
         ["POST", "/v1/workspaces", '{"name":"media-workspace"}', {}, 202, { id: "ws-2" }],
         ["POST", "/v1/workspaces/ws-1/sessions", '{"title":"media-session"}', {}, 202, { id: "ses-2" }],
-        ["PATCH", "/v1/workspaces/ws-1", '{"name":"renamed"}', { "If-Match": "1" }, 200, { revision: 2 }],
-        ["PATCH", "/v1/sessions/ses-1", '{"title":"retitled"}', { "If-Match": "1" }, 200, { revision: 2 }],
+        ["PATCH", "/v1/workspaces/ws-1", '{"name":"renamed"}', { "T4-If-Revision": "1" }, 200, { revision: 2 }],
+        ["PATCH", "/v1/sessions/ses-1", '{"title":"retitled"}', { "T4-If-Revision": "1" }, 200, { revision: 2 }],
         ["POST", "/v1/sessions/ses-1/commands", '{"command":"ok"}', {}, 202, { commandId: "cmd-1" }],
       ] as const;
       for (const [index, [method, path, body, routeHeaders, successStatus, successBody]] of cases.entries()) {
@@ -698,7 +741,7 @@ describe("generated T4 API v1 client conformance", () => {
     }
   });
 
-  it("validates If-Match syntax before PATCH idempotency lookup", async () => {
+  it("validates T4-If-Revision syntax before PATCH idempotency lookup", async () => {
     const service = new T4ApiV1ConformanceService();
     const client = createT4ApiClient({ baseUrl: service.origin, credential: "token-a", majorVersion: 1, fetch: service.fetch });
     for (const [index, path] of ["/v1/workspaces/missing", "/v1/sessions/missing"].entries()) {
@@ -707,7 +750,7 @@ describe("generated T4 API v1 client conformance", () => {
           method: "PATCH",
           headers: {
             Authorization: "Bearer token-a", "T4-API-Version": "1", "Idempotency-Key": `missing-if-match-${index}-${ifMatch ?? "absent"}`, "Content-Type": "application/json",
-            ...(ifMatch === undefined ? {} : { "If-Match": ifMatch }),
+            ...(ifMatch === undefined ? {} : { "T4-If-Revision": ifMatch }),
           },
           body: path.includes("workspaces") ? '{"name":"updated"}' : '{"title":"updated"}',
         });
@@ -724,7 +767,7 @@ describe("generated T4 API v1 client conformance", () => {
         method: "PATCH",
         headers: {
           Authorization: "Bearer token-a", "T4-API-Version": "1", "Idempotency-Key": key, "Content-Type": "application/json",
-          ...(ifMatch === undefined ? {} : { "If-Match": ifMatch }),
+          ...(ifMatch === undefined ? {} : { "T4-If-Revision": ifMatch }),
         },
         body: '{"name":"updated"}',
       });
@@ -743,6 +786,120 @@ describe("generated T4 API v1 client conformance", () => {
     expect(missingOnReplay.status).toBe(400);
   });
 
+  it("rejects duplicate JSON members before idempotency is recorded", async () => {
+    for (const [index, body] of [
+      '{"name":"first","name":"second"}',
+      '{"name":"workspace","labels":{"team":"one","team":"two"}}',
+    ].entries()) {
+      const service = new T4ApiV1ConformanceService();
+      const key = `duplicate-json-${index}-0000`;
+      const headers = {
+        Authorization: "Bearer token-a",
+        "T4-API-Version": "1",
+        "Idempotency-Key": key,
+        "Content-Type": "application/json",
+      };
+      const rejected = await service.fetch(`${service.origin}/v1/workspaces`, {
+        method: "POST", headers, body,
+      });
+      expect(rejected.status).toBe(400);
+      const accepted = await service.fetch(`${service.origin}/v1/workspaces`, {
+        method: "POST", headers, body: '{"name":"workspace"}',
+      });
+      expect(accepted.status).toBe(202);
+      expect(accepted.headers.get("Idempotency-Replayed")).toBe("false");
+    }
+
+    const commandService = new T4ApiV1ConformanceService();
+    await seededClient(commandService, "duplicate-command");
+    for (const [index, body] of [
+      '{"command":"first","command":"second"}',
+      '{"command":"run","metadata":{"attempt":1,"attempt":2}}',
+    ].entries()) {
+      const response = await commandService.fetch(`${commandService.origin}/v1/sessions/ses-1/commands`, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer token-a",
+          "T4-API-Version": "1",
+          "Idempotency-Key": `duplicate-command-${index}-0000`,
+          "Content-Type": "application/json",
+        },
+        body,
+      });
+      expect(response.status).toBe(400);
+    }
+  });
+
+  it("commits concurrent revision mutations with one atomic compare-and-swap", async () => {
+    for (const kind of ["workspace", "session"] as const) {
+      const service = new T4ApiV1ConformanceService();
+      await seededClient(service, `cas-${kind}`);
+      const path = kind === "workspace" ? "/v1/workspaces/ws-1" : "/v1/sessions/ses-1";
+      const field = kind === "workspace" ? "name" : "title";
+      const streams = [new TransformStream<Uint8Array>(), new TransformStream<Uint8Array>()];
+      const requests = streams.map((stream, index) => service.fetch(`${service.origin}${path}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: "Bearer token-a",
+          "T4-API-Version": "1",
+          "T4-If-Revision": "1",
+          "Idempotency-Key": `concurrent-${kind}-${index}-0000`,
+          "Content-Type": "application/json",
+        },
+        body: stream.readable,
+        duplex: "half",
+      } as RequestInit & { duplex: "half" }));
+      await Promise.all(streams.map(async (stream, index) => {
+        const writer = stream.writable.getWriter();
+        await writer.write(new TextEncoder().encode(JSON.stringify({ [field]: `value-${index}` })));
+        await writer.close();
+      }));
+      const responses = await Promise.all(requests);
+      expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+      const current = await service.fetch(`${service.origin}${path}`, {
+        headers: { Authorization: "Bearer token-a", "T4-API-Version": "1" },
+      });
+      expect(await current.json()).toMatchObject({ revision: 2 });
+    }
+
+    for (const kind of ["workspace", "session"] as const) {
+      const service = new T4ApiV1ConformanceService();
+      await seededClient(service, `delete-race-${kind}`);
+      const path = kind === "workspace" ? "/v1/workspaces/ws-1" : "/v1/sessions/ses-1";
+      const field = kind === "workspace" ? "name" : "title";
+      const stream = new TransformStream<Uint8Array>();
+      const patch = service.fetch(`${service.origin}${path}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: "Bearer token-a",
+          "T4-API-Version": "1",
+          "T4-If-Revision": "1",
+          "Idempotency-Key": `delete-race-patch-${kind}`,
+          "Content-Type": "application/json",
+        },
+        body: stream.readable,
+        duplex: "half",
+      } as RequestInit & { duplex: "half" });
+      const deletion = await service.fetch(`${service.origin}${path}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: "Bearer token-a",
+          "T4-API-Version": "1",
+          "Idempotency-Key": `delete-race-delete-${kind}`,
+        },
+      });
+      expect(deletion.status).toBe(204);
+      const writer = stream.writable.getWriter();
+      await writer.write(new TextEncoder().encode(JSON.stringify({ [field]: "resurrected" })));
+      await writer.close();
+      expect((await patch).status).toBe(404);
+      const current = await service.fetch(`${service.origin}${path}`, {
+        headers: { Authorization: "Bearer token-a", "T4-API-Version": "1" },
+      });
+      expect(current.status).toBe(404);
+    }
+  });
+
   it("rejects an invalid declared watch cache header", async () => {
     let cacheBodyCancelled = false;
     const cacheClient = createT4ApiClient({
@@ -754,6 +911,63 @@ describe("generated T4 API v1 client conformance", () => {
     });
     await expect(cacheClient.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({ status: 502, retryable: false });
     expect(cacheBodyCancelled).toBe(true);
+  });
+
+  it("reconnects instead of hanging on a half-open watch past the heartbeat deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      let cancelled = false;
+      const client = createT4ApiClient({
+        baseUrl: "https://half-open-watch.test",
+        credential: "token-a",
+        majorVersion: 1,
+        fetch: async () => apiResponse(new ReadableStream<Uint8Array>({
+          cancel() { cancelled = true; },
+        }), { headers: { "Content-Type": "text/event-stream" } }),
+      });
+      const pending = client.watchSession("ses-1", {
+        maxEvents: 1,
+        heartbeatSeconds: 5,
+        maxReconnectAttempts: 0,
+      }).next();
+      const rejected = expect(pending).rejects.toMatchObject({ status: 502, code: "indeterminate" });
+      await vi.advanceTimersByTimeAsync(10_001);
+      await rejected;
+      expect(cancelled).toBe(true);
+
+      let commentsCancelled = false;
+      let commentInterval: ReturnType<typeof setInterval> | undefined;
+      const comments = createT4ApiClient({
+        baseUrl: "https://comment-watch.test",
+        credential: "token-a",
+        majorVersion: 1,
+        fetch: async () => apiResponse(new ReadableStream<Uint8Array>({
+          start(stream) {
+            commentInterval = setInterval(
+              () => stream.enqueue(new TextEncoder().encode(": keepalive\n\n")),
+              4_000,
+            );
+          },
+          cancel() {
+            if (commentInterval !== undefined) clearInterval(commentInterval);
+            commentsCancelled = true;
+          },
+        }), { headers: { "Content-Type": "text/event-stream" } }),
+      });
+      const commentPending = comments.watchSession("ses-1", {
+        maxEvents: 1,
+        heartbeatSeconds: 5,
+        maxReconnectAttempts: 0,
+      }).next();
+      const commentRejected = expect(commentPending).rejects.toMatchObject({
+        status: 502, code: "indeterminate",
+      });
+      await vi.advanceTimersByTimeAsync(10_001);
+      await commentRejected;
+      expect(commentsCancelled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("requires no-store through the exported HTTP watch operation", async () => {
@@ -1003,15 +1217,15 @@ describe("generated T4 API v1 client conformance", () => {
       ["POST", "/v1/sessions/ses-1/cancel", undefined],
       ["POST", "/v1/sessions/ses-1/commands", '{"command":"ok"}'],
     ] as const) {
-      const response = await service.fetch(`${service.origin}${path}`, { method, headers: { ...baseHeaders, "If-Match": "1" }, ...(body === undefined ? {} : { body }) });
+      const response = await service.fetch(`${service.origin}${path}`, { method, headers: { ...baseHeaders, "T4-If-Revision": "1" }, ...(body === undefined ? {} : { body }) });
       expect(response.status).toBe(400);
       expect(await response.json()).toMatchObject({ error: { code: "idempotency_key_required" } });
     }
     for (const [method, path, headers] of [
       ["POST", "/v1/workspaces", { ...baseHeaders, "Idempotency-Key": "malformed-workspace-01" }],
-      ["PATCH", "/v1/workspaces/ws-1", { ...baseHeaders, "If-Match": "1", "Idempotency-Key": "malformed-workspace-02" }],
+      ["PATCH", "/v1/workspaces/ws-1", { ...baseHeaders, "T4-If-Revision": "1", "Idempotency-Key": "malformed-workspace-02" }],
       ["POST", "/v1/workspaces/ws-1/sessions", { ...baseHeaders, "Idempotency-Key": "malformed-session-0001" }],
-      ["PATCH", "/v1/sessions/ses-1", { ...baseHeaders, "If-Match": "1", "Idempotency-Key": "malformed-session-0002" }],
+      ["PATCH", "/v1/sessions/ses-1", { ...baseHeaders, "T4-If-Revision": "1", "Idempotency-Key": "malformed-session-0002" }],
     ] as const) {
       const response = await service.fetch(`${service.origin}${path}`, { method, headers, body: "{" });
       expect(response.status).toBe(400);
@@ -1337,7 +1551,10 @@ describe("generated T4 API v1 client conformance", () => {
       [503, { error: { code: "unavailable", message: "bad", requestId: "r", retryable: false } }],
     ] as const;
     for (const [status, body] of declared) {
-      const client = createT4ApiClient({ baseUrl: "https://watch-status.test", credential: "token-a", majorVersion: 1, fetch: async () => jsonResponse(body, { status }) });
+      const client = createT4ApiClient({ baseUrl: "https://watch-status.test", credential: "token-a", majorVersion: 1, fetch: async () => jsonResponse(body, {
+        status,
+        ...(status === 401 ? { headers: { "WWW-Authenticate": 'Bearer realm="t4"' } } : {}),
+      }) });
       await expect(client.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({ status, code: body.error.code });
     }
 
@@ -1476,9 +1693,27 @@ describe("generated T4 API v1 client conformance", () => {
 
     const unauthenticated = createT4ApiClient({
       baseUrl: "https://response-version.test", credential: "token-a", majorVersion: 1,
-      fetch: async () => Response.json({ error: { code: "unauthenticated", message: "bad", requestId: "r", retryable: false } }, { status: 401 }),
+      fetch: async () => Response.json({ error: { code: "unauthenticated", message: "bad", requestId: "r", retryable: false } }, {
+        status: 401,
+        headers: { "WWW-Authenticate": 'Bearer realm="t4"' },
+      }),
     });
     expect((await unauthenticated.http.GET("/v1", { params: { header: VERSION_HEADERS } })).response.status).toBe(401);
+
+    for (const challenge of [undefined, 'Basic realm="t4"']) {
+      const invalidChallenge = createT4ApiClient({
+        baseUrl: "https://response-version.test",
+        credential: "token-a",
+        majorVersion: 1,
+        fetch: async () => Response.json(
+          { error: { code: "unauthenticated", message: "bad", requestId: "r", retryable: false } },
+          { status: 401, ...(challenge === undefined ? {} : { headers: { "WWW-Authenticate": challenge } }) },
+        ),
+      });
+      await expect(invalidChallenge.http.GET("/v1", { params: { header: VERSION_HEADERS } })).rejects.toMatchObject({
+        status: 502, code: "indeterminate",
+      });
+    }
 
     const invalidUnauthenticated = createT4ApiClient({
       baseUrl: "https://response-version.test", credential: "token-a", majorVersion: 1,

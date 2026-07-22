@@ -19,6 +19,7 @@ if (sseSchema?.["x-t4-sse-data-schema"] !== "#/components/schemas/WatchEvent") t
 const schemas = document.components?.schemas ?? {};
 const apiVersionSchema = document.components?.parameters?.ApiVersion?.schema;
 if (apiVersionSchema?.pattern !== "^[1-9][0-9]{0,3}$" || apiVersionSchema?.maxLength !== 4) throw new Error("ApiVersion must remain a bounded major-only header");
+if (document.components?.parameters?.IfRevision?.name !== "T4-If-Revision") throw new Error("optimistic revisions must use the T4-If-Revision application header");
 const resyncSnapshot = schemas.Resync?.properties?.snapshotUrl;
 if (resyncSnapshot?.pattern !== "^v1/sessions/[A-Za-z0-9][A-Za-z0-9._~-]{0,127}/snapshot$" || resyncSnapshot?.maxLength !== 149) throw new Error("Resync.snapshotUrl must remain API-base-relative and ResourceId-bounded");
 const commandCreate = schemas.CommandCreate;
@@ -41,7 +42,7 @@ if (selectedVersionHeader?.required !== true) throw new Error("SelectedVersion m
 if (replayHeaderObject?.required !== true) throw new Error("IdempotencyReplayed must remain required wherever referenced");
 if (eventCursorHeader?.required !== true || eventCursorHeader?.schema?.$ref !== "#/components/schemas/Cursor") throw new Error("EventCursor must remain a required header-safe cursor");
 const selectedVersion = document.components?.headers?.SelectedVersion?.schema;
-if (selectedVersion?.pattern !== "^1\\.[0-9]+$" || selectedVersion?.maxLength !== 16) throw new Error("SelectedVersion must remain a bounded v1 minor");
+if (selectedVersion?.const !== "1.0") throw new Error("SelectedVersion must remain the exact strict v1.0 profile");
 const replayHeader = document.components?.headers?.IdempotencyReplayed?.schema;
 if (replayHeader?.type !== "string" || JSON.stringify(replayHeader.enum) !== '["true","false"]') throw new Error("IdempotencyReplayed must remain the exact true|false string enum");
 if (schemas.HeartbeatWatchEvent?.properties?.observedAt?.maxLength !== 64) throw new Error("HeartbeatWatchEvent.observedAt must remain bounded to 64 characters");
@@ -60,6 +61,9 @@ if (document.paths?.["/v1/sessions/{sessionId}/events"]?.get?.responses?.["200"]
 const watchCacheControl = document.paths?.["/v1/sessions/{sessionId}/events"]?.get?.responses?.["200"]?.headers?.["Cache-Control"];
 if (watchCacheControl?.required !== true || watchCacheControl?.schema?.const !== "no-store") throw new Error("watch success must require Cache-Control: no-store");
 if (document.components?.responses?.Error401?.headers?.["T4-API-Version"] !== undefined) throw new Error("Error401 must omit SelectedVersion");
+if (document.components?.responses?.Error401?.headers?.["WWW-Authenticate"]?.schema?.const !== 'Bearer realm="t4"') throw new Error("Error401 must require the exact bearer challenge");
+const limits = schemas.Discovery?.properties?.limits?.properties;
+if (limits?.watchEventsDefault === undefined || limits?.watchEventsMax === undefined) throw new Error("Discovery must expose watch default and maximum bounds");
 if (document.paths?.["/v1/workspaces/{workspaceId}"]?.patch?.responses?.["200"]?.$ref !== "#/components/responses/WorkspaceReplay") throw new Error("workspace PATCH success must declare replay headers");
 if (document.paths?.["/v1/sessions/{sessionId}"]?.patch?.responses?.["200"]?.$ref !== "#/components/responses/SessionReplay") throw new Error("session PATCH success must declare replay headers");
 const errorResponses = { 400: "Error400", 401: "Error401", 403: "Error403", 404: "Error404", 406: "Error406", 409: "Error409", 410: "Error410", 422: "Error422", 503: "Error503" };

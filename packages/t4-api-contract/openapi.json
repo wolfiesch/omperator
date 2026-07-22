@@ -93,7 +93,7 @@
         "tags": ["Workspaces"],
         "parameters": [
           { "$ref": "#/components/parameters/ApiVersion" },
-          { "$ref": "#/components/parameters/IfMatch" },
+          { "$ref": "#/components/parameters/IfRevision" },
           { "$ref": "#/components/parameters/IdempotencyKey" }
         ],
         "requestBody": {
@@ -196,7 +196,7 @@
         "tags": ["Sessions"],
         "parameters": [
           { "$ref": "#/components/parameters/ApiVersion" },
-          { "$ref": "#/components/parameters/IfMatch" },
+          { "$ref": "#/components/parameters/IfRevision" },
           { "$ref": "#/components/parameters/IdempotencyKey" }
         ],
         "requestBody": {
@@ -364,8 +364,8 @@
         "description": "Opaque caller-generated key scoped by the server to the authenticated principal, operation ID, and target resource IDs. Idempotency is evaluated only after path, query, header, and request-schema validation and application of schema defaults. Request identity is the operation ID, target IDs, relevant precondition headers, and the RFC 8785 JSON Canonicalization Scheme (JCS) bytes of the validated JSON body. JCS object member order is insignificant, array order is significant, omitted fields remain distinct unless the request schema defaulted them, and no Unicode normalization is performed beyond RFC 8785. Reusing a key with identical identity replays the original terminal response and advertises Idempotency-Replayed; reusing it with a different identity returns 409 idempotency_conflict.",
         "schema": { "type": "string", "minLength": 16, "maxLength": 128, "pattern": "^[A-Za-z0-9._~-]+$" }
       },
-      "IfMatch": {
-        "name": "If-Match",
+      "IfRevision": {
+        "name": "T4-If-Revision",
         "in": "header",
         "required": true,
         "description": "Decimal resource revision for optimistic mutation.",
@@ -386,7 +386,8 @@
       "PageSize": {
         "name": "pageSize",
         "in": "query",
-        "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 25 }
+        "description": "Omit to use the server-specific limits.pageSizeDefault value from discovery.",
+        "schema": { "type": "integer", "minimum": 1, "maximum": 100 }
       },
       "PageCursor": {
         "name": "cursor",
@@ -409,7 +410,8 @@
       "MaxEvents": {
         "name": "maxEvents",
         "in": "query",
-        "schema": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 100 }
+        "description": "Omit to use the server-specific limits.watchEventsDefault value from discovery.",
+        "schema": { "type": "integer", "minimum": 1, "maximum": 1000 }
       },
       "HeartbeatSeconds": {
         "name": "heartbeatSeconds",
@@ -419,9 +421,9 @@
     },
     "headers": {
       "SelectedVersion": {
-        "description": "Selected compatible T4 API minor version.",
+        "description": "Selected T4 API profile. This strict v1.0 contract requires exactly 1.0.",
         "required": true,
-        "schema": { "type": "string", "pattern": "^1\\.[0-9]+$", "maxLength": 16 }
+        "schema": { "type": "string", "const": "1.0" }
       },
       "IdempotencyReplayed": {
         "description": "True when this response replays a prior identical request.",
@@ -491,13 +493,14 @@
           "limits": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["pageSizeDefault", "pageSizeMax", "commandBytesMax", "commandRequestBytesMax", "commandMetadataValueBytesMax", "watchEventsMax", "heartbeatSeconds"],
+            "required": ["pageSizeDefault", "pageSizeMax", "commandBytesMax", "commandRequestBytesMax", "commandMetadataValueBytesMax", "watchEventsDefault", "watchEventsMax", "heartbeatSeconds"],
             "properties": {
               "pageSizeDefault": { "type": "integer", "minimum": 1, "maximum": 100 },
               "pageSizeMax": { "type": "integer", "minimum": 1, "maximum": 100 },
               "commandBytesMax": { "type": "integer", "minimum": 1, "maximum": 262144 },
               "commandRequestBytesMax": { "type": "integer", "minimum": 1, "maximum": 1048576 },
               "commandMetadataValueBytesMax": { "type": "integer", "minimum": 1, "maximum": 262144 },
+              "watchEventsDefault": { "type": "integer", "minimum": 1, "maximum": 1000 },
               "watchEventsMax": { "type": "integer", "minimum": 1, "maximum": 1000 },
               "heartbeatSeconds": { "type": "integer", "minimum": 5, "maximum": 60 }
             }
@@ -848,7 +851,7 @@
       "Snapshot": { "description": "Bounded session snapshot and reconnect cursor", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SessionSnapshot" } } } },
       "Deleted": { "description": "Idempotent deletion accepted or resource already absent", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" }, "T4-Event-Cursor": { "$ref": "#/components/headers/EventCursor" } } },
       "Error400": { "description": "Malformed request or missing idempotency key", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BadRequestErrorEnvelope" } } } },
-      "Error401": { "description": "Missing or invalid opaque bearer credential", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UnauthenticatedErrorEnvelope" } } } },
+      "Error401": { "description": "Missing or invalid opaque bearer credential", "headers": { "WWW-Authenticate": { "required": true, "schema": { "type": "string", "const": "Bearer realm=\"t4\"" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UnauthenticatedErrorEnvelope" } } } },
       "Error403": { "description": "Credential lacks the deny-by-default operation or resource scope", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ForbiddenErrorEnvelope" } } } },
       "Error404": { "description": "Resource absent or outside caller scope (scope existence is not disclosed)", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NotFoundErrorEnvelope" } } } },
       "Error406": { "description": "Requested major is incompatible; no silent downgrade", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IncompatibleVersionErrorEnvelope" } } } },

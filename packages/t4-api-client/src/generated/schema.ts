@@ -239,6 +239,7 @@ export interface components {
                 heartbeatSeconds: number;
                 pageSizeDefault: number;
                 pageSizeMax: number;
+                watchEventsDefault: number;
                 watchEventsMax: number;
             };
             serverBuild: components["schemas"]["ServerBuild"];
@@ -439,6 +440,7 @@ export interface components {
         /** @description Missing or invalid opaque bearer credential */
         Error401: {
             headers: {
+                "WWW-Authenticate": "Bearer realm=\"t4\"";
                 [name: string]: unknown;
             };
             content: {
@@ -623,12 +625,14 @@ export interface components {
         /** @description Opaque caller-generated key scoped by the server to the authenticated principal, operation ID, and target resource IDs. Idempotency is evaluated only after path, query, header, and request-schema validation and application of schema defaults. Request identity is the operation ID, target IDs, relevant precondition headers, and the RFC 8785 JSON Canonicalization Scheme (JCS) bytes of the validated JSON body. JCS object member order is insignificant, array order is significant, omitted fields remain distinct unless the request schema defaulted them, and no Unicode normalization is performed beyond RFC 8785. Reusing a key with identical identity replays the original terminal response and advertises Idempotency-Replayed; reusing it with a different identity returns 409 idempotency_conflict. */
         IdempotencyKey: string;
         /** @description Decimal resource revision for optimistic mutation. */
-        IfMatch: string;
+        IfRevision: string;
         /** @description Standard SSE reconnect header. Must agree with cursor when both are present. */
         LastEventId: components["schemas"]["Cursor"];
+        /** @description Omit to use the server-specific limits.watchEventsDefault value from discovery. */
         MaxEvents: number;
         /** @description Opaque page cursor, valid only for the same identity and list operation. */
         PageCursor: components["schemas"]["Cursor"];
+        /** @description Omit to use the server-specific limits.pageSizeDefault value from discovery. */
         PageSize: number;
         SessionId: components["schemas"]["ResourceId"];
         /** @description Opaque last-consumed watch event cursor. */
@@ -641,8 +645,8 @@ export interface components {
         EventCursor: components["schemas"]["Cursor"];
         /** @description True when this response replays a prior identical request. */
         IdempotencyReplayed: "true" | "false";
-        /** @description Selected compatible T4 API minor version. */
-        SelectedVersion: string;
+        /** @description Selected T4 API profile. This strict v1.0 contract requires exactly 1.0. */
+        SelectedVersion: "1.0";
     };
     pathItems: never;
 }
@@ -721,10 +725,10 @@ export interface operations {
             header: {
                 /** @description Opaque caller-generated key scoped by the server to the authenticated principal, operation ID, and target resource IDs. Idempotency is evaluated only after path, query, header, and request-schema validation and application of schema defaults. Request identity is the operation ID, target IDs, relevant precondition headers, and the RFC 8785 JSON Canonicalization Scheme (JCS) bytes of the validated JSON body. JCS object member order is insignificant, array order is significant, omitted fields remain distinct unless the request schema defaulted them, and no Unicode normalization is performed beyond RFC 8785. Reusing a key with identical identity replays the original terminal response and advertises Idempotency-Replayed; reusing it with a different identity returns 409 idempotency_conflict. */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Decimal resource revision for optimistic mutation. */
-                "If-Match": components["parameters"]["IfMatch"];
                 /** @description Requested API major. v1 clients send 1. Unsupported majors fail with 406 instead of silently downgrading. */
                 "T4-API-Version": components["parameters"]["ApiVersion"];
+                /** @description Decimal resource revision for optimistic mutation. */
+                "T4-If-Revision": components["parameters"]["IfRevision"];
             };
             path: {
                 sessionId: components["parameters"]["SessionId"];
@@ -813,6 +817,7 @@ export interface operations {
                 /** @description Opaque last-consumed watch event cursor. */
                 cursor?: components["parameters"]["WatchCursor"];
                 heartbeatSeconds?: components["parameters"]["HeartbeatSeconds"];
+                /** @description Omit to use the server-specific limits.watchEventsDefault value from discovery. */
                 maxEvents?: components["parameters"]["MaxEvents"];
             };
             header: {
@@ -877,6 +882,7 @@ export interface operations {
             query?: {
                 /** @description Opaque page cursor, valid only for the same identity and list operation. */
                 cursor?: components["parameters"]["PageCursor"];
+                /** @description Omit to use the server-specific limits.pageSizeDefault value from discovery. */
                 pageSize?: components["parameters"]["PageSize"];
             };
             header: {
@@ -980,10 +986,10 @@ export interface operations {
             header: {
                 /** @description Opaque caller-generated key scoped by the server to the authenticated principal, operation ID, and target resource IDs. Idempotency is evaluated only after path, query, header, and request-schema validation and application of schema defaults. Request identity is the operation ID, target IDs, relevant precondition headers, and the RFC 8785 JSON Canonicalization Scheme (JCS) bytes of the validated JSON body. JCS object member order is insignificant, array order is significant, omitted fields remain distinct unless the request schema defaulted them, and no Unicode normalization is performed beyond RFC 8785. Reusing a key with identical identity replays the original terminal response and advertises Idempotency-Replayed; reusing it with a different identity returns 409 idempotency_conflict. */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Decimal resource revision for optimistic mutation. */
-                "If-Match": components["parameters"]["IfMatch"];
                 /** @description Requested API major. v1 clients send 1. Unsupported majors fail with 406 instead of silently downgrading. */
                 "T4-API-Version": components["parameters"]["ApiVersion"];
+                /** @description Decimal resource revision for optimistic mutation. */
+                "T4-If-Revision": components["parameters"]["IfRevision"];
             };
             path: {
                 workspaceId: components["parameters"]["WorkspaceId"];
@@ -1012,6 +1018,7 @@ export interface operations {
             query?: {
                 /** @description Opaque page cursor, valid only for the same identity and list operation. */
                 cursor?: components["parameters"]["PageCursor"];
+                /** @description Omit to use the server-specific limits.pageSizeDefault value from discovery. */
                 pageSize?: components["parameters"]["PageSize"];
             };
             header: {

@@ -38,7 +38,7 @@ const HTTP_WEEKDAYS: Readonly<Record<string, number>> = {
   Wed: 3, Wednesday: 3, Thu: 4, Thursday: 4, Fri: 5, Friday: 5,
   Sat: 6, Saturday: 6,
 };
-const SELECTED_VERSION_PATTERN = /^1\.[0-9]+$/u;
+const SELECTED_VERSION_PATTERN = /^1\.0$/u;
 const ERROR_CODES = {
   invalid_request: true, unauthenticated: true, forbidden: true, not_found: true,
   idempotency_key_required: true, idempotency_conflict: true, revision_conflict: true,
@@ -429,9 +429,9 @@ function validDiscovery(value: unknown): boolean {
     typeof serverBuild.revision === "string" && serverBuild.revision !== "" && hasAtMostCodePoints(serverBuild.revision, 128) &&
     Array.isArray(discovery.supportedMajors) && discovery.supportedMajors.length >= 1 && discovery.supportedMajors.length <= 8 && hasUniqueItems(discovery.supportedMajors) && discovery.supportedMajors.every((major) => Number.isSafeInteger(major) && Number(major) >= 1) &&
     capabilities !== undefined && Object.keys(capabilities).length <= 128 && Object.entries(capabilities).every(([id, status]) => /^[a-z][a-z0-9.-]{0,127}$/u.test(id) && validCapabilityStatus(status)) &&
-    limits !== undefined && hasOnlyKeys(limits, { pageSizeDefault: true, pageSizeMax: true, commandBytesMax: true, commandRequestBytesMax: true, commandMetadataValueBytesMax: true, watchEventsMax: true, heartbeatSeconds: true }) &&
-    [limits.pageSizeDefault, limits.pageSizeMax, limits.commandBytesMax, limits.commandRequestBytesMax, limits.commandMetadataValueBytesMax, limits.watchEventsMax, limits.heartbeatSeconds].every((limit) => Number.isSafeInteger(limit) && Number(limit) >= 1) &&
-    Number(limits.pageSizeDefault) <= Number(limits.pageSizeMax) && Number(limits.commandBytesMax) <= Number(limits.commandRequestBytesMax) && Number(limits.commandMetadataValueBytesMax) <= Number(limits.commandRequestBytesMax) &&
+    limits !== undefined && hasOnlyKeys(limits, { pageSizeDefault: true, pageSizeMax: true, commandBytesMax: true, commandRequestBytesMax: true, commandMetadataValueBytesMax: true, watchEventsDefault: true, watchEventsMax: true, heartbeatSeconds: true }) &&
+    [limits.pageSizeDefault, limits.pageSizeMax, limits.commandBytesMax, limits.commandRequestBytesMax, limits.commandMetadataValueBytesMax, limits.watchEventsDefault, limits.watchEventsMax, limits.heartbeatSeconds].every((limit) => Number.isSafeInteger(limit) && Number(limit) >= 1) &&
+    Number(limits.pageSizeDefault) <= Number(limits.pageSizeMax) && Number(limits.watchEventsDefault) <= Number(limits.watchEventsMax) && Number(limits.commandBytesMax) <= Number(limits.commandRequestBytesMax) && Number(limits.commandMetadataValueBytesMax) <= Number(limits.commandRequestBytesMax) &&
     Number(limits.pageSizeMax) <= 100 && Number(limits.commandBytesMax) <= 262144 && Number(limits.commandRequestBytesMax) <= 1048576 && Number(limits.commandMetadataValueBytesMax) <= 262144 && Number(limits.watchEventsMax) <= 1000 && Number(limits.heartbeatSeconds) >= 5 && Number(limits.heartbeatSeconds) <= 60;
 }
 
@@ -527,10 +527,38 @@ function responseContract(method: string, path: string): ResponseContract | unde
   return undefined;
 }
 
+function validPathBoundResponse(method: string, path: string, value: unknown): boolean {
+  const workspace = /^\/v1\/workspaces\/([^/]+)$/u.exec(path);
+  if (workspace !== null && (method === "GET" || method === "PATCH")) {
+    return record(value)?.id === workspace[1];
+  }
+  const sessions = /^\/v1\/workspaces\/([^/]+)\/sessions$/u.exec(path);
+  if (sessions !== null) {
+    if (method === "POST") return record(value)?.workspaceId === sessions[1];
+    if (method === "GET") {
+      const items = record(value)?.items;
+      return Array.isArray(items) && items.every((item) => record(item)?.workspaceId === sessions[1]);
+    }
+  }
+  const session = /^\/v1\/sessions\/([^/]+)$/u.exec(path);
+  if (session !== null && (method === "GET" || method === "PATCH")) {
+    return record(value)?.id === session[1];
+  }
+  const cancellation = /^\/v1\/sessions\/([^/]+)\/cancel$/u.exec(path);
+  if (cancellation !== null && method === "POST") return record(value)?.id === cancellation[1];
+  const snapshot = /^\/v1\/sessions\/([^/]+)\/snapshot$/u.exec(path);
+  if (snapshot !== null && method === "GET") return record(value)?.sessionId === snapshot[1];
+  return true;
+}
+
 function validSelectedVersion(response: Response, expectedMajor?: string): boolean {
   const selected = response.headers.get("T4-API-Version");
   return selected !== null && selected.length <= SELECTED_VERSION_MAX_LENGTH && SELECTED_VERSION_PATTERN.test(selected) &&
     (expectedMajor === undefined || selected.startsWith(`${expectedMajor}.`));
+}
+
+function validBearerChallenge(response: Response): boolean {
+  return response.headers.get("WWW-Authenticate") === 'Bearer realm="t4"';
 }
 
 function validReplayHeader(response: Response): boolean {
@@ -551,7 +579,7 @@ async function validateResponse(request: Request, response: Response, baseUrl: s
       void response.body?.cancel().catch(() => {});
       throw protocolError(502, "T4 API returned an undeclared error status");
     }
-    if ((response.status === 401 && response.headers.has("T4-API-Version")) ||
+    if ((response.status === 401 && (response.headers.has("T4-API-Version") || !validBearerChallenge(response))) ||
       (response.status !== 401 && !validSelectedVersion(response))) {
       void response.body?.cancel().catch(() => {});
       throw protocolError(502, "T4 API returned an invalid selected-version header");
@@ -605,7 +633,7 @@ async function validateResponse(request: Request, response: Response, baseUrl: s
   const text = await boundedResponseText(response.clone(), MAX_JSON_RESPONSE_BYTES);
   let value: unknown;
   try { value = text === undefined ? undefined : JSON.parse(text); } catch { value = undefined; }
-  if (text === undefined || !validator(value)) {
+  if (text === undefined || !validator(value) || !validPathBoundResponse(request.method, path!, value)) {
     void response.body?.cancel().catch(() => {});
     throw protocolError(502, "T4 API returned an invalid or oversized JSON response");
   }
@@ -806,6 +834,34 @@ async function retryDelay(milliseconds: number, signal: AbortSignal): Promise<bo
   });
 }
 
+async function readBeforeDeadline(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  deadline: number,
+  signal: AbortSignal,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  const remaining = Math.max(0, deadline - Date.now());
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", aborted);
+      callback();
+    };
+    const aborted = (): void => finish(() => reject(signal.reason));
+    const timeout = setTimeout(
+      () => finish(() => reject(new TypeError("T4 API watch exceeded its heartbeat inactivity deadline"))),
+      remaining,
+    );
+    signal.addEventListener("abort", aborted, { once: true });
+    reader.read().then(
+      (result) => finish(() => resolve(result)),
+      (error: unknown) => finish(() => reject(error)),
+    );
+  });
+}
+
 async function* watch(
   baseUrl: string,
   credential: string,
@@ -855,7 +911,7 @@ async function* watch(
             void response.body?.cancel().catch(() => {});
             throw protocolError(502, "T4 API returned an undeclared watch error status");
           }
-          if ((response.status === 401 && response.headers.has("T4-API-Version")) ||
+          if ((response.status === 401 && (response.headers.has("T4-API-Version") || !validBearerChallenge(response))) ||
             (response.status !== 401 && !validSelectedVersion(response))) {
             void response.body?.cancel().catch(() => {});
             throw protocolError(502, "T4 API returned an invalid selected-version header");
@@ -882,9 +938,11 @@ async function* watch(
         if (response.body === null) throw protocolError(502, "T4 API watch response body is unavailable");
         reader = response.body.getReader();
         const parser = new SseFrameParser();
+        let inactivityDeadline = Date.now() + heartbeatSeconds * 2_000;
         while (delivered < maxEvents && !controller.signal.aborted) {
-          const chunk = await reader.read();
+          const chunk = await readBeforeDeadline(reader, inactivityDeadline, controller.signal);
           const events = chunk.done ? decodedFrames(parser, undefined) : decodedFrames(parser, chunk.value);
+          if (events.length > 0) inactivityDeadline = Date.now() + heartbeatSeconds * 2_000;
           for (const event of events) {
             if (event.type === "heartbeat") {
               if (cursor === undefined) {
