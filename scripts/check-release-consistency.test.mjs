@@ -292,7 +292,7 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       (text) =>
         replaceRequired(
           text,
-          'test "$source_repository" = "https://github.com/lyc-aon/oh-my-pi"',
+          'test "$source_repository" = "https://github.com/wolfiesch/oh-my-pi"',
           'test "$source_repository" = "https://github.com/example/other"',
         ),
     ],
@@ -536,17 +536,17 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("ref: ${{ github.event.pull_request.head.sha || github.sha }}"));
   assert.ok(
     ciWorkflow.includes(
-      `source_repository="$(jq -er '.sourceRepository' provenance/omp-host-migration.json)"`,
+      `source_repository="$(jq -er '.verifiedRuntime.sourceRepository' compat/omp-app-matrix.json)"`,
     ),
   );
   assert.ok(
-    ciWorkflow.includes('test "$source_repository" = "https://github.com/lyc-aon/oh-my-pi"'),
+    ciWorkflow.includes('test "$source_repository" = "https://github.com/wolfiesch/oh-my-pi"'),
   );
   assert.ok(
     ciWorkflow.includes("sha=\"$(jq -er '.inputs.operationsContinuity' provenance/omp-host-migration.json)\""),
   );
   assert.ok(ciWorkflow.includes('[[ "$sha" =~ ^[0-9a-f]{40}$ ]]'));
-  assert.ok(ciWorkflow.includes('echo "repository=lyc-aon/oh-my-pi" >> "$GITHUB_OUTPUT"'));
+  assert.ok(ciWorkflow.includes('echo "repository=wolfiesch/oh-my-pi" >> "$GITHUB_OUTPUT"'));
   assert.ok(ciWorkflow.includes("repository: ${{ steps.authority.outputs.repository }}"));
   assert.ok(ciWorkflow.includes("ref: ${{ steps.authority.outputs.sha }}"));
   assert.ok(ciWorkflow.includes("T4_OMP_SOURCE_DIR: ${{ github.workspace }}/.continuity/omp"));

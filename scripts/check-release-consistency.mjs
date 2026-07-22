@@ -39,7 +39,8 @@ export const RELEASE_CONTRACT_PATHS = [
 ];
 
 const REPOSITORY_URL = "https://github.com/LycaonLLC/t4-code";
-const OMP_RUNTIME_REPOSITORY = "https://github.com/lyc-aon/oh-my-pi";
+const OMP_RUNTIME_REPOSITORY = "https://github.com/wolfiesch/oh-my-pi";
+const OMP_APP_WIRE_SOURCE_REPOSITORY = "https://github.com/lyc-aon/oh-my-pi";
 const OMP_UPSTREAM_REPOSITORY = "https://github.com/can1357/oh-my-pi";
 const VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
@@ -501,8 +502,8 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   if (typeof appWireVersion !== "string" || !VERSION_PATTERN.test(appWireVersion)) {
     errors.push(`${matrixPath} app-wire version must be a stable x.y.z version`);
   }
-  if (appWire?.sourceRepository !== OMP_RUNTIME_REPOSITORY) {
-    errors.push(`${matrixPath} app-wire repository must be ${OMP_RUNTIME_REPOSITORY}`);
+  if (appWire?.sourceRepository !== OMP_APP_WIRE_SOURCE_REPOSITORY) {
+    errors.push(`${matrixPath} app-wire repository must be ${OMP_APP_WIRE_SOURCE_REPOSITORY}`);
   }
   if (!SHA_PATTERN.test(appWireSourceCommit)) {
     errors.push(`${matrixPath} app-wire commit must be a lowercase 40-character Git SHA`);
@@ -519,8 +520,8 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   ) {
     errors.push(`${matrixPath} published app-wire version must be a stable x.y.z version`);
   }
-  if (publishedAppWire?.sourceRepository !== OMP_RUNTIME_REPOSITORY) {
-    errors.push(`${matrixPath} published app-wire repository must be ${OMP_RUNTIME_REPOSITORY}`);
+  if (publishedAppWire?.sourceRepository !== OMP_APP_WIRE_SOURCE_REPOSITORY) {
+    errors.push(`${matrixPath} published app-wire repository must be ${OMP_APP_WIRE_SOURCE_REPOSITORY}`);
   }
   if (!SHA_PATTERN.test(publishedAppWireSourceCommit)) {
     errors.push(`${matrixPath} published app-wire commit must be a lowercase 40-character Git SHA`);
@@ -721,7 +722,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   );
   requireText(
     site,
-    "export const OMP_RUNTIME_URL = `https://github.com/lyc-aon/oh-my-pi/tree/${OMP_RUNTIME_TAG}`;",
+    "export const OMP_RUNTIME_URL = `https://github.com/wolfiesch/oh-my-pi/tree/${OMP_RUNTIME_TAG}`;",
     "apps/site/src/release.ts",
     errors,
   );
@@ -774,7 +775,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   );
   requireText(
     readme,
-    `T4 Code vendors \`@oh-my-pi/app-wire\` ${publishedAppWireVersion} from integration commit [\`${publishedAppWireSourceCommit.slice(0, 8)}\`](${OMP_RUNTIME_REPOSITORY}/commit/${publishedAppWireSourceCommit}), source tree \`${publishedAppWireSourceTree}\`.`,
+    `T4 Code vendors \`@oh-my-pi/app-wire\` ${publishedAppWireVersion} from integration commit [\`${publishedAppWireSourceCommit.slice(0, 8)}\`](${OMP_APP_WIRE_SOURCE_REPOSITORY}/commit/${publishedAppWireSourceCommit}), source tree \`${publishedAppWireSourceTree}\`.`,
     "README.md",
     errors,
   );
@@ -803,7 +804,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   const releaseNotes = files.get("docs/CURRENT_RELEASE_NOTES.md") ?? "";
   for (const expected of [
     `app-wire ${publishedAppWireVersion}`,
-    `[${publishedAppWireSourceCommit.slice(0, 8)}](${OMP_RUNTIME_REPOSITORY}/commit/${publishedAppWireSourceCommit})`,
+    `[${publishedAppWireSourceCommit.slice(0, 8)}](${OMP_APP_WIRE_SOURCE_REPOSITORY}/commit/${publishedAppWireSourceCommit})`,
     `OMP ${ompRuntimeVersion}`,
     `[${String(ompRuntimeCommit).slice(0, 8)}](${ompRuntimeCommitUrl})`,
     `[${ompRuntimeSourceTag}](${ompRuntimeSourceUrl})`,
@@ -882,11 +883,11 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
       const continuityStep = namedStep("Run legacy bridge continuity gate");
       const uploadStep = namedStep("Upload continuity evidence");
       const authorityCommands = [
-        `source_repository="$(jq -er '.sourceRepository' provenance/omp-host-migration.json)"`,
-        `test "$source_repository" = "https://github.com/lyc-aon/oh-my-pi"`,
+        `source_repository="$(jq -er '.verifiedRuntime.sourceRepository' compat/omp-app-matrix.json)"`,
+        `test "$source_repository" = "https://github.com/wolfiesch/oh-my-pi"`,
         `sha="$(jq -er '.inputs.operationsContinuity' provenance/omp-host-migration.json)"`,
         '[[ "$sha" =~ ^[0-9a-f]{40}$ ]]',
-        `echo "repository=lyc-aon/oh-my-pi" >> "$GITHUB_OUTPUT"`,
+        `echo "repository=wolfiesch/oh-my-pi" >> "$GITHUB_OUTPUT"`,
         `echo "sha=$sha" >> "$GITHUB_OUTPUT"`,
       ];
       for (const command of authorityCommands) {
@@ -918,11 +919,11 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "core:",
     "legacy-bridge-continuity:",
     'ref: ${{ github.event.pull_request.head.sha || github.sha }}',
-    `source_repository="$(jq -er '.sourceRepository' provenance/omp-host-migration.json)"`,
-    `test "$source_repository" = "https://github.com/lyc-aon/oh-my-pi"`,
+    `source_repository="$(jq -er '.verifiedRuntime.sourceRepository' compat/omp-app-matrix.json)"`,
+    `test "$source_repository" = "https://github.com/wolfiesch/oh-my-pi"`,
     `sha="$(jq -er '.inputs.operationsContinuity' provenance/omp-host-migration.json)"`,
     '[[ "$sha" =~ ^[0-9a-f]{40}$ ]]',
-    `echo "repository=lyc-aon/oh-my-pi" >> "$GITHUB_OUTPUT"`,
+    `echo "repository=wolfiesch/oh-my-pi" >> "$GITHUB_OUTPUT"`,
     "repository: ${{ steps.authority.outputs.repository }}",
     "ref: ${{ steps.authority.outputs.sha }}",
     "T4_OMP_SOURCE_DIR: ${{ github.workspace }}/.continuity/omp",

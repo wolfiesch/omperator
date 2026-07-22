@@ -71,11 +71,11 @@ FORK_SYNC_RUN_MIN_OBSERVATION_POLLS=${T4_MAINTAINER_FORK_SYNC_RUN_MIN_OBSERVATIO
 SLEEP=${T4_MAINTAINER_SLEEP:-sleep}
 
 readonly OMP_UPSTREAM_REPOSITORY="can1357/oh-my-pi"
-readonly OMP_INTEGRATION_REPOSITORY="lyc-aon/oh-my-pi"
+readonly OMP_INTEGRATION_REPOSITORY="wolfiesch/oh-my-pi"
 readonly OMP_PRODUCT_BRANCH="t4code/main"
 readonly OMP_FORK_WORKFLOW="ci.yml"
 readonly OMP_UPSTREAM_URL="https://github.com/can1357/oh-my-pi.git"
-readonly OMP_INTEGRATION_URL="https://github.com/lyc-aon/oh-my-pi.git"
+readonly OMP_INTEGRATION_URL="https://github.com/wolfiesch/oh-my-pi.git"
 readonly T4_REPOSITORY="LycaonLLC/t4-code"
 readonly T4_SITE="https://t4code.net"
 T4_MAIN_GATE_SHA=
@@ -1317,7 +1317,7 @@ atomic_publication_receipt_is_valid() {
       .schemaVersion == 1 and .helperOwned == true and .atomicPush == true and
       .pushedRefCount == 3 and .productionRemoteIdentity == true and
       .officialRepository == "can1357/oh-my-pi" and
-      .forkRepository == "lyc-aon/oh-my-pi" and
+      .forkRepository == "wolfiesch/oh-my-pi" and
       .upstream.tag == $upstream_tag and .upstream.commit == $upstream_commit and
       (.upstream.tagObject | test("^[0-9a-f]{40}$")) and
       .product.branch == "t4code/main" and .product.commit == $integration_commit and

@@ -159,13 +159,13 @@ case $tool in
       repos/can1357/oh-my-pi/commits/v1.2.3)
         printf '%s\n' "$MOCK_UPSTREAM_COMMIT"
         ;;
-      repos/lyc-aon/oh-my-pi/commits/v1.2.3)
+      repos/wolfiesch/oh-my-pi/commits/v1.2.3)
         printf '%s\n' "$MOCK_UPSTREAM_COMMIT"
         ;;
       repos/can1357/oh-my-pi/git/ref/tags/v1.2.3)
         printf '%s\n' "$MOCK_UPSTREAM_TAG_OBJECT"
         ;;
-      repos/lyc-aon/oh-my-pi/git/ref/tags/v1.2.3)
+      repos/wolfiesch/oh-my-pi/git/ref/tags/v1.2.3)
         [[ \${MOCK_FORK_BASE_TAG_MISSING:-0} != 1 ]] || exit 1
         if [[ \${MOCK_FORK_BASE_TAG_MISMATCH:-0} == 1 ]]; then
           printf '%040d\n' 8
@@ -173,13 +173,13 @@ case $tool in
           printf '%s\n' "$MOCK_UPSTREAM_TAG_OBJECT"
         fi
         ;;
-      repos/lyc-aon/oh-my-pi/git/ref/tags/t4code-1.2.3-appserver-1)
+      repos/wolfiesch/oh-my-pi/git/ref/tags/t4code-1.2.3-appserver-1)
         printf '%s\n' "$MOCK_INTEGRATION_TAG_OBJECT"
         ;;
       repos/can1357/oh-my-pi/commits/main)
         printf '%s\n' "$MOCK_MAIN_COMMIT"
         ;;
-      repos/lyc-aon/oh-my-pi/commits/main)
+      repos/wolfiesch/oh-my-pi/commits/main)
         if [[ -f $state/fork-main-synced ]]; then
           printf '%s\n' "$MOCK_MAIN_COMMIT"
         elif [[ \${MOCK_FORK_MAIN_DIVERGED:-0} == 1 ]]; then
@@ -190,15 +190,15 @@ case $tool in
           printf '%s\n' "$MOCK_MAIN_COMMIT"
         fi
         ;;
-      repos/lyc-aon/oh-my-pi/actions/workflows/ci.yml)
+      repos/wolfiesch/oh-my-pi/actions/workflows/ci.yml)
         printf '%s\n' "$(read_state fork-workflow active)"
         ;;
-      repos/lyc-aon/oh-my-pi/actions/workflows/ci.yml/disable)
+      repos/wolfiesch/oh-my-pi/actions/workflows/ci.yml/disable)
         [[ \${MOCK_FORK_WORKFLOW_DISABLE_FAIL:-0} != 1 ]] || exit 1
         write_state fork-workflow disabled_manually
         printf '{}\n'
         ;;
-      repos/lyc-aon/oh-my-pi/actions/workflows/ci.yml/enable)
+      repos/wolfiesch/oh-my-pi/actions/workflows/ci.yml/enable)
         [[ \${MOCK_FORK_WORKFLOW_ENABLE_FAIL:-0} != 1 ]] || exit 1
         write_state fork-workflow active
         printf '{}\n'
@@ -219,7 +219,7 @@ case $tool in
         printf '{"desktop":{"version":"1.2.3"},"verifiedRuntime":{"upstreamTag":"%s","upstreamCommit":"%s","sourceTag":"t4code-1.2.3-appserver-1","sourceCommit":"%s"}}\n' \
           "$upstream_tag" "$MOCK_UPSTREAM_COMMIT" "$MOCK_INTEGRATION_COMMIT"
         ;;
-      repos/lyc-aon/oh-my-pi/commits/t4code-1.2.3-appserver-1)
+      repos/wolfiesch/oh-my-pi/commits/t4code-1.2.3-appserver-1)
         printf '%s\n' "$MOCK_INTEGRATION_COMMIT"
         ;;
       repos/LycaonLLC/t4-code/commits/main)
@@ -235,7 +235,7 @@ case $tool in
       repos/LycaonLLC/t4-code/commits/v1.2.3)
         printf '%s\n' "$MOCK_T4_COMMIT"
         ;;
-      repos/lyc-aon/oh-my-pi/compare/*)
+      repos/wolfiesch/oh-my-pi/compare/*)
         if [[ $endpoint == *"$MOCK_INTEGRATION_COMMIT...t4code/main" &&
               \${MOCK_PRODUCT_BRANCH_MISSING:-0} != 1 ]]; then
           printf '{"status":"ahead","ahead_by":1,"base_commit":{"sha":"%s"},"merge_base_commit":{"sha":"%s"},"commits":[]}\n' \
@@ -284,7 +284,7 @@ JSON
 JSON
         fi
         ;;
-      repos/lyc-aon/oh-my-pi/actions/workflows/ci.yml/runs*)
+      repos/wolfiesch/oh-my-pi/actions/workflows/ci.yml/runs*)
         if [[ $endpoint == *'branch=main'* && $endpoint == *"head_sha=$MOCK_MAIN_COMMIT"* ]]; then
           [[ \${MOCK_FORK_MAIN_RUN_LIST_FAIL:-0} != 1 ]] || exit 1
           if [[ \${MOCK_FORK_MAIN_RUN_MALFORMED:-0} == 1 ]]; then
@@ -331,7 +331,7 @@ JSON
           fi
         fi
         ;;
-      repos/lyc-aon/oh-my-pi/actions/runs/4242/cancel)
+      repos/wolfiesch/oh-my-pi/actions/runs/4242/cancel)
         if [[ \${MOCK_FORK_MAIN_RUN_CANCEL_STUCK:-0} != 1 ]]; then
           write_state fork-main-run-cancelled 1
         fi
@@ -343,7 +343,7 @@ JSON
           printf '{}\n'
         fi
         ;;
-      repos/lyc-aon/oh-my-pi/releases/tags/t4code-1.2.3-appserver-1)
+      repos/wolfiesch/oh-my-pi/releases/tags/t4code-1.2.3-appserver-1)
         omp_digest=$(printf 'mock-asset\n' | sha256sum | awk '{print $1}')
         omp_asset_prefix='mock://'
         [[ \${MOCK_OMP_ASSET_WRONG_ORIGIN:-0} != 1 ]] || omp_asset_prefix='https://example.invalid/'
@@ -357,7 +357,7 @@ JSON
         [[ \${MOCK_OMP_ASSET_DIGESTLESS:-0} != 1 ]] || digest='null'
         [[ $digest == null ]] || digest='"'"$digest"'"'
         cat <<JSON
-{"tag_name":"t4code-1.2.3-appserver-1","html_url":"https://github.com/lyc-aon/oh-my-pi/releases/tag/t4code-1.2.3-appserver-1","draft":false,"prerelease":false,"assets":[
+{"tag_name":"t4code-1.2.3-appserver-1","html_url":"https://github.com/wolfiesch/oh-my-pi/releases/tag/t4code-1.2.3-appserver-1","draft":false,"prerelease":false,"assets":[
   $missing
   {"name":"omp-linux-arm64","state":"uploaded","size":$size,"digest":$digest,"browser_download_url":"\${omp_asset_prefix}omp-linux-arm64"},
   {"name":"omp-darwin-x64","state":"uploaded","size":11,"digest":"sha256:$omp_digest","browser_download_url":"\${omp_asset_prefix}omp-darwin-x64"},
@@ -1081,7 +1081,7 @@ function forgedOmpPublicProof() {
   const canonical = {
     tagName: "t4code-1.2.3-appserver-1",
     htmlUrl:
-      "https://github.com/lyc-aon/oh-my-pi/releases/tag/t4code-1.2.3-appserver-1",
+      "https://github.com/wolfiesch/oh-my-pi/releases/tag/t4code-1.2.3-appserver-1",
     assets: [
       "omp-linux-x64",
       "omp-linux-arm64",
@@ -1681,7 +1681,7 @@ async function createRunnerFixture(options = {}) {
       pushedRefCount: 3,
       productionRemoteIdentity: true,
       officialRepository: "can1357/oh-my-pi",
-      forkRepository: "lyc-aon/oh-my-pi",
+      forkRepository: "wolfiesch/oh-my-pi",
       upstream: {
         tag: "v1.2.3",
         commit: upstreamCommit,
@@ -2476,7 +2476,7 @@ test("a divergent fork main is retried and rejected before source staging", asyn
   assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
   const calls = await fixture.callsText();
   assert.equal(
-    calls.split("\n").filter((line) => line.includes("repos/lyc-aon/oh-my-pi/commits/main"))
+    calls.split("\n").filter((line) => line.includes("repos/wolfiesch/oh-my-pi/commits/main"))
       .length,
     2,
     calls,
@@ -2500,7 +2500,7 @@ test("a missing or recreated fork base tag is rejected before source staging", a
       assert.equal(
         calls
           .split("\n")
-          .filter((line) => line.includes("repos/lyc-aon/oh-my-pi/git/ref/tags/v1.2.3"))
+          .filter((line) => line.includes("repos/wolfiesch/oh-my-pi/git/ref/tags/v1.2.3"))
           .length,
         2,
         calls,
@@ -2519,7 +2519,7 @@ test("public verification rejects a changed fork base-tag object", async (t) => 
   assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
   const calls = await fixture.callsText();
   assert.match(calls, /repos\/can1357\/oh-my-pi\/git\/ref\/tags\/v1\.2\.3/mu);
-  assert.match(calls, /repos\/lyc-aon\/oh-my-pi\/git\/ref\/tags\/v1\.2\.3/mu);
+  assert.match(calls, /repos\/wolfiesch\/oh-my-pi\/git\/ref\/tags\/v1\.2\.3/mu);
   assert.equal(calls.split("\n").filter((line) => line.startsWith("local-deploy\t")).length, 0);
   assert.equal(calls.split("\n").filter((line) => line.startsWith("omp\t")).length, 0);
 });
@@ -2630,7 +2630,7 @@ test("integration tags must remain reachable from the durable fork product branc
     const calls = await fixture.callsText();
     assert.match(
       calls,
-      /repos\/lyc-aon\/oh-my-pi\/compare\/b{40}\.\.\.t4code\/main/mu,
+      /repos\/wolfiesch\/oh-my-pi\/compare\/b{40}\.\.\.t4code\/main/mu,
     );
     assert.equal(calls.split("\n").filter((line) => line.startsWith("local-deploy\t")).length, 0);
     assert.equal(calls.split("\n").filter((line) => line.startsWith("omp\t")).length, 0);

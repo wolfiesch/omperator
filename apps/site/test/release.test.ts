@@ -64,7 +64,7 @@ describe("OMP integration contract", () => {
     expect(OMP_RUNTIME_TAG).toBe("t4code-17.0.5-appserver-10");
     expect(OMP_RUNTIME_COMMIT).toBe("8476f4451ed95c5d5401785d279a93d3c659fac4");
     expect(OMP_RUNTIME_URL).toBe(
-      "https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.5-appserver-10",
+      "https://github.com/wolfiesch/oh-my-pi/tree/t4code-17.0.5-appserver-10",
     );
     expect(OMP_UPSTREAM_TAG).toBe("v17.0.5");
     expect(OMP_UPSTREAM_COMMIT).toBe("9fd6e97113f5ed3a847e66d346970efdf8afcad9");

@@ -314,7 +314,7 @@ test("runner gives Sol the requested model, tools, and release ownership", async
   assert.match(runner, /"\$SETPRIV" --no-new-privs -- "\$OMP"/u);
   assert.doesNotMatch(runner, /--no-tools|--tools=|--no-pty|\bbwrap\b/u);
   for (const responsibility of [
-    "`lyc-aon/oh-my-pi` fork",
+    "`wolfiesch/oh-my-pi` fork",
     "wrapper has already synchronized",
     "merge the exact official `vX.Y.Z` base into the durable `t4code/main` product branch",
     "reachable from `t4code/main`",
@@ -521,6 +521,22 @@ test("public verification requires exact GitHub provenance despite admin bypass 
     'site_release_manifest_matches "$release_json" "$t4_version"',
     'site_has_release "$t4_tag" "$integration_tag" "$t4_version"',
   ]);
+});
+
+test("atomic publisher pins the owned OMP fork identity", async () => {
+  const publisher = await source("publish-omp-atomic.sh");
+  assertIncludesAll(
+    publisher,
+    [
+      "readonly FORK_REPOSITORY=wolfiesch/oh-my-pi",
+      "readonly FORK_REPOSITORY_ID=1271775475",
+      "readonly FORK_REPOSITORY_NODE_ID=R_kgDOS83A8w",
+      ".id == $id and .node_id == $node_id",
+      '.full_name == "wolfiesch/oh-my-pi" and .fork == true',
+      '.parent.full_name == "can1357/oh-my-pi"',
+    ],
+    "owned OMP fork identity",
+  );
 });
 
 test("pending publication is atomic and gates local deployment before processed state", async () => {

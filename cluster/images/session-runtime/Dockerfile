@@ -12,7 +12,7 @@ RUN rm -f /etc/apt/sources.list.d/* \
 COPY --from=docker.io/oven/bun:1.3.14-debian@sha256:9dba1a1b43ce28c9d7931bfc4eb00feb63b0114720a0277a8f939ae4dfc9db6f /usr/local/bin/bun /usr/local/bin/bun
 WORKDIR /opt/omp
 RUN git init \
-    && git remote add origin https://github.com/lyc-aon/oh-my-pi.git \
+    && git remote add origin https://github.com/wolfiesch/oh-my-pi.git \
     && git fetch --depth=1 origin "refs/tags/t4code-17.0.5-appserver-10" \
     && test "$(git rev-parse FETCH_HEAD)" = "8476f4451ed95c5d5401785d279a93d3c659fac4" \
     && git checkout --detach "8476f4451ed95c5d5401785d279a93d3c659fac4"

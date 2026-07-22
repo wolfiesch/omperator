@@ -23,19 +23,19 @@ EXPECTED_UPSTREAM_COMMIT=${T4_ATOMIC_EXPECTED_UPSTREAM_COMMIT:?T4_ATOMIC_EXPECTE
 TEST_MODE=${T4_ATOMIC_TEST_MODE:-0}
 
 readonly OFFICIAL_REPOSITORY=can1357/oh-my-pi
-readonly FORK_REPOSITORY=lyc-aon/oh-my-pi
+readonly FORK_REPOSITORY=wolfiesch/oh-my-pi
 readonly PRODUCT_BRANCH=t4code/main
 readonly OFFICIAL_REPOSITORY_ID=1125856365
-readonly FORK_REPOSITORY_ID=1271877000
+readonly FORK_REPOSITORY_ID=1271775475
 readonly OFFICIAL_REPOSITORY_NODE_ID=R_kgDOQxs0bQ
-readonly FORK_REPOSITORY_NODE_ID=R_kgDOS89NiA
+readonly FORK_REPOSITORY_NODE_ID=R_kgDOS83A8w
 
 if [[ $TEST_MODE == 1 ]]; then
   OFFICIAL_URL=${T4_ATOMIC_OFFICIAL_URL:?T4_ATOMIC_OFFICIAL_URL is required in test mode}
   FORK_URL=${T4_ATOMIC_FORK_URL:?T4_ATOMIC_FORK_URL is required in test mode}
 else
   OFFICIAL_URL=https://github.com/can1357/oh-my-pi.git
-  FORK_URL=https://github.com/lyc-aon/oh-my-pi.git
+  FORK_URL=https://github.com/wolfiesch/oh-my-pi.git
 fi
 
 fail() {
@@ -138,15 +138,19 @@ assert_production_identity() {
   local official fork origin official_remote
   official=$($GH api "repos/$OFFICIAL_REPOSITORY") || return 1
   fork=$($GH api "repos/$FORK_REPOSITORY") || return 1
-  printf '%s' "$official" | $JQ -e --argjson id "$OFFICIAL_REPOSITORY_ID" '
-    .id == $id and .node_id == "R_kgDOQxs0bQ" and .full_name == "can1357/oh-my-pi"
+  printf '%s' "$official" | $JQ -e \
+    --argjson id "$OFFICIAL_REPOSITORY_ID" \
+    --arg node_id "$OFFICIAL_REPOSITORY_NODE_ID" '
+    .id == $id and .node_id == $node_id and .full_name == "can1357/oh-my-pi"
   ' >/dev/null || return 1
   printf '%s' "$fork" | $JQ -e \
     --argjson id "$FORK_REPOSITORY_ID" \
-    --argjson parent_id "$OFFICIAL_REPOSITORY_ID" '
-      .id == $id and .node_id == "R_kgDOS89NiA" and
-      .full_name == "lyc-aon/oh-my-pi" and .fork == true and
-      .parent.id == $parent_id and .parent.node_id == "R_kgDOQxs0bQ" and
+    --arg node_id "$FORK_REPOSITORY_NODE_ID" \
+    --argjson parent_id "$OFFICIAL_REPOSITORY_ID" \
+    --arg parent_node_id "$OFFICIAL_REPOSITORY_NODE_ID" '
+      .id == $id and .node_id == $node_id and
+      .full_name == "wolfiesch/oh-my-pi" and .fork == true and
+      .parent.id == $parent_id and .parent.node_id == $parent_node_id and
       .parent.full_name == "can1357/oh-my-pi"
     ' >/dev/null || return 1
   origin=$($GIT -C "$repo" remote get-url origin) || return 1
@@ -286,7 +290,7 @@ if [[ -s $receipt_file ]]; then
       .pushedRefCount == 3 and
       .productionRemoteIdentity == $production and
       .officialRepository == "can1357/oh-my-pi" and
-      .forkRepository == "lyc-aon/oh-my-pi" and
+      .forkRepository == "wolfiesch/oh-my-pi" and
       .upstream.tag == $upstream_tag and .upstream.commit == $upstream_commit and
       .product.branch == "t4code/main" and
       .integration.tag == $integration_tag and
