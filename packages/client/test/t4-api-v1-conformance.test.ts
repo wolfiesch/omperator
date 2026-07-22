@@ -134,6 +134,66 @@ describe("generated T4 API v1 client conformance", () => {
     expect(discovery.limits).toMatchObject({ commandBytesMax: 32, commandRequestBytesMax: 256, commandMetadataValueBytesMax: 32 });
   });
 
+  it("keeps transport, routing, serializers, and middleware under SDK ownership", async () => {
+    let transportCalls = 0;
+    const client = createT4ApiClient({
+      baseUrl: "https://sdk-owned.test",
+      credential: "token-a",
+      majorVersion: 1,
+      fetch: async () => {
+        transportCalls += 1;
+        return jsonResponse(DISCOVERY);
+      },
+    });
+    const get = client.http.GET as unknown as (
+      path: string,
+      init: Record<string, unknown>,
+    ) => Promise<unknown>;
+    for (const [key, value] of [
+      ["baseUrl", "https://exfiltration.test"],
+      ["fetch", async () => jsonResponse(DISCOVERY)],
+      ["headers", { Authorization: "Bearer attacker" }],
+      ["middleware", [{ onRequest: () => jsonResponse(DISCOVERY) }]],
+      ["querySerializer", () => ""],
+      ["bodySerializer", () => "{}"],
+      ["pathSerializer", () => "/v1"],
+      ["Request", Request],
+      ["method", "POST"],
+    ] as const) {
+      expect(() => get("/v1", { [key]: value, params: { header: VERSION_HEADERS } })).toThrow(
+        `T4 API request option ${key} is SDK-owned`,
+      );
+    }
+    expect(transportCalls).toBe(0);
+    expect("use" in client.http).toBe(false);
+    expect("eject" in client.http).toBe(false);
+  });
+
+  it("uses a watch default that fits every advertised positive service bound", async () => {
+    const service = new T4ApiV1ConformanceService();
+    const client = createT4ApiClient({
+      baseUrl: service.origin,
+      credential: "token-a",
+      majorVersion: 1,
+      fetch: service.fetch,
+    });
+    requireData(await client.http.POST("/v1/workspaces", {
+      body: { name: "workspace" },
+      params: { header: idempotencyHeaders("workspace-watch-default") },
+    }));
+    requireData(await client.http.POST("/v1/workspaces/{workspaceId}/sessions", {
+      body: { title: "agent" },
+      params: {
+        header: idempotencyHeaders("session-watch-default"),
+        path: { workspaceId: "ws-1" },
+      },
+    }));
+    const stream = client.watchSession("ses-1", { maxReconnectAttempts: 0 });
+    await expect(stream.next()).resolves.toMatchObject({ done: false });
+    await stream.return(undefined);
+    expect(service.watchQueries.at(-1)).toEqual({ maxEvents: "1", heartbeatSeconds: "15" });
+  });
+
   it("creates, canonically replays, conflicts, mutates, paginates, isolates, and deletes workspaces", async () => {
     const service = new T4ApiV1ConformanceService();
     const owner = createT4ApiClient({ baseUrl: service.origin, credential: "token-a", majorVersion: 1, fetch: service.fetch });

@@ -98,7 +98,7 @@ export interface T4ApiClient {
    * Low-level generated client. Event-stream calls must pass `parseAs: "stream"`;
    * use `watchSession` for bounded, validated event decoding and reconnects.
    */
-  readonly http: Client<T4ClientPaths>;
+  readonly http: Readonly<Omit<Client<T4ClientPaths>, "use" | "eject">>;
   watchSession(sessionId: string, options?: WatchSessionOptions): AsyncGenerator<WatchEvent, void, undefined>;
 }
 
@@ -815,7 +815,7 @@ async function* watch(
   options: WatchSessionOptions,
 ): AsyncGenerator<WatchEvent, void, undefined> {
   const sessionId = requiredSessionId(sessionIdValue);
-  const maxEvents = boundedInteger(options.maxEvents, 100, 1, 1000, "maxEvents");
+  const maxEvents = boundedInteger(options.maxEvents, 1, 1, 1000, "maxEvents");
   const heartbeatSeconds = boundedInteger(options.heartbeatSeconds, 15, 5, 60, "heartbeatSeconds");
   const maxReconnectAttempts = boundedInteger(options.maxReconnectAttempts, 3, 0, 10, "maxReconnectAttempts");
   const retryBackoffMs = boundedInteger(options.retryBackoffMs, 250, 0, 30_000, "retryBackoffMs");
@@ -941,17 +941,48 @@ export function createT4ApiClient(options: T4ApiClientOptions): T4ApiClient {
   const majorVersion = requiredMajor(options.majorVersion);
   const fetchImpl = options.fetch ?? globalThis.fetch;
   const authenticatedFetch: typeof globalThis.fetch = async (input, init) => {
-    const request = new Request(input, init);
-    request.headers.set("Authorization", `Bearer ${credential}`);
-    request.headers.set("T4-API-Version", majorVersion);
-    const path = relativeApiPath(request, baseUrl);
-    const contract = path === undefined ? undefined : responseContract(request.method, path);
-    request.headers.set("Accept", contract?.success[200] === "event-stream" ? "text/event-stream" : "application/json");
+    const candidate = new Request(input, init);
+    const path = relativeApiPath(candidate, baseUrl);
+    const contract = path === undefined ? undefined : responseContract(candidate.method, path);
+    if (contract === undefined) throw protocolError(502, "T4 API client refused an undeclared or cross-origin request");
+    const headers = new Headers(candidate.headers);
+    headers.set("Authorization", `Bearer ${credential}`);
+    headers.set("T4-API-Version", majorVersion);
+    headers.set("Accept", contract.success[200] === "event-stream" ? "text/event-stream" : "application/json");
+    const request = new Request(candidate, { headers, redirect: "error" });
     const response = await fetchImpl(request);
     await validateResponse(request, response, baseUrl);
     return response;
   };
-  const http = createClient<T4ClientPaths>({ baseUrl, fetch: authenticatedFetch });
+  const generated = createClient<T4ClientPaths>({ baseUrl, fetch: authenticatedFetch });
+  const forbiddenOverrides = new Set([
+    "baseUrl", "fetch", "headers", "middleware", "querySerializer", "bodySerializer",
+    "pathSerializer", "Request", "method",
+  ]);
+  const safeInit = (init: unknown): unknown => {
+    if (init === undefined) return undefined;
+    if (init === null || typeof init !== "object" || Array.isArray(init)) {
+      throw new TypeError("T4 API request options must be an object");
+    }
+    for (const key of Object.keys(init)) {
+      if (forbiddenOverrides.has(key)) {
+        throw new TypeError(`T4 API request option ${key} is SDK-owned`);
+      }
+    }
+    return init;
+  };
+  const http = Object.freeze({
+    request: (method: Parameters<typeof generated.request>[0], path: Parameters<typeof generated.request>[1], init?: unknown) =>
+      generated.request(method, path, safeInit(init) as never),
+    GET: (path: Parameters<typeof generated.GET>[0], init?: unknown) => generated.GET(path, safeInit(init) as never),
+    PUT: (path: Parameters<typeof generated.PUT>[0], init?: unknown) => generated.PUT(path, safeInit(init) as never),
+    POST: (path: Parameters<typeof generated.POST>[0], init?: unknown) => generated.POST(path, safeInit(init) as never),
+    DELETE: (path: Parameters<typeof generated.DELETE>[0], init?: unknown) => generated.DELETE(path, safeInit(init) as never),
+    OPTIONS: (path: Parameters<typeof generated.OPTIONS>[0], init?: unknown) => generated.OPTIONS(path, safeInit(init) as never),
+    HEAD: (path: Parameters<typeof generated.HEAD>[0], init?: unknown) => generated.HEAD(path, safeInit(init) as never),
+    PATCH: (path: Parameters<typeof generated.PATCH>[0], init?: unknown) => generated.PATCH(path, safeInit(init) as never),
+    TRACE: (path: Parameters<typeof generated.TRACE>[0], init?: unknown) => generated.TRACE(path, safeInit(init) as never),
+  }) as unknown as Readonly<Omit<Client<T4ClientPaths>, "use" | "eject">>;
   return Object.freeze({
     http,
     watchSession: (sessionId: string, watchOptions: WatchSessionOptions = {}) =>
