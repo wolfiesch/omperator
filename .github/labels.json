@@ -1,0 +1,18 @@
+[
+  { "name": "proposal", "color": "5319e7", "description": "A product or architecture decision that needs review" },
+  { "name": "triaged", "color": "0e8a16", "description": "Scope and next action have been confirmed" },
+  { "name": "needs-info", "color": "fbca04", "description": "More information is required before work can continue" },
+  { "name": "prio:p0", "color": "b60205", "description": "Critical: release, security, or severe user impact" },
+  { "name": "prio:p1", "color": "d93f0b", "description": "High: significant impact and near-term work" },
+  { "name": "prio:p2", "color": "fbca04", "description": "Medium: important but not urgent" },
+  { "name": "prio:p3", "color": "0e8a16", "description": "Low: minor impact or backlog" },
+  { "name": "platform:macos", "color": "e99695", "description": "macOS-specific behavior" },
+  { "name": "platform:linux", "color": "e99695", "description": "Linux-specific behavior" },
+  { "name": "platform:android", "color": "e99695", "description": "Android-specific behavior" },
+  { "name": "area:desktop", "color": "0052cc", "description": "Electron desktop application" },
+  { "name": "area:host", "color": "0052cc", "description": "Host service, protocol, or OMP integration" },
+  { "name": "area:cluster", "color": "0052cc", "description": "Cluster operator or multi-host orchestration" },
+  { "name": "area:release", "color": "0052cc", "description": "Packaging, signing, publication, or updates" },
+  { "name": "dependencies", "color": "0366d6", "description": "Dependency and supply-chain updates" },
+  { "name": "security", "color": "b60205", "description": "Security-sensitive work; do not disclose vulnerabilities publicly" }
+]

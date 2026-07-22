@@ -1,0 +1,32 @@
+name: Question
+description: Ask about installing, configuring, or using Omperator.
+labels: ["question"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to do?
+      description: Describe the outcome you want, not only the command or screen you are using.
+    validations:
+      required: true
+  - type: textarea
+    id: attempted
+    attributes:
+      label: What have you tried?
+      description: Include relevant commands or screenshots after removing secrets and private paths.
+  - type: input
+    id: version
+    attributes:
+      label: Omperator version
+      description: Use the displayed T4 Code version while the application rebrand is in progress.
+      placeholder: "0.1.31"
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS Apple Silicon
+        - Linux x86_64
+        - Android
+        - Built from source
+        - Other

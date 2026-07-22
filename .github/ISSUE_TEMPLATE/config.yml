@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security vulnerability (private)
-    url: https://github.com/LycaonLLC/t4-code/security/advisories/new
+    url: https://github.com/wolfiesch/omperator/security/advisories/new
     about: Never report security problems in a public issue. Use GitHub private vulnerability reporting.
   - name: Documentation
-    url: https://t4code.net/docs
-    about: Install, first run, and usage docs.
+    url: https://github.com/wolfiesch/omperator#readme
+    about: Current installation, development, and product documentation.

@@ -1,0 +1,44 @@
+name: Sync repository labels
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/labels.json"
+      - ".github/workflows/sync-labels.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: sync-repository-labels
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out trusted label configuration
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Create or update declared labels
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          jq -c '.[]' .github/labels.json | while IFS= read -r label; do
+            name=$(jq -r '.name' <<<"$label")
+            color=$(jq -r '.color' <<<"$label")
+            description=$(jq -r '.description' <<<"$label")
+            gh label create "$name" \
+              --repo "$GITHUB_REPOSITORY" \
+              --color "$color" \
+              --description "$description" \
+              --force
+          done

@@ -1,0 +1,12 @@
+# Repository-wide product and release ownership.
+* @wolfiesch
+
+# Changes to governance, automation, releases, signing, and provenance require
+# explicit owner review even after additional maintainers are added.
+/.github/ @wolfiesch
+/GOVERNANCE.md @wolfiesch
+/LICENSE @wolfiesch
+/THIRD_PARTY_NOTICES.md @wolfiesch
+/infra/ @wolfiesch
+/scripts/*package* @wolfiesch
+/scripts/*release* @wolfiesch
