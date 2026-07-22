@@ -19,7 +19,7 @@
     "@t4-code/protocol": "workspace:*"
   },
   "devDependencies": {
-    "@types/bun": "1.3.5",
+    "@types/bun": "1.3.14",
     "@types/node": "24.12.4",
     "typescript": "~6.0.3"
   },
