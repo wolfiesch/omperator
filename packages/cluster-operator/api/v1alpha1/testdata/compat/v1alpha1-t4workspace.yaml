@@ -1,0 +1,29 @@
+apiVersion: cluster.t4.dev/v1alpha1
+kind: T4Workspace
+metadata:
+  name: legacy-workspace
+  finalizers:
+    - cluster.t4.dev/workspace-protection
+spec:
+  hostRef: legacy-host
+  displayName: Legacy workspace
+  owner: user:legacy-owner
+  repository:
+    repositoryId: legacy/project
+    ref: refs/heads/main
+    commit: 0123456789abcdef0123456789abcdef01234567
+  size: 20Gi
+  retentionPolicy: Retain
+status:
+  observedGeneration: 4
+  pvcName: legacy-workspace-data
+  pvcPhase: Bound
+  capacity: 20Gi
+  phase: Ready
+  conditions:
+    - type: Ready
+      status: "True"
+      observedGeneration: 4
+      lastTransitionTime: "2026-01-15T12:00:00Z"
+      reason: StorageBound
+      message: Legacy workspace storage is ready

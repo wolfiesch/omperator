@@ -252,9 +252,9 @@ steps:
     image: mirror.gcr.io/library/golang:1.25.1-bookworm@sha256:c423747fbd96fd8f0b1102d947f51f9b266060217478e5f9bf86f145969562ee
     directory: packages/cluster-operator
     commands:
-      - GOMAXPROCS=1 GOFLAGS=-p=1 go test ./api/... ./controllers/... ./cmd/...
+      - GOMAXPROCS=1 GOFLAGS='-mod=readonly -p=1' go test ./api/... ./controllers/... ./cmd/...
       - mkdir -p ../../artifacts/cluster-proof
-      - CGO_ENABLED=0 GOMAXPROCS=1 GOFLAGS=-p=1 go test -c ./charttests -o ../../artifacts/cluster-proof/chart-contract.test
+      - CGO_ENABLED=0 GOMAXPROCS=1 GOFLAGS='-mod=readonly -p=1' go test -c ./charttests -o ../../artifacts/cluster-proof/chart-contract.test
     backend_options:
       kubernetes:
         serviceAccountName: woodpecker-ci-untrusted

@@ -10,6 +10,7 @@ import (
 	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/api/meta"
+	apiresource "k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -23,7 +24,8 @@ import (
 
 type WorkspaceReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	APIReader client.Reader
+	Scheme    *runtime.Scheme
 }
 
 const (
@@ -73,8 +75,9 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, request ctrl.Reques
 	}
 
 	pvcName := WorkspacePVCName(&workspace)
+	pvcKey := types.NamespacedName{Namespace: workspace.Namespace, Name: pvcName}
 	var pvc corev1.PersistentVolumeClaim
-	err = r.Get(ctx, types.NamespacedName{Namespace: workspace.Namespace, Name: pvcName}, &pvc)
+	err = r.Get(ctx, pvcKey, &pvc)
 	if apierrors.IsNotFound(err) {
 		volumeMode := corev1.PersistentVolumeFilesystem
 		pvc = corev1.PersistentVolumeClaim{
@@ -98,13 +101,27 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, request ctrl.Reques
 				return ctrl.Result{}, err
 			}
 		}
-		if err := r.Create(ctx, &pvc); err != nil && !apierrors.IsAlreadyExists(err) {
-			return ctrl.Result{}, err
+		if err := r.Create(ctx, &pvc); err != nil {
+			if !apierrors.IsAlreadyExists(err) {
+				return ctrl.Result{}, err
+			}
+			reader := r.APIReader
+			if reader == nil {
+				reader = r.Client
+			}
+			if err := reader.Get(ctx, pvcKey, &pvc); err != nil {
+				return ctrl.Result{}, err
+			}
 		}
 	} else if err != nil {
 		return ctrl.Result{}, err
-	} else if !workspaceOwnsPVC(&workspace, &pvc) {
+	}
+	if !workspaceOwnsPVC(&workspace, &pvc) {
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", "PVCOwnershipConflict", "deterministic workspace PVC does not belong to this workspace")
+	} else if !pvcHasRWX(&pvc) {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", "PVCNotRWX", "workspace PVC does not request ReadWriteMany")
+	} else if pvcStorageClassName(&pvc) != storageClassName {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", ReasonStorageClassMismatch, fmt.Sprintf("workspace PVC uses StorageClass %q instead of host-selected %q; data-bearing PVCs are never recreated automatically", pvcStorageClassName(&pvc), storageClassName))
 	} else if workspace.Spec.RetentionPolicy == clusterv1alpha1.RetentionPolicyRetain && metav1.IsControlledBy(&pvc, &workspace) {
 		before := pvc.DeepCopy()
 		pvc.OwnerReferences = removeWorkspaceOwnerReference(pvc.OwnerReferences, workspace.UID)
@@ -114,6 +131,31 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, request ctrl.Reques
 			}
 			return ctrl.Result{Requeue: true}, nil
 		}
+	}
+	reader := r.APIReader
+	if reader == nil {
+		reader = r.Client
+	}
+	var authoritativePVC corev1.PersistentVolumeClaim
+	if err := reader.Get(ctx, pvcKey, &authoritativePVC); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", "PVCNotFound", "workspace PVC does not exist in authoritative API state")
+		}
+		return ctrl.Result{}, err
+	}
+	if authoritativePVC.UID != pvc.UID || !workspaceOwnsPVC(&workspace, &authoritativePVC) {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", "PVCOwnershipConflict", "authoritative workspace PVC identity or ownership does not belong to this workspace")
+	}
+	if !pvcHasRWX(&authoritativePVC) {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", "PVCNotRWX", "authoritative workspace PVC does not request ReadWriteMany")
+	}
+	if pvcStorageClassName(&authoritativePVC) != storageClassName {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", ReasonStorageClassMismatch, fmt.Sprintf("authoritative workspace PVC uses StorageClass %q instead of host-selected %q; data-bearing PVCs are never recreated automatically", pvcStorageClassName(&authoritativePVC), storageClassName))
+	}
+	pvc = authoritativePVC
+
+	if pvc.Status.Phase == corev1.ClaimLost {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", "PVCLost", "workspace PVC lost its volume")
 	}
 
 	original := workspace.Status
@@ -126,19 +168,12 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, request ctrl.Reques
 	workspace.Status.PVCPhase = pvc.Status.Phase
 	capacity := pvc.Status.Capacity[corev1.ResourceStorage]
 	workspace.Status.Capacity = capacity.DeepCopy()
+	meta.SetStatusCondition(&workspace.Status.Conditions, condition("HostReady", metav1.ConditionTrue, "HostResolved", "referenced T4ClusterHost is available", workspace.Generation))
 	meta.SetStatusCondition(&workspace.Status.Conditions, condition("StorageReady", metav1.ConditionTrue, ReasonStorageReady, "RWX StorageClass and workspace PVC are accepted", workspace.Generation))
 	switch pvc.Status.Phase {
 	case corev1.ClaimBound:
-		if !pvcHasRWX(&pvc) {
-			workspace.Status.Phase = clusterv1alpha1.InfrastructureFailed
-			meta.SetStatusCondition(&workspace.Status.Conditions, condition("Ready", metav1.ConditionFalse, "PVCNotRWX", "bound workspace PVC does not request ReadWriteMany", workspace.Generation))
-		} else {
-			workspace.Status.Phase = clusterv1alpha1.InfrastructureReady
-			meta.SetStatusCondition(&workspace.Status.Conditions, condition("Ready", metav1.ConditionTrue, "PVCBound", "workspace PVC is bound with ReadWriteMany access", workspace.Generation))
-		}
-	case corev1.ClaimLost:
-		workspace.Status.Phase = clusterv1alpha1.InfrastructureFailed
-		meta.SetStatusCondition(&workspace.Status.Conditions, condition("Ready", metav1.ConditionFalse, "PVCLost", "workspace PVC lost its volume", workspace.Generation))
+		workspace.Status.Phase = clusterv1alpha1.InfrastructureReady
+		meta.SetStatusCondition(&workspace.Status.Conditions, condition("Ready", metav1.ConditionTrue, "PVCBound", "workspace PVC is bound with ReadWriteMany access", workspace.Generation))
 	default:
 		workspace.Status.Phase = clusterv1alpha1.InfrastructurePending
 		meta.SetStatusCondition(&workspace.Status.Conditions, condition("Ready", metav1.ConditionFalse, "PVCBinding", "workspace PVC is waiting to bind", workspace.Generation))
@@ -157,6 +192,11 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, request ctrl.Reques
 func workspaceOwnsPVC(workspace *clusterv1alpha1.T4Workspace, pvc *corev1.PersistentVolumeClaim) bool {
 	if pvc.Annotations[clusterv1alpha1.WorkspaceUIDAnnotation] != string(workspace.UID) {
 		return false
+	}
+	for _, reference := range pvc.OwnerReferences {
+		if reference.APIVersion != clusterv1alpha1.GroupVersion.String() || reference.Kind != "T4Workspace" || reference.Name != workspace.Name || reference.UID != workspace.UID {
+			return false
+		}
 	}
 	controller := metav1.GetControllerOf(pvc)
 	if workspace.Spec.RetentionPolicy == clusterv1alpha1.RetentionPolicyDelete {
@@ -192,7 +232,11 @@ func (r *WorkspaceReconciler) reconcileDelete(ctx context.Context, workspace *cl
 		}
 	}
 	var sessions clusterv1alpha1.T4SessionList
-	if err := r.List(ctx, &sessions, client.InNamespace(workspace.Namespace)); err != nil {
+	sessionReader := r.APIReader
+	if sessionReader == nil {
+		sessionReader = r.Client
+	}
+	if err := sessionReader.List(ctx, &sessions, client.InNamespace(workspace.Namespace)); err != nil {
 		return ctrl.Result{}, err
 	}
 	remainingSessions := 0
@@ -216,7 +260,11 @@ func (r *WorkspaceReconciler) reconcileDelete(ctx context.Context, workspace *cl
 	}
 	pvcKey := types.NamespacedName{Namespace: workspace.Namespace, Name: WorkspacePVCName(workspace)}
 	var pvc corev1.PersistentVolumeClaim
-	err := r.Get(ctx, pvcKey, &pvc)
+	reader := r.APIReader
+	if reader == nil {
+		reader = r.Client
+	}
+	err := reader.Get(ctx, pvcKey, &pvc)
 	if err == nil && !workspaceOwnsPVC(workspace, &pvc) {
 		before := workspace.Status
 		if workspace.Status.Conditions != nil {
@@ -248,7 +296,7 @@ func (r *WorkspaceReconciler) reconcileDelete(ctx context.Context, workspace *cl
 		}
 	} else {
 		if err == nil {
-			if err := r.Delete(ctx, &pvc); err != nil && !apierrors.IsNotFound(err) {
+			if err := deleteWithPreconditions(ctx, r.Client, &pvc); err != nil && !apierrors.IsNotFound(err) {
 				return ctrl.Result{}, err
 			}
 			return ctrl.Result{RequeueAfter: time.Second}, nil
@@ -268,11 +316,18 @@ func (r *WorkspaceReconciler) updateWorkspaceFailure(ctx context.Context, worksp
 		original.Conditions = append([]metav1.Condition(nil), workspace.Status.Conditions...)
 	}
 	workspace.Status.ObservedGeneration = workspace.Generation
+	workspace.Status.PVCName = ""
+	workspace.Status.PVCPhase = ""
+	workspace.Status.Capacity = apiresource.Quantity{}
 	workspace.Status.Phase = clusterv1alpha1.InfrastructureFailed
-	meta.SetStatusCondition(&workspace.Status.Conditions, condition(conditionType, metav1.ConditionFalse, reason, message, workspace.Generation))
-	if conditionType != "Ready" {
-		meta.SetStatusCondition(&workspace.Status.Conditions, condition("Ready", metav1.ConditionFalse, reason, message, workspace.Generation))
+	if conditionType == "HostReady" {
+		meta.SetStatusCondition(&workspace.Status.Conditions, condition("HostReady", metav1.ConditionFalse, reason, message, workspace.Generation))
+		meta.SetStatusCondition(&workspace.Status.Conditions, condition("StorageReady", metav1.ConditionUnknown, "NotEvaluated", "storage dependency was not evaluated because the referenced host is unavailable", workspace.Generation))
+	} else {
+		meta.SetStatusCondition(&workspace.Status.Conditions, condition("HostReady", metav1.ConditionTrue, "HostResolved", "referenced T4ClusterHost is available", workspace.Generation))
+		meta.SetStatusCondition(&workspace.Status.Conditions, condition("StorageReady", metav1.ConditionFalse, reason, message, workspace.Generation))
 	}
+	meta.SetStatusCondition(&workspace.Status.Conditions, condition("Ready", metav1.ConditionFalse, reason, message, workspace.Generation))
 	if reflect.DeepEqual(original, workspace.Status) {
 		return nil
 	}
@@ -337,6 +392,23 @@ func (r *WorkspaceReconciler) workspaceRequestsForStorageClass(ctx context.Conte
 	return requests
 }
 
+func (r *WorkspaceReconciler) workspaceRequestsForHost(ctx context.Context, object client.Object) []ctrl.Request {
+	host, ok := object.(*clusterv1alpha1.T4ClusterHost)
+	if !ok || host.Name == "" || host.Namespace == "" {
+		return nil
+	}
+	var workspaces clusterv1alpha1.T4WorkspaceList
+	if err := r.List(ctx, &workspaces, client.InNamespace(host.Namespace), client.MatchingFields{workspaceHostRefIndexField: host.Name}); err != nil {
+		ctrl.LoggerFrom(ctx).Error(err, "unable to map cluster host to workspaces", "clusterHost", client.ObjectKeyFromObject(host))
+		return nil
+	}
+	requests := make([]ctrl.Request, 0, len(workspaces.Items))
+	for i := range workspaces.Items {
+		requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&workspaces.Items[i])})
+	}
+	return requests
+}
+
 func (r *WorkspaceReconciler) SetupWithManager(manager ctrl.Manager) error {
 	if err := manager.GetFieldIndexer().IndexField(context.Background(), &clusterv1alpha1.T4ClusterHost{}, hostStorageClassIndexField, indexHostByStorageClass); err != nil {
 		return fmt.Errorf("index T4ClusterHost by StorageClass: %w", err)
@@ -346,6 +418,7 @@ func (r *WorkspaceReconciler) SetupWithManager(manager ctrl.Manager) error {
 	}
 	return ctrl.NewControllerManagedBy(manager).
 		For(&clusterv1alpha1.T4Workspace{}).
+		Watches(&clusterv1alpha1.T4ClusterHost{}, handler.EnqueueRequestsFromMapFunc(r.workspaceRequestsForHost)).
 		Watches(&corev1.PersistentVolumeClaim{}, handler.EnqueueRequestsFromMapFunc(workspaceRequestsForPVC)).
 		Watches(&storagev1.StorageClass{}, handler.EnqueueRequestsFromMapFunc(r.workspaceRequestsForStorageClass)).
 		Complete(r)

@@ -70,7 +70,7 @@ func main() {
 		ctrl.Log.Error(err, "unable to register T4ClusterHost controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.WorkspaceReconciler{Client: manager.GetClient(), Scheme: manager.GetScheme()}).SetupWithManager(manager); err != nil {
+	if err := (&controllers.WorkspaceReconciler{Client: manager.GetClient(), APIReader: manager.GetAPIReader(), Scheme: manager.GetScheme()}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register T4Workspace controller")
 		os.Exit(1)
 	}

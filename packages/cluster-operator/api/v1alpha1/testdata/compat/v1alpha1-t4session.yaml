@@ -1,0 +1,29 @@
+apiVersion: cluster.t4.dev/v1alpha1
+kind: T4Session
+metadata:
+  name: legacy-session
+  finalizers:
+    - cluster.t4.dev/session-cleanup
+spec:
+  hostRef: legacy-host
+  workspaceRef: legacy-workspace
+  title: Legacy session
+  runtimeProfile: gui
+  initialPromptSecretRef:
+    name: legacy-initial-prompt
+  ci:
+    repositoryId: legacy/project
+    ref: refs/heads/main
+    commit: 0123456789abcdef0123456789abcdef01234567
+status:
+  observedGeneration: 7
+  podName: legacy-session-pod
+  serviceName: legacy-session
+  phase: Running
+  conditions:
+    - type: Available
+      status: "True"
+      observedGeneration: 7
+      lastTransitionTime: "2026-01-15T12:00:00Z"
+      reason: RuntimeReady
+      message: Legacy session infrastructure is running

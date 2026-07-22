@@ -9,6 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -98,6 +99,45 @@ func TestWorkspaceRequestsForStorageClassOnlyEnqueuesAffectedWorkspaces(t *testi
 		got[request.NamespacedName]++
 	}
 	want := []types.NamespacedName{{Namespace: "team", Name: "workspace-a"}, {Namespace: "other", Name: "workspace-b"}}
+	if len(got) != len(want) {
+		t.Fatalf("requests = %#v, want exactly %v", requests, want)
+	}
+	for _, key := range want {
+		if got[key] != 1 {
+			t.Fatalf("requests = %#v, want %v exactly once", requests, key)
+		}
+	}
+}
+
+func TestWorkspaceRequestsForHostOnlyEnqueuesAffectedWorkspaces(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := clusterv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	objects := []client.Object{
+		&clusterv1alpha1.T4Workspace{ObjectMeta: metav1.ObjectMeta{Name: "workspace-a", Namespace: "team"}, Spec: clusterv1alpha1.T4WorkspaceSpec{HostRef: "host-a"}},
+		&clusterv1alpha1.T4Workspace{ObjectMeta: metav1.ObjectMeta{Name: "workspace-b", Namespace: "team"}, Spec: clusterv1alpha1.T4WorkspaceSpec{HostRef: "host-a"}},
+		&clusterv1alpha1.T4Workspace{ObjectMeta: metav1.ObjectMeta{Name: "other-host", Namespace: "team"}, Spec: clusterv1alpha1.T4WorkspaceSpec{HostRef: "host-b"}},
+		&clusterv1alpha1.T4Workspace{ObjectMeta: metav1.ObjectMeta{Name: "other-namespace", Namespace: "other"}, Spec: clusterv1alpha1.T4WorkspaceSpec{HostRef: "host-a"}},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithIndex(&clusterv1alpha1.T4Workspace{}, workspaceHostRefIndexField, indexWorkspaceByHostRef).
+		WithObjects(objects...).Build()
+	r := &WorkspaceReconciler{Client: c, Scheme: scheme}
+
+	requests := r.workspaceRequestsForHost(context.Background(), &clusterv1alpha1.T4ClusterHost{ObjectMeta: metav1.ObjectMeta{Name: "host-a", Namespace: "team"}})
+	assertRequestSet(t, requests, []types.NamespacedName{
+		{Namespace: "team", Name: "workspace-a"},
+		{Namespace: "team", Name: "workspace-b"},
+	})
+}
+
+func assertRequestSet(t *testing.T, requests []ctrl.Request, want []types.NamespacedName) {
+	t.Helper()
+	got := make(map[types.NamespacedName]int, len(requests))
+	for _, request := range requests {
+		got[request.NamespacedName]++
+	}
 	if len(got) != len(want) {
 		t.Fatalf("requests = %#v, want exactly %v", requests, want)
 	}
