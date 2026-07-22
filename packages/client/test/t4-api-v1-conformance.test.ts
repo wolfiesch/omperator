@@ -899,6 +899,25 @@ describe("generated T4 API v1 client conformance", () => {
     }
   });
 
+  it("rejects malformed workspace and session pagination cursors", async () => {
+    const service = new T4ApiV1ConformanceService();
+    const headers = { Authorization: "Bearer token-a", "T4-API-Version": "1", "Content-Type": "application/json" };
+    expect((await service.fetch(`${service.origin}/v1/workspaces`, {
+      method: "POST", headers: { ...headers, "Idempotency-Key": "pagination-workspace" }, body: '{"name":"workspace"}',
+    })).status).toBe(202);
+    expect((await service.fetch(`${service.origin}/v1/workspaces/ws-1/sessions`, {
+      method: "POST", headers: { ...headers, "Idempotency-Key": "pagination-session-1" }, body: '{"title":"session"}',
+    })).status).toBe(202);
+
+    for (const path of ["/v1/workspaces", "/v1/workspaces/ws-1/sessions"]) {
+      for (const cursor of ["foo", "page--1", "page-01", "page-9007199254740992"]) {
+        const response = await service.fetch(`${service.origin}${path}?cursor=${encodeURIComponent(cursor)}`, { headers });
+        expect(response.status, `${path} accepted ${cursor}`).toBe(422);
+        expect(await response.json()).toMatchObject({ error: { code: "invalid_request", violations: [{ field: "cursor", rule: "format" }] } });
+      }
+    }
+  });
+
   it("parses service frames incrementally across split UTF-8 and per-frame bounds", async () => {
     const bytewiseService = new T4ApiV1ConformanceService({ watchTransport: "bytewise" });
     const bytewiseClient = await seededClient(bytewiseService, "bytewise");
