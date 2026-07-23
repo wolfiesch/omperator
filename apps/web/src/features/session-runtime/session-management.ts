@@ -124,15 +124,14 @@ export function sessionCreateSupport(
     };
   }
   const catalogFrame = snapshot.catalogs.get(address.hostId);
-  const hasUsableModel = catalogFrame?.items.some(
-    (item) => item.kind === "model" && item.supported !== false,
-  );
-  return hasUsableModel
-    ? { supported: true, reason: null }
-    : {
-        supported: false,
-        reason: "Configure a model for this OMP profile before creating a session",
-      };
+  const modelItems = catalogFrame?.items.filter((item) => item.kind === "model") ?? [];
+  if (modelItems.length > 0 && !modelItems.some((item) => item.supported !== false)) {
+    return {
+      supported: false,
+      reason: "Configure a model for this OMP profile before creating a session",
+    };
+  }
+  return { supported: true, reason: null };
 }
 
 function sessionKey(address: LiveSessionAddress): string {

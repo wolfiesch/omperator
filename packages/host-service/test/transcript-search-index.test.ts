@@ -467,4 +467,32 @@ describe("TranscriptSearchIndex", () => {
 			await fs.rm(root, { recursive: true, force: true });
 		}
 	});
+
+	test("counts the union of retained and newly discovered sessions in a partial inventory", async () => {
+		const { root, transcript, index } = await fixture();
+		const retained = join(root, "retained.jsonl");
+		const discovered = join(root, "discovered.jsonl");
+		try {
+			await fs.writeFile(transcript, message("old-one", "user", "first retained session"));
+			await fs.writeFile(retained, message("old-two", "assistant", "second retained session"));
+			await fs.writeFile(discovered, message("new-one", "assistant", "newly discovered session"));
+			await index.reconcile([
+				record("session-old-one", transcript),
+				record("session-old-two", retained),
+			]);
+
+			const partial = await index.reconcile(
+				[record("session-new-one", discovered)],
+				{ pruneMissing: false },
+			);
+			expect(partial).toMatchObject({ state: "stale", indexedSessions: 3, knownSessions: 3 });
+			expect(index.search({ query: "session" })).toMatchObject({
+				incomplete: true,
+				index: { indexedSessions: 3, knownSessions: 3 },
+			});
+		} finally {
+			index.close();
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
 });

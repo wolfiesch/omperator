@@ -426,7 +426,11 @@ export class TranscriptSearchIndex {
 				if (!wanted.has(session_id))
 					this.#commitMutation(() => db.run("DELETE FROM sessions WHERE session_id=?", [session_id]).changes > 0);
 			}
-		} else this.#knownSessions = Math.max(this.#knownSessions, existingIds.length);
+		} else {
+			const known = new Set(existingIds.map(({ session_id }) => session_id));
+			for (const session_id of wanted) known.add(session_id);
+			this.#knownSessions = known.size;
+		}
 		for (const record of records) {
 			try {
 				await this.#reconcileSession(record);

@@ -515,6 +515,24 @@ describe("session management authority helpers", () => {
       reason: "Configure a model for this OMP profile before creating a session",
     });
 
+    const commandOnlyCatalog = catalog();
+    const officialAuthority = {
+      ...snapshot,
+      catalogs: new Map([
+        [
+          ADDRESS.hostId,
+          {
+            ...commandOnlyCatalog,
+            items: commandOnlyCatalog.items.filter((item) => item.kind !== "model"),
+          },
+        ],
+      ]),
+    } as DesktopRuntimeSnapshot;
+    expect(sessionCreateSupport(officialAuthority, address)).toEqual({
+      supported: true,
+      reason: null,
+    });
+
     const unbound = {
       ...snapshot,
       targetHosts: new Map(),

@@ -515,6 +515,87 @@ describe("appserver lifecycle", () => {
 			await rm(root, { recursive: true, force: true });
 		}
 	});
+	test("ignores external runtime records when resolving a native session project", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-created-session-external-record-"));
+		const worktree = join(root, "external-worktree");
+		await mkdir(worktree);
+		const socketPath = join(root, "run", "appserver.sock");
+		const requestedProject = stableProjectId(root);
+		const external = {
+			...record("external-session"),
+			path: worktree,
+			cwd: worktree,
+			projectId: requestedProject,
+			runtime: { id: "external-runtime", workspaceInstanceId: "external-worktree" },
+		};
+		const created = {
+			...record("native-created-session"),
+			path: join(root, "native-created-session.jsonl"),
+			cwd: root,
+			projectId: requestedProject,
+		};
+		let createdCwd: string | undefined;
+		let resolverCalls = 0;
+		const sessionAuthority = {
+			create: async (cwd: string) => {
+				createdCwd = cwd;
+				return created;
+			},
+			list: async () => [external],
+			archive: async () => {},
+			restore: async () => {},
+			delete: async () => {},
+		};
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "external-record-project-test",
+			socketPath,
+			discovery: sessionAuthority,
+			sessionAuthority,
+			projectRootForProject: () => {
+				resolverCalls += 1;
+				return root;
+			},
+			childFactory: new FakeFactory(),
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "external-record-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: [],
+				capabilities: { client: ["sessions.manage", "sessions.read"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect((await client.nextServer()).type).toBe("sessions");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "create-native-session",
+				commandId: "create-native-session-command",
+				hostId: host,
+				command: "session.create",
+				args: { projectId: requestedProject },
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type !== "response" || frame.requestId !== "create-native-session") continue;
+				expect(frame).toMatchObject({ ok: true });
+				break;
+			}
+			expect(resolverCalls).toBe(1);
+			expect(createdCwd).toBe(await realpath(root));
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
 	test("prunes ownership when a created session never enters discovery", async () => {
 		const root = await mkdtemp(join(tmpdir(), "t4-created-session-missing-"));
 		const socketPath = join(root, "run", "appserver.sock");

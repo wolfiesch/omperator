@@ -32,6 +32,7 @@ import {
 	parseBounded,
 	type OperationCapability,
 	projectId,
+	type ProjectId,
 	type ResultFrame,
 	requiredCapability,
 	revision as wireRevision,
@@ -2739,22 +2740,40 @@ export class LocalAppserver implements AppserverHandle {
 		if (!this.#projectRootForProject) throw new Error("project resolver is unavailable");
 		if (typeof value !== "string") throw new Error("projectId is invalid");
 		const requestedProject = projectId(value);
-		const indexed = [...this.#records.values()].find(
-			record => record.projectId === requestedProject,
+		const indexed = [...this.#records.values()].filter(
+			record => record.runtime === undefined && record.projectId === requestedProject,
 		);
-		const requestedCwd = indexed?.cwd ?? (await this.#projectRootForProject(requestedProject));
+		for (const record of indexed) {
+			const canonical = await this.canonicalProjectRoot(record.cwd, requestedProject);
+			if (canonical !== undefined) return canonical;
+		}
+		const requestedCwd = await this.#projectRootForProject(requestedProject);
 		if (typeof requestedCwd !== "string" || !requestedCwd.startsWith("/"))
 			throw new Error("project resolver returned an invalid local root");
-		let canonical: string;
-		try {
-			canonical = await realpath(requestedCwd);
-			if (!(await fsStat(canonical)).isDirectory()) throw new Error("not a directory");
-		} catch {
+		const canonical = await this.canonicalProjectRoot(requestedCwd, requestedProject);
+		if (canonical === undefined) {
+			let available = false;
+			try {
+				available = (await fsStat(await realpath(requestedCwd))).isDirectory();
+			} catch {}
+			if (available)
+				throw new Error("project resolver returned a mismatched local root");
 			throw new Error("project resolver returned an unavailable local root");
 		}
-		if (stableProjectId(canonical) !== requestedProject)
-			throw new Error("project resolver returned a mismatched local root");
 		return canonical;
+	}
+	private async canonicalProjectRoot(
+		candidate: string,
+		requestedProject: ProjectId,
+	): Promise<string | undefined> {
+		if (!candidate.startsWith("/")) return undefined;
+		try {
+			const canonical = await realpath(candidate);
+			if (!(await fsStat(canonical)).isDirectory()) return undefined;
+			return stableProjectId(canonical) === requestedProject ? canonical : undefined;
+		} catch {
+			return undefined;
+		}
 	}
 	private workspaceProjection(record: WorkspaceRecord): Record<string, unknown> {
 		return {

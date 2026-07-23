@@ -186,7 +186,9 @@ describe("T4 host daemon CLI", () => {
     });
     const catalog = await operations.catalogGet?.();
     if (!catalog) throw new Error("official catalog missing");
-    const commandNames = (catalog.items as Array<{ name: string }>).map(item => item.name);
+    const officialItems = catalog.items as Array<{ kind: string; name: string }>;
+    const commandNames = officialItems.map(item => item.name);
+    expect(officialItems.every(item => item.kind === "command")).toBe(true);
     expect(commandNames).toContain("session.model.set");
     expect(commandNames).not.toContain("session.fast.set");
     expect(commandNames).not.toContain("session.retry");
