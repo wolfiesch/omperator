@@ -263,8 +263,9 @@ function hostMetadata(capabilities: readonly string[], features: readonly string
 }
 
 /**
- * Dispatch-time write freshness requires a complete host inventory that
- * contains this session's indexed ref; graft both onto fake projections.
+ * Dispatch-time write freshness requires this process to have received the
+ * session's indexed ref; graft the ref, its arrival marker, and inventory
+ * metadata onto fake projections.
  */
 function withInventory(projection: ProjectionSnapshot): ProjectionSnapshot {
   const key = `${HOST}\u0000${SESSION}`;
@@ -282,7 +283,9 @@ function withInventory(projection: ProjectionSnapshot): ProjectionSnapshot {
   }
   const sessionIndexMetadata = new Map(projection.sessionIndexMetadata);
   sessionIndexMetadata.set(HOST, { truncated: false, totalCount: sessionIndex.size } as never);
-  return { ...projection, sessionIndex, sessionIndexMetadata };
+  const sessionRefArrivalOrdinals = new Map(projection.sessionRefArrivalOrdinals);
+  sessionRefArrivalOrdinals.set(key, 1);
+  return { ...projection, sessionIndex, sessionIndexMetadata, sessionRefArrivalOrdinals };
 }
 
 interface VoidDeferred {
