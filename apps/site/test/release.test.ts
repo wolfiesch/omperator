@@ -61,10 +61,10 @@ describe("release assets", () => {
 
 describe("OMP integration contract", () => {
   it("pins the verified runtime tag, commit, and app-wire package", () => {
-    expect(OMP_RUNTIME_TAG).toBe("t4code-17.0.5-appserver-10");
-    expect(OMP_RUNTIME_COMMIT).toBe("8476f4451ed95c5d5401785d279a93d3c659fac4");
+    expect(OMP_RUNTIME_TAG).toBe("t4code-17.0.5-appserver-12");
+    expect(OMP_RUNTIME_COMMIT).toBe("2eef185481d499c6e04323b71eda550a54bd4550");
     expect(OMP_RUNTIME_URL).toBe(
-      "https://github.com/wolfiesch/oh-my-pi/tree/t4code-17.0.5-appserver-10",
+      "https://github.com/wolfiesch/oh-my-pi/tree/t4code-17.0.5-appserver-12",
     );
     expect(OMP_UPSTREAM_TAG).toBe("v17.0.5");
     expect(OMP_UPSTREAM_COMMIT).toBe("9fd6e97113f5ed3a847e66d346970efdf8afcad9");

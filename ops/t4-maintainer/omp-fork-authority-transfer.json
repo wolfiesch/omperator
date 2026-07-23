@@ -29,16 +29,16 @@
     "currentBaseTagObject": null,
     "currentBaseCommitAccessible": true,
     "productBranch": "t4code/main",
-    "productCommit": "8476f4451ed95c5d5401785d279a93d3c659fac4",
-    "integrationTag": "t4code-17.0.5-appserver-10",
-    "integrationCommit": "8476f4451ed95c5d5401785d279a93d3c659fac4",
-    "integrationTagObject": "7619f67dad1e836c4fe5aba7b6d4699c68039b0e"
+    "productCommit": "2eef185481d499c6e04323b71eda550a54bd4550",
+    "integrationTag": "t4code-17.0.5-appserver-12",
+    "integrationCommit": "2eef185481d499c6e04323b71eda550a54bd4550",
+    "integrationTagObject": "cce1d5db34d4f53b38a61947f2cf54e2244e1e82"
   },
   "releaseAssets": [
-    {"name":"omp-darwin-arm64","size":120893008,"digest":"sha256:f7d4438e163aabc4ca624468bf5bd4a243b5e1ab5360e84cef52abe93683ea55"},
-    {"name":"omp-darwin-x64","size":126353216,"digest":"sha256:d6cb8ab8d75497e87c387eb55be3f8a604d0c4add8006e82765982bdd2a05880"},
-    {"name":"omp-linux-arm64","size":150513808,"digest":"sha256:968a939fc26329590ba53b11c9cb0eccc0e849e8988c8da9fc58c7c2fcfe8ef5"},
-    {"name":"omp-linux-x64","size":175372416,"digest":"sha256:deb7dae793a2191746681980305ab8b5ed0480410950ca7d5e555257f4f3fb04"},
-    {"name":"omp-windows-x64.exe","size":154442240,"digest":"sha256:019524f8ccd6c5a3e8f1656dadf86ec8cf0597f571c26045d0bd02b849c39e57"}
+    {"name":"omp-darwin-arm64","size":120893008,"digest":"sha256:c3893f7b4fffd18279a4ee214d1d6de465b87062504a613374b2ac5e75283895"},
+    {"name":"omp-darwin-x64","size":126353216,"digest":"sha256:c78ef5d796e3aae96ff3280d87c4a4b3b36c10ca5543312ff6ba35ea6923a741"},
+    {"name":"omp-linux-arm64","size":150513808,"digest":"sha256:327102ec5045f58229f39490510d14ac5582ad90436c9b51e12a5e8a8f19db12"},
+    {"name":"omp-linux-x64","size":175372416,"digest":"sha256:6eecf8c3d4d68a7044f7b0a0f57a0969814e58dfdc06b526b15401e1d61ad480"},
+    {"name":"omp-windows-x64.exe","size":154442240,"digest":"sha256:7a0f2a39908171a40c171c46e8e97513669070266e51075b7cf696c3872ea001"}
   ]
 }
