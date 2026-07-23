@@ -633,7 +633,9 @@ test("@soak recovers one live phone session across 20 network drops", async ({ p
   for (let cycle = 1; cycle <= 20; cycle += 1) {
     const before = await fixture.state();
     await fixture.disconnectClients();
-    await expect(page.getByText("Offline", { exact: true }).first()).toBeVisible();
+    await expect(
+      page.getByText("Connecting", { exact: true }).filter({ visible: true }).first(),
+    ).toBeVisible();
     await page.clock.fastForward(10_000);
     await expect
       .poll(async () => (await fixture.state()).connections, {
@@ -646,7 +648,7 @@ test("@soak recovers one live phone session across 20 network drops", async ({ p
       transcript.getByText("Hello world", { exact: true }).filter({ visible: true }),
     ).toHaveCount(1);
     await expect(composer).toBeEnabled();
-    await expect(page.getByText("Offline", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Connecting", { exact: true })).toHaveCount(0);
   }
 });
 
