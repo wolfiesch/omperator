@@ -5,7 +5,10 @@
 import type { DesktopRuntimeController } from "@t4-code/client";
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 
-import { desktopRuntime } from "../../platform/desktop-runtime.ts";
+import {
+  desktopRuntime,
+  useDesktopRuntimeSelector,
+} from "../../platform/desktop-runtime.ts";
 import { resolveLiveSession } from "../../platform/live-workspace.ts";
 import {
   createFixtureSessionRuntime,
@@ -109,15 +112,10 @@ export interface UseSessionRuntimeResult {
 
 export function useSessionRuntime(sessionKey: string, link: SessionLink): UseSessionRuntimeResult {
   const controller = desktopRuntime();
-  const controllerSnapshot = useSyncExternalStore(
-    (listener) => controller?.subscribe(listener) ?? (() => undefined),
-    () => controller?.getSnapshot() ?? null,
-    () => null,
+  const selectedTargetId = useDesktopRuntimeSelector(
+    (snapshot) => resolveLiveSession(snapshot, sessionKey)?.targetId,
   );
-  const targetId =
-    controller === null || controllerSnapshot === null
-      ? undefined
-      : resolveLiveSession(controllerSnapshot, sessionKey)?.targetId;
+  const targetId = controller === null ? undefined : (selectedTargetId ?? undefined);
   const runtime = useMemo(
     () => obtainRuntime(sessionKey, link, targetId),
     [sessionKey, link, targetId],

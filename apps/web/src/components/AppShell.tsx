@@ -18,7 +18,10 @@ import { handoffTranscriptSearchQuery } from "../features/transcript-search/inde
 import { composerStore } from "../features/composer/composer-store.ts";
 import { TRANSCRIPT_SEARCH_ROUTE } from "../features/transcript-search/route.ts";
 import { getInspectorStore } from "../features/panes/inspector-store.ts";
-import { startDesktopRuntime, useDesktopRuntimeSnapshot } from "../platform/desktop-runtime.ts";
+import {
+  startDesktopRuntime,
+  useDesktopRuntimeSelector,
+} from "../platform/desktop-runtime.ts";
 import {
   ATTENTION_INBOX_FIXTURES,
   buildAttentionInboxViewModel,
@@ -61,7 +64,6 @@ export function AppShell() {
   const [nowMs] = useState(() => Date.now());
 
   const shellData = useShellData();
-  const runtimeSnapshot = useDesktopRuntimeSnapshot();
   const currentGroups = useMemo(
     () =>
       buildProjectGroups(
@@ -170,15 +172,15 @@ export function AppShell() {
     (session) => session.archivedAt === undefined,
   ).length;
   const archivedCount = shellData.sessions.length - currentCount;
-  const attentionCount = useMemo(
-    () =>
-      runtimeSnapshot === null
-        ? buildAttentionInboxViewModel(ATTENTION_INBOX_FIXTURES.sample.items).urgentCount
-        : deriveAttentionInbox(runtimeSnapshot, {
-            seenOutcomeIdsBySessionKey: lastSeenAttentionOutcomeBySessionKey,
-          }).urgentCount,
-    [lastSeenAttentionOutcomeBySessionKey, runtimeSnapshot],
+  const liveAttentionCount = useDesktopRuntimeSelector(
+    (snapshot) =>
+      deriveAttentionInbox(snapshot, {
+        seenOutcomeIdsBySessionKey: lastSeenAttentionOutcomeBySessionKey,
+      }).urgentCount,
   );
+  const attentionCount =
+    liveAttentionCount ??
+    buildAttentionInboxViewModel(ATTENTION_INBOX_FIXTURES.sample.items).urgentCount;
   const hiddenProjectIdSet = useMemo(
     () => new Set(Object.keys(hiddenProjectIds).filter((id) => hiddenProjectIds[id] === true)),
     [hiddenProjectIds],

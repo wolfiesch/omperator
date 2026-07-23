@@ -553,6 +553,7 @@ export function Composer({
   };
 
   const primaryLabel = revisingPlanId !== null ? "Send revision" : turnActive ? "Steer" : "Send";
+  const primaryDisplayLabel = sending ? "Sending…" : primaryLabel;
   const preparingAttachments = preparingAttachmentCount > 0;
   const canSubmit =
     !disabled && !preparingAttachments && (draft.trim() !== "" || attachments.length > 0);
@@ -856,14 +857,14 @@ export function Composer({
             )}
             <Button
               aria-busy={sending || preparingAttachments || undefined}
-              aria-label={primaryLabel}
+              aria-label={primaryDisplayLabel}
               className="ml-1"
               disabled={!canSubmit || sending}
               onClick={submit}
               size="xs"
             >
               <ArrowUp aria-hidden="true" />
-              {primaryLabel}
+              {primaryDisplayLabel}
             </Button>
           </div>
           <div className="flex min-w-0 flex-col gap-1.5 px-2 pb-2 sm:hidden">
@@ -897,7 +898,7 @@ export function Composer({
               onSubmit={submit}
               primaryBusy={sending || preparingAttachments}
               primaryDisabled={!canSubmit || sending}
-              primaryLabel={primaryLabel}
+              primaryLabel={primaryDisplayLabel}
               queueDisabled={disabled || sending || preparingAttachments || draft.trim() === ""}
               turnActive={turnActive}
             />

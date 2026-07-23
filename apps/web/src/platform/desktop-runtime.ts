@@ -11,7 +11,7 @@ import {
   type DesktopShellPort,
   type ProjectionCacheStore,
 } from "@t4-code/client";
-import { useSyncExternalStore } from "react";
+import { useCallback, useRef, useSyncExternalStore } from "react";
 
 import { bindAuthoritativeComposerCleanup } from "../features/composer/authoritative-cleanup.ts";
 import { rendererPlatform } from "../state/store-instance.ts";
@@ -169,4 +169,52 @@ export function useDesktopRuntimeSnapshot(): DesktopRuntimeSnapshot | null {
     binding?.subscribe ?? subscribeNoop,
     binding?.getSnapshot ?? getNull,
   );
+}
+
+/**
+ * Subscribe to one derived piece of desktop state. The selected value keeps
+ * its previous reference while `isEqual` says the relevant truth is
+ * unchanged, so high-frequency transcript frames do not re-render unrelated
+ * shell surfaces such as the 1,000-session rail.
+ */
+export function useDesktopRuntimeSelector<T>(
+  selector: (snapshot: DesktopRuntimeSnapshot) => T,
+  isEqual: (left: T, right: T) => boolean = Object.is,
+): T | null {
+  const controller = desktopRuntime();
+  const selectorRef = useRef(selector);
+  const equalityRef = useRef(isEqual);
+  const cacheRef = useRef<
+    | {
+        readonly controller: DesktopRuntimeController;
+        readonly value: T;
+      }
+    | undefined
+  >(undefined);
+  selectorRef.current = selector;
+  equalityRef.current = isEqual;
+
+  const getSelected = useCallback((): T | null => {
+    if (controller === null) return null;
+    const next = selectorRef.current(controller.getSnapshot());
+    const cached = cacheRef.current;
+    if (cached?.controller === controller && equalityRef.current(cached.value, next)) {
+      return cached.value;
+    }
+    cacheRef.current = { controller, value: next };
+    return next;
+  }, [controller]);
+
+  let binding: StoreBinding | undefined;
+  if (controller !== null) {
+    binding = bindings.get(controller);
+    if (binding === undefined) {
+      binding = {
+        subscribe: (onChange) => controller.subscribe(onChange),
+        getSnapshot: () => controller.getSnapshot(),
+      };
+      bindings.set(controller, binding);
+    }
+  }
+  return useSyncExternalStore(binding?.subscribe ?? subscribeNoop, getSelected, getNull);
 }

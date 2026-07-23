@@ -84,7 +84,7 @@ import {
 } from "../features/session-runtime/session-management.ts";
 import { resolveSessionManagementNavigation } from "../features/session-runtime/session-navigation.ts";
 import { presentSessionControlKind } from "../features/session-runtime/session-observer.ts";
-import { desktopRuntime, useDesktopRuntimeSnapshot } from "../platform/desktop-runtime.ts";
+import { desktopRuntime } from "../platform/desktop-runtime.ts";
 import {
   deriveWorkspaceData,
   requiresProfileChoiceForCreate,
@@ -92,6 +92,7 @@ import {
   resolveLiveProjectCreateTargets,
   resolveLiveSession,
 } from "../platform/live-workspace.ts";
+import { useWorkspaceRuntimeSnapshot } from "../state/shell-data.ts";
 import { useWorkspace, workspaceStore } from "../state/store-instance.ts";
 import { SessionListTabs } from "./SessionListTabs.tsx";
 
@@ -115,6 +116,7 @@ function SessionRowItem({
   active,
   index,
   nowMs,
+  runtimeSnapshot,
   onAnnounce,
   contextLabel,
   manual,
@@ -127,6 +129,7 @@ function SessionRowItem({
   active: boolean;
   index: number;
   nowMs: number;
+  runtimeSnapshot: ReturnType<typeof useWorkspaceRuntimeSnapshot>;
   onAnnounce: (message: string) => void;
   contextLabel?: string;
   manual?: boolean;
@@ -136,7 +139,6 @@ function SessionRowItem({
   onDrop?: (sourceId: string) => void;
 }) {
   const navigate = useNavigate();
-  const snapshot = useDesktopRuntimeSnapshot();
   const controller = desktopRuntime();
   const { session } = row;
   const pinned = useWorkspace((state) => state.pinnedSessionIds[session.id] === true);
@@ -149,7 +151,8 @@ function SessionRowItem({
   const [pending, setPending] = useState<SessionAction | null>(null);
   const pendingRef = useRef<SessionAction | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const address = snapshot === null ? null : resolveLiveSession(snapshot, session.id);
+  const address =
+    runtimeSnapshot === null ? null : resolveLiveSession(runtimeSnapshot, session.id);
   const archived = session.archivedAt !== undefined;
 
   const support = (
@@ -160,9 +163,9 @@ function SessionRowItem({
       | "session.restore"
       | "session.delete",
   ) =>
-    snapshot === null || address === null
+    runtimeSnapshot === null || address === null
       ? { supported: false, reason: "Connect to this host to manage the session" }
-      : managementCommandSupport(snapshot, address, command);
+      : managementCommandSupport(runtimeSnapshot, address, command);
   const renameSupport = support("session.rename");
   const terminateSupport = support("session.close");
   const archiveSupport = support("session.archive");
@@ -752,6 +755,7 @@ function ProjectHeaderRow({
   onDrop,
   onPin,
   onAnnounce,
+  runtimeSnapshot,
   view,
 }: {
   group: ProjectGroup;
@@ -768,10 +772,10 @@ function ProjectHeaderRow({
   onDrop: (sourceId: string) => void;
   onPin: () => void;
   onAnnounce: (message: string) => void;
+  runtimeSnapshot: ReturnType<typeof useWorkspaceRuntimeSnapshot>;
   view: SessionListView;
 }) {
   const navigate = useNavigate();
-  const snapshot = useDesktopRuntimeSnapshot();
   const controller = desktopRuntime();
   const [pending, setPending] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
@@ -781,6 +785,7 @@ function ProjectHeaderRow({
   const [error, setError] = useState<string | null>(null);
   const disclosureRef = useRef<HTMLButtonElement | null>(null);
 
+  const snapshot = runtimeSnapshot;
   const address = snapshot !== null ? resolveLiveProject(snapshot, group.project.id) : null;
   const createTargets =
     snapshot === null
@@ -1535,6 +1540,7 @@ export function Rail({
   attentionCount: number;
 }) {
   const navigate = useNavigate();
+  const runtimeSnapshot = useWorkspaceRuntimeSnapshot();
   const activeSessionId = useWorkspace((state) => state.activeSessionId);
   const organization = useWorkspace((state) => state.railOrganization);
   const sort = useWorkspace((state) => state.railSort);
@@ -1797,6 +1803,7 @@ export function Rail({
                 nowMs={nowMs}
                 onAnnounce={setAnnouncement}
                 row={row}
+                runtimeSnapshot={runtimeSnapshot}
               />
             ))}
           </div>
@@ -1837,6 +1844,7 @@ export function Rail({
                   )
                 }
                 row={row}
+                runtimeSnapshot={runtimeSnapshot}
               />
             ))}
           </div>
@@ -1885,6 +1893,7 @@ export function Rail({
                   );
                 }}
                 pinned={pinnedProjectIds[group.project.id] === true}
+                runtimeSnapshot={runtimeSnapshot}
                 shortcutHidden={hiddenProjectIds.has(group.project.id)}
                 view={view}
               />
@@ -1907,6 +1916,7 @@ export function Rail({
                         dropSession(group.project.id, sessionIds, sourceId, row.session.id)
                       }
                       row={row}
+                      runtimeSnapshot={runtimeSnapshot}
                     />
                   ))}
                   {group.sessions.length > limit && (
