@@ -234,6 +234,46 @@ describe("client projections", () => {
     });
   });
 
+  it("keeps every returned ref current when a full bounded page rolls forward", () => {
+    const oldPage = Array.from(
+      { length: MAX_INDEXED_SESSION_REFS },
+      (_, index) => ref(String(HOST), `listed-${index + 2}`),
+    );
+    const currentPage = Array.from(
+      { length: MAX_INDEXED_SESSION_REFS },
+      (_, index) => ref(String(HOST), `listed-${index}`),
+    );
+    let state = applyPublicFrame(createProjectionSnapshot(), {
+      v: V,
+      type: "sessions",
+      hostId: HOST,
+      cursor: { epoch: "rolling", seq: 0 },
+      sessions: oldPage,
+      totalCount: MAX_INDEXED_SESSION_REFS + 2,
+      truncated: true,
+    } as ProjectionFrame);
+    state = applyPublicFrame(state, frame("welcome"));
+    state = applyPublicFrame(state, {
+      v: V,
+      type: "sessions",
+      hostId: HOST,
+      cursor: { epoch: "rolling", seq: 1 },
+      sessions: currentPage,
+      totalCount: MAX_INDEXED_SESSION_REFS + 2,
+      truncated: true,
+    } as ProjectionFrame);
+
+    expect(state.sessionIndex.size).toBe(MAX_INDEXED_SESSION_REFS);
+    expect(state.sessionRefArrivalOrdinals.size).toBe(MAX_INDEXED_SESSION_REFS);
+    for (const listed of currentPage) {
+      const listedKey = sessionKey(String(listed.sessionId));
+      expect(state.sessionIndex.has(listedKey)).toBe(true);
+      expect(state.sessionRefArrivalOrdinals.has(listedKey)).toBe(true);
+    }
+    expect(state.sessionIndex.has(sessionKey("listed-1000"))).toBe(false);
+    expect(state.sessionRefArrivalOrdinals.has(sessionKey("listed-1000"))).toBe(false);
+  });
+
   it("rejects a delayed lower same-epoch session inventory without regressing the index", () => {
     const currentRef = ref(String(HOST), "ordered", { title: "Current" });
     const staleRef = ref(String(HOST), "ordered", { title: "Stale" });

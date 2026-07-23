@@ -1158,23 +1158,35 @@ function applyProjectionInput(
           if (activeSessionKey === warmKey) activeSessionKey = undefined;
         }
       }
+      // A bounded inventory page is authoritative for every row it returned.
+      // Repeated mapWith calls against a full, differently ordered cached page
+      // can evict an upcoming returned row, reinsert it later, and cascade that
+      // eviction through the page. Build the two capped maps atomically so all
+      // returned refs survive and their current-arrival markers stay aligned.
+      const retainedCapacity = Math.max(0, config.maxIndexedSessions - refs.length);
+      const retainedCandidates = [...sessionIndex.entries()]
+        .filter(([existingKey]) => !incomingKeys.has(existingKey));
+      const retainedEntries = retainedCapacity === 0
+        ? []
+        : retainedCandidates.slice(-retainedCapacity);
+      const incomingEntries = refs.map((ref) => [
+        key(String(ref.hostId), String(ref.sessionId)),
+        ref,
+      ] as const);
+      sessionIndex = immutableMap([...retainedEntries, ...incomingEntries]);
+      const retainedKeys = new Set(retainedEntries.map(([existingKey]) => existingKey));
+      const retainedOrdinalEntries = [...snapshot.sessionRefArrivalOrdinals.entries()].filter(
+        ([existingKey]) => {
+          if (!retainedKeys.has(existingKey)) return false;
+          const existingRef = snapshot.sessionIndex.get(existingKey);
+          return existingRef !== undefined && !authoritativeHosts.has(String(existingRef.hostId));
+        },
+      );
+      sessionRefArrivalOrdinals = immutableMap([
+        ...retainedOrdinalEntries,
+        ...incomingEntries.map(([sessionKey]) => [sessionKey, arrivalOrdinal] as const),
+      ]);
       const lru = freezeArray(snapshot.lru.filter((sessionKey) => sessions.has(sessionKey)));
-      for (const ref of refs) {
-        const sessionKey = key(String(ref.hostId), String(ref.sessionId));
-        sessionIndex = mapWith(sessionIndex, sessionKey, ref, config.maxIndexedSessions);
-        sessionRefArrivalOrdinals = mapWith(
-          sessionRefArrivalOrdinals,
-          sessionKey,
-          arrivalOrdinal,
-          config.maxIndexedSessions,
-        );
-      }
-      while (sessionIndex.size > config.maxIndexedSessions) {
-        const oldest = sessionIndex.keys().next().value;
-        if (oldest === undefined) break;
-        sessionIndex = mapWithout(sessionIndex, oldest);
-        sessionRefArrivalOrdinals = mapWithout(sessionRefArrivalOrdinals, oldest);
-      }
       let sessionIndexMetadata = snapshot.sessionIndexMetadata;
       for (const [hostId, metadata] of sessionFrameMetadata(
         frame,
