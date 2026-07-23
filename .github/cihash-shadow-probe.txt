@@ -1,1 +1,2 @@
 CIHash shadow parity probe. Safe to close without merging.
+Ready-state synchronization event.
