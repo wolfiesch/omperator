@@ -411,17 +411,22 @@ export class TranscriptSearchIndex {
 		this.#commitMutation(() => db.run("UPDATE sessions SET state='stale' WHERE session_id=?", [session]).changes > 0);
 	}
 
-	async reconcile(records: readonly SessionRecord[]): Promise<TranscriptSearchIndexStatus> {
+	async reconcile(
+		records: readonly SessionRecord[],
+		options: { readonly pruneMissing?: boolean } = {},
+	): Promise<TranscriptSearchIndexStatus> {
 		const db = this.#database();
 		this.#state = "building";
 		this.#knownSessions = records.length;
 		let failed = false;
 		const wanted = new Set(records.map(record => String(record.sessionId)));
 		const existingIds = db.query("SELECT session_id FROM sessions").all() as Array<{ session_id: string }>;
-		for (const { session_id } of existingIds) {
-			if (!wanted.has(session_id))
-				this.#commitMutation(() => db.run("DELETE FROM sessions WHERE session_id=?", [session_id]).changes > 0);
-		}
+		if (options.pruneMissing !== false) {
+			for (const { session_id } of existingIds) {
+				if (!wanted.has(session_id))
+					this.#commitMutation(() => db.run("DELETE FROM sessions WHERE session_id=?", [session_id]).changes > 0);
+			}
+		} else this.#knownSessions = Math.max(this.#knownSessions, existingIds.length);
 		for (const record of records) {
 			try {
 				await this.#reconcileSession(record);
@@ -430,7 +435,7 @@ export class TranscriptSearchIndex {
 				this.#markSessionStale(String(record.sessionId));
 			}
 		}
-		this.#state = failed ? "stale" : "ready";
+		this.#state = failed || options.pruneMissing === false ? "stale" : "ready";
 		this.#refreshStatus();
 		return this.status();
 	}

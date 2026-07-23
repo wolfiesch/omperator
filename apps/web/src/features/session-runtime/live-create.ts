@@ -1,13 +1,15 @@
 import { hostId as brandHostId } from "@t4-code/protocol";
 import type { RendererServerEventEnvelope } from "@t4-code/protocol/desktop-ipc";
 import { sessionViewId } from "../../platform/live-workspace.ts";
+import {
+  sessionCreateSupport,
+  type SessionCreateSnapshot,
+} from "./session-management.ts";
 
 export interface LiveCreateAddress { readonly targetId: string; readonly hostId: string; readonly projectId: string; }
 export interface LiveCreateResult { readonly viewId: string; }
 export interface LiveCreateController {
-  getSnapshot(): {
-    connections: ReadonlyMap<string, string>;
-    targetHosts: ReadonlyMap<string, string>;
+  getSnapshot(): SessionCreateSnapshot & {
     projection: {
       sessionIndex: ReadonlyMap<string, { hostId: string; sessionId: string; project: { projectId: string } }>;
       sessionIndexMetadata: ReadonlyMap<string, { truncated: boolean; totalCount: number }>;
@@ -35,11 +37,9 @@ export async function createLiveSession(
   // and the host retains that projection while discovery catches up.
   const assertCreatable = () => {
     const snapshot = controller.getSnapshot();
-    if (snapshot.connections.get(address.targetId) !== "connected") {
-      throw new Error("Connect to this host to create a session.");
-    }
-    if (snapshot.targetHosts.get(address.targetId) !== address.hostId) {
-      throw new Error("Project host binding is no longer available.");
+    const support = sessionCreateSupport(snapshot, address);
+    if (!support.supported) {
+      throw new Error(support.reason ?? "Session creation is unavailable.");
     }
   };
   assertCreatable();

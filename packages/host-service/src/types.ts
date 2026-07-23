@@ -178,7 +178,10 @@ export interface AppserverUsageAuthority {
 }
 export interface AppserverTranscriptSearchAuthority {
 	initialize(): Promise<void>;
-	reconcile(records: readonly SessionRecord[]): Promise<TranscriptSearchIndexStatus>;
+	reconcile(
+		records: readonly SessionRecord[],
+		options?: { readonly pruneMissing?: boolean },
+	): Promise<TranscriptSearchIndexStatus>;
 	search(
 		args: TranscriptSearchArguments,
 		signal: AbortSignal,

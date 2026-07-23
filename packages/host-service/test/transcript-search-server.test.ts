@@ -59,6 +59,15 @@ class StaticDiscovery implements SessionDiscovery {
 	}
 }
 
+class PartialDiscovery extends StaticDiscovery {
+	inventoryComplete(): boolean {
+		return false;
+	}
+	inventoryTotalCount(): number {
+		return 2;
+	}
+}
+
 class FakeSessionAuthority implements SessionAuthority {
 	constructor(
 		private readonly records: SessionRecord[],
@@ -116,6 +125,7 @@ class FakeTranscriptSearchAuthority implements AppserverTranscriptSearchAuthorit
 	readonly contexts: Array<{ sessionId: string; args: TranscriptContextArguments }> = [];
 	initializeCalls = 0;
 	reconcileCalls = 0;
+	lastReconcileOptions: { readonly pruneMissing?: boolean } | undefined;
 	closeCalls = 0;
 	constructor(lifecycle: string[] = []) {
 		this.lifecycle = lifecycle;
@@ -125,8 +135,12 @@ class FakeTranscriptSearchAuthority implements AppserverTranscriptSearchAuthorit
 		this.initializeCalls += 1;
 		this.lifecycle.push("search.initialize");
 	}
-	async reconcile(): Promise<TranscriptSearchResult["index"]> {
+	async reconcile(
+		_records: readonly SessionRecord[],
+		options?: { readonly pruneMissing?: boolean },
+	): Promise<TranscriptSearchResult["index"]> {
 		this.reconcileCalls += 1;
+		this.lastReconcileOptions = options;
 		this.lifecycle.push("search.reconcile");
 		return searchResult.index;
 	}
@@ -155,6 +169,12 @@ class FailingTranscriptSearchAuthority extends FakeTranscriptSearchAuthority {
 	}
 	override context(): TranscriptContextResult {
 		throw new TranscriptSearchError("transcript_anchor_not_found");
+	}
+}
+
+class SynchronouslyFailingReconcileAuthority extends FakeTranscriptSearchAuthority {
+	override reconcile(): Promise<TranscriptSearchResult["index"]> {
+		throw new Error("synchronous search maintenance failure");
 	}
 }
 
@@ -276,6 +296,34 @@ describe("transcript search appserver boundary", () => {
 		expect(appserverSupportedFeatures({ transcriptSearchAuthority: new FakeTranscriptSearchAuthority() })).toContain(
 			"transcript.search",
 		);
+	});
+
+	test("keeps initial session inventory independent from deferred search maintenance", async () => {
+		const search = new SynchronouslyFailingReconcileAuthority();
+		const { appserver, client, root } = await startServer([record("visible")], search);
+		await cleanup(appserver, client, root);
+	});
+
+	test("marks partial inventory reconciliation as non-pruning", async () => {
+		const root = await mkdtemp(join(tmpdir(), "omp-transcript-search-partial-"));
+		const socketPath = join(root, "run", "app.sock");
+		const search = new FakeTranscriptSearchAuthority();
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "transcript-search-partial-test",
+			socketPath,
+			discovery: new PartialDiscovery([record("visible")]),
+			transcriptSearchAuthority: search,
+		});
+		await appserver.start();
+		const { client } = await readyClient(socketPath);
+		try {
+			for (let attempt = 0; attempt < 20 && search.reconcileCalls === 0; attempt += 1)
+				await Bun.sleep(5);
+			expect(search.lastReconcileOptions).toEqual({ pruneMissing: false });
+		} finally {
+			await cleanup(appserver, client, root);
+		}
 	});
 
 	test("routes search and archived context reads and never replays them from idempotency", async () => {

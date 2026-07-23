@@ -28,6 +28,11 @@ export interface SessionManagementSupport {
   readonly reason: string | null;
 }
 
+export type SessionCreateSnapshot = Pick<
+  DesktopRuntimeSnapshot,
+  "connections" | "targetHosts" | "hosts" | "catalogs"
+>;
+
 /** Finder reveal is a host-native action and is never offered for remote targets. */
 export function projectRevealSupport(
   snapshot: DesktopRuntimeSnapshot,
@@ -94,7 +99,7 @@ const MANAGEMENT_SYNCING_REASON =
   "This session is still syncing from the host. Try again in a moment.";
 
 export function sessionCreateSupport(
-  snapshot: DesktopRuntimeSnapshot,
+  snapshot: SessionCreateSnapshot,
   address: LiveProjectAddress,
 ): SessionManagementSupport {
   if (snapshot.connections.get(address.targetId) !== "connected") {
@@ -109,14 +114,24 @@ export function sessionCreateSupport(
     return { supported: false, reason: "Session creation is not granted on this host" };
   }
   const catalog = commandSupport(snapshot.catalogs.get(address.hostId), granted, "session.create");
-  return catalog.supported
-    ? { supported: true, reason: null }
-    : {
+  if (!catalog.supported) {
+    return {
         supported: false,
         reason:
           catalog.reason === "This host can't change this from here yet — use the terminal"
             ? "This host does not offer session creation yet"
             : catalog.reason,
+    };
+  }
+  const catalogFrame = snapshot.catalogs.get(address.hostId);
+  const hasUsableModel = catalogFrame?.items.some(
+    (item) => item.kind === "model" && item.supported !== false,
+  );
+  return hasUsableModel
+    ? { supported: true, reason: null }
+    : {
+        supported: false,
+        reason: "Configure a model for this OMP profile before creating a session",
       };
 }
 

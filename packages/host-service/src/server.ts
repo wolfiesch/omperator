@@ -852,6 +852,7 @@ export class LocalAppserver implements AppserverHandle {
 	#sessionLoads = new Map<SessionId, Promise<void>>();
 	#inventoryGeneration = 0;
 	#inventoryLoaded = false;
+	#inventoryComplete = false;
 	#inventoryTotalCount = 0;
 	#discoveryMisses = new Map<SessionId, number>();
 	#agentTranscripts = new Map<SessionId, AgentTranscriptProjection>();
@@ -1100,6 +1101,7 @@ export class LocalAppserver implements AppserverHandle {
 		if (this.#started) return;
 		this.#inventoryGeneration += 1;
 		this.#inventoryLoaded = false;
+		this.#inventoryComplete = false;
 		this.#inventoryTotalCount = 0;
 		this.#stopping = false;
 		this.#draining = false;
@@ -2737,7 +2739,10 @@ export class LocalAppserver implements AppserverHandle {
 		if (!this.#projectRootForProject) throw new Error("project resolver is unavailable");
 		if (typeof value !== "string") throw new Error("projectId is invalid");
 		const requestedProject = projectId(value);
-		const requestedCwd = await this.#projectRootForProject(requestedProject);
+		const indexed = [...this.#records.values()].find(
+			record => record.projectId === requestedProject,
+		);
+		const requestedCwd = indexed?.cwd ?? (await this.#projectRootForProject(requestedProject));
 		if (typeof requestedCwd !== "string" || !requestedCwd.startsWith("/"))
 			throw new Error("project resolver returned an invalid local root");
 		let canonical: string;
@@ -4242,6 +4247,7 @@ export class LocalAppserver implements AppserverHandle {
 			(inventoryComplete && reportedTotal !== discovered.length)
 		)
 			throw new Error("session inventory completeness metadata is invalid");
+		this.#inventoryComplete = inventoryComplete;
 		this.#inventoryTotalCount = reportedTotal;
 		const publishChanges = this.#inventoryLoaded;
 		const discoveredIds = new Set<SessionId>();
@@ -4427,7 +4433,13 @@ export class LocalAppserver implements AppserverHandle {
 		}
 		const authority = this.#transcriptSearch;
 		const records = [...this.#records.values()];
-		const reconcile = authority.reconcile(records);
+		const pruneMissing = this.#inventoryComplete;
+		// Search maintenance is deliberately a later task. Reconciliation may do
+		// synchronous SQLite work before its first await; starting it inline would
+		// delay the authoritative sessions frame after Welcome.
+		const reconcile = new Promise<void>(resolve => setTimeout(resolve, 0)).then(() =>
+			authority.reconcile(records, { pruneMissing }),
+		);
 		this.#transcriptSearchReconcile = reconcile;
 		void reconcile
 			.catch(() => undefined)

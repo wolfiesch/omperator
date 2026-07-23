@@ -443,4 +443,28 @@ describe("TranscriptSearchIndex", () => {
 			await fs.rm(root, { recursive: true, force: true });
 		}
 	});
+
+	test("retains sessions omitted from a partial inventory until a complete inventory confirms removal", async () => {
+		const { root, transcript, index } = await fixture();
+		const omitted = join(root, "omitted.jsonl");
+		try {
+			await fs.writeFile(transcript, message("kept", "user", "retained koala decision"));
+			await fs.writeFile(omitted, message("omitted", "assistant", "protected wombat decision"));
+			const keptRecord = record("session-one", transcript);
+			const omittedRecord = record("session-two", omitted);
+			await index.reconcile([keptRecord, omittedRecord]);
+
+			const partial = await index.reconcile([keptRecord], { pruneMissing: false });
+			expect(partial).toMatchObject({ state: "stale", indexedSessions: 2, knownSessions: 2 });
+			const partialSearch = index.search({ query: "wombat" });
+			expect(partialSearch.items).toHaveLength(1);
+			expect(partialSearch.incomplete).toBe(true);
+
+			await index.reconcile([keptRecord]);
+			expect(index.search({ query: "wombat" }).items).toHaveLength(0);
+		} finally {
+			index.close();
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
 });

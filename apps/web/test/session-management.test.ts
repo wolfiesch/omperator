@@ -73,6 +73,7 @@ function catalog(): CatalogFrame {
     hostId: hostId(ADDRESS.hostId),
     revision: revision("catalog-1"),
     items: [
+      ...[
       "session.create",
       "project.reveal",
       "session.rename",
@@ -87,6 +88,13 @@ function catalog(): CatalogFrame {
       supported: true,
       capabilities: ["sessions.manage"],
     })),
+      {
+        id: "model-default" as never,
+        kind: "model",
+        name: "Default model",
+        supported: true,
+      },
+    ],
   };
 }
 
@@ -477,6 +485,34 @@ describe("session management authority helpers", () => {
     expect(sessionCreateSupport(missing, address)).toEqual({
       supported: false,
       reason: "This host does not offer session creation yet",
+    });
+
+    const withoutUsableModel = catalog();
+    const unavailable = {
+      ...snapshot,
+      catalogs: new Map([
+        [
+          ADDRESS.hostId,
+          {
+            ...withoutUsableModel,
+            items: withoutUsableModel.items.map((item) =>
+              item.kind === "model"
+                ? {
+                    ...item,
+                    id: "availability:models" as never,
+                    name: "availability:models",
+                    supported: false,
+                    reason: "model registry unavailable or no available models",
+                  }
+                : item,
+            ),
+          },
+        ],
+      ]),
+    } as DesktopRuntimeSnapshot;
+    expect(sessionCreateSupport(unavailable, address)).toEqual({
+      supported: false,
+      reason: "Configure a model for this OMP profile before creating a session",
     });
 
     const unbound = {

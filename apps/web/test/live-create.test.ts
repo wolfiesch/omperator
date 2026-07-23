@@ -3,6 +3,7 @@ import {
   createLiveSession,
   type LiveCreateController,
 } from "../src/features/session-runtime/live-create.ts";
+import { hostId, revision, type CatalogFrame } from "@t4-code/protocol";
 import type { RendererServerEventEnvelope } from "@t4-code/protocol/desktop-ipc";
 import {
   requiresProfileChoiceForCreate,
@@ -11,11 +12,36 @@ import {
 } from "../src/platform/live-workspace.ts";
 
 const address = { targetId: "target-1", hostId: "host-1", projectId: "project-1" } as const;
+function catalog(): CatalogFrame {
+  return {
+    v: "omp-app/1",
+    type: "catalog",
+    hostId: hostId(address.hostId),
+    revision: revision("catalog-1"),
+    items: [
+      {
+        id: "command-session-create" as never,
+        kind: "command",
+        name: "session.create",
+        supported: true,
+        capabilities: ["sessions.manage"],
+      },
+      {
+        id: "model-default" as never,
+        kind: "model",
+        name: "Default model",
+        supported: true,
+      },
+    ],
+  };
+}
 function controller() {
   const events: Array<(event: RendererServerEventEnvelope) => void> = [];
   const snapshot: {
     connections: Map<string, string>;
     targetHosts: Map<string, string>;
+    hosts: Map<string, { grantedCapabilities: string[] }>;
+    catalogs: Map<string, CatalogFrame>;
     projection: {
       sessionIndex: Map<
         string,
@@ -26,6 +52,8 @@ function controller() {
   } = {
     connections: new Map([[address.targetId, "connected"]]),
     targetHosts: new Map([[address.targetId, address.hostId]]),
+    hosts: new Map([[address.hostId, { grantedCapabilities: ["sessions.manage"] }]]),
+    catalogs: new Map([[address.hostId, catalog()]]),
     projection: {
       sessionIndex: new Map(),
       sessionIndexMetadata: new Map([[address.hostId, { truncated: false, totalCount: 0 }]]),
@@ -35,7 +63,7 @@ function controller() {
   let unsubscribed = 0;
   let next = 1;
   const fake: LiveCreateController = {
-    getSnapshot: () => snapshot,
+    getSnapshot: () => snapshot as never,
     subscribeEvents: (_filter, listener) => {
       events.push(listener);
       return () => {
@@ -281,6 +309,21 @@ describe("createLiveSession", () => {
         const c = controller();
         c.snapshot.targetHosts.set(address.targetId, "other");
         await expect(createLiveSession(c.fake, address)).rejects.toThrow("binding");
+        expect(c.unsubscribed).toBe(0);
+      },
+      async () => {
+        const c = controller();
+        const unavailableCatalog = catalog();
+        c.snapshot.catalogs.set(address.hostId, {
+          ...unavailableCatalog,
+          items: unavailableCatalog.items.map((item) =>
+            item.kind === "model" ? { ...item, supported: false } : item,
+          ),
+        });
+        await expect(createLiveSession(c.fake, address)).rejects.toThrow(
+          "Configure a model for this OMP profile",
+        );
+        expect(c.commands).toHaveLength(0);
         expect(c.unsubscribed).toBe(0);
       },
     ];
