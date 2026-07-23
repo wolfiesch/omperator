@@ -25,6 +25,10 @@ export interface RailViewOptions {
   readonly filter?: RailFilter;
   readonly query?: string;
   readonly sort?: RailSort;
+  /** New projects default closed in large inventories; explicit client state always wins. */
+  readonly defaultExpanded?: boolean;
+  /** Keep the routed session discoverable when its project has no explicit disclosure state. */
+  readonly activeSessionId?: string | null;
   readonly projectManualOrder?: readonly string[];
   readonly sessionManualOrderByProjectId?: Readonly<Record<string, readonly string[]>>;
   readonly projectAliasById?: Readonly<Record<string, string>>;
@@ -231,7 +235,11 @@ export function buildProjectGroups(
       project,
       displayName,
       host,
-      expanded: projectExpandedById[project.id] ?? true,
+      expanded:
+        projectExpandedById[project.id] ??
+        (sessions.some((row) => row.session.id === options.activeSessionId)
+          ? true
+          : (options.defaultExpanded ?? true)),
       sessions: sortSessionRows(
         sessions,
         sort,
