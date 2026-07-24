@@ -2,7 +2,6 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
-import { load as parseYaml } from "js-yaml";
 
 export const RELEASE_CONTRACT_PATHS = [
   ".woodpecker.yml",
@@ -187,6 +186,38 @@ function parseJson(files, path, errors) {
 
 function requireText(text, expected, path, errors) {
   if (!text.includes(expected)) errors.push(`${path} is missing ${JSON.stringify(expected)}`);
+}
+
+function extractWorkflowJob(source, jobName, errors) {
+  const lines = source.split(/\r?\n/u);
+  const header = `  ${jobName}:`;
+  const matches = lines.flatMap((line, index) => (line === header ? [index] : []));
+  if (matches.length !== 1) {
+    errors.push(`.github/workflows/ci.yml must contain exactly one ${JSON.stringify(jobName)} job`);
+    return "";
+  }
+  const start = matches[0];
+  const next = lines.findIndex(
+    (line, index) => index > start && /^ {2}[A-Za-z0-9_-]+:\s*$/u.test(line),
+  );
+  return lines.slice(start, next === -1 ? lines.length : next).join("\n");
+}
+
+function extractWorkflowStep(job, stepName, errors) {
+  const lines = job.split(/\r?\n/u);
+  const header = `      - name: ${stepName}`;
+  const matches = lines.flatMap((line, index) => (line === header ? [index] : []));
+  if (matches.length !== 1) {
+    errors.push(`.github/workflows/ci.yml must contain exactly one ${JSON.stringify(stepName)} step`);
+    return "";
+  }
+  const start = matches[0];
+  const next = lines.findIndex((line, index) => index > start && /^ {6}-\s/u.test(line));
+  return lines.slice(start, next === -1 ? lines.length : next).join("\n");
+}
+
+function requireWorkflowStepText(step, expected, message, errors) {
+  if (!step.includes(expected)) errors.push(message);
 }
 
 function validateRuntimeMetadata(value, label, matrixPath, errors) {
@@ -902,108 +933,160 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   if (woodpeckerWorkflow.includes("https://github.com/lyc-aon/oh-my-pi.git")) {
     errors.push(".woodpecker.yml must not use the retired Lycaon OMP integration fork");
   }
-  try {
-    const workflow = parseYaml(ciWorkflow);
-    const continuityJob = workflow?.jobs?.["legacy-bridge-continuity"];
-    if (!continuityJob || !Array.isArray(continuityJob.steps)) {
-      errors.push(".github/workflows/ci.yml is missing the legacy-bridge-continuity job");
-    } else {
-      const namedStep = (name) => {
-        const matches = continuityJob.steps.filter((step) => step?.name === name);
-        if (matches.length !== 1) {
-          errors.push(`.github/workflows/ci.yml must contain exactly one ${JSON.stringify(name)} step`);
-          return undefined;
-        }
-        return matches[0];
-      };
-      const authorityStep = namedStep("Resolve pinned OMP authority source");
-      const checkoutStep = namedStep("Check out pinned OMP authority source");
-      const continuityStep = namedStep("Run legacy bridge continuity gate");
-      const uploadStep = namedStep("Upload continuity evidence");
-      const authorityCommands = [
-        `source_repository="$(jq -er '.verifiedRuntime.sourceRepository' compat/omp-app-matrix.json)"`,
-        `test "$source_repository" = "https://github.com/wolfiesch/oh-my-pi"`,
-        `sha="$(jq -er '.inputs.operationsContinuity' provenance/omp-host-migration.json)"`,
-        '[[ "$sha" =~ ^[0-9a-f]{40}$ ]]',
-        `echo "repository=wolfiesch/oh-my-pi" >> "$GITHUB_OUTPUT"`,
-        `echo "sha=$sha" >> "$GITHUB_OUTPUT"`,
-      ];
-      for (const command of authorityCommands) {
-        if (!authorityStep?.run?.includes(command))
-          errors.push(`.github/workflows/ci.yml authority step is missing ${JSON.stringify(command)}`);
-      }
-      if (checkoutStep?.with?.repository !== "${{ steps.authority.outputs.repository }}")
-        errors.push(".github/workflows/ci.yml continuity checkout must use the validated repository output");
-      if (checkoutStep?.with?.ref !== "${{ steps.authority.outputs.sha }}")
-        errors.push(".github/workflows/ci.yml continuity checkout must use the validated SHA output");
-      if (checkoutStep?.with?.path !== ".continuity/omp")
-        errors.push(".github/workflows/ci.yml continuity checkout must use .continuity/omp");
-      if (continuityStep?.env?.T4_OMP_SOURCE_DIR !== "${{ github.workspace }}/.continuity/omp")
-        errors.push(".github/workflows/ci.yml continuity gate must target the checked-out OMP source");
-      if (continuityStep?.run !== "pnpm test:legacy-bridge-continuity")
-        errors.push(".github/workflows/ci.yml continuity gate must run the release-bound command");
-      if (
-        uploadStep?.if !== "${{ always() }}" ||
-        uploadStep?.with?.path !== "artifacts/legacy-bridge-continuity/" ||
-        uploadStep?.with?.["if-no-files-found"] !== "error"
-      )
-        errors.push(".github/workflows/ci.yml continuity evidence upload is not fail-closed");
-    }
-    const currentJob = workflow?.jobs?.["current-bridge-continuity"];
-    if (!currentJob || !Array.isArray(currentJob.steps)) {
-      errors.push(".github/workflows/ci.yml is missing the current-bridge-continuity job");
-    } else {
-      const namedCurrentStep = (name) => {
-        const matches = currentJob.steps.filter((step) => step?.name === name);
-        if (matches.length !== 1) {
-          errors.push(`.github/workflows/ci.yml must contain exactly one ${JSON.stringify(name)} step`);
-          return undefined;
-        }
-        return matches[0];
-      };
-      const authorityStep = namedCurrentStep("Resolve current OMP authority source");
-      const checkoutStep = namedCurrentStep("Check out current OMP authority source");
-      const sourceTestStep = namedCurrentStep("Run current OMP authority source tests");
-      const proofStep = namedCurrentStep("Run current bridge compatibility proof");
-      const uploadStep = namedCurrentStep("Upload current bridge evidence");
-      for (const command of [
-        `source_repository="$(jq -er '.verifiedRuntime.sourceRepository' compat/omp-app-matrix.json)"`,
-        `test "$source_repository" = "https://github.com/wolfiesch/oh-my-pi"`,
-        `sha="$(jq -er '.verifiedRuntime.sourceCommit' compat/omp-app-matrix.json)"`,
-        '[[ "$sha" =~ ^[0-9a-f]{40}$ ]]',
-        `echo "repository=wolfiesch/oh-my-pi" >> "$GITHUB_OUTPUT"`,
-        `echo "sha=$sha" >> "$GITHUB_OUTPUT"`,
-      ]) {
-        if (!authorityStep?.run?.includes(command))
-          errors.push(`.github/workflows/ci.yml current authority step is missing ${JSON.stringify(command)}`);
-      }
-      if (checkoutStep?.with?.repository !== "${{ steps.current-authority.outputs.repository }}")
-        errors.push(".github/workflows/ci.yml current checkout must use the validated repository output");
-      if (checkoutStep?.with?.ref !== "${{ steps.current-authority.outputs.sha }}")
-        errors.push(".github/workflows/ci.yml current checkout must use the validated SHA output");
-      if (checkoutStep?.with?.path !== ".current-continuity/omp")
-        errors.push(".github/workflows/ci.yml current checkout must use .current-continuity/omp");
-      if (
-        sourceTestStep?.["working-directory"] !== ".current-continuity/omp" ||
-        sourceTestStep?.run !==
-          "bun test packages/coding-agent/test/appserver-bridge.test.ts packages/coding-agent/test/appserver-session-lifecycle.test.ts"
-      )
-        errors.push(".github/workflows/ci.yml current authority source tests are incomplete");
-      if (
-        proofStep?.env?.T4_CURRENT_OMP_SOURCE_DIR !==
-          "${{ github.workspace }}/.current-continuity/omp" ||
-        proofStep?.run !== "pnpm --filter @t4-code/host-service verify:current-omp-bridge"
-      )
-        errors.push(".github/workflows/ci.yml current bridge proof must target the checked-out current source");
-      if (
-        uploadStep?.if !== "${{ success() }}" ||
-        uploadStep?.with?.path !== "artifacts/current-omp-bridge/" ||
-        uploadStep?.with?.["if-no-files-found"] !== "error"
-      )
-        errors.push(".github/workflows/ci.yml current bridge evidence upload is not fail-closed");
-    }
-  } catch (error) {
-    errors.push(`.github/workflows/ci.yml is invalid YAML: ${error instanceof Error ? error.message : error}`);
+  const continuityJob = extractWorkflowJob(ciWorkflow, "legacy-bridge-continuity", errors);
+  const authorityStep = extractWorkflowStep(
+    continuityJob,
+    "Resolve pinned OMP authority source",
+    errors,
+  );
+  const checkoutStep = extractWorkflowStep(
+    continuityJob,
+    "Check out pinned OMP authority source",
+    errors,
+  );
+  const continuityStep = extractWorkflowStep(
+    continuityJob,
+    "Run legacy bridge continuity gate",
+    errors,
+  );
+  const uploadStep = extractWorkflowStep(continuityJob, "Upload continuity evidence", errors);
+  for (const command of [
+    `source_repository="$(jq -er '.verifiedRuntime.sourceRepository' compat/omp-app-matrix.json)"`,
+    `test "$source_repository" = "https://github.com/wolfiesch/oh-my-pi"`,
+    `sha="$(jq -er '.inputs.operationsContinuity' provenance/omp-host-migration.json)"`,
+    '[[ "$sha" =~ ^[0-9a-f]{40}$ ]]',
+    `echo "repository=wolfiesch/oh-my-pi" >> "$GITHUB_OUTPUT"`,
+    `echo "sha=$sha" >> "$GITHUB_OUTPUT"`,
+  ]) {
+    requireWorkflowStepText(
+      authorityStep,
+      command,
+      `.github/workflows/ci.yml authority step is missing ${JSON.stringify(command)}`,
+      errors,
+    );
+  }
+  for (const expected of [
+    "repository: ${{ steps.authority.outputs.repository }}",
+    "ref: ${{ steps.authority.outputs.sha }}",
+    "path: .continuity/omp",
+  ]) {
+    requireWorkflowStepText(
+      checkoutStep,
+      expected,
+      ".github/workflows/ci.yml continuity checkout must use the validated authority source",
+      errors,
+    );
+  }
+  for (const expected of [
+    "T4_OMP_SOURCE_DIR: ${{ github.workspace }}/.continuity/omp",
+    "run: pnpm test:legacy-bridge-continuity",
+  ]) {
+    requireWorkflowStepText(
+      continuityStep,
+      expected,
+      ".github/workflows/ci.yml continuity gate must target the checked-out OMP source",
+      errors,
+    );
+  }
+  for (const expected of [
+    "if: ${{ always() }}",
+    "path: artifacts/legacy-bridge-continuity/",
+    "if-no-files-found: error",
+  ]) {
+    requireWorkflowStepText(
+      uploadStep,
+      expected,
+      ".github/workflows/ci.yml continuity evidence upload is not fail-closed",
+      errors,
+    );
+  }
+
+  const currentJob = extractWorkflowJob(ciWorkflow, "current-bridge-continuity", errors);
+  const currentAuthorityStep = extractWorkflowStep(
+    currentJob,
+    "Resolve current OMP authority source",
+    errors,
+  );
+  const currentCheckoutStep = extractWorkflowStep(
+    currentJob,
+    "Check out current OMP authority source",
+    errors,
+  );
+  const sourceTestStep = extractWorkflowStep(
+    currentJob,
+    "Run current OMP authority source tests",
+    errors,
+  );
+  const proofStep = extractWorkflowStep(
+    currentJob,
+    "Run current bridge compatibility proof",
+    errors,
+  );
+  const currentUploadStep = extractWorkflowStep(
+    currentJob,
+    "Upload current bridge evidence",
+    errors,
+  );
+  for (const command of [
+    `source_repository="$(jq -er '.verifiedRuntime.sourceRepository' compat/omp-app-matrix.json)"`,
+    `test "$source_repository" = "https://github.com/wolfiesch/oh-my-pi"`,
+    `sha="$(jq -er '.verifiedRuntime.sourceCommit' compat/omp-app-matrix.json)"`,
+    '[[ "$sha" =~ ^[0-9a-f]{40}$ ]]',
+    `echo "repository=wolfiesch/oh-my-pi" >> "$GITHUB_OUTPUT"`,
+    `echo "sha=$sha" >> "$GITHUB_OUTPUT"`,
+  ]) {
+    requireWorkflowStepText(
+      currentAuthorityStep,
+      command,
+      `.github/workflows/ci.yml current authority step is missing ${JSON.stringify(command)}`,
+      errors,
+    );
+  }
+  for (const expected of [
+    "repository: ${{ steps.current-authority.outputs.repository }}",
+    "ref: ${{ steps.current-authority.outputs.sha }}",
+    "path: .current-continuity/omp",
+  ]) {
+    requireWorkflowStepText(
+      currentCheckoutStep,
+      expected,
+      ".github/workflows/ci.yml current checkout must use the validated authority source",
+      errors,
+    );
+  }
+  for (const expected of [
+    "working-directory: .current-continuity/omp",
+    "run: bun test packages/coding-agent/test/appserver-bridge.test.ts packages/coding-agent/test/appserver-session-lifecycle.test.ts",
+  ]) {
+    requireWorkflowStepText(
+      sourceTestStep,
+      expected,
+      ".github/workflows/ci.yml current authority source tests are incomplete",
+      errors,
+    );
+  }
+  for (const expected of [
+    "T4_CURRENT_OMP_SOURCE_DIR: ${{ github.workspace }}/.current-continuity/omp",
+    "run: pnpm --filter @t4-code/host-service verify:current-omp-bridge",
+  ]) {
+    requireWorkflowStepText(
+      proofStep,
+      expected,
+      ".github/workflows/ci.yml current bridge proof must target the checked-out current source",
+      errors,
+    );
+  }
+  for (const expected of [
+    "if: ${{ success() }}",
+    "path: artifacts/current-omp-bridge/",
+    "if-no-files-found: error",
+  ]) {
+    requireWorkflowStepText(
+      currentUploadStep,
+      expected,
+      ".github/workflows/ci.yml current bridge evidence upload is not fail-closed",
+      errors,
+    );
   }
 
   for (const expected of [

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 
@@ -13,6 +13,11 @@ import {
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const files = loadReleaseContractFiles(repoRoot);
+
+test("keeps the pre-install release verifier dependency-free", () => {
+  const source = readFileSync(resolve(repoRoot, "scripts/check-release-consistency.mjs"), "utf8");
+  assert.doesNotMatch(source, /from\s+["'](?!node:|\.)[^"']+["']/u);
+});
 
 function changed(path, replace) {
   const copy = new Map(files);
