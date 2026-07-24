@@ -1281,7 +1281,8 @@ export class OmpClient {
       {},
     )
       .then((response) => {
-        if (!response.ok) this.emitRecoveryFailure("session.state.get");
+        if (!response.ok && response.error?.code !== "unsupported")
+          this.emitRecoveryFailure("session.state.get");
       })
       .catch((error: unknown) => this.emitRecoveryError(error, "session.state.get"));
   }

@@ -160,6 +160,19 @@ function responseFor(command: CommandFrame, result: Record<string, unknown> = {}
     },
   };
 }
+function failureFor(command: CommandFrame, code: string): ServerFrame {
+  return {
+    v: V,
+    type: "response",
+    requestId: command.requestId,
+    commandId: command.commandId,
+    hostId: command.hostId,
+    ...(command.sessionId === undefined ? {} : { sessionId: command.sessionId }),
+    command: command.command,
+    ok: false,
+    error: { code, message: "command is unsupported by the selected runtime" },
+  };
+}
 function semanticSessionState(): Record<string, unknown> {
   return {
     isStreaming: false,
@@ -1115,6 +1128,61 @@ describe("OmpClient reconnect stability", () => {
         .filter((frame): frame is CommandFrame => frame.type === "command")
         .map((frame) => frame.command),
     ).toEqual(["session.attach", "session.state.get"]);
+    await client.close();
+  });
+
+  it("treats unsupported semantic state hydration as an expected no-op", async () => {
+    const clock = new FakeClock();
+    const respond = (frame: ClientFrame, transport: FakeTransport): void => {
+      if (frame.type !== "command") return;
+      if (frame.command === "session.attach") {
+        transport.emit(responseFor(frame));
+      } else if (frame.command === "session.state.get") {
+        transport.emit(failureFor(frame, "unsupported"));
+      }
+    };
+    const first = new FakeTransport({ welcome: welcome(), onSend: respond });
+    const second = new FakeTransport({
+      welcome: welcome({ resumed: true }),
+      onSend: respond,
+    });
+    const transports = [first, second];
+    const client = new OmpClient({
+      transport: () => transports.shift() ?? new FakeTransport(),
+      hostId: HOST,
+      clock,
+      timers: clock,
+      random: () => 0,
+      reconnect: { baseMs: 0, maxMs: 0 },
+    });
+    const errors: string[] = [];
+    client.onError((error) => errors.push(error.message));
+
+    await client.connect();
+    await client.attach(HOST, SESSION);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(
+      first.sent
+        .map((serialized) => decodeClientFrame(serialized))
+        .filter((frame): frame is CommandFrame => frame.type === "command")
+        .map((frame) => frame.command),
+    ).toEqual(["session.attach", "session.state.get"]);
+    expect(errors).toEqual([]);
+
+    first.drop();
+    await flushReconnect(clock);
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(client.state).toBe("ready");
+    expect(
+      second.sent
+        .map((serialized) => decodeClientFrame(serialized))
+        .filter((frame): frame is CommandFrame => frame.type === "command")
+        .map((frame) => frame.command),
+    ).toEqual(["session.attach", "session.state.get"]);
+    expect(errors).toEqual([]);
     await client.close();
   });
 
