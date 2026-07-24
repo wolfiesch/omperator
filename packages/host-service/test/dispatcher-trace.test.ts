@@ -96,7 +96,11 @@ describe("host ingress trace", () => {
 			abortSignal: new AbortController().signal,
 		};
 
-		await dispatcher.dispatch(frame as never, context as never).catch(() => undefined);
+		// This command does not exist, so dispatch MUST reject. Asserting that
+		// keeps the test from silently passing if it ever starts succeeding.
+		await expect(
+			dispatcher.dispatch(frame as never, context as never),
+		).rejects.toBeDefined();
 
 		expect(lines.some(line => line.includes("phase=ingress"))).toBe(true);
 		// A rejected command must still settle, otherwise it is indistinguishable
@@ -106,73 +110,70 @@ describe("host ingress trace", () => {
 		expect(lines.some(line => line.includes("phase=authority-invoke"))).toBe(false);
 	});
 
+	// `settings.read` results are decoded and require a revision; omitting it
+	// makes dispatch throw, which would silently turn the success case below
+	// into a failure case. Matches the fixture in operations.test.ts.
+	const settingsAuthority = () =>
+		({ settingsRead: async () => ({ revision: "revision-settings", settings: {} }) }) as never;
+
+	const settingsFrame = (requestId: string, commandId: string) => ({
+		v: 1,
+		type: "command",
+		requestId,
+		commandId,
+		hostId: "host-1",
+		command: "settings.read",
+		args: {},
+	});
+
+	const settingsContext = () => ({
+		hostId: "host-1",
+		deviceId: "device-1",
+		connectionId: "conn-1",
+		capabilities: new Set(["config.read"]),
+		abortSignal: new AbortController().signal,
+	});
+
 	it("emits the full phase sequence when the authority answers", async () => {
 		const lines: string[] = [];
 		const dispatcher = new DesktopOperationDispatcher(
-			{ settingsRead: async () => ({ settings: {} }) } as never,
+			settingsAuthority(),
 			undefined,
 			undefined,
 			line => lines.push(line),
 		);
-		const frame = {
-			v: 1,
-			type: "command",
-			requestId: "req-ok",
-			commandId: "cmd-3",
-			hostId: "host-1",
-			command: "settings.read",
-			args: {},
-		};
-		const context = {
-			hostId: "host-1",
-			deviceId: "device-1",
-			connectionId: "conn-1",
-			capabilities: new Set(["config.read"]),
-			abortSignal: new AbortController().signal,
-		};
 
-		await dispatcher.dispatch(frame as never, context as never).catch(() => undefined);
+		// Not caught: a rejection here must fail the test rather than be mistaken
+		// for a traced success.
+		const result = await dispatcher.dispatch(
+			settingsFrame("req-ok", "cmd-3") as never,
+			settingsContext() as never,
+		);
+		expect(result).toBeDefined();
 
-		// The ordering is the diagnostic: reaching the authority is what separates
-		// a host-side stall from an authority-side one.
+		// The exact ordering IS the diagnostic. Reaching `authority-invoke` is
+		// what separates a host-side stall from an authority-side one, and the
+		// run must end in `returned`, never `threw`.
 		const phases = lines.map(line => (line.match(/phase=(\S+)/) ?? [])[1]);
-		expect(phases[0]).toBe("ingress");
-		expect(phases).toContain("authority-invoke");
-		expect(phases.at(-1)).toMatch(/^(returned|threw)$/);
+		expect(phases).toEqual(["ingress", "authority-invoke", "authority-ok", "returned"]);
 	});
 
 	it("does not let a throwing sink break the command it observes", async () => {
 		const dispatcher = new DesktopOperationDispatcher(
-			{ settingsRead: async () => ({ settings: {} }) } as never,
+			settingsAuthority(),
 			undefined,
 			undefined,
 			() => {
 				throw new Error("sink exploded");
 			},
 		);
-		const frame = {
-			v: 1,
-			type: "command",
-			requestId: "req-sink",
-			commandId: "cmd-4",
-			hostId: "host-1",
-			command: "settings.read",
-			args: {},
-		};
-		const context = {
-			hostId: "host-1",
-			deviceId: "device-1",
-			connectionId: "conn-1",
-			capabilities: new Set(["config.read"]),
-			abortSignal: new AbortController().signal,
-		};
 
-		// The sink throws on every phase; the dispatch must still settle on its
-		// own terms rather than surfacing a diagnostics failure.
-		let sinkError: unknown;
-		await dispatcher.dispatch(frame as never, context as never).catch((error: unknown) => {
-			sinkError = error;
-		});
-		expect(String((sinkError as Error | undefined)?.message ?? "")).not.toContain("sink exploded");
+		// The sink throws on every phase. The dispatch must still RESOLVE, so an
+		// unhandled rejection here fails the test outright.
+		const result = await dispatcher.dispatch(
+			settingsFrame("req-sink", "cmd-4") as never,
+			settingsContext() as never,
+		);
+		expect(result).toBeDefined();
 	});
 });
