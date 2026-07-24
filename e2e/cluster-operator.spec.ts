@@ -436,15 +436,21 @@ test.describe("OMP/T4 cluster GUI boundaries", () => {
   test("desktop attach, steer, and reconnect preserve canonical cursors without duplicate rows", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await openSession(page);
-    await expect.poll(() => wire.commands.some((frame) => frame.command === "session.state.get")).toBe(true);
+    await expect.poll(() => wire.commands.some((frame) => frame.command === "session.attach")).toBe(true);
+    expect(wire.commands.some((frame) => frame.command === "session.state.get")).toBe(false);
     const composer = page.getByRole("textbox", { name: "Message the session" });
     await composer.fill("Keep the current approach");
     await page.getByRole("button", { name: "Steer", exact: true }).click();
     await expect.poll(() => wire.commands.some((frame) => frame.command === "session.steer")).toBe(true);
 
     const helloCount = wire.hellos.length;
+    const attachCount = wire.commands.filter((frame) => frame.command === "session.attach").length;
     wire.disconnectClients();
     await expect.poll(() => wire.hellos.length).toBeGreaterThan(helloCount);
+    await expect
+      .poll(() => wire.commands.filter((frame) => frame.command === "session.attach").length)
+      .toBeGreaterThan(attachCount);
+    expect(wire.commands.some((frame) => frame.command === "session.state.get")).toBe(false);
     await expect(page.locator(`[data-session-row="${VIEW}"]`)).toHaveCount(1);
     expect(wire.hellos.at(-1)?.requestedFeatures).toContain("cluster.operator");
     const latestHello = wire.hellos.at(-1);
