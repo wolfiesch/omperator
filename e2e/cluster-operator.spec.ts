@@ -307,6 +307,29 @@ class OperatorWireFixture {
           ...DECOY_PREVIEW,
         });
         return;
+      case "session.state.get":
+        this.response(socket, frame, {
+          isStreaming: true,
+          isCompacting: false,
+          isPaused: false,
+          messageCount: 0,
+          queuedMessageCount: 0,
+          steeringMode: "one-at-a-time",
+          followUpMode: "one-at-a-time",
+          interruptMode: "immediate",
+          model: {
+            id: "gpt-5.6-sol",
+            provider: "openai-codex",
+            selector: "openai-codex/gpt-5.6-sol",
+          },
+          thinking: "medium",
+          thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
+          thinkingSupported: true,
+          fast: false,
+          fastAvailable: true,
+          fastActive: false,
+        });
+        return;
       case "session.steer":
       case "session.prompt":
         this.response(socket, frame, { accepted: true });
@@ -413,6 +436,7 @@ test.describe("OMP/T4 cluster GUI boundaries", () => {
   test("desktop attach, steer, and reconnect preserve canonical cursors without duplicate rows", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await openSession(page);
+    await expect.poll(() => wire.commands.some((frame) => frame.command === "session.state.get")).toBe(true);
     const composer = page.getByRole("textbox", { name: "Message the session" });
     await composer.fill("Keep the current approach");
     await page.getByRole("button", { name: "Steer", exact: true }).click();

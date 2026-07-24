@@ -196,6 +196,24 @@ function defaultResultFor(command: CommandFrame): Record<string, unknown> {
   if (command.command === "session.attach") {
     return { attached: true, cursor: { epoch: "epoch-a", seq: 0 } };
   }
+  if (command.command === "session.state.get") {
+    return {
+      isStreaming: false,
+      isCompacting: false,
+      isPaused: false,
+      messageCount: 0,
+      queuedMessageCount: 0,
+      steeringMode: "one-at-a-time",
+      followUpMode: "one-at-a-time",
+      interruptMode: "immediate",
+      thinking: "medium",
+      thinkingLevels: ["low", "medium", "high"],
+      thinkingSupported: true,
+      fast: false,
+      fastAvailable: true,
+      fastActive: false,
+    };
+  }
   if (command.command === "session.cancel") return { cancelled: true };
   return {};
 }

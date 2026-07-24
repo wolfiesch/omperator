@@ -189,6 +189,8 @@ export class OmpClient {
   private granted = new Set<string>();
   private previewStateGeneration: number | undefined;
   private readonly previewStateSessions = new Set<string>();
+  private sessionStateGeneration: number | undefined;
+  private readonly sessionStateSessions = new Set<string>();
   private closedByUser = false;
   private compatibilityFallbackUsed = false;
   private connectWaiters: ConnectWaiter[] = [];
@@ -448,10 +450,9 @@ export class OmpClient {
       intent.hostId !== undefined &&
       intent.sessionId !== undefined
     ) {
-      this.requestPreviewState(
-        { hostId: hostId(intent.hostId), sessionId: sessionId(intent.sessionId) },
-        generation,
-      );
+      const record = { hostId: hostId(intent.hostId), sessionId: sessionId(intent.sessionId) };
+      this.requestSessionState(record, generation);
+      this.requestPreviewState(record, generation);
     }
     return response;
   }
@@ -1235,6 +1236,7 @@ export class OmpClient {
       void recovery.then(
         (response) => {
           if (response.ok) {
+            this.requestSessionState(record, generation);
             this.requestPreviewState(record, generation);
             if (!state.awaitsSnapshot && this.attachmentRecoveries.get(key) === state) {
               this.attachmentRecoveries.delete(key);
@@ -1246,10 +1248,43 @@ export class OmpClient {
         },
         (error: unknown) => {
           if (this.attachmentRecoveries.get(key) === state) this.attachmentRecoveries.delete(key);
-          this.emitRecoveryError(error);
+          this.emitRecoveryError(error, "session.attach");
         },
       );
     }
+  }
+
+  private requestSessionState(
+    record: { readonly hostId: HostId; readonly sessionId: SessionId },
+    generation: number,
+  ): void {
+    if (
+      generation !== this.generation ||
+      this.stateValue !== "ready" ||
+      !this.granted.has("sessions.read")
+    )
+      return;
+    if (this.sessionStateGeneration !== generation) {
+      this.sessionStateGeneration = generation;
+      this.sessionStateSessions.clear();
+    }
+    const key = sessionKey(String(record.hostId), String(record.sessionId));
+    if (this.sessionStateSessions.has(key)) return;
+    this.sessionStateSessions.add(key);
+    void this.sendCommand(
+      {
+        hostId: String(record.hostId),
+        sessionId: String(record.sessionId),
+        command: "session.state.get",
+        args: {},
+      },
+      {},
+    )
+      .then((response) => {
+        if (!response.ok && response.error?.code !== "unsupported")
+          this.emitRecoveryFailure("session.state.get");
+      })
+      .catch((error: unknown) => this.emitRecoveryError(error, "session.state.get"));
   }
 
   private requestPreviewState(
@@ -1273,18 +1308,18 @@ export class OmpClient {
       .then((response) => {
         if (!response.ok) this.emitRecoveryFailure("preview.state");
       })
-      .catch((error: unknown) => this.emitRecoveryError(error));
+      .catch((error: unknown) => this.emitRecoveryError(error, "preview.state"));
   }
 
   private emitRecoveryFailure(command: string): void {
     this.emitError(this.error("protocol", `${command} recovery request failed`, true, { command }));
   }
 
-  private emitRecoveryError(error: unknown): void {
+  private emitRecoveryError(error: unknown, command: string): void {
     this.emitError(
       error instanceof OmpClientError
         ? error
-        : this.error("transport", "preview recovery request failed", true),
+        : this.error("transport", `${command} recovery request failed`, true, { command }),
     );
   }
 
