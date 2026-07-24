@@ -4,12 +4,13 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { extname, join, resolve } from "node:path";
+import { basename, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 const TAG_PATTERN = /^v\d+\.\d+\.\d+$/u;
+const MACOS_APP_BUNDLE_NAME = "T4 Code.app";
 
 function requireString(value, label) {
   if (typeof value !== "string" || value.length === 0) {
@@ -132,13 +133,23 @@ function run(command, args, options = {}) {
   return `${result.stdout ?? ""}${result.stderr ?? ""}`;
 }
 
+export function validateMacosAppBundleName(appPath) {
+  const actualName = basename(appPath);
+  if (actualName !== MACOS_APP_BUNDLE_NAME) {
+    throw new Error(
+      `macOS release app must be named ${MACOS_APP_BUNDLE_NAME}; found ${actualName}`,
+    );
+  }
+  return appPath;
+}
+
 function findSingleApp(directory) {
   const apps = readdirSync(directory, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && extname(entry.name).toLowerCase() === ".app")
     .map((entry) => join(directory, entry.name));
   if (apps.length !== 1)
     throw new Error(`expected exactly one top-level macOS app; found ${apps.length}`);
-  return apps[0];
+  return validateMacosAppBundleName(apps[0]);
 }
 
 function inspectApp(appPath, contract, certificatePrefix) {

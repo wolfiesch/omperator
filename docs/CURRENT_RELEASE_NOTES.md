@@ -10,9 +10,35 @@ session and transcript behavior, native Browser workspace, terminal, files, revi
 credentials, and signed update path. The public demo now builds from the same React client shipped
 inside Electron, eliminating a second product implementation.
 
+## Permanent Omperator release authority
+
+`wolfiesch/omperator` now owns product source, CI, signed releases, update metadata, and website
+deployment. `LycaonLLC/t4-code` is a frozen historical release record and is no longer a development
+or publication target.
+
+Clients through v0.1.32 validate download URLs against that historical repository. Install v0.1.33
+manually once from Omperator; subsequent releases use the permanent Omperator update path.
+
+## Session controls without lock takeover
+
+New sessions created in T4 Code now restore their semantic thinking-level and fast-mode state after
+attachment and transport reconnects. Existing sessions, including sessions owned by an OMP TUI,
+remain observer-only: T4 does not issue the legacy state read that can start a supervisor and claim
+the session lock.
+
+Pull-request CI now treats client runtime changes as bridge-boundary changes and runs both the
+current-runtime and pinned-legacy continuity gates.
+
+## macOS application identity
+
+The v0.1.32 DMG accidentally named its bundle `t4-code.app` instead of the documented
+`T4 Code.app`. Before installing a newer release, quit T4 Code and move
+`/Applications/t4-code.app` to the Trash, then copy the new `T4 Code.app` into Applications.
+Removing the old application bundle does not remove T4 Code settings or sessions.
+
 ## A session rail built for large libraries
 
-T4 Code v0.1.31 makes a large session library easier to navigate. The rail now supports text search, activity filters, newest/oldest sorting, grouped and flat layouts, collapsible project folders, and saved display preferences. Those controls follow the Codex desktop organization model while keeping OMP as the source of truth.
+T4 Code v0.1.33 makes a large session library easier to navigate. The rail now supports text search, activity filters, newest/oldest sorting, grouped and flat layouts, collapsible project folders, and saved display preferences. Those controls follow the Codex desktop organization model while keeping OMP as the source of truth.
 
 Project menus can create a session in that folder, reveal the folder in the system file manager, collapse the group, or hide it from the rail. Hidden projects are not deleted and can be restored from the filter menu. The reveal action is deliberately narrow: the host accepts only project paths already present in its session catalog.
 
@@ -48,7 +74,7 @@ Session-linked Host Browser Previews continue to open in their dedicated workspa
 
 ## Runtime provenance
 
-T4 Code v0.1.31 vendors app-wire 0.7.0 from integration commit [796bb7dc](https://github.com/lyc-aon/oh-my-pi/commit/796bb7dca45027bd4b7b94017cdf41ef214a11f2), source tree `0c195a01ba0bb98fbf4d4863aee59bf23a6e81b7`. The frozen package remains compatibility evidence; T4 owns the active `omp-app/1` wire schema.
+T4 Code v0.1.33 vendors app-wire 0.7.0 from integration commit [796bb7dc](https://github.com/lyc-aon/oh-my-pi/commit/796bb7dca45027bd4b7b94017cdf41ef214a11f2), source tree `0c195a01ba0bb98fbf4d4863aee59bf23a6e81b7`. The frozen package remains compatibility evidence; T4 owns the active `omp-app/1` wire schema.
 
 The verified OMP 17.0.5 runtime is built from commit [fc0c3913](https://github.com/wolfiesch/oh-my-pi/commit/fc0c391334c08ab260057756aa84bd2b07741ee7) and tagged [t4code-17.0.5-appserver-13](https://github.com/wolfiesch/oh-my-pi/tree/t4code-17.0.5-appserver-13). It provides the bounded authority bridge used by T4's standalone host and no longer exposes the old public appserver launchers. It pages snapshot-consistent session inventories across bounded frames, marks over-limit inventories partial, and allows lifecycle actions only when a lock is missing or provably stale. It also keeps session-list metadata sparse before bridge encoding, publishes `xd://` mounts atomically with their transport tools, and preserves bounded newest-first transcript paging, stale-owner recovery, privacy-safe local project reveal, lazy session indexing, cross-session attention and transcript search, and the negotiated browser-preview command surface. Unsupported optional capabilities remain hidden when the host does not advertise them.
 

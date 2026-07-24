@@ -5,7 +5,7 @@ export const UPDATE_MANIFEST_URL = "https://t4code.net/releases/latest.json";
 const UPDATE_MANIFEST_MAX_BYTES = 256 * 1024;
 const UPDATE_CHECK_TIMEOUT_MS = 10_000;
 const PASSIVE_UPDATE_DELAY_MS = 15_000;
-const RELEASE_DOWNLOAD_ROOT = "https://github.com/LycaonLLC/t4-code/releases/download";
+const RELEASE_DOWNLOAD_ROOT = "https://github.com/wolfiesch/omperator/releases/download";
 
 interface NativeUpdateInfo {
   readonly version: string;
@@ -173,7 +173,7 @@ export function decodeReleaseManifest(value: unknown): ReleaseManifest {
   }
   const releaseVersion = version(root.version, "release version");
   if (root.tag !== `v${releaseVersion}`) throw new Error("invalid release tag");
-  if (root.releaseUrl !== `https://github.com/LycaonLLC/t4-code/releases/tag/v${releaseVersion}`) {
+  if (root.releaseUrl !== `https://github.com/wolfiesch/omperator/releases/tag/v${releaseVersion}`) {
     throw new Error("invalid release URL");
   }
   const publishedAt = requiredString(root.publishedAt, "publishedAt", 64);

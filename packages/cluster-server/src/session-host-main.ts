@@ -55,7 +55,7 @@ export async function runSessionHost(
 			attentionOutcomePath: join(config.stateRoot, "attention-outcomes.json"),
 			ompVersion: ready.ompVersion,
 			ompBuild: ready.ompBuild,
-			appserverVersion: "0.1.31",
+			appserverVersion: "0.1.33",
 			appserverBuild: "cluster-session",
 			sessionAuthority: authorities.sessionAuthority,
 			discovery: authorities.discovery,

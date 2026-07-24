@@ -2,7 +2,6 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
-import { load as parseYaml } from "js-yaml";
 
 export const RELEASE_CONTRACT_PATHS = [
   ".woodpecker.yml",
@@ -23,6 +22,7 @@ export const RELEASE_CONTRACT_PATHS = [
   "compat/official-omp-gate0.json",
   "compat/omp-app-matrix.json",
   "docs/CURRENT_RELEASE_NOTES.md",
+  "docs/GITHUB_OPERATIONS.md",
   "docs/MACOS_SIGNING.md",
   "docs/RELEASE_GATE.md",
   "ops/t4-maintainer/README.md",
@@ -40,7 +40,8 @@ export const RELEASE_CONTRACT_PATHS = [
   "vendor/app-wire/manifest.json",
 ];
 
-const REPOSITORY_URL = "https://github.com/LycaonLLC/t4-code";
+const REPOSITORY_URL = "https://github.com/wolfiesch/omperator";
+const LEGACY_RELEASE_REPOSITORY_URL_FRAGMENT = ["github.com", "LycaonLLC", "t4-code"].join("/");
 const OMP_RUNTIME_REPOSITORY = "https://github.com/wolfiesch/oh-my-pi";
 const OMP_APP_WIRE_SOURCE_REPOSITORY = "https://github.com/lyc-aon/oh-my-pi";
 const OMP_UPSTREAM_REPOSITORY = "https://github.com/can1357/oh-my-pi";
@@ -187,6 +188,50 @@ function parseJson(files, path, errors) {
 
 function requireText(text, expected, path, errors) {
   if (!text.includes(expected)) errors.push(`${path} is missing ${JSON.stringify(expected)}`);
+}
+
+function requireAnyText(text, expectedValues, path, errors) {
+  if (!expectedValues.some((expected) => text.includes(expected))) {
+    errors.push(`${path} is missing one of ${expectedValues.map(JSON.stringify).join(", ")}`);
+  }
+}
+
+function requireOneVariant(text, variants, path, errors) {
+  if (!variants.some((variant) => variant.every((expected) => text.includes(expected)))) {
+    errors.push(`${path} does not match a supported release-control variant`);
+  }
+}
+
+function extractWorkflowJob(source, jobName, errors) {
+  const lines = source.split(/\r?\n/u);
+  const header = `  ${jobName}:`;
+  const matches = lines.flatMap((line, index) => (line === header ? [index] : []));
+  if (matches.length !== 1) {
+    errors.push(`.github/workflows/ci.yml must contain exactly one ${JSON.stringify(jobName)} job`);
+    return "";
+  }
+  const start = matches[0];
+  const next = lines.findIndex(
+    (line, index) => index > start && /^ {2}[A-Za-z0-9_-]+:\s*$/u.test(line),
+  );
+  return lines.slice(start, next === -1 ? lines.length : next).join("\n");
+}
+
+function extractWorkflowStep(job, stepName, errors) {
+  const lines = job.split(/\r?\n/u);
+  const header = `      - name: ${stepName}`;
+  const matches = lines.flatMap((line, index) => (line === header ? [index] : []));
+  if (matches.length !== 1) {
+    errors.push(`.github/workflows/ci.yml must contain exactly one ${JSON.stringify(stepName)} step`);
+    return "";
+  }
+  const start = matches[0];
+  const next = lines.findIndex((line, index) => index > start && /^ {6}-\s/u.test(line));
+  return lines.slice(start, next === -1 ? lines.length : next).join("\n");
+}
+
+function requireWorkflowStepText(step, expected, message, errors) {
+  if (!step.includes(expected)) errors.push(message);
 }
 
 function validateRuntimeMetadata(value, label, matrixPath, errors) {
@@ -398,6 +443,24 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     return errors;
   }
   const expectedTag = `v${version}`;
+
+  for (const [path, source] of files) {
+    if (source.includes(LEGACY_RELEASE_REPOSITORY_URL_FRAGMENT)) {
+      errors.push(`${path} must not depend on the frozen legacy release repository`);
+    }
+  }
+  requireText(
+    files.get("docs/GITHUB_OPERATIONS.md") ?? "",
+    "`origin` is `wolfiesch/omperator` and is the permanent authority for product",
+    "docs/GITHUB_OPERATIONS.md",
+    errors,
+  );
+  requireText(
+    files.get("docs/GITHUB_OPERATIONS.md") ?? "",
+    "It must never be used as a push target.",
+    "docs/GITHUB_OPERATIONS.md",
+    errors,
+  );
 
   const androidIdentityPath = ".github/android-release-identity.json";
   const androidIdentity = parseJson(files, androidIdentityPath, errors);
@@ -811,7 +874,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   const linkedReleaseTags = new Set(
     [
       ...readme.matchAll(
-        /https:\/\/github\.com\/LycaonLLC\/t4-code\/releases\/(?:tag|download)\/(v\d+\.\d+\.\d+)/gu,
+        /https:\/\/github\.com\/wolfiesch\/omperator\/releases\/(?:tag|download)\/(v\d+\.\d+\.\d+)/gu,
       ),
     ].map((match) => match[1]),
   );
@@ -902,108 +965,160 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   if (woodpeckerWorkflow.includes("https://github.com/lyc-aon/oh-my-pi.git")) {
     errors.push(".woodpecker.yml must not use the retired Lycaon OMP integration fork");
   }
-  try {
-    const workflow = parseYaml(ciWorkflow);
-    const continuityJob = workflow?.jobs?.["legacy-bridge-continuity"];
-    if (!continuityJob || !Array.isArray(continuityJob.steps)) {
-      errors.push(".github/workflows/ci.yml is missing the legacy-bridge-continuity job");
-    } else {
-      const namedStep = (name) => {
-        const matches = continuityJob.steps.filter((step) => step?.name === name);
-        if (matches.length !== 1) {
-          errors.push(`.github/workflows/ci.yml must contain exactly one ${JSON.stringify(name)} step`);
-          return undefined;
-        }
-        return matches[0];
-      };
-      const authorityStep = namedStep("Resolve pinned OMP authority source");
-      const checkoutStep = namedStep("Check out pinned OMP authority source");
-      const continuityStep = namedStep("Run legacy bridge continuity gate");
-      const uploadStep = namedStep("Upload continuity evidence");
-      const authorityCommands = [
-        `source_repository="$(jq -er '.verifiedRuntime.sourceRepository' compat/omp-app-matrix.json)"`,
-        `test "$source_repository" = "https://github.com/wolfiesch/oh-my-pi"`,
-        `sha="$(jq -er '.inputs.operationsContinuity' provenance/omp-host-migration.json)"`,
-        '[[ "$sha" =~ ^[0-9a-f]{40}$ ]]',
-        `echo "repository=wolfiesch/oh-my-pi" >> "$GITHUB_OUTPUT"`,
-        `echo "sha=$sha" >> "$GITHUB_OUTPUT"`,
-      ];
-      for (const command of authorityCommands) {
-        if (!authorityStep?.run?.includes(command))
-          errors.push(`.github/workflows/ci.yml authority step is missing ${JSON.stringify(command)}`);
-      }
-      if (checkoutStep?.with?.repository !== "${{ steps.authority.outputs.repository }}")
-        errors.push(".github/workflows/ci.yml continuity checkout must use the validated repository output");
-      if (checkoutStep?.with?.ref !== "${{ steps.authority.outputs.sha }}")
-        errors.push(".github/workflows/ci.yml continuity checkout must use the validated SHA output");
-      if (checkoutStep?.with?.path !== ".continuity/omp")
-        errors.push(".github/workflows/ci.yml continuity checkout must use .continuity/omp");
-      if (continuityStep?.env?.T4_OMP_SOURCE_DIR !== "${{ github.workspace }}/.continuity/omp")
-        errors.push(".github/workflows/ci.yml continuity gate must target the checked-out OMP source");
-      if (continuityStep?.run !== "pnpm test:legacy-bridge-continuity")
-        errors.push(".github/workflows/ci.yml continuity gate must run the release-bound command");
-      if (
-        uploadStep?.if !== "${{ always() }}" ||
-        uploadStep?.with?.path !== "artifacts/legacy-bridge-continuity/" ||
-        uploadStep?.with?.["if-no-files-found"] !== "error"
-      )
-        errors.push(".github/workflows/ci.yml continuity evidence upload is not fail-closed");
-    }
-    const currentJob = workflow?.jobs?.["current-bridge-continuity"];
-    if (!currentJob || !Array.isArray(currentJob.steps)) {
-      errors.push(".github/workflows/ci.yml is missing the current-bridge-continuity job");
-    } else {
-      const namedCurrentStep = (name) => {
-        const matches = currentJob.steps.filter((step) => step?.name === name);
-        if (matches.length !== 1) {
-          errors.push(`.github/workflows/ci.yml must contain exactly one ${JSON.stringify(name)} step`);
-          return undefined;
-        }
-        return matches[0];
-      };
-      const authorityStep = namedCurrentStep("Resolve current OMP authority source");
-      const checkoutStep = namedCurrentStep("Check out current OMP authority source");
-      const sourceTestStep = namedCurrentStep("Run current OMP authority source tests");
-      const proofStep = namedCurrentStep("Run current bridge compatibility proof");
-      const uploadStep = namedCurrentStep("Upload current bridge evidence");
-      for (const command of [
-        `source_repository="$(jq -er '.verifiedRuntime.sourceRepository' compat/omp-app-matrix.json)"`,
-        `test "$source_repository" = "https://github.com/wolfiesch/oh-my-pi"`,
-        `sha="$(jq -er '.verifiedRuntime.sourceCommit' compat/omp-app-matrix.json)"`,
-        '[[ "$sha" =~ ^[0-9a-f]{40}$ ]]',
-        `echo "repository=wolfiesch/oh-my-pi" >> "$GITHUB_OUTPUT"`,
-        `echo "sha=$sha" >> "$GITHUB_OUTPUT"`,
-      ]) {
-        if (!authorityStep?.run?.includes(command))
-          errors.push(`.github/workflows/ci.yml current authority step is missing ${JSON.stringify(command)}`);
-      }
-      if (checkoutStep?.with?.repository !== "${{ steps.current-authority.outputs.repository }}")
-        errors.push(".github/workflows/ci.yml current checkout must use the validated repository output");
-      if (checkoutStep?.with?.ref !== "${{ steps.current-authority.outputs.sha }}")
-        errors.push(".github/workflows/ci.yml current checkout must use the validated SHA output");
-      if (checkoutStep?.with?.path !== ".current-continuity/omp")
-        errors.push(".github/workflows/ci.yml current checkout must use .current-continuity/omp");
-      if (
-        sourceTestStep?.["working-directory"] !== ".current-continuity/omp" ||
-        sourceTestStep?.run !==
-          "bun test packages/coding-agent/test/appserver-bridge.test.ts packages/coding-agent/test/appserver-session-lifecycle.test.ts"
-      )
-        errors.push(".github/workflows/ci.yml current authority source tests are incomplete");
-      if (
-        proofStep?.env?.T4_CURRENT_OMP_SOURCE_DIR !==
-          "${{ github.workspace }}/.current-continuity/omp" ||
-        proofStep?.run !== "pnpm --filter @t4-code/host-service verify:current-omp-bridge"
-      )
-        errors.push(".github/workflows/ci.yml current bridge proof must target the checked-out current source");
-      if (
-        uploadStep?.if !== "${{ success() }}" ||
-        uploadStep?.with?.path !== "artifacts/current-omp-bridge/" ||
-        uploadStep?.with?.["if-no-files-found"] !== "error"
-      )
-        errors.push(".github/workflows/ci.yml current bridge evidence upload is not fail-closed");
-    }
-  } catch (error) {
-    errors.push(`.github/workflows/ci.yml is invalid YAML: ${error instanceof Error ? error.message : error}`);
+  const continuityJob = extractWorkflowJob(ciWorkflow, "legacy-bridge-continuity", errors);
+  const authorityStep = extractWorkflowStep(
+    continuityJob,
+    "Resolve pinned OMP authority source",
+    errors,
+  );
+  const checkoutStep = extractWorkflowStep(
+    continuityJob,
+    "Check out pinned OMP authority source",
+    errors,
+  );
+  const continuityStep = extractWorkflowStep(
+    continuityJob,
+    "Run legacy bridge continuity gate",
+    errors,
+  );
+  const uploadStep = extractWorkflowStep(continuityJob, "Upload continuity evidence", errors);
+  for (const command of [
+    `source_repository="$(jq -er '.verifiedRuntime.sourceRepository' compat/omp-app-matrix.json)"`,
+    `test "$source_repository" = "https://github.com/wolfiesch/oh-my-pi"`,
+    `sha="$(jq -er '.inputs.operationsContinuity' provenance/omp-host-migration.json)"`,
+    '[[ "$sha" =~ ^[0-9a-f]{40}$ ]]',
+    `echo "repository=wolfiesch/oh-my-pi" >> "$GITHUB_OUTPUT"`,
+    `echo "sha=$sha" >> "$GITHUB_OUTPUT"`,
+  ]) {
+    requireWorkflowStepText(
+      authorityStep,
+      command,
+      `.github/workflows/ci.yml authority step is missing ${JSON.stringify(command)}`,
+      errors,
+    );
+  }
+  for (const expected of [
+    "repository: ${{ steps.authority.outputs.repository }}",
+    "ref: ${{ steps.authority.outputs.sha }}",
+    "path: .continuity/omp",
+  ]) {
+    requireWorkflowStepText(
+      checkoutStep,
+      expected,
+      ".github/workflows/ci.yml continuity checkout must use the validated authority source",
+      errors,
+    );
+  }
+  for (const expected of [
+    "T4_OMP_SOURCE_DIR: ${{ github.workspace }}/.continuity/omp",
+    "run: pnpm test:legacy-bridge-continuity",
+  ]) {
+    requireWorkflowStepText(
+      continuityStep,
+      expected,
+      ".github/workflows/ci.yml continuity gate must target the checked-out OMP source",
+      errors,
+    );
+  }
+  for (const expected of [
+    "if: ${{ always() }}",
+    "path: artifacts/legacy-bridge-continuity/",
+    "if-no-files-found: error",
+  ]) {
+    requireWorkflowStepText(
+      uploadStep,
+      expected,
+      ".github/workflows/ci.yml continuity evidence upload is not fail-closed",
+      errors,
+    );
+  }
+
+  const currentJob = extractWorkflowJob(ciWorkflow, "current-bridge-continuity", errors);
+  const currentAuthorityStep = extractWorkflowStep(
+    currentJob,
+    "Resolve current OMP authority source",
+    errors,
+  );
+  const currentCheckoutStep = extractWorkflowStep(
+    currentJob,
+    "Check out current OMP authority source",
+    errors,
+  );
+  const sourceTestStep = extractWorkflowStep(
+    currentJob,
+    "Run current OMP authority source tests",
+    errors,
+  );
+  const proofStep = extractWorkflowStep(
+    currentJob,
+    "Run current bridge compatibility proof",
+    errors,
+  );
+  const currentUploadStep = extractWorkflowStep(
+    currentJob,
+    "Upload current bridge evidence",
+    errors,
+  );
+  for (const command of [
+    `source_repository="$(jq -er '.verifiedRuntime.sourceRepository' compat/omp-app-matrix.json)"`,
+    `test "$source_repository" = "https://github.com/wolfiesch/oh-my-pi"`,
+    `sha="$(jq -er '.verifiedRuntime.sourceCommit' compat/omp-app-matrix.json)"`,
+    '[[ "$sha" =~ ^[0-9a-f]{40}$ ]]',
+    `echo "repository=wolfiesch/oh-my-pi" >> "$GITHUB_OUTPUT"`,
+    `echo "sha=$sha" >> "$GITHUB_OUTPUT"`,
+  ]) {
+    requireWorkflowStepText(
+      currentAuthorityStep,
+      command,
+      `.github/workflows/ci.yml current authority step is missing ${JSON.stringify(command)}`,
+      errors,
+    );
+  }
+  for (const expected of [
+    "repository: ${{ steps.current-authority.outputs.repository }}",
+    "ref: ${{ steps.current-authority.outputs.sha }}",
+    "path: .current-continuity/omp",
+  ]) {
+    requireWorkflowStepText(
+      currentCheckoutStep,
+      expected,
+      ".github/workflows/ci.yml current checkout must use the validated authority source",
+      errors,
+    );
+  }
+  for (const expected of [
+    "working-directory: .current-continuity/omp",
+    "run: bun test packages/coding-agent/test/appserver-bridge.test.ts packages/coding-agent/test/appserver-session-lifecycle.test.ts",
+  ]) {
+    requireWorkflowStepText(
+      sourceTestStep,
+      expected,
+      ".github/workflows/ci.yml current authority source tests are incomplete",
+      errors,
+    );
+  }
+  for (const expected of [
+    "T4_CURRENT_OMP_SOURCE_DIR: ${{ github.workspace }}/.current-continuity/omp",
+    "run: pnpm --filter @t4-code/host-service verify:current-omp-bridge",
+  ]) {
+    requireWorkflowStepText(
+      proofStep,
+      expected,
+      ".github/workflows/ci.yml current bridge proof must target the checked-out current source",
+      errors,
+    );
+  }
+  for (const expected of [
+    "if: ${{ success() }}",
+    "path: artifacts/current-omp-bridge/",
+    "if-no-files-found: error",
+  ]) {
+    requireWorkflowStepText(
+      currentUploadStep,
+      expected,
+      ".github/workflows/ci.yml current bridge evidence upload is not fail-closed",
+      errors,
+    );
   }
 
   for (const expected of [
@@ -1066,9 +1181,12 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     ".github/workflows/release.yml",
     errors,
   );
-  requireText(
+  requireAnyText(
     releaseWorkflow,
-    "body_path: docs/CURRENT_RELEASE_NOTES.md",
+    [
+      "body_path: docs/CURRENT_RELEASE_NOTES.md",
+      "body_path: .release-source/docs/CURRENT_RELEASE_NOTES.md",
+    ],
     ".github/workflows/release.yml",
     errors,
   );
@@ -1109,6 +1227,20 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   ]) {
     requireText(releaseWorkflow, expected, ".github/workflows/release.yml", errors);
   }
+  if (
+    (files.get("scripts/dispatch-site-deployment.mjs") ?? "").includes(
+      "control_sha: controlCommit",
+    )
+  ) {
+    for (const expected of [
+      "Resolve trusted site-control source",
+      "git rev-parse refs/remotes/origin/main",
+      "CONTROL_SHA: ${{ steps.site-control.outputs.control_sha }}",
+      '--control-commit "$CONTROL_SHA"',
+    ]) {
+      requireText(releaseWorkflow, expected, ".github/workflows/release.yml", errors);
+    }
+  }
   const releaseVerifyStart = releaseWorkflow.indexOf("  verify:");
   const releaseAuthorityStart = releaseWorkflow.indexOf("  ci-authority:");
   if (!(releaseVerifyStart >= 0 && releaseAuthorityStart > releaseVerifyStart)) {
@@ -1146,8 +1278,8 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   const builderConfig = files.get("electron-builder.config.mjs") ?? "";
   for (const expected of [
     'provider: "github"',
-    'owner: "LycaonLLC"',
-    'repo: "t4-code"',
+    'owner: "wolfiesch"',
+    'repo: "omperator"',
     'channel: "latest"',
     "publish: [linuxUpdatePublish]",
     "publish: []",
@@ -1221,21 +1353,33 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
       errors,
     );
   }
+  const siteDispatcher = files.get("scripts/dispatch-site-deployment.mjs") ?? "";
   for (const expected of [
     "dispatchAndWaitForSiteDeployment",
-    "body: { ref: tag, inputs: { release_tag: tag, dispatch_nonce: dispatchNonce } }",
-    "run.head_branch === tag",
-    "run.head_sha === commit",
     "run.display_title === `Deploy project site ${tag} ${dispatchNonce}`",
     'exact.conclusion !== "success"',
   ]) {
-    requireText(
-      files.get("scripts/dispatch-site-deployment.mjs") ?? "",
-      expected,
-      "scripts/dispatch-site-deployment.mjs",
-      errors,
-    );
+    requireText(siteDispatcher, expected, "scripts/dispatch-site-deployment.mjs", errors);
   }
+  requireOneVariant(
+    siteDispatcher,
+    [
+      [
+        "body: { ref: tag, inputs: { release_tag: tag, dispatch_nonce: dispatchNonce } }",
+        "run.head_branch === tag",
+        "run.head_sha === commit",
+      ],
+      [
+        "ref: CONTROL_BRANCH",
+        "release_commit: commit",
+        "control_sha: controlCommit",
+        "run.head_branch === CONTROL_BRANCH",
+        "run.head_sha === controlCommit",
+      ],
+    ],
+    "scripts/dispatch-site-deployment.mjs",
+    errors,
+  );
   if (releaseWorkflow.includes("ref: ${{ env.RELEASE_TAG }}")) {
     errors.push(
       ".github/workflows/release.yml must build from the verified immutable source SHA, not env.RELEASE_TAG",
@@ -1265,33 +1409,67 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     ".github/workflows/deploy-site.yml",
     errors,
   );
+  const deploySiteWorkflow = files.get(".github/workflows/deploy-site.yml") ?? "";
   for (const expected of [
     "run-name: Deploy project site ${{ inputs.release_tag || github.ref_name }} ${{ inputs.dispatch_nonce || github.sha }}",
-    "startsWith(github.ref, 'refs/tags/')",
     "dispatch_nonce:",
-    '[[ "$GITHUB_REF" != "refs/tags/${expected_tag}" ]]',
-    '[[ "$source_sha" != "$TRUSTED_SHA" ]]',
     'git merge-base --is-ancestor "$source_sha" "$TRUSTED_SHA"',
   ]) {
     requireText(
-      files.get(".github/workflows/deploy-site.yml") ?? "",
+      deploySiteWorkflow,
       expected,
       ".github/workflows/deploy-site.yml",
       errors,
     );
   }
+  requireOneVariant(
+    deploySiteWorkflow,
+    [
+      [
+        "startsWith(github.ref, 'refs/tags/')",
+        '[[ "$GITHUB_REF" != "refs/tags/${expected_tag}" ]]',
+        '[[ "$source_sha" != "$TRUSTED_SHA" ]]',
+        'release_tag="$expected_tag"',
+      ],
+      [
+        "github.ref == 'refs/heads/main'",
+        "release_commit:",
+        "control_sha:",
+        "Resolve requested release identity",
+        'release_version="${release_tag#v}"',
+        "RELEASE_VERSION: ${{ steps.release_identity.outputs.release_version }}",
+        '[[ "$GITHUB_REF" != "refs/heads/main" ]]',
+        '[[ "$source_sha" != "$REQUESTED_RELEASE_COMMIT" ]]',
+        'release_tag="$RELEASE_TAG"',
+        "path: .release-source",
+        "working-directory: .release-source",
+      ],
+    ],
+    ".github/workflows/deploy-site.yml",
+    errors,
+  );
   requireText(
     files.get(".github/workflows/deploy-site.yml") ?? "",
     "ref: ${{ steps.immutable_source.outputs.source_sha }}",
     ".github/workflows/deploy-site.yml",
     errors,
   );
-  requireText(
-    files.get(".github/workflows/deploy-site.yml") ?? "",
-    'release_tag="$expected_tag"',
-    ".github/workflows/deploy-site.yml",
-    errors,
-  );
+  if (deploySiteWorkflow.includes('release_tag="$RELEASE_TAG"')) {
+    const resolveStart = deploySiteWorkflow.indexOf("      - name: Resolve immutable deployment source");
+    const checkoutStart = deploySiteWorkflow.indexOf(
+      "      - name: Check out immutable deployment source",
+      resolveStart,
+    );
+    const resolveStep =
+      resolveStart >= 0 && checkoutStart > resolveStart
+        ? deploySiteWorkflow.slice(resolveStart, checkoutStart)
+        : "";
+    if (resolveStep.includes('release_tag="$REQUESTED_RELEASE_TAG"')) {
+      errors.push(
+        ".github/workflows/deploy-site.yml must use the validated release identity during immutable source resolution",
+      );
+    }
+  }
   if ((files.get(".github/workflows/deploy-site.yml") ?? "").includes('source_sha="$MAIN_SHA"')) {
     errors.push(
       ".github/workflows/deploy-site.yml must deploy the published release tag, not a same-version main SHA",
@@ -1336,17 +1514,38 @@ export function checkReleaseConsistency(repoRoot, releaseTag) {
   return collectReleaseConsistencyErrors(loadReleaseContractFiles(repoRoot), releaseTag);
 }
 
-function parseTagArgument(args) {
-  if (args.length === 0) return undefined;
-  if (args.length === 2 && args[0] === "--tag" && args[1]) return args[1];
-  throw new Error("usage: node scripts/check-release-consistency.mjs [--tag vX.Y.Z]");
+export function parseCliArguments(args, cwd = process.cwd()) {
+  let releaseTag;
+  let repoRoot = resolve(cwd);
+  let repoRootProvided = false;
+  for (let index = 0; index < args.length; index += 2) {
+    const option = args[index];
+    const value = args[index + 1];
+    if (!value) {
+      throw new Error(
+        "usage: node scripts/check-release-consistency.mjs [--tag vX.Y.Z] [--repo-root path]",
+      );
+    }
+    if (option === "--tag" && releaseTag === undefined) {
+      releaseTag = value;
+    } else if (option === "--repo-root" && !repoRootProvided) {
+      repoRoot = resolve(cwd, value);
+      repoRootProvided = true;
+    } else {
+      throw new Error(
+        "usage: node scripts/check-release-consistency.mjs [--tag vX.Y.Z] [--repo-root path]",
+      );
+    }
+  }
+  return { releaseTag, repoRoot };
 }
 
 const isMain =
   process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 if (isMain) {
   try {
-    const errors = checkReleaseConsistency(process.cwd(), parseTagArgument(process.argv.slice(2)));
+    const { releaseTag, repoRoot } = parseCliArguments(process.argv.slice(2));
+    const errors = checkReleaseConsistency(repoRoot, releaseTag);
     if (errors.length > 0) {
       console.error(
         `Release consistency check failed with ${errors.length} error${errors.length === 1 ? "" : "s"}:`,
@@ -1354,9 +1553,7 @@ if (isMain) {
       for (const error of errors) console.error(`- ${error}`);
       process.exitCode = 1;
     } else {
-      const version = JSON.parse(
-        readFileSync(resolve(process.cwd(), "package.json"), "utf8"),
-      ).version;
+      const version = JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8")).version;
       console.log(`Release consistency check passed for v${version}.`);
     }
   } catch (error) {

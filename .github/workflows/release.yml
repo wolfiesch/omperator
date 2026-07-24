@@ -72,6 +72,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ steps.source.outputs.source_sha }}
+          path: .release-source
           persist-credentials: false
 
       - name: Install Node.js
@@ -80,7 +81,7 @@ jobs:
           node-version: 24.13.1
 
       - name: Verify tag, packages, clients, docs, and downloads agree
-        run: node scripts/check-release-consistency.mjs --tag "$RELEASE_TAG"
+        run: node scripts/check-release-consistency.mjs --tag "$RELEASE_TAG" --repo-root .release-source
 
   ci-authority:
     needs: verify
@@ -134,6 +135,11 @@ jobs:
         with:
           node-version: 24.13.1
           cache: pnpm
+
+      - name: Install Bun for the T4 host binary
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -305,6 +311,11 @@ jobs:
           node-version: 24.13.1
           cache: pnpm
 
+      - name: Install Bun for the T4 host binary
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -368,15 +379,23 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Check out verified release source
+      - name: Check out trusted publication-control source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Check out verified release content
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ needs.verify.outputs.source_sha }}
+          path: .release-source
           fetch-depth: 0
           persist-credentials: false
 
       - name: Confirm the release tag still resolves to the verified source
         shell: bash
+        working-directory: .release-source
         env:
           SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
         run: |
@@ -433,7 +452,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           generate_release_notes: true
           fail_on_unmatched_files: true
-          body_path: docs/CURRENT_RELEASE_NOTES.md
+          body_path: .release-source/docs/CURRENT_RELEASE_NOTES.md
           files: |
             artifacts/T4-Code-*.apk
             artifacts/T4-Code-*.deb
@@ -469,11 +488,26 @@ jobs:
         with:
           node-version: 24.13.1
 
+      - name: Resolve trusted site-control source
+        id: site-control
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --no-tags origin "refs/heads/main:refs/remotes/origin/main"
+          control_sha=$(git rev-parse refs/remotes/origin/main)
+          if [[ ! "$control_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "main must resolve to an immutable commit SHA" >&2
+            exit 1
+          fi
+          printf 'control_sha=%s\n' "$control_sha" >> "$GITHUB_OUTPUT"
+
       - name: Dispatch and await the exact immutable production deployment
         env:
+          CONTROL_SHA: ${{ steps.site-control.outputs.control_sha }}
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
         run: >-
           node scripts/dispatch-site-deployment.mjs
           --tag "$RELEASE_TAG"
           --commit "$SOURCE_SHA"
+          --control-commit "$CONTROL_SHA"

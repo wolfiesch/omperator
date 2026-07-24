@@ -217,7 +217,7 @@ export function renderSystemdUnit(input) {
   return [
     "[Unit]",
     "Description=T4 Code Tailnet web gateway",
-    "Documentation=https://github.com/LycaonLLC/t4-code/blob/main/docs/TAILNET_REMOTE.md",
+    "Documentation=https://github.com/wolfiesch/omperator/blob/main/docs/TAILNET_REMOTE.md",
     "Wants=network-online.target",
     "After=network-online.target",
     "",

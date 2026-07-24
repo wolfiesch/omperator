@@ -32,14 +32,14 @@ function asset(name, id) {
     state: "uploaded",
     size: id + 100,
     digest: `sha256:${String(id).padStart(64, "0")}`,
-    browser_download_url: `https://github.com/LycaonLLC/t4-code/releases/download/${tag}/${name}`,
+    browser_download_url: `https://github.com/wolfiesch/omperator/releases/download/${tag}/${name}`,
   };
 }
 
 function release(assets = expectedPublishedAssetNames(version).map((name, index) => asset(name, index + 1))) {
   return {
     tag_name: tag,
-    html_url: `https://github.com/LycaonLLC/t4-code/releases/tag/${tag}`,
+    html_url: `https://github.com/wolfiesch/omperator/releases/tag/${tag}`,
     draft: false,
     prerelease: false,
     published_at: "2026-07-15T20:00:00Z",
@@ -93,7 +93,7 @@ releaseDate: '2026-07-15T20:00:00Z'
       state: "uploaded",
       size,
       digest: `sha256:${digest}`,
-      browser_download_url: `https://github.com/LycaonLLC/t4-code/releases/download/${tag}/${name}`,
+      browser_download_url: `https://github.com/wolfiesch/omperator/releases/download/${tag}/${name}`,
     };
   });
   return { release: release(assets), bodies };

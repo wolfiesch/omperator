@@ -21,8 +21,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	clusterv1alpha1 "github.com/LycaonLLC/t4-code/packages/cluster-operator/api/v1alpha1"
-	"github.com/LycaonLLC/t4-code/packages/cluster-operator/controllers"
+	clusterv1alpha1 "github.com/wolfiesch/omperator/packages/cluster-operator/api/v1alpha1"
+	"github.com/wolfiesch/omperator/packages/cluster-operator/controllers"
 )
 
 const (

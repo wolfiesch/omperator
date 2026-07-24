@@ -11,7 +11,7 @@ import {
 } from "./generate-release-manifest.mjs";
 import { readBoundedResponseBytes } from "./read-bounded-response.mjs";
 
-const REPOSITORY = "LycaonLLC/t4-code";
+const REPOSITORY = "wolfiesch/omperator";
 const VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
 const MAX_API_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_RELEASE_METADATA_BYTES = 64 * 1024;

@@ -1,4 +1,4 @@
-module github.com/LycaonLLC/t4-code/packages/cluster-operator
+module github.com/wolfiesch/omperator/packages/cluster-operator
 
 go 1.24.0
 

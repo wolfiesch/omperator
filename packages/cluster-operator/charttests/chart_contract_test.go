@@ -219,7 +219,7 @@ func TestBuiltInModelGatewayAloneReceivesProviderCredential(t *testing.T) {
 	assertCount(t, output, "kind: Deployment", 3)
 	gateway := documentContainingKind(t, output, "Deployment", "name: \"release-name-t4-cluster-model-gateway\"")
 	assertContains(t, gateway,
-		"image: \"ghcr.io/lycaonllc/t4-model-gateway@"+fakeDigest+"\"",
+		"image: \"ghcr.io/wolfiesch/omperator-model-gateway@"+fakeDigest+"\"",
 		"name: T4_MODEL_GATEWAY_UPSTREAM_ORIGIN",
 		"value: \"https://api.example.test\"",
 		"name: T4_MODEL_GATEWAY_ALLOWED_PATHS",

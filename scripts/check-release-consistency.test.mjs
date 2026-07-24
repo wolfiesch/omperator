@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 
@@ -9,10 +9,16 @@ import {
   collectReleaseConsistencyErrors,
   discoverReleasePackagePaths,
   loadReleaseContractFiles,
+  parseCliArguments,
 } from "./check-release-consistency.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const files = loadReleaseContractFiles(repoRoot);
+
+test("keeps the pre-install release verifier dependency-free", () => {
+  const source = readFileSync(resolve(repoRoot, "scripts/check-release-consistency.mjs"), "utf8");
+  assert.doesNotMatch(source, /from\s+["'](?!node:|\.)[^"']+["']/u);
+});
 
 function changed(path, replace) {
   const copy = new Map(files);
@@ -64,6 +70,19 @@ function resolveWorkflowExpression(expression, context) {
 
 test("current source tree has one consistent release version", () => {
   assert.deepEqual(collectReleaseConsistencyErrors(files), []);
+});
+
+test("rejects the frozen legacy repository as an active release dependency", () => {
+  const legacyRepository = ["LycaonLLC", "t4-code"].join("/");
+  const drifted = changed(
+    "apps/site/src/release.ts",
+    (text) => `${text}\n// https://github.com/${legacyRepository}/releases\n`,
+  );
+  assert.ok(
+    collectReleaseConsistencyErrors(drifted).some((error) =>
+      error.includes("must not depend on the frozen legacy release repository"),
+    ),
+  );
 });
 
 test("release package discovery ignores non-Node package directories", () => {
@@ -167,7 +186,7 @@ test("pins official OMP artifacts and the Gate 0 proof contract", () => {
 test("rejects a tag that differs from the package version", () => {
   assert.ok(
     collectReleaseConsistencyErrors(files, "v9.9.9").some((error) =>
-      error.includes("release tag v9.9.9 does not match v0.1.31"),
+      error.includes("release tag v9.9.9 does not match v0.1.33"),
     ),
   );
 });
@@ -196,7 +215,7 @@ test("tagged releases reject published provenance drift", () => {
   for (const [field, mutate] of appWireCases) {
     const drifted = changedRuntime("publishedAppWire", mutate);
     assert.ok(
-      collectReleaseConsistencyErrors(drifted, "v0.1.31").some((error) =>
+      collectReleaseConsistencyErrors(drifted, "v0.1.33").some((error) =>
         error.includes(
           `published app-wire ${field} must match current app-wire for tagged releases`,
         ),
@@ -239,7 +258,7 @@ test("tagged releases reject published provenance drift", () => {
   for (const [field, mutate] of runtimeCases) {
     const drifted = changedRuntime("publishedRuntime", mutate);
     assert.ok(
-      collectReleaseConsistencyErrors(drifted, "v0.1.31").some((error) =>
+      collectReleaseConsistencyErrors(drifted, "v0.1.33").some((error) =>
         error.includes(
           `published runtime ${field} must match current verified runtime for tagged releases`,
         ),
@@ -251,7 +270,7 @@ test("tagged releases reject published provenance drift", () => {
     runtime.artifactSha256 = "0".repeat(64);
   });
   assert.ok(
-    collectReleaseConsistencyErrors(extended, "v0.1.31").some((error) =>
+    collectReleaseConsistencyErrors(extended, "v0.1.33").some((error) =>
       error.includes(
         "published runtime must exactly match current verified runtime for tagged releases",
       ),
@@ -261,15 +280,15 @@ test("tagged releases reject published provenance drift", () => {
 
 test("rejects workspace, site, README, and runtime version drift", () => {
   const cases = [
-    ["apps/web/package.json", (text) => text.replace('"version": "0.1.31"', '"version": "0.1.3"')],
+    ["apps/web/package.json", (text) => text.replace('"version": "0.1.33"', '"version": "0.1.3"')],
     [
       "apps/site/src/release.ts",
-      (text) => text.replace('RELEASE_TAG = "v0.1.31"', 'RELEASE_TAG = "v0.1.3"'),
+      (text) => text.replace('RELEASE_TAG = "v0.1.33"', 'RELEASE_TAG = "v0.1.3"'),
     ],
-    ["README.md", (text) => text.replace("Download v0.1.31", "Download v0.1.3")],
+    ["README.md", (text) => text.replace("Download v0.1.33", "Download v0.1.3")],
     [
       "apps/desktop/src/target-manager.ts",
-      (text) => text.replace('version: "0.1.31"', 'version: "0.1.3"'),
+      (text) => text.replace('version: "0.1.33"', 'version: "0.1.3"'),
     ],
     [
       "apps/site/src/docs/content.ts",
@@ -299,7 +318,7 @@ test("rejects version drift in a newly added workspace package", () => {
 
 test("rejects updater channel, stable manifest, and publication-contract drift", () => {
   const cases = [
-    ["electron-builder.config.mjs", (text) => text.replace('repo: "t4-code"', 'repo: "renamed"')],
+    ["electron-builder.config.mjs", (text) => text.replace('repo: "omperator"', 'repo: "renamed"')],
     [
       "scripts/generate-release-manifest.mjs",
       (text) =>
@@ -357,7 +376,7 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
     ],
     [
       "scripts/dispatch-site-deployment.mjs",
-      (text) => text.replace("body: { ref: tag", 'body: { ref: "main"'),
+      (text) => text.replace("ref: CONTROL_BRANCH", 'ref: "untrusted"'),
     ],
     [
       "scripts/wait-for-exact-ci.mjs",
@@ -370,7 +389,15 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
     [
       ".github/workflows/deploy-site.yml",
       (text) =>
-        text.replace("startsWith(github.ref, 'refs/tags/')", "github.ref == 'refs/heads/main'"),
+        text.replace("github.ref == 'refs/heads/main'", "github.ref == 'refs/tags/untrusted'"),
+    ],
+    [
+      ".github/workflows/deploy-site.yml",
+      (text) =>
+        text.replace(
+          'release_tag="$RELEASE_TAG"',
+          'release_tag="$RELEASE_TAG"\n          release_tag="$REQUESTED_RELEASE_TAG"',
+        ),
     ],
   ];
   for (const [path, replace] of cases) {
@@ -428,6 +455,66 @@ test("historical repair runs CI authority from trusted control while querying ol
   const queriedSha = resolveWorkflowExpression(authorityStep.env[commitVariable], context);
   assert.equal(queriedSha, historicalSourceSha);
   assert.notEqual(checkoutSha, queriedSha);
+});
+
+test("historical repair keeps trusted verification code separate from immutable source", () => {
+  const verifyJob = requiredWorkflowJob(files.get(".github/workflows/release.yml"), "verify");
+  const controlCheckout = requiredNamedStep(verifyJob, "Check out trusted release-control source");
+  const sourceCheckout = requiredNamedStep(verifyJob, "Check out immutable release source");
+  const consistencyStep = requiredNamedStep(
+    verifyJob,
+    "Verify tag, packages, clients, docs, and downloads agree",
+  );
+
+  assert.equal(controlCheckout.with.ref, "${{ github.sha }}");
+  assert.equal(sourceCheckout.with.ref, "${{ steps.source.outputs.source_sha }}");
+  assert.equal(sourceCheckout.with.path, ".release-source");
+  assert.equal(
+    consistencyStep.run,
+    'node scripts/check-release-consistency.mjs --tag "$RELEASE_TAG" --repo-root .release-source',
+  );
+  assert.deepEqual(parseCliArguments(["--tag", "v0.1.33", "--repo-root", ".release-source"]), {
+    releaseTag: "v0.1.33",
+    repoRoot: resolve(".release-source"),
+  });
+});
+
+test("historical repair keeps trusted publication control separate from release content", () => {
+  const publishJob = requiredWorkflowJob(files.get(".github/workflows/release.yml"), "publish");
+  const controlCheckout = requiredNamedStep(
+    publishJob,
+    "Check out trusted publication-control source",
+  );
+  const contentCheckout = requiredNamedStep(publishJob, "Check out verified release content");
+  const tagStep = requiredNamedStep(
+    publishJob,
+    "Confirm the release tag still resolves to the verified source",
+  );
+  const prepareStep = requiredNamedStep(
+    publishJob,
+    "Preserve an exact release or prepare an incomplete release for repair",
+  );
+  const publishStep = requiredNamedStep(publishJob, "Publish GitHub release");
+  const verifyStep = requiredNamedStep(publishJob, "Verify the exact remote release bundle");
+
+  assert.equal(controlCheckout.with.ref, "${{ github.sha }}");
+  assert.equal(contentCheckout.with.ref, "${{ needs.verify.outputs.source_sha }}");
+  assert.equal(contentCheckout.with.path, ".release-source");
+  assert.equal(tagStep["working-directory"], ".release-source");
+  assert.match(prepareStep.run, /^node scripts\/reconcile-release-assets\.mjs/u);
+  assert.equal(publishStep.with.body_path, ".release-source/docs/CURRENT_RELEASE_NOTES.md");
+  assert.match(verifyStep.run, /^node scripts\/reconcile-release-assets\.mjs/u);
+});
+
+test("historical release content may retain its root-relative release notes path", () => {
+  const historical = changed(".github/workflows/release.yml", (workflow) =>
+    workflow.replace(
+      "body_path: .release-source/docs/CURRENT_RELEASE_NOTES.md",
+      "body_path: docs/CURRENT_RELEASE_NOTES.md",
+    ),
+  );
+
+  assert.deepEqual(collectReleaseConsistencyErrors(historical), []);
 });
 
 test("rejects published app-wire version drift until release surfaces agree", () => {
@@ -562,11 +649,11 @@ test("accepts a current app-wire update without rewriting published release surf
 
 test("rejects stale README release URLs while allowing historical prose", () => {
   const oldTag = ["v0", "1", "3"].join(".");
-  const oldReleaseUrl = `https://github.com/LycaonLLC/t4-code/releases/tag/${oldTag}`;
+  const oldReleaseUrl = `https://github.com/wolfiesch/omperator/releases/tag/${oldTag}`;
   const staleLink = changed("README.md", (text) => `${text}\n[Old release](${oldReleaseUrl})\n`);
   assert.ok(
     collectReleaseConsistencyErrors(staleLink).some((error) =>
-      error.includes("release URL for v0.1.3; expected v0.1.31"),
+      error.includes("release URL for v0.1.3; expected v0.1.33"),
     ),
   );
   assert.deepEqual(collectReleaseConsistencyErrors(files), []);
@@ -727,6 +814,12 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(releaseWorkflow.includes("node scripts/dispatch-site-deployment.mjs"));
   assert.ok(releaseWorkflow.includes('--tag "$RELEASE_TAG"'));
   assert.ok(releaseWorkflow.includes('--commit "$SOURCE_SHA"'));
+  assert.ok(releaseWorkflow.includes('--control-commit "$CONTROL_SHA"'));
+  assert.ok(releaseWorkflow.includes("Resolve trusted site-control source"));
+  assert.ok(releaseWorkflow.includes("git rev-parse refs/remotes/origin/main"));
+  assert.ok(
+    releaseWorkflow.includes("CONTROL_SHA: ${{ steps.site-control.outputs.control_sha }}"),
+  );
   assert.ok(!releaseWorkflow.includes("gh workflow run deploy-site.yml"));
   const dispatchSite = releaseWorkflow.slice(releaseWorkflow.indexOf("  dispatch-site:"));
   assert.ok(dispatchSite.includes("ref: ${{ github.sha }}"));
@@ -745,16 +838,31 @@ test("deploys release site source only after artifact publication", () => {
 
   assert.ok(deployWorkflow.includes("workflow_dispatch:"));
   assert.ok(deployWorkflow.includes("release_tag:"));
+  assert.ok(deployWorkflow.includes("release_commit:"));
+  assert.ok(deployWorkflow.includes("control_sha:"));
   assert.ok(deployWorkflow.includes("dispatch_nonce:"));
   assert.ok(deployWorkflow.includes("inputs.dispatch_nonce || github.sha"));
-  assert.ok(deployWorkflow.includes("startsWith(github.ref, 'refs/tags/')"));
-  assert.ok(deployWorkflow.includes('[[ "$GITHUB_REF" != "refs/tags/${expected_tag}" ]]'));
-  assert.ok(deployWorkflow.includes('expected_tag="v${TRUSTED_VERSION}"'));
-  assert.ok(deployWorkflow.includes('release_tag="$expected_tag"'));
+  assert.ok(deployWorkflow.includes("github.ref == 'refs/heads/main'"));
+  assert.ok(deployWorkflow.includes('[[ "$GITHUB_REF" != "refs/heads/main" ]]'));
+  assert.ok(deployWorkflow.includes("Resolve requested release identity"));
+  assert.ok(deployWorkflow.includes('release_version="${release_tag#v}"'));
+  assert.ok(
+    deployWorkflow.includes(
+      "RELEASE_VERSION: ${{ steps.release_identity.outputs.release_version }}",
+    ),
+  );
+  assert.ok(!deployWorkflow.includes('release tag must be the current release'));
   assert.ok(deployWorkflow.includes("releases/tags/${release_tag}"));
-  assert.ok(deployWorkflow.includes('[[ "$source_sha" != "$TRUSTED_SHA" ]]'));
+  assert.ok(deployWorkflow.includes('[[ "$source_sha" != "$REQUESTED_RELEASE_COMMIT" ]]'));
   assert.ok(deployWorkflow.includes('git merge-base --is-ancestor "$source_sha" "$TRUSTED_SHA"'));
   assert.ok(deployWorkflow.includes("ref: ${{ steps.immutable_source.outputs.source_sha }}"));
+  assert.ok(deployWorkflow.includes("path: .release-source"));
+  assert.ok(deployWorkflow.includes("working-directory: .release-source"));
+  const immutableResolution = deployWorkflow.slice(
+    deployWorkflow.indexOf("      - name: Resolve immutable deployment source"),
+    deployWorkflow.indexOf("      - name: Check out immutable deployment source"),
+  );
+  assert.ok(!immutableResolution.includes('release_tag="$REQUESTED_RELEASE_TAG"'));
   assert.ok(!deployWorkflow.includes('source_sha="$MAIN_SHA"'));
   assert.ok(!deployWorkflow.includes("cache: pnpm"));
   assert.ok(

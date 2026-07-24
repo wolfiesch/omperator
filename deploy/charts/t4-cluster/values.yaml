@@ -12,19 +12,19 @@ kubernetes:
 
 images:
   controller:
-    repository: ghcr.io/lycaonllc/t4-cluster-operator
+    repository: ghcr.io/wolfiesch/omperator-cluster-operator
     digest: ""
     pullPolicy: IfNotPresent
   server:
-    repository: ghcr.io/lycaonllc/t4-cluster-server
+    repository: ghcr.io/wolfiesch/omperator-cluster-server
     digest: ""
     pullPolicy: IfNotPresent
   sessionRuntime:
-    repository: ghcr.io/lycaonllc/t4-session-runtime
+    repository: ghcr.io/wolfiesch/omperator-session-runtime
     digest: ""
     pullPolicy: IfNotPresent
   modelGateway:
-    repository: ghcr.io/lycaonllc/t4-model-gateway
+    repository: ghcr.io/wolfiesch/omperator-model-gateway
     digest: ""
     pullPolicy: IfNotPresent
 

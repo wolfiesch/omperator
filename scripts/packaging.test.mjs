@@ -87,11 +87,14 @@ function androidReleaseFixture(overrides = {}) {
 test("builder config keeps release contract", () => {
   assert.equal(config.appId, "com.lycaonsolutions.t4code");
   assert.equal(config.productName, "T4 Code");
+  assert.equal(config.executableName, undefined);
+  assert.equal(config.linux.executableName, "t4-code");
+  assert.equal(config.mac.executableName, undefined);
   assert.equal(config.asar, true);
   assert.deepEqual(config.protocols[0].schemes, ["t4-code"]);
   assert.equal(config.linux.category, "Development");
   assert.deepEqual(config.linux.publish, [
-    { provider: "github", owner: "LycaonLLC", repo: "t4-code", channel: "latest" },
+    { provider: "github", owner: "wolfiesch", repo: "omperator", channel: "latest" },
   ]);
   assert.equal(config.mac.category, "public.app-category.developer-tools");
   assert.deepEqual(config.mac.publish, []);
@@ -136,6 +139,30 @@ test("signed macOS packaging is explicit, credentialed, and release-gated", asyn
     assert.ok(releaseWorkflow.includes(expected), `release workflow must include ${expected}`);
   }
   assert.doesNotMatch(releaseWorkflow, /Build unsigned macOS packages/u);
+});
+
+test("desktop release builders install the pinned Bun compiler before packaging", () => {
+  const releaseWorkflow = readFileSync(resolve(repoRoot, ".github/workflows/release.yml"), "utf8");
+  const jobs = [
+    ["build-linux", "build-android", "pnpm package:linux"],
+    ["build-macos", "publish", "pnpm package:mac"],
+  ];
+
+  for (const [jobName, nextJobName, packageCommand] of jobs) {
+    const job = releaseWorkflow.slice(
+      releaseWorkflow.indexOf(`  ${jobName}:`),
+      releaseWorkflow.indexOf(`  ${nextJobName}:`),
+    );
+    const setupBun = job.indexOf(
+      "uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6",
+    );
+    const pinnedVersion = job.indexOf("bun-version: 1.3.14");
+    const packaging = job.indexOf(packageCommand);
+
+    assert.ok(setupBun >= 0, `${jobName} must install Bun`);
+    assert.ok(pinnedVersion > setupBun, `${jobName} must pin the Bun version`);
+    assert.ok(packaging > pinnedVersion, `${jobName} must install Bun before packaging`);
+  }
 });
 
 test("signed macOS packaging relaxes library validation only for the bundled OMP runtime", () => {
