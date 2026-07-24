@@ -55,6 +55,10 @@ export const MESSAGES = {
   denied: "The host didn't allow this shell.",
   failed: "The shell couldn't be started.",
   badResult: "The host answered with something this app couldn't use.",
+  openFailedLocally: "This app couldn't send the shell request. Try again.",
+  openRequestFailed: "The shell request failed. Try again.",
+  openOutcomeUnknown:
+    "The shell request may have reached the host. Check for a new shell before trying again.",
   connectionLost: "The connection dropped. The shell may still be running on the host.",
 } as const;
 export type LiveTerminalAvailability =
