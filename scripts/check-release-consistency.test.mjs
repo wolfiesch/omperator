@@ -485,6 +485,17 @@ test("historical repair keeps trusted publication control separate from release 
   assert.match(verifyStep.run, /^node scripts\/reconcile-release-assets\.mjs/u);
 });
 
+test("historical release content may retain its root-relative release notes path", () => {
+  const historical = changed(".github/workflows/release.yml", (workflow) =>
+    workflow.replace(
+      "body_path: .release-source/docs/CURRENT_RELEASE_NOTES.md",
+      "body_path: docs/CURRENT_RELEASE_NOTES.md",
+    ),
+  );
+
+  assert.deepEqual(collectReleaseConsistencyErrors(historical), []);
+});
+
 test("rejects published app-wire version drift until release surfaces agree", () => {
   const drifted = changedRuntime("publishedAppWire", (record) => {
     record.version = "0.5.1";

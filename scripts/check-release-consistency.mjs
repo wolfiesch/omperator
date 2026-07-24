@@ -188,6 +188,12 @@ function requireText(text, expected, path, errors) {
   if (!text.includes(expected)) errors.push(`${path} is missing ${JSON.stringify(expected)}`);
 }
 
+function requireAnyText(text, expectedValues, path, errors) {
+  if (!expectedValues.some((expected) => text.includes(expected))) {
+    errors.push(`${path} is missing one of ${expectedValues.map(JSON.stringify).join(", ")}`);
+  }
+}
+
 function extractWorkflowJob(source, jobName, errors) {
   const lines = source.split(/\r?\n/u);
   const header = `  ${jobName}:`;
@@ -1149,9 +1155,12 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     ".github/workflows/release.yml",
     errors,
   );
-  requireText(
+  requireAnyText(
     releaseWorkflow,
-    "body_path: .release-source/docs/CURRENT_RELEASE_NOTES.md",
+    [
+      "body_path: docs/CURRENT_RELEASE_NOTES.md",
+      "body_path: .release-source/docs/CURRENT_RELEASE_NOTES.md",
+    ],
     ".github/workflows/release.yml",
     errors,
   );
