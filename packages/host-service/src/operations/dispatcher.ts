@@ -14,6 +14,31 @@ import {
 	type TerminalId,
 } from "@t4-code/host-wire";
 
+/**
+ * Opt-in host ingress trace, off unless T4_TRACE_COMMANDS is set.
+ *
+ * Emits ONLY the wire requestId, the command name, a phase, and elapsed time.
+ * Terminal and file commands cross a trust boundary, so session ids, args, cwd,
+ * shell, and payloads must never appear. `dispatcher-trace.test.ts` enforces
+ * that with a frame full of distinctive secrets.
+ *
+ * The wire requestId is the correlator: log the same id where the client
+ * constructs and sends the CommandFrame to match the two sides under
+ * concurrency. Phases distinguish a command the host never sees from one it
+ * receives and then stalls on inside the authority.
+ */
+export type HostTraceSink = (line: string) => void;
+
+export function formatHostTrace(
+	requestId: string,
+	command: string,
+	phase: string,
+	elapsedMs?: number,
+): string {
+	const elapsed = elapsedMs === undefined ? "" : ` ms=${elapsedMs}`;
+	return `[t4-host-trace] req=${requestId} command=${command} phase=${phase}${elapsed}`;
+}
+
 export interface OperationContext {
 	hostId: HostId;
 	sessionId?: SessionId;
@@ -317,12 +342,35 @@ export class DesktopOperationDispatcher implements OperationCommandHandler {
 		private readonly authority: DesktopOperationsAuthority,
 		private readonly terminalOwners = new TerminalOwnerRegistry(),
 		private readonly output?: (frame: unknown, owner: TerminalOwner) => void,
+		private readonly trace: HostTraceSink | undefined = process.env.T4_TRACE_COMMANDS === "1"
+			? line => console.error(line)
+			: undefined,
 	) {}
 	hasCommand(command: string): boolean {
 		return commandIsRoutable(this.authority, command);
 	}
 
 	async dispatch(command: CommandFrame, context: OperationContext): Promise<CommandResult> {
+		if (!this.trace) return this.dispatchInner(command, context);
+		// Trace on entry, before any validation, so a command rejected during
+		// validation stays distinguishable from one that never reached the host.
+		// Every path below emits a terminal phase, otherwise a rejection and an
+		// interrupted process would look identical.
+		const startedAt = performance.now();
+		this.trace(formatHostTrace(command.requestId, command.command, "ingress"));
+		try {
+			const result = await this.dispatchInner(command, context);
+			const ms = Math.round(performance.now() - startedAt);
+			this.trace(formatHostTrace(command.requestId, command.command, "returned", ms));
+			return result;
+		} catch (error) {
+			const ms = Math.round(performance.now() - startedAt);
+			this.trace(formatHostTrace(command.requestId, command.command, "threw", ms));
+			throw error;
+		}
+	}
+
+	private async dispatchInner(command: CommandFrame, context: OperationContext): Promise<CommandResult> {
 		const descriptor = COMMAND_DESCRIPTORS[command.command];
 		const required = CAPABILITY_BY_COMMAND[command.command];
 		if (commandFeature(command.command) && !OPERATION_METHOD_BY_COMMAND[command.command])
@@ -367,7 +415,20 @@ export class DesktopOperationDispatcher implements OperationCommandHandler {
 			},
 		};
 		try {
+			// `authority-invoke` with no matching `authority-ok` means the command
+			// reached the host and stalled inside the authority, which is the case
+			// a client-side timeout alone cannot distinguish.
+			this.trace?.(formatHostTrace(command.requestId, command.command, "authority-invoke"));
+			const authorityStartedAt = performance.now();
 			const result = await invoke(this.authority, command.command, args, operationContext);
+			this.trace?.(
+				formatHostTrace(
+					command.requestId,
+					command.command,
+					"authority-ok",
+					Math.round(performance.now() - authorityStartedAt),
+				),
+			);
 			const decoded = cloneFreeze(decodeCommandResult(command.command, result));
 			if (command.command === "term.open" && typeof decoded.terminalId === "string" && context.sessionId) {
 				owner = {
