@@ -53,6 +53,14 @@ test("host wire changes run every dependent client and continuity gate", () => {
   });
 });
 
+test("client runtime changes run both bridge continuity gates", () => {
+  assert.deepEqual(classifyCiPaths(["packages/client/src/omp-client-runtime.ts"]), {
+    ...none,
+    continuity: true,
+    android_debug: true,
+  });
+});
+
 test("host daemon changes run its host gates", () => {
   assert.deepEqual(classifyCiPaths(["packages/host-daemon/src/main.ts"]), {
     ...none,
