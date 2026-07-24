@@ -117,12 +117,20 @@ function presentPagedTranscript(
 ): TranscriptProjection {
   if (pagedEntries.length === 0) return projection;
   if (projection.entries.length === 0) return { ...projection, entries: pagedEntries };
-  const liveIds = new Set(projection.entries.map((entry) => entry.id));
-  const firstOverlap = pagedEntries.findIndex((entry) => liveIds.has(entry.id));
-  const prefix = firstOverlap < 0 ? pagedEntries : pagedEntries.slice(0, firstOverlap);
-  return prefix.length === 0
-    ? projection
-    : { ...projection, entries: [...prefix, ...projection.entries] };
+  // The host page is authority for the range it covers, but the warm projection can
+  // extend past that range on both sides. Splice the page between the live entries
+  // that sit outside it, keyed on the shared anchors, so a gappy warm projection is
+  // repaired without reordering history the page never described.
+  const pagedIds = new Set(pagedEntries.map((entry) => entry.id));
+  const firstAnchor = projection.entries.findIndex((entry) => pagedIds.has(entry.id));
+  if (firstAnchor < 0) {
+    // No overlap: the page is strictly older than everything the projection holds.
+    return { ...projection, entries: [...pagedEntries, ...projection.entries] };
+  }
+  const lastAnchor = projection.entries.findLastIndex((entry) => pagedIds.has(entry.id));
+  const before = projection.entries.slice(0, firstAnchor);
+  const after = projection.entries.slice(lastAnchor + 1);
+  return { ...projection, entries: [...before, ...pagedEntries, ...after] };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
