@@ -363,7 +363,7 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
     ],
     [
       "scripts/dispatch-site-deployment.mjs",
-      (text) => text.replace("body: { ref: tag", 'body: { ref: "main"'),
+      (text) => text.replace("ref: CONTROL_BRANCH", 'ref: "untrusted"'),
     ],
     [
       "scripts/wait-for-exact-ci.mjs",
@@ -376,7 +376,7 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
     [
       ".github/workflows/deploy-site.yml",
       (text) =>
-        text.replace("startsWith(github.ref, 'refs/tags/')", "github.ref == 'refs/heads/main'"),
+        text.replace("github.ref == 'refs/heads/main'", "github.ref == 'refs/tags/untrusted'"),
     ],
   ];
   for (const [path, replace] of cases) {
@@ -793,6 +793,12 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(releaseWorkflow.includes("node scripts/dispatch-site-deployment.mjs"));
   assert.ok(releaseWorkflow.includes('--tag "$RELEASE_TAG"'));
   assert.ok(releaseWorkflow.includes('--commit "$SOURCE_SHA"'));
+  assert.ok(releaseWorkflow.includes('--control-commit "$CONTROL_SHA"'));
+  assert.ok(releaseWorkflow.includes("Resolve trusted site-control source"));
+  assert.ok(releaseWorkflow.includes("git rev-parse refs/remotes/origin/main"));
+  assert.ok(
+    releaseWorkflow.includes("CONTROL_SHA: ${{ steps.site-control.outputs.control_sha }}"),
+  );
   assert.ok(!releaseWorkflow.includes("gh workflow run deploy-site.yml"));
   const dispatchSite = releaseWorkflow.slice(releaseWorkflow.indexOf("  dispatch-site:"));
   assert.ok(dispatchSite.includes("ref: ${{ github.sha }}"));
@@ -811,16 +817,26 @@ test("deploys release site source only after artifact publication", () => {
 
   assert.ok(deployWorkflow.includes("workflow_dispatch:"));
   assert.ok(deployWorkflow.includes("release_tag:"));
+  assert.ok(deployWorkflow.includes("release_commit:"));
+  assert.ok(deployWorkflow.includes("control_sha:"));
   assert.ok(deployWorkflow.includes("dispatch_nonce:"));
   assert.ok(deployWorkflow.includes("inputs.dispatch_nonce || github.sha"));
-  assert.ok(deployWorkflow.includes("startsWith(github.ref, 'refs/tags/')"));
-  assert.ok(deployWorkflow.includes('[[ "$GITHUB_REF" != "refs/tags/${expected_tag}" ]]'));
-  assert.ok(deployWorkflow.includes('expected_tag="v${TRUSTED_VERSION}"'));
-  assert.ok(deployWorkflow.includes('release_tag="$expected_tag"'));
+  assert.ok(deployWorkflow.includes("github.ref == 'refs/heads/main'"));
+  assert.ok(deployWorkflow.includes('[[ "$GITHUB_REF" != "refs/heads/main" ]]'));
+  assert.ok(deployWorkflow.includes("Resolve requested release identity"));
+  assert.ok(deployWorkflow.includes('release_version="${release_tag#v}"'));
+  assert.ok(
+    deployWorkflow.includes(
+      "RELEASE_VERSION: ${{ steps.release_identity.outputs.release_version }}",
+    ),
+  );
+  assert.ok(!deployWorkflow.includes('release tag must be the current release'));
   assert.ok(deployWorkflow.includes("releases/tags/${release_tag}"));
-  assert.ok(deployWorkflow.includes('[[ "$source_sha" != "$TRUSTED_SHA" ]]'));
+  assert.ok(deployWorkflow.includes('[[ "$source_sha" != "$REQUESTED_RELEASE_COMMIT" ]]'));
   assert.ok(deployWorkflow.includes('git merge-base --is-ancestor "$source_sha" "$TRUSTED_SHA"'));
   assert.ok(deployWorkflow.includes("ref: ${{ steps.immutable_source.outputs.source_sha }}"));
+  assert.ok(deployWorkflow.includes("path: .release-source"));
+  assert.ok(deployWorkflow.includes("working-directory: .release-source"));
   assert.ok(!deployWorkflow.includes('source_sha="$MAIN_SHA"'));
   assert.ok(!deployWorkflow.includes("cache: pnpm"));
   assert.ok(

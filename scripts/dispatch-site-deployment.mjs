@@ -7,6 +7,7 @@ import { readBoundedResponseBytes } from "./read-bounded-response.mjs";
 const REPOSITORY = "LycaonLLC/t4-code";
 const WORKFLOW = "deploy-site.yml";
 const WORKFLOW_PATH = `.github/workflows/${WORKFLOW}`;
+const CONTROL_BRANCH = "main";
 const VERSION_TAG_PATTERN = /^v\d+\.\d+\.\d+$/u;
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/u;
 const DISPATCH_NONCE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -59,7 +60,7 @@ async function apiJson(url, options) {
   }
 }
 
-function exactRuns(payload, commit, tag, dispatchNonce) {
+function exactRuns(payload, controlCommit, tag, dispatchNonce) {
   if (!payload || typeof payload !== "object" || !Array.isArray(payload.workflow_runs)) {
     throw new Error("GitHub workflow run list was malformed");
   }
@@ -70,8 +71,8 @@ function exactRuns(payload, commit, tag, dispatchNonce) {
       run.id > 0 &&
       run.path === WORKFLOW_PATH &&
       run.event === "workflow_dispatch" &&
-      run.head_sha === commit &&
-      run.head_branch === tag &&
+      run.head_sha === controlCommit &&
+      run.head_branch === CONTROL_BRANCH &&
       run.display_title === `Deploy project site ${tag} ${dispatchNonce}`,
   );
 }
@@ -79,6 +80,7 @@ function exactRuns(payload, commit, tag, dispatchNonce) {
 export async function dispatchAndWaitForSiteDeployment({
   tag,
   commit,
+  controlCommit,
   token,
   fetchImpl = fetch,
   sleep = (milliseconds) => new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds)),
@@ -90,16 +92,19 @@ export async function dispatchAndWaitForSiteDeployment({
 }) {
   if (!VERSION_TAG_PATTERN.test(tag)) throw new Error("tag must be vX.Y.Z");
   if (!COMMIT_PATTERN.test(commit)) throw new Error("commit must be a lowercase 40-character SHA");
+  if (!COMMIT_PATTERN.test(controlCommit)) {
+    throw new Error("controlCommit must be a lowercase 40-character SHA");
+  }
   if (!DISPATCH_NONCE_PATTERN.test(dispatchNonce)) throw new Error("dispatchNonce must be a UUIDv4");
   positiveInteger(pollIntervalMs, "pollIntervalMs");
   positiveInteger(creationTimeoutMs, "creationTimeoutMs");
   positiveInteger(completionTimeoutMs, "completionTimeoutMs");
 
   const workflowUrl = `https://api.github.com/repos/${REPOSITORY}/actions/workflows/${WORKFLOW}`;
-  const runsUrl = `${workflowUrl}/runs?event=workflow_dispatch&head_sha=${commit}&per_page=100`;
+  const runsUrl = `${workflowUrl}/runs?event=workflow_dispatch&head_sha=${controlCommit}&per_page=100`;
   const before = exactRuns(
     await apiJson(runsUrl, { token, fetchImpl }),
-    commit,
+    controlCommit,
     tag,
     dispatchNonce,
   );
@@ -109,7 +114,15 @@ export async function dispatchAndWaitForSiteDeployment({
     token,
     fetchImpl,
     method: "POST",
-    body: { ref: tag, inputs: { release_tag: tag, dispatch_nonce: dispatchNonce } },
+    body: {
+      ref: CONTROL_BRANCH,
+      inputs: {
+        release_tag: tag,
+        release_commit: commit,
+        control_sha: controlCommit,
+        dispatch_nonce: dispatchNonce,
+      },
+    },
   });
   if (dispatch.status !== 204) {
     throw new Error(`GitHub workflow dispatch returned HTTP ${dispatch.status}`);
@@ -120,7 +133,7 @@ export async function dispatchAndWaitForSiteDeployment({
   while (now() <= creationDeadline) {
     const runs = exactRuns(
       await apiJson(runsUrl, { token, fetchImpl }),
-      commit,
+      controlCommit,
       tag,
       dispatchNonce,
     );
@@ -128,13 +141,15 @@ export async function dispatchAndWaitForSiteDeployment({
     if (run) break;
     await sleep(pollIntervalMs);
   }
-  if (!run) throw new Error(`GitHub did not create an exact ${WORKFLOW} run for ${commit}`);
+  if (!run) {
+    throw new Error(`GitHub did not create an exact ${WORKFLOW} run for ${controlCommit}`);
+  }
 
   const completionDeadline = now() + completionTimeoutMs;
   const runUrl = `https://api.github.com/repos/${REPOSITORY}/actions/runs/${run.id}`;
   while (now() <= completionDeadline) {
     const current = await apiJson(runUrl, { token, fetchImpl });
-    const exact = exactRuns({ workflow_runs: [current] }, commit, tag, dispatchNonce)[0];
+    const exact = exactRuns({ workflow_runs: [current] }, controlCommit, tag, dispatchNonce)[0];
     if (!exact || exact.id !== run.id) throw new Error("GitHub site deployment run changed identity");
     if (exact.status === "completed") {
       if (exact.conclusion !== "success") {
@@ -155,10 +170,13 @@ function parseArguments(args) {
     if (!value) throw new Error(`missing value for ${flag ?? "argument"}`);
     if (flag === "--tag") options.tag = value;
     else if (flag === "--commit") options.commit = value;
+    else if (flag === "--control-commit") options.controlCommit = value;
     else throw new Error(`unknown argument ${flag}`);
   }
-  if (!options.tag || !options.commit) {
-    throw new Error("usage: dispatch-site-deployment.mjs --tag vX.Y.Z --commit SHA");
+  if (!options.tag || !options.commit || !options.controlCommit) {
+    throw new Error(
+      "usage: dispatch-site-deployment.mjs --tag vX.Y.Z --commit SHA --control-commit SHA",
+    );
   }
   return options;
 }

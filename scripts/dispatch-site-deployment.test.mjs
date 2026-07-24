@@ -5,6 +5,7 @@ import { dispatchAndWaitForSiteDeployment } from "./dispatch-site-deployment.mjs
 
 const tag = "v0.1.17";
 const commit = "a".repeat(40);
+const controlCommit = "b".repeat(40);
 const dispatchNonce = "11111111-1111-4111-8111-111111111111";
 
 function run(id, overrides = {}) {
@@ -13,8 +14,8 @@ function run(id, overrides = {}) {
     name: `Deploy project site ${tag} ${dispatchNonce}`,
     path: ".github/workflows/deploy-site.yml",
     event: "workflow_dispatch",
-    head_sha: commit,
-    head_branch: tag,
+    head_sha: controlCommit,
+    head_branch: "main",
     display_title: `Deploy project site ${tag} ${dispatchNonce}`,
     status: "queued",
     conclusion: null,
@@ -34,6 +35,7 @@ test("dispatches the site workflow at the immutable tag and awaits its exact suc
   const result = await dispatchAndWaitForSiteDeployment({
     tag,
     commit,
+    controlCommit,
     token: "test-token",
     dispatchNonce,
     pollIntervalMs: 1,
@@ -56,8 +58,13 @@ test("dispatches the site workflow at the immutable tag and awaits its exact suc
   assert.equal(result.runId, 22);
   const dispatch = requests.find(({ url }) => url.endsWith("/dispatches"));
   assert.deepEqual(JSON.parse(dispatch.init.body), {
-    ref: tag,
-    inputs: { release_tag: tag, dispatch_nonce: dispatchNonce },
+    ref: "main",
+    inputs: {
+      release_tag: tag,
+      release_commit: commit,
+      control_sha: controlCommit,
+      dispatch_nonce: dispatchNonce,
+    },
   });
 });
 
@@ -67,6 +74,7 @@ test("fails the release when the exact site deployment run fails", async () => {
     dispatchAndWaitForSiteDeployment({
       tag,
       commit,
+      controlCommit,
       token: "test-token",
       dispatchNonce,
       pollIntervalMs: 1,
@@ -90,6 +98,7 @@ test("ignores mutable-main and independently dispatched runs at the release comm
     dispatchAndWaitForSiteDeployment({
       tag,
       commit,
+      controlCommit,
       token: "test-token",
       dispatchNonce,
       pollIntervalMs: 1,
@@ -100,7 +109,7 @@ test("ignores mutable-main and independently dispatched runs at the release comm
         if (url.endsWith("/dispatches")) return new Response(null, { status: 204 });
         return json({
           workflow_runs: [
-            run(22, { head_branch: "main" }),
+            run(22, { head_branch: tag }),
             run(23, {
               display_title: `Deploy project site ${tag} 22222222-2222-4222-8222-222222222222`,
             }),

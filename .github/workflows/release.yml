@@ -488,11 +488,26 @@ jobs:
         with:
           node-version: 24.13.1
 
+      - name: Resolve trusted site-control source
+        id: site-control
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --no-tags origin "refs/heads/main:refs/remotes/origin/main"
+          control_sha=$(git rev-parse refs/remotes/origin/main)
+          if [[ ! "$control_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "main must resolve to an immutable commit SHA" >&2
+            exit 1
+          fi
+          printf 'control_sha=%s\n' "$control_sha" >> "$GITHUB_OUTPUT"
+
       - name: Dispatch and await the exact immutable production deployment
         env:
+          CONTROL_SHA: ${{ steps.site-control.outputs.control_sha }}
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
         run: >-
           node scripts/dispatch-site-deployment.mjs
           --tag "$RELEASE_TAG"
           --commit "$SOURCE_SHA"
+          --control-commit "$CONTROL_SHA"

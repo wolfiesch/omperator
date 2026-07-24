@@ -194,6 +194,12 @@ function requireAnyText(text, expectedValues, path, errors) {
   }
 }
 
+function requireOneVariant(text, variants, path, errors) {
+  if (!variants.some((variant) => variant.every((expected) => text.includes(expected)))) {
+    errors.push(`${path} does not match a supported release-control variant`);
+  }
+}
+
 function extractWorkflowJob(source, jobName, errors) {
   const lines = source.split(/\r?\n/u);
   const header = `  ${jobName}:`;
@@ -1201,6 +1207,20 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   ]) {
     requireText(releaseWorkflow, expected, ".github/workflows/release.yml", errors);
   }
+  if (
+    (files.get("scripts/dispatch-site-deployment.mjs") ?? "").includes(
+      "control_sha: controlCommit",
+    )
+  ) {
+    for (const expected of [
+      "Resolve trusted site-control source",
+      "git rev-parse refs/remotes/origin/main",
+      "CONTROL_SHA: ${{ steps.site-control.outputs.control_sha }}",
+      '--control-commit "$CONTROL_SHA"',
+    ]) {
+      requireText(releaseWorkflow, expected, ".github/workflows/release.yml", errors);
+    }
+  }
   const releaseVerifyStart = releaseWorkflow.indexOf("  verify:");
   const releaseAuthorityStart = releaseWorkflow.indexOf("  ci-authority:");
   if (!(releaseVerifyStart >= 0 && releaseAuthorityStart > releaseVerifyStart)) {
@@ -1313,21 +1333,33 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
       errors,
     );
   }
+  const siteDispatcher = files.get("scripts/dispatch-site-deployment.mjs") ?? "";
   for (const expected of [
     "dispatchAndWaitForSiteDeployment",
-    "body: { ref: tag, inputs: { release_tag: tag, dispatch_nonce: dispatchNonce } }",
-    "run.head_branch === tag",
-    "run.head_sha === commit",
     "run.display_title === `Deploy project site ${tag} ${dispatchNonce}`",
     'exact.conclusion !== "success"',
   ]) {
-    requireText(
-      files.get("scripts/dispatch-site-deployment.mjs") ?? "",
-      expected,
-      "scripts/dispatch-site-deployment.mjs",
-      errors,
-    );
+    requireText(siteDispatcher, expected, "scripts/dispatch-site-deployment.mjs", errors);
   }
+  requireOneVariant(
+    siteDispatcher,
+    [
+      [
+        "body: { ref: tag, inputs: { release_tag: tag, dispatch_nonce: dispatchNonce } }",
+        "run.head_branch === tag",
+        "run.head_sha === commit",
+      ],
+      [
+        "ref: CONTROL_BRANCH",
+        "release_commit: commit",
+        "control_sha: controlCommit",
+        "run.head_branch === CONTROL_BRANCH",
+        "run.head_sha === controlCommit",
+      ],
+    ],
+    "scripts/dispatch-site-deployment.mjs",
+    errors,
+  );
   if (releaseWorkflow.includes("ref: ${{ env.RELEASE_TAG }}")) {
     errors.push(
       ".github/workflows/release.yml must build from the verified immutable source SHA, not env.RELEASE_TAG",
@@ -1357,30 +1389,48 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     ".github/workflows/deploy-site.yml",
     errors,
   );
+  const deploySiteWorkflow = files.get(".github/workflows/deploy-site.yml") ?? "";
   for (const expected of [
     "run-name: Deploy project site ${{ inputs.release_tag || github.ref_name }} ${{ inputs.dispatch_nonce || github.sha }}",
-    "startsWith(github.ref, 'refs/tags/')",
     "dispatch_nonce:",
-    '[[ "$GITHUB_REF" != "refs/tags/${expected_tag}" ]]',
-    '[[ "$source_sha" != "$TRUSTED_SHA" ]]',
     'git merge-base --is-ancestor "$source_sha" "$TRUSTED_SHA"',
   ]) {
     requireText(
-      files.get(".github/workflows/deploy-site.yml") ?? "",
+      deploySiteWorkflow,
       expected,
       ".github/workflows/deploy-site.yml",
       errors,
     );
   }
-  requireText(
-    files.get(".github/workflows/deploy-site.yml") ?? "",
-    "ref: ${{ steps.immutable_source.outputs.source_sha }}",
+  requireOneVariant(
+    deploySiteWorkflow,
+    [
+      [
+        "startsWith(github.ref, 'refs/tags/')",
+        '[[ "$GITHUB_REF" != "refs/tags/${expected_tag}" ]]',
+        '[[ "$source_sha" != "$TRUSTED_SHA" ]]',
+        'release_tag="$expected_tag"',
+      ],
+      [
+        "github.ref == 'refs/heads/main'",
+        "release_commit:",
+        "control_sha:",
+        "Resolve requested release identity",
+        'release_version="${release_tag#v}"',
+        "RELEASE_VERSION: ${{ steps.release_identity.outputs.release_version }}",
+        '[[ "$GITHUB_REF" != "refs/heads/main" ]]',
+        '[[ "$source_sha" != "$REQUESTED_RELEASE_COMMIT" ]]',
+        'release_tag="$RELEASE_TAG"',
+        "path: .release-source",
+        "working-directory: .release-source",
+      ],
+    ],
     ".github/workflows/deploy-site.yml",
     errors,
   );
   requireText(
     files.get(".github/workflows/deploy-site.yml") ?? "",
-    'release_tag="$expected_tag"',
+    "ref: ${{ steps.immutable_source.outputs.source_sha }}",
     ".github/workflows/deploy-site.yml",
     errors,
   );

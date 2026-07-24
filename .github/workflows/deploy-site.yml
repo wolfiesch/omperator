@@ -27,6 +27,14 @@ on:
         description: Published release tag whose immutable source must be deployed.
         required: true
         type: string
+      release_commit:
+        description: Immutable commit resolved from the published release tag.
+        required: true
+        type: string
+      control_sha:
+        description: Trusted main commit that dispatched this deployment.
+        required: true
+        type: string
       dispatch_nonce:
         description: Unique release-workflow dispatch identity.
         required: true
@@ -90,7 +98,7 @@ jobs:
         run: pnpm deploy:demo
 
   deploy:
-    if: ${{ github.event_name != 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
+    if: ${{ github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     environment:
@@ -114,6 +122,27 @@ jobs:
           version=$(node -p "require('./package.json').version")
           printf 'version=%s\ntrusted_sha=%s\n' "$version" "$TRUSTED_SHA" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve requested release identity
+        id: release_identity
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_RELEASE_TAG: ${{ inputs.release_tag }}
+          TRUSTED_VERSION: ${{ steps.source.outputs.version }}
+        run: |
+          set -euo pipefail
+          release_tag="v${TRUSTED_VERSION}"
+          release_version="$TRUSTED_VERSION"
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ ! "$REQUESTED_RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "release_tag must be vX.Y.Z" >&2
+              exit 1
+            fi
+            release_tag="$REQUESTED_RELEASE_TAG"
+            release_version="${release_tag#v}"
+          fi
+          printf 'release_tag=%s\nrelease_version=%s\n' "$release_tag" "$release_version" >> "$GITHUB_OUTPUT"
+
       - name: Install pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
@@ -128,7 +157,7 @@ jobs:
         id: published_release
         if: ${{ github.event_name == 'workflow_dispatch' }}
         env:
-          RELEASE_VERSION: ${{ steps.source.outputs.version }}
+          RELEASE_VERSION: ${{ steps.release_identity.outputs.release_version }}
         run: node scripts/wait-for-release-assets.mjs --version "$RELEASE_VERSION" --timeout-ms 2400000 --interval-ms 15000
 
       - name: Classify the stable release referenced by an ordinary main push
@@ -136,14 +165,14 @@ jobs:
         if: ${{ github.event_name == 'push' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ steps.source.outputs.version }}
+          RELEASE_VERSION: ${{ steps.release_identity.outputs.release_version }}
         run: node scripts/check-release-publication.mjs --version "$RELEASE_VERSION" --github-output "$GITHUB_OUTPUT"
 
       - name: Confirm assets for an existing stable release
         id: existing_release
         if: ${{ github.event_name == 'push' && steps.release_state.outputs.state == 'published' }}
         env:
-          RELEASE_VERSION: ${{ steps.source.outputs.version }}
+          RELEASE_VERSION: ${{ steps.release_identity.outputs.release_version }}
         run: node scripts/wait-for-release-assets.mjs --version "$RELEASE_VERSION" --timeout-ms 15000 --interval-ms 3000
 
       - name: Defer a release-version site update until publication
@@ -157,20 +186,25 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           GH_TOKEN: ${{ github.token }}
+          REQUESTED_CONTROL_SHA: ${{ inputs.control_sha }}
+          REQUESTED_RELEASE_COMMIT: ${{ inputs.release_commit }}
+          RELEASE_TAG: ${{ steps.release_identity.outputs.release_tag }}
+          RELEASE_VERSION: ${{ steps.release_identity.outputs.release_version }}
           TRUSTED_SHA: ${{ steps.source.outputs.trusted_sha }}
-          REQUESTED_RELEASE_TAG: ${{ inputs.release_tag }}
-          TRUSTED_VERSION: ${{ steps.source.outputs.version }}
         run: |
           set -euo pipefail
-          expected_tag="v${TRUSTED_VERSION}"
-          release_tag="$expected_tag"
+          release_tag="$RELEASE_TAG"
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            if [[ "$REQUESTED_RELEASE_TAG" != "$expected_tag" ]]; then
-              echo "release_tag must be the current release ${expected_tag}" >&2
+            if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+              echo "workflow_dispatch must run from the trusted main branch" >&2
               exit 1
             fi
-            if [[ "$GITHUB_REF" != "refs/tags/${expected_tag}" ]]; then
-              echo "workflow_dispatch must run from the immutable release tag ${expected_tag}" >&2
+            if [[ ! "$REQUESTED_CONTROL_SHA" =~ ^[0-9a-f]{40}$ || "$REQUESTED_CONTROL_SHA" != "$TRUSTED_SHA" ]]; then
+              echo "control_sha must match the trusted workflow source" >&2
+              exit 1
+            fi
+            if [[ ! "$REQUESTED_RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "release_commit must be an immutable commit SHA" >&2
               exit 1
             fi
             release_tag="$REQUESTED_RELEASE_TAG"
@@ -183,16 +217,17 @@ jobs:
           git fetch --force origin "refs/tags/${release_tag}:refs/tags/${release_tag}"
           source_sha=$(git rev-parse "${release_tag}^{commit}")
           tag_version=$(git show "${source_sha}:package.json" | jq -er '.version')
-          if [[ "$tag_version" != "$TRUSTED_VERSION" ]]; then
-            echo "release tag package version ${tag_version} does not match trusted source ${TRUSTED_VERSION}" >&2
+          if [[ "$tag_version" != "$RELEASE_VERSION" ]]; then
+            echo "release tag package version ${tag_version} does not match requested version ${RELEASE_VERSION}" >&2
             exit 1
           fi
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            if [[ "$source_sha" != "$TRUSTED_SHA" ]]; then
-              echo "release tag moved after this immutable deployment was dispatched" >&2
+            if [[ "$source_sha" != "$REQUESTED_RELEASE_COMMIT" ]]; then
+              echo "release tag no longer resolves to the requested immutable commit" >&2
               exit 1
             fi
-          elif ! git merge-base --is-ancestor "$source_sha" "$TRUSTED_SHA"; then
+          fi
+          if ! git merge-base --is-ancestor "$source_sha" "$TRUSTED_SHA"; then
             echo "release tag source is not reachable from the trusted workflow source" >&2
             exit 1
           fi
@@ -203,10 +238,12 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ steps.immutable_source.outputs.source_sha }}
+          path: .release-source
           persist-credentials: false
 
       - name: Install dependencies
         if: ${{ steps.published_release.outcome == 'success' || steps.existing_release.outcome == 'success' }}
+        working-directory: .release-source
         run: pnpm install --frozen-lockfile
 
       - name: Authenticate to AWS with GitHub OIDC
@@ -226,6 +263,7 @@ jobs:
 
       - name: Build and deploy immutable release site
         if: ${{ steps.published_release.outcome == 'success' || steps.existing_release.outcome == 'success' }}
+        working-directory: .release-source
         env:
           GH_TOKEN: ${{ github.token }}
           T4_SITE_BUCKET: ${{ vars.T4_SITE_BUCKET }}
