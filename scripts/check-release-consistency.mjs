@@ -1419,17 +1419,38 @@ export function checkReleaseConsistency(repoRoot, releaseTag) {
   return collectReleaseConsistencyErrors(loadReleaseContractFiles(repoRoot), releaseTag);
 }
 
-function parseTagArgument(args) {
-  if (args.length === 0) return undefined;
-  if (args.length === 2 && args[0] === "--tag" && args[1]) return args[1];
-  throw new Error("usage: node scripts/check-release-consistency.mjs [--tag vX.Y.Z]");
+export function parseCliArguments(args, cwd = process.cwd()) {
+  let releaseTag;
+  let repoRoot = resolve(cwd);
+  let repoRootProvided = false;
+  for (let index = 0; index < args.length; index += 2) {
+    const option = args[index];
+    const value = args[index + 1];
+    if (!value) {
+      throw new Error(
+        "usage: node scripts/check-release-consistency.mjs [--tag vX.Y.Z] [--repo-root path]",
+      );
+    }
+    if (option === "--tag" && releaseTag === undefined) {
+      releaseTag = value;
+    } else if (option === "--repo-root" && !repoRootProvided) {
+      repoRoot = resolve(cwd, value);
+      repoRootProvided = true;
+    } else {
+      throw new Error(
+        "usage: node scripts/check-release-consistency.mjs [--tag vX.Y.Z] [--repo-root path]",
+      );
+    }
+  }
+  return { releaseTag, repoRoot };
 }
 
 const isMain =
   process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 if (isMain) {
   try {
-    const errors = checkReleaseConsistency(process.cwd(), parseTagArgument(process.argv.slice(2)));
+    const { releaseTag, repoRoot } = parseCliArguments(process.argv.slice(2));
+    const errors = checkReleaseConsistency(repoRoot, releaseTag);
     if (errors.length > 0) {
       console.error(
         `Release consistency check failed with ${errors.length} error${errors.length === 1 ? "" : "s"}:`,
@@ -1437,9 +1458,7 @@ if (isMain) {
       for (const error of errors) console.error(`- ${error}`);
       process.exitCode = 1;
     } else {
-      const version = JSON.parse(
-        readFileSync(resolve(process.cwd(), "package.json"), "utf8"),
-      ).version;
+      const version = JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8")).version;
       console.log(`Release consistency check passed for v${version}.`);
     }
   } catch (error) {

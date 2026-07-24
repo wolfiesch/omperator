@@ -72,6 +72,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ steps.source.outputs.source_sha }}
+          path: .release-source
           persist-credentials: false
 
       - name: Install Node.js
@@ -80,7 +81,7 @@ jobs:
           node-version: 24.13.1
 
       - name: Verify tag, packages, clients, docs, and downloads agree
-        run: node scripts/check-release-consistency.mjs --tag "$RELEASE_TAG"
+        run: node scripts/check-release-consistency.mjs --tag "$RELEASE_TAG" --repo-root .release-source
 
   ci-authority:
     needs: verify

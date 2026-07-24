@@ -9,6 +9,7 @@ import {
   collectReleaseConsistencyErrors,
   discoverReleasePackagePaths,
   loadReleaseContractFiles,
+  parseCliArguments,
 } from "./check-release-consistency.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "..");
@@ -433,6 +434,28 @@ test("historical repair runs CI authority from trusted control while querying ol
   const queriedSha = resolveWorkflowExpression(authorityStep.env[commitVariable], context);
   assert.equal(queriedSha, historicalSourceSha);
   assert.notEqual(checkoutSha, queriedSha);
+});
+
+test("historical repair keeps trusted verification code separate from immutable source", () => {
+  const verifyJob = requiredWorkflowJob(files.get(".github/workflows/release.yml"), "verify");
+  const controlCheckout = requiredNamedStep(verifyJob, "Check out trusted release-control source");
+  const sourceCheckout = requiredNamedStep(verifyJob, "Check out immutable release source");
+  const consistencyStep = requiredNamedStep(
+    verifyJob,
+    "Verify tag, packages, clients, docs, and downloads agree",
+  );
+
+  assert.equal(controlCheckout.with.ref, "${{ github.sha }}");
+  assert.equal(sourceCheckout.with.ref, "${{ steps.source.outputs.source_sha }}");
+  assert.equal(sourceCheckout.with.path, ".release-source");
+  assert.equal(
+    consistencyStep.run,
+    'node scripts/check-release-consistency.mjs --tag "$RELEASE_TAG" --repo-root .release-source',
+  );
+  assert.deepEqual(parseCliArguments(["--tag", "v0.1.31", "--repo-root", ".release-source"]), {
+    releaseTag: "v0.1.31",
+    repoRoot: resolve(".release-source"),
+  });
 });
 
 test("rejects published app-wire version drift until release surfaces agree", () => {
