@@ -39,6 +39,25 @@ export function formatHostTrace(
 	return `[t4-host-trace] req=${requestId} command=${command} phase=${phase}${elapsed}`;
 }
 
+/**
+ * Diagnostics must never change dispatch behaviour, so a sink that throws is
+ * swallowed rather than surfaced as a command failure.
+ */
+function emitHostTrace(
+	sink: HostTraceSink | undefined,
+	requestId: string,
+	command: string,
+	phase: string,
+	elapsedMs?: number,
+): void {
+	if (!sink) return;
+	try {
+		sink(formatHostTrace(requestId, command, phase, elapsedMs));
+	} catch {
+		// A broken diagnostic sink must not break the command it is observing.
+	}
+}
+
 export interface OperationContext {
 	hostId: HostId;
 	sessionId?: SessionId;
@@ -357,15 +376,15 @@ export class DesktopOperationDispatcher implements OperationCommandHandler {
 		// Every path below emits a terminal phase, otherwise a rejection and an
 		// interrupted process would look identical.
 		const startedAt = performance.now();
-		this.trace(formatHostTrace(command.requestId, command.command, "ingress"));
+		emitHostTrace(this.trace, command.requestId, command.command, "ingress");
 		try {
 			const result = await this.dispatchInner(command, context);
 			const ms = Math.round(performance.now() - startedAt);
-			this.trace(formatHostTrace(command.requestId, command.command, "returned", ms));
+			emitHostTrace(this.trace, command.requestId, command.command, "returned", ms);
 			return result;
 		} catch (error) {
 			const ms = Math.round(performance.now() - startedAt);
-			this.trace(formatHostTrace(command.requestId, command.command, "threw", ms));
+			emitHostTrace(this.trace, command.requestId, command.command, "threw", ms);
 			throw error;
 		}
 	}
@@ -418,16 +437,15 @@ export class DesktopOperationDispatcher implements OperationCommandHandler {
 			// `authority-invoke` with no matching `authority-ok` means the command
 			// reached the host and stalled inside the authority, which is the case
 			// a client-side timeout alone cannot distinguish.
-			this.trace?.(formatHostTrace(command.requestId, command.command, "authority-invoke"));
+			emitHostTrace(this.trace, command.requestId, command.command, "authority-invoke");
 			const authorityStartedAt = performance.now();
 			const result = await invoke(this.authority, command.command, args, operationContext);
-			this.trace?.(
-				formatHostTrace(
-					command.requestId,
-					command.command,
-					"authority-ok",
-					Math.round(performance.now() - authorityStartedAt),
-				),
+			emitHostTrace(
+				this.trace,
+				command.requestId,
+				command.command,
+				"authority-ok",
+				Math.round(performance.now() - authorityStartedAt),
 			);
 			const decoded = cloneFreeze(decodeCommandResult(command.command, result));
 			if (command.command === "term.open" && typeof decoded.terminalId === "string" && context.sessionId) {

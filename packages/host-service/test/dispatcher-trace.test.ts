@@ -105,4 +105,74 @@ describe("host ingress trace", () => {
 		// It never reached the authority.
 		expect(lines.some(line => line.includes("phase=authority-invoke"))).toBe(false);
 	});
+
+	it("emits the full phase sequence when the authority answers", async () => {
+		const lines: string[] = [];
+		const dispatcher = new DesktopOperationDispatcher(
+			{ settingsRead: async () => ({ settings: {} }) } as never,
+			undefined,
+			undefined,
+			line => lines.push(line),
+		);
+		const frame = {
+			v: 1,
+			type: "command",
+			requestId: "req-ok",
+			commandId: "cmd-3",
+			hostId: "host-1",
+			command: "settings.read",
+			args: {},
+		};
+		const context = {
+			hostId: "host-1",
+			deviceId: "device-1",
+			connectionId: "conn-1",
+			capabilities: new Set(["config.read"]),
+			abortSignal: new AbortController().signal,
+		};
+
+		await dispatcher.dispatch(frame as never, context as never).catch(() => undefined);
+
+		// The ordering is the diagnostic: reaching the authority is what separates
+		// a host-side stall from an authority-side one.
+		const phases = lines.map(line => (line.match(/phase=(\S+)/) ?? [])[1]);
+		expect(phases[0]).toBe("ingress");
+		expect(phases).toContain("authority-invoke");
+		expect(phases.at(-1)).toMatch(/^(returned|threw)$/);
+	});
+
+	it("does not let a throwing sink break the command it observes", async () => {
+		const dispatcher = new DesktopOperationDispatcher(
+			{ settingsRead: async () => ({ settings: {} }) } as never,
+			undefined,
+			undefined,
+			() => {
+				throw new Error("sink exploded");
+			},
+		);
+		const frame = {
+			v: 1,
+			type: "command",
+			requestId: "req-sink",
+			commandId: "cmd-4",
+			hostId: "host-1",
+			command: "settings.read",
+			args: {},
+		};
+		const context = {
+			hostId: "host-1",
+			deviceId: "device-1",
+			connectionId: "conn-1",
+			capabilities: new Set(["config.read"]),
+			abortSignal: new AbortController().signal,
+		};
+
+		// The sink throws on every phase; the dispatch must still settle on its
+		// own terms rather than surfacing a diagnostics failure.
+		let sinkError: unknown;
+		await dispatcher.dispatch(frame as never, context as never).catch((error: unknown) => {
+			sinkError = error;
+		});
+		expect(String((sinkError as Error | undefined)?.message ?? "")).not.toContain("sink exploded");
+	});
 });
