@@ -16,7 +16,6 @@ export const linuxUpdatePublish = {
 const config = {
   appId: "com.lycaonsolutions.t4code",
   productName: "T4 Code",
-  executableName: "t4-code",
   electronVersion: "41.5.0",
   artifactName: "T4-Code-${version}-${os}-${arch}.${ext}",
   directories: {
@@ -37,6 +36,7 @@ const config = {
   ],
   protocols: [{ name: "T4 Code", schemes: ["t4-code"] }],
   linux: {
+    executableName: "t4-code",
     category: "Development",
     icon: "apps/desktop/build/icons",
     publish: [linuxUpdatePublish],

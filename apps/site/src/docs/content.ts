@@ -100,6 +100,10 @@ const install: DocTopic = {
       kind: "note",
       text: `The v${RELEASE_VERSION} macOS build is signed with the project's pinned Developer ID identity and notarized by Apple. The release workflow verifies both downloadable formats with Gatekeeper before publication.`,
     },
+    {
+      kind: "note",
+      text: "Upgrade note for v0.1.32 only: its DMG named the bundle `t4-code.app`. Before installing a newer release, quit T4 Code and move `/Applications/t4-code.app` to the Trash, then copy `T4 Code.app` into Applications. Removing the old application bundle does not remove your T4 Code settings or sessions.",
+    },
     { kind: "h3", id: "install-gatekeeper", text: "First launch on macOS" },
     { kind: "p", text: "After copying the app into Applications, open T4 Code normally." },
     {

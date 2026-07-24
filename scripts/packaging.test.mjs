@@ -87,6 +87,9 @@ function androidReleaseFixture(overrides = {}) {
 test("builder config keeps release contract", () => {
   assert.equal(config.appId, "com.lycaonsolutions.t4code");
   assert.equal(config.productName, "T4 Code");
+  assert.equal(config.executableName, undefined);
+  assert.equal(config.linux.executableName, "t4-code");
+  assert.equal(config.mac.executableName, undefined);
   assert.equal(config.asar, true);
   assert.deepEqual(config.protocols[0].schemes, ["t4-code"]);
   assert.equal(config.linux.category, "Development");

@@ -83,6 +83,11 @@ chmod +x T4-Code-0.1.31-linux-x86_64.AppImage
 3. Open T4 Code normally. The release workflow verifies the pinned publisher, hardened runtime, secure timestamp, Apple notarization, stapled ticket, and Gatekeeper acceptance before publication.
 4. To start terminal or CMUX sessions that can hand off to T4 Code, open **Settings → Hosts** and choose **Install t4-omp**. This adds `~/.local/bin/t4-omp` and leaves any existing `omp` command unchanged.
 
+Upgrade note for v0.1.32 only: its DMG named the bundle `t4-code.app`. Before installing a
+newer release, quit T4 Code and move `/Applications/t4-code.app` to the Trash, then copy
+`T4 Code.app` into `/Applications`. Removing the old application bundle does not remove
+your T4 Code settings or sessions.
+
 ## What the app does
 
 - **Sessions.** Browse sessions grouped by their working folder, create new ones, and switch between them. Rename, terminate a stuck runtime, archive, restore, or permanently delete a session from its menu. Recently used sessions stay warm, so switching back is instant and nothing is replayed twice.

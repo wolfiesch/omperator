@@ -10,6 +10,23 @@ session and transcript behavior, native Browser workspace, terminal, files, revi
 credentials, and signed update path. The public demo now builds from the same React client shipped
 inside Electron, eliminating a second product implementation.
 
+## Session controls without lock takeover
+
+New sessions created in T4 Code now restore their semantic thinking-level and fast-mode state after
+attachment and transport reconnects. Existing sessions, including sessions owned by an OMP TUI,
+remain observer-only: T4 does not issue the legacy state read that can start a supervisor and claim
+the session lock.
+
+Pull-request CI now treats client runtime changes as bridge-boundary changes and runs both the
+current-runtime and pinned-legacy continuity gates.
+
+## macOS application identity
+
+The v0.1.32 DMG accidentally named its bundle `t4-code.app` instead of the documented
+`T4 Code.app`. Before installing a newer release, quit T4 Code and move
+`/Applications/t4-code.app` to the Trash, then copy the new `T4 Code.app` into Applications.
+Removing the old application bundle does not remove T4 Code settings or sessions.
+
 ## A session rail built for large libraries
 
 T4 Code v0.1.31 makes a large session library easier to navigate. The rail now supports text search, activity filters, newest/oldest sorting, grouped and flat layouts, collapsible project folders, and saved display preferences. Those controls follow the Codex desktop organization model while keeping OMP as the source of truth.

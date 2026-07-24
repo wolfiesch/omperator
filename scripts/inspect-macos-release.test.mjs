@@ -5,6 +5,7 @@ import { test } from "node:test";
 import {
   parseCodesignDisplay,
   validateMacosLibraryValidationBoundary,
+  validateMacosAppBundleName,
   validateMacosIdentityContract,
   validateMacosSignatureReport,
 } from "./inspect-macos-release.mjs";
@@ -14,7 +15,7 @@ const identity = JSON.parse(
 );
 
 const displayFixture = `
-Executable=/Applications/T4 Code.app/Contents/MacOS/t4-code
+Executable=/Applications/T4 Code.app/Contents/MacOS/T4 Code
 Identifier=com.lycaonsolutions.t4code
 Format=app bundle with Mach-O thin (arm64)
 CodeDirectory v=20500 size=640 flags=0x10000(runtime) hashes=10+7 location=embedded
@@ -24,6 +25,17 @@ Authority=Apple Root CA
 Timestamp=Jul 18, 2026 at 8:30:00 PM
 TeamIdentifier=WJLM3D3DK6
 `;
+
+test("macOS release archives preserve the canonical application bundle name", () => {
+  assert.equal(
+    validateMacosAppBundleName("/Volumes/T4 Code/T4 Code.app"),
+    "/Volumes/T4 Code/T4 Code.app",
+  );
+  assert.throws(
+    () => validateMacosAppBundleName("/Volumes/T4 Code/t4-code.app"),
+    /must be named T4 Code\.app; found t4-code\.app/u,
+  );
+});
 
 test("macOS release identity pins the public Developer ID contract", () => {
   assert.doesNotThrow(() => validateMacosIdentityContract(identity));
