@@ -11,7 +11,7 @@ import {
 
 const publishedRelease = {
   tag_name: "v0.1.17",
-  html_url: "https://github.com/LycaonLLC/t4-code/releases/tag/v0.1.17",
+  html_url: "https://github.com/wolfiesch/omperator/releases/tag/v0.1.17",
   draft: false,
   prerelease: false,
   published_at: "2026-07-15T00:00:00Z",
@@ -69,7 +69,7 @@ test("accepts an exact published stable release", async () => {
   });
   assert.equal(
     request[0],
-    "https://api.github.com/repos/LycaonLLC/t4-code/releases/tags/v0.1.17",
+    "https://api.github.com/repos/wolfiesch/omperator/releases/tags/v0.1.17",
   );
   assert.equal(request[1].headers.Authorization, "Bearer test-token");
 });

@@ -72,6 +72,19 @@ test("current source tree has one consistent release version", () => {
   assert.deepEqual(collectReleaseConsistencyErrors(files), []);
 });
 
+test("rejects the frozen legacy repository as an active release dependency", () => {
+  const legacyRepository = ["LycaonLLC", "t4-code"].join("/");
+  const drifted = changed(
+    "apps/site/src/release.ts",
+    (text) => `${text}\n// https://github.com/${legacyRepository}/releases\n`,
+  );
+  assert.ok(
+    collectReleaseConsistencyErrors(drifted).some((error) =>
+      error.includes("must not depend on the frozen legacy release repository"),
+    ),
+  );
+});
+
 test("release package discovery ignores non-Node package directories", () => {
   assert.equal(discoverReleasePackagePaths(repoRoot).includes("packages/cluster-operator/package.json"), false);
 });
@@ -173,7 +186,7 @@ test("pins official OMP artifacts and the Gate 0 proof contract", () => {
 test("rejects a tag that differs from the package version", () => {
   assert.ok(
     collectReleaseConsistencyErrors(files, "v9.9.9").some((error) =>
-      error.includes("release tag v9.9.9 does not match v0.1.31"),
+      error.includes("release tag v9.9.9 does not match v0.1.33"),
     ),
   );
 });
@@ -202,7 +215,7 @@ test("tagged releases reject published provenance drift", () => {
   for (const [field, mutate] of appWireCases) {
     const drifted = changedRuntime("publishedAppWire", mutate);
     assert.ok(
-      collectReleaseConsistencyErrors(drifted, "v0.1.31").some((error) =>
+      collectReleaseConsistencyErrors(drifted, "v0.1.33").some((error) =>
         error.includes(
           `published app-wire ${field} must match current app-wire for tagged releases`,
         ),
@@ -245,7 +258,7 @@ test("tagged releases reject published provenance drift", () => {
   for (const [field, mutate] of runtimeCases) {
     const drifted = changedRuntime("publishedRuntime", mutate);
     assert.ok(
-      collectReleaseConsistencyErrors(drifted, "v0.1.31").some((error) =>
+      collectReleaseConsistencyErrors(drifted, "v0.1.33").some((error) =>
         error.includes(
           `published runtime ${field} must match current verified runtime for tagged releases`,
         ),
@@ -257,7 +270,7 @@ test("tagged releases reject published provenance drift", () => {
     runtime.artifactSha256 = "0".repeat(64);
   });
   assert.ok(
-    collectReleaseConsistencyErrors(extended, "v0.1.31").some((error) =>
+    collectReleaseConsistencyErrors(extended, "v0.1.33").some((error) =>
       error.includes(
         "published runtime must exactly match current verified runtime for tagged releases",
       ),
@@ -267,15 +280,15 @@ test("tagged releases reject published provenance drift", () => {
 
 test("rejects workspace, site, README, and runtime version drift", () => {
   const cases = [
-    ["apps/web/package.json", (text) => text.replace('"version": "0.1.31"', '"version": "0.1.3"')],
+    ["apps/web/package.json", (text) => text.replace('"version": "0.1.33"', '"version": "0.1.3"')],
     [
       "apps/site/src/release.ts",
-      (text) => text.replace('RELEASE_TAG = "v0.1.31"', 'RELEASE_TAG = "v0.1.3"'),
+      (text) => text.replace('RELEASE_TAG = "v0.1.33"', 'RELEASE_TAG = "v0.1.3"'),
     ],
-    ["README.md", (text) => text.replace("Download v0.1.31", "Download v0.1.3")],
+    ["README.md", (text) => text.replace("Download v0.1.33", "Download v0.1.3")],
     [
       "apps/desktop/src/target-manager.ts",
-      (text) => text.replace('version: "0.1.31"', 'version: "0.1.3"'),
+      (text) => text.replace('version: "0.1.33"', 'version: "0.1.3"'),
     ],
     [
       "apps/site/src/docs/content.ts",
@@ -305,7 +318,7 @@ test("rejects version drift in a newly added workspace package", () => {
 
 test("rejects updater channel, stable manifest, and publication-contract drift", () => {
   const cases = [
-    ["electron-builder.config.mjs", (text) => text.replace('repo: "t4-code"', 'repo: "renamed"')],
+    ["electron-builder.config.mjs", (text) => text.replace('repo: "omperator"', 'repo: "renamed"')],
     [
       "scripts/generate-release-manifest.mjs",
       (text) =>
@@ -460,8 +473,8 @@ test("historical repair keeps trusted verification code separate from immutable 
     consistencyStep.run,
     'node scripts/check-release-consistency.mjs --tag "$RELEASE_TAG" --repo-root .release-source',
   );
-  assert.deepEqual(parseCliArguments(["--tag", "v0.1.31", "--repo-root", ".release-source"]), {
-    releaseTag: "v0.1.31",
+  assert.deepEqual(parseCliArguments(["--tag", "v0.1.33", "--repo-root", ".release-source"]), {
+    releaseTag: "v0.1.33",
     repoRoot: resolve(".release-source"),
   });
 });
@@ -636,11 +649,11 @@ test("accepts a current app-wire update without rewriting published release surf
 
 test("rejects stale README release URLs while allowing historical prose", () => {
   const oldTag = ["v0", "1", "3"].join(".");
-  const oldReleaseUrl = `https://github.com/LycaonLLC/t4-code/releases/tag/${oldTag}`;
+  const oldReleaseUrl = `https://github.com/wolfiesch/omperator/releases/tag/${oldTag}`;
   const staleLink = changed("README.md", (text) => `${text}\n[Old release](${oldReleaseUrl})\n`);
   assert.ok(
     collectReleaseConsistencyErrors(staleLink).some((error) =>
-      error.includes("release URL for v0.1.3; expected v0.1.31"),
+      error.includes("release URL for v0.1.3; expected v0.1.33"),
     ),
   );
   assert.deepEqual(collectReleaseConsistencyErrors(files), []);

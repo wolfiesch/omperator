@@ -6,10 +6,13 @@ settings should match it; changes to the contract land through pull requests.
 ## Repository model
 
 - `main` is the only integration and release branch.
-- `origin` is `wolfiesch/omperator` and is authoritative for product work.
-- `upstream` is the original `LycaonLLC/t4-code` repository and is fetch-only in
-  the canonical local checkout. Upstream changes are selected deliberately and
-  imported through ordinary reviewed pull requests. There is no automatic sync.
+- `origin` is `wolfiesch/omperator` and is the permanent authority for product
+  work, CI, signing, releases, update metadata, and website deployment.
+- `LycaonLLC/t4-code` is a frozen legacy release record. It is not an upstream,
+  mirror, release-control repository, or publication target. No new product
+  commits, pull requests, tags, releases, or deployment dispatches belong there.
+- A local remote for the legacy repository may remain fetch-only while historical
+  releases are being verified. It must never be used as a push target.
 - `can1357/oh-my-pi` remains the upstream runtime project. OMP runtime updates
   follow the pinned compatibility and provenance contracts already in this repo.
 
@@ -93,6 +96,7 @@ successful exact-SHA CI. The release workflow owns packaging and publication.
 macOS notarization, Android signing, updater metadata, deployment credentials,
 and GitHub environments remain owner-controlled.
 
-Until Omperator's application identifiers and artifacts are rebranded, do not
-publish a new stable tag from this repository. Existing T4 release tags and
-artifacts remain historical upstream records rather than Omperator releases.
+Application identifiers and the T4 Code product name may remain stable for
+upgrade compatibility; they do not determine repository ownership. All new
+stable tags and artifacts are published from `wolfiesch/omperator`. Existing
+releases in `LycaonLLC/t4-code` remain historical records only.

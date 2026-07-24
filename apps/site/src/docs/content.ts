@@ -582,7 +582,7 @@ const security: DocTopic = {
     { kind: "h2", id: "security-unsigned", text: "Signed macOS releases" },
     {
       kind: "p",
-      text: `The v${RELEASE_VERSION} macOS build is signed with the project's pinned Developer ID identity and notarized by Apple. Publication stops if the certificate, Team ID, hardened runtime, secure timestamp, stapled ticket, or Gatekeeper result drifts. You can also [build from source](#build-from-source). The repository is public at [LycaonLLC/t4-code](${REPO_URL}).`,
+      text: `The v${RELEASE_VERSION} macOS build is signed with the project's pinned Developer ID identity and notarized by Apple. Publication stops if the certificate, Team ID, hardened runtime, secure timestamp, stapled ticket, or Gatekeeper result drifts. You can also [build from source](#build-from-source). The repository is public at [wolfiesch/omperator](${REPO_URL}).`,
     },
     { kind: "h2", id: "security-credentials", text: "Credentials" },
     {

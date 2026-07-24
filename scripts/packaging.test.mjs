@@ -94,7 +94,7 @@ test("builder config keeps release contract", () => {
   assert.deepEqual(config.protocols[0].schemes, ["t4-code"]);
   assert.equal(config.linux.category, "Development");
   assert.deepEqual(config.linux.publish, [
-    { provider: "github", owner: "LycaonLLC", repo: "t4-code", channel: "latest" },
+    { provider: "github", owner: "wolfiesch", repo: "omperator", channel: "latest" },
   ]);
   assert.equal(config.mac.category, "public.app-category.developer-tools");
   assert.deepEqual(config.mac.publish, []);

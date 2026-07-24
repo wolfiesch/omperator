@@ -22,6 +22,7 @@ export const RELEASE_CONTRACT_PATHS = [
   "compat/official-omp-gate0.json",
   "compat/omp-app-matrix.json",
   "docs/CURRENT_RELEASE_NOTES.md",
+  "docs/GITHUB_OPERATIONS.md",
   "docs/MACOS_SIGNING.md",
   "docs/RELEASE_GATE.md",
   "ops/t4-maintainer/README.md",
@@ -39,7 +40,8 @@ export const RELEASE_CONTRACT_PATHS = [
   "vendor/app-wire/manifest.json",
 ];
 
-const REPOSITORY_URL = "https://github.com/LycaonLLC/t4-code";
+const REPOSITORY_URL = "https://github.com/wolfiesch/omperator";
+const LEGACY_RELEASE_REPOSITORY_URL_FRAGMENT = ["github.com", "LycaonLLC", "t4-code"].join("/");
 const OMP_RUNTIME_REPOSITORY = "https://github.com/wolfiesch/oh-my-pi";
 const OMP_APP_WIRE_SOURCE_REPOSITORY = "https://github.com/lyc-aon/oh-my-pi";
 const OMP_UPSTREAM_REPOSITORY = "https://github.com/can1357/oh-my-pi";
@@ -441,6 +443,24 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     return errors;
   }
   const expectedTag = `v${version}`;
+
+  for (const [path, source] of files) {
+    if (source.includes(LEGACY_RELEASE_REPOSITORY_URL_FRAGMENT)) {
+      errors.push(`${path} must not depend on the frozen legacy release repository`);
+    }
+  }
+  requireText(
+    files.get("docs/GITHUB_OPERATIONS.md") ?? "",
+    "`origin` is `wolfiesch/omperator` and is the permanent authority for product",
+    "docs/GITHUB_OPERATIONS.md",
+    errors,
+  );
+  requireText(
+    files.get("docs/GITHUB_OPERATIONS.md") ?? "",
+    "It must never be used as a push target.",
+    "docs/GITHUB_OPERATIONS.md",
+    errors,
+  );
 
   const androidIdentityPath = ".github/android-release-identity.json";
   const androidIdentity = parseJson(files, androidIdentityPath, errors);
@@ -854,7 +874,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   const linkedReleaseTags = new Set(
     [
       ...readme.matchAll(
-        /https:\/\/github\.com\/LycaonLLC\/t4-code\/releases\/(?:tag|download)\/(v\d+\.\d+\.\d+)/gu,
+        /https:\/\/github\.com\/wolfiesch\/omperator\/releases\/(?:tag|download)\/(v\d+\.\d+\.\d+)/gu,
       ),
     ].map((match) => match[1]),
   );
@@ -1258,8 +1278,8 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   const builderConfig = files.get("electron-builder.config.mjs") ?? "";
   for (const expected of [
     'provider: "github"',
-    'owner: "LycaonLLC"',
-    'repo: "t4-code"',
+    'owner: "wolfiesch"',
+    'repo: "omperator"',
     'channel: "latest"',
     "publish: [linuxUpdatePublish]",
     "publish: []",
