@@ -207,7 +207,6 @@ jobs:
               echo "release_commit must be an immutable commit SHA" >&2
               exit 1
             fi
-            release_tag="$REQUESTED_RELEASE_TAG"
           fi
           release_flags=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${release_tag}" --jq '[.draft, .prerelease] | @tsv')
           if [[ "$release_flags" != $'false\tfalse' ]]; then

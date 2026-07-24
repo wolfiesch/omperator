@@ -1434,6 +1434,22 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     ".github/workflows/deploy-site.yml",
     errors,
   );
+  if (deploySiteWorkflow.includes('release_tag="$RELEASE_TAG"')) {
+    const resolveStart = deploySiteWorkflow.indexOf("      - name: Resolve immutable deployment source");
+    const checkoutStart = deploySiteWorkflow.indexOf(
+      "      - name: Check out immutable deployment source",
+      resolveStart,
+    );
+    const resolveStep =
+      resolveStart >= 0 && checkoutStart > resolveStart
+        ? deploySiteWorkflow.slice(resolveStart, checkoutStart)
+        : "";
+    if (resolveStep.includes('release_tag="$REQUESTED_RELEASE_TAG"')) {
+      errors.push(
+        ".github/workflows/deploy-site.yml must use the validated release identity during immutable source resolution",
+      );
+    }
+  }
   if ((files.get(".github/workflows/deploy-site.yml") ?? "").includes('source_sha="$MAIN_SHA"')) {
     errors.push(
       ".github/workflows/deploy-site.yml must deploy the published release tag, not a same-version main SHA",

@@ -378,6 +378,14 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       (text) =>
         text.replace("github.ref == 'refs/heads/main'", "github.ref == 'refs/tags/untrusted'"),
     ],
+    [
+      ".github/workflows/deploy-site.yml",
+      (text) =>
+        text.replace(
+          'release_tag="$RELEASE_TAG"',
+          'release_tag="$RELEASE_TAG"\n          release_tag="$REQUESTED_RELEASE_TAG"',
+        ),
+    ],
   ];
   for (const [path, replace] of cases) {
     assert.ok(
@@ -837,6 +845,11 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(deployWorkflow.includes("ref: ${{ steps.immutable_source.outputs.source_sha }}"));
   assert.ok(deployWorkflow.includes("path: .release-source"));
   assert.ok(deployWorkflow.includes("working-directory: .release-source"));
+  const immutableResolution = deployWorkflow.slice(
+    deployWorkflow.indexOf("      - name: Resolve immutable deployment source"),
+    deployWorkflow.indexOf("      - name: Check out immutable deployment source"),
+  );
+  assert.ok(!immutableResolution.includes('release_tag="$REQUESTED_RELEASE_TAG"'));
   assert.ok(!deployWorkflow.includes('source_sha="$MAIN_SHA"'));
   assert.ok(!deployWorkflow.includes("cache: pnpm"));
   assert.ok(
