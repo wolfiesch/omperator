@@ -1140,6 +1140,12 @@ export class DesktopRuntimeController {
     return refreshOnConnect;
   }
   private updateConnection(targetId: string, state: DesktopTarget["state"]): void {
+    if (
+      state === "connecting" &&
+      this.current.connections.get(targetId) === state
+    ) {
+      return;
+    }
     const refreshOnConnect = this.prepareConnectionTransition(targetId, state);
     const connections = new Map(this.current.connections).set(targetId, state);
     const existing = this.current.targets.get(targetId);

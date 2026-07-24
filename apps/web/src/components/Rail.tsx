@@ -83,7 +83,7 @@ import {
   terminateLiveSession,
 } from "../features/session-runtime/session-management.ts";
 import { resolveSessionManagementNavigation } from "../features/session-runtime/session-navigation.ts";
-import { presentSessionControlKind } from "../features/session-runtime/session-observer.ts";
+import { presentSessionState } from "../features/session-runtime/session-state.ts";
 import { desktopRuntime } from "../platform/desktop-runtime.ts";
 import {
   deriveWorkspaceData,
@@ -97,15 +97,7 @@ import { useWorkspace, workspaceStore } from "../state/store-instance.ts";
 import { SessionListTabs } from "./SessionListTabs.tsx";
 
 export function describeSessionState(session: WorkspaceSession): string {
-  if (session.freshness === "offline") return "Offline";
-  if (session.freshness === "cached") return "Cached";
-  // Owner kind is never proven across the wire, so labels stay generic —
-  // and only a confirmed live lock reads "Active elsewhere".
-  if (session.control !== undefined) return presentSessionControlKind(session.control).railLabel;
-  if (session.status !== null) return "";
-  if (session.lifecycle === "idle") return "Idle";
-  if (session.lifecycle === "closed") return "Stopped";
-  return "Status unknown";
+  return presentSessionState(session).label;
 }
 
 type SessionDialog = "rename" | "terminate" | "delete" | null;
@@ -142,8 +134,9 @@ function SessionRowItem({
   const controller = desktopRuntime();
   const { session } = row;
   const pinned = useWorkspace((state) => state.pinnedSessionIds[session.id] === true);
-  const stateLabel = describeSessionState(session);
-  const ariaState = stateLabel !== "" ? stateLabel : (session.status ?? "Status unknown");
+  const statePresentation = presentSessionState(session);
+  const stateLabel = statePresentation.label;
+  const ariaState = stateLabel;
   const [menuOpen, setMenuOpen] = useState(false);
   const [dialog, setDialog] = useState<SessionDialog>(null);
   const [renameValue, setRenameValue] = useState(session.title);
@@ -361,11 +354,13 @@ function SessionRowItem({
                   )}
                   <span className="shrink-0">{formatRelativeTime(session.updatedAt, nowMs)}</span>
                   <span className="min-w-0 flex-1" />
-                  {session.status !== null ? (
-                    <StatusPill className="shrink-0 gap-1" status={session.status} />
-                  ) : (
-                    stateLabel !== "" && <span className="shrink-0">{stateLabel}</span>
-                  )}
+                  <span className="flex w-28 shrink-0 justify-end overflow-hidden">
+                    {statePresentation.status !== null ? (
+                      <StatusPill className="gap-1" status={statePresentation.status} />
+                    ) : (
+                      <span className="truncate">{stateLabel}</span>
+                    )}
+                  </span>
                 </span>
               </button>
             }

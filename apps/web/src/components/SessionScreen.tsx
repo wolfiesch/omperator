@@ -9,7 +9,6 @@ import {
   ScrollArea,
   Sheet,
   SheetPopup,
-  StatusPill,
   Tooltip,
   TooltipPopup,
   TooltipTrigger,
@@ -45,11 +44,9 @@ import {
   type ExportMeta,
 } from "../features/transcript/export.ts";
 import {
-  FreshnessBadge,
-  SessionLifecycleBadge,
   SessionMain,
   SessionConnectionBadge,
-  SessionOwnershipBadge,
+  SessionStateBadge,
 } from "../features/transcript/SessionMain.tsx";
 import { RIGHT_PANE_DOCK_QUERY, useMediaQuery } from "../hooks/useMediaQuery.ts";
 import { rendererPlatform, useWorkspace, workspaceStore } from "../state/store-instance.ts";
@@ -431,20 +428,22 @@ export function SessionScreen({
             />
           </span>
         </div>
-        {archived && <Badge variant="outline">Archived · read-only</Badge>}
-        {session.status !== null && (
-          <>
-            <StatusPill className="hidden shrink-0 sm:inline-flex" status={session.status} />
-            <StatusPill className="shrink-0 sm:hidden" labelHidden status={session.status} />
-          </>
-        )}
         <span className="flex shrink-0 items-center gap-1">
           {connectionState !== null && <SessionConnectionBadge state={connectionState} />}
-          {(connectionState === null || session.freshness === "cached") && (
-            <FreshnessBadge session={session} />
+          {!archived &&
+            (connectionState === null || connectionState === "connected") && (
+              <SessionStateBadge session={session} />
+            )}
+          {archived && (
+            <Badge
+              aria-label="Archived · read-only"
+              className="w-20 justify-center px-2 sm:w-32"
+              variant="outline"
+            >
+              <span className="sm:hidden">Archived</span>
+              <span className="hidden sm:inline">Archived · read-only</span>
+            </Badge>
           )}
-          <SessionLifecycleBadge session={session} />
-          <SessionOwnershipBadge session={session} />
         </span>
         {previewCount > 0 && (
           <Link

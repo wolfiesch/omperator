@@ -2913,6 +2913,39 @@ describe("session lifecycle", () => {
 });
 
 describe("workspace projection safety", () => {
+  it("retires a stale command confirmation when a newer idle ref settles the session", async () => {
+    const { shell, controller } = await startedRuntime();
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "confirmation",
+        confirmationId: confirmationId("cancel-confirmation"),
+        commandId: commandId("cancel-command"),
+        hostId: hostId(HOST),
+        sessionId: sessionId(SESSION),
+        commandHash: "sha256:cancel",
+        revision: revision("rev-1"),
+        expiresAt: "2999-01-01T00:00:00Z",
+        summary: "session.cancel",
+      },
+    });
+    expect(deriveWorkspaceData(controller.getSnapshot()).sessions[0]).toMatchObject({
+      pendingApprovals: 1,
+      status: "pendingApproval",
+    });
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: pendingPromptsSessionsFrame([], 2, "idle"),
+    });
+    expect(deriveWorkspaceData(controller.getSnapshot()).sessions[0]).toMatchObject({
+      lifecycle: "idle",
+      pendingApprovals: 0,
+      status: null,
+    });
+  });
+
   it("gives cached and offline freshness precedence over stale working refs", async () => {
     const { shell, controller } = await startedRuntime();
     shell.emitFrame({

@@ -3,12 +3,12 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { describeSessionState } from "../src/components/Rail.tsx";
 import {
-  FreshnessBadge,
   resolveSessionActivity,
   SessionActivityBanner,
   SessionConnectionBadge,
-  SessionLifecycleBadge,
+  SessionStateBadge,
 } from "../src/features/transcript/SessionMain.tsx";
+import { presentSessionState } from "../src/features/session-runtime/session-state.ts";
 import type { WorkspaceSession } from "../src/lib/workspace-data.ts";
 
 const BASE_SESSION: WorkspaceSession = {
@@ -41,43 +41,98 @@ describe("truthful session state presentation", () => {
     );
   });
 
-  it("shows the same explicit lifecycle in the task header", () => {
+  it("shows the same explicit lifecycle in the task header's stable state slot", () => {
     const idle = renderToStaticMarkup(
-      <SessionLifecycleBadge session={{ ...BASE_SESSION, lifecycle: "idle" }} />,
+      <SessionStateBadge session={{ ...BASE_SESSION, lifecycle: "idle" }} />,
     );
     const stopped = renderToStaticMarkup(
-      <SessionLifecycleBadge session={{ ...BASE_SESSION, lifecycle: "closed" }} />,
+      <SessionStateBadge session={{ ...BASE_SESSION, lifecycle: "closed" }} />,
     );
-    const unknown = renderToStaticMarkup(<SessionLifecycleBadge session={BASE_SESSION} />);
+    const unknown = renderToStaticMarkup(<SessionStateBadge session={BASE_SESSION} />);
 
     expect(idle).toContain("Idle");
+    expect(idle).toContain("bg-muted-foreground");
     expect(stopped).toContain("Stopped");
     expect(unknown).toContain("Status unknown");
+    for (const markup of [idle, stopped, unknown]) {
+      expect(markup).toContain("sm:w-32");
+    }
   });
 
-  it("keeps connection, activity, and ownership as separate signals", () => {
+  it("keeps connection separate while collapsing activity and ownership into one signal", () => {
     const connected = renderToStaticMarkup(<SessionConnectionBadge state="connected" />);
-    const syncing = renderToStaticMarkup(
-      <FreshnessBadge session={{ ...BASE_SESSION, freshness: "cached" }} />,
-    );
-    const observedIdle = renderToStaticMarkup(
-      <SessionLifecycleBadge
-        session={{ ...BASE_SESSION, control: "observer", lifecycle: "idle" }}
+    const observedWorking = renderToStaticMarkup(
+      <SessionStateBadge
+        session={{
+          ...BASE_SESSION,
+          control: "observer",
+          lifecycle: "idle",
+          status: "working",
+        }}
       />,
     );
 
     expect(connected).toContain("Connected");
-    expect(syncing).toContain("Cached");
-    expect(observedIdle).toContain("Idle");
+    expect(observedWorking).toContain("Working elsewhere");
+    expect(observedWorking).not.toContain(">Idle<");
     expect(
       resolveSessionActivity({
         archived: false,
         catchingUp: false,
+        controlled: false,
         contextMaintenance: false,
         link: "live",
         sessionActive: true,
       }),
     ).toBe("working");
+    expect(
+      resolveSessionActivity({
+        archived: false,
+        catchingUp: false,
+        controlled: true,
+        contextMaintenance: false,
+        link: "live",
+        sessionActive: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("uses stable connection geometry and names reconnects without leaking them into activity", () => {
+    const connected = renderToStaticMarkup(<SessionConnectionBadge state="connected" />);
+    const reconnecting = renderToStaticMarkup(<SessionConnectionBadge state="connecting" />);
+
+    for (const markup of [connected, reconnecting]) {
+      expect(markup).toContain("sm:w-28");
+    }
+    expect(reconnecting).toContain("Reconnecting");
+    expect(reconnecting).not.toContain(">Connecting<");
+    expect(presentSessionState({ ...BASE_SESSION, status: "connecting" }).label).toBe(
+      "Status unknown",
+    );
+  });
+
+  it("keeps state priority truthful through takeover and reconnect transitions", () => {
+    const sequence = [
+      presentSessionState({ ...BASE_SESSION, lifecycle: "idle" }).label,
+      presentSessionState({
+        ...BASE_SESSION,
+        lifecycle: "idle",
+        control: "reconciling",
+      }).label,
+      presentSessionState({ ...BASE_SESSION, lifecycle: "active", status: "working" }).label,
+      presentSessionState({ ...BASE_SESSION, freshness: "cached", status: "working" }).label,
+      presentSessionState({ ...BASE_SESSION, freshness: "offline", status: "working" }).label,
+      presentSessionState({ ...BASE_SESSION, lifecycle: "idle" }).label,
+    ];
+
+    expect(sequence).toEqual([
+      "Idle",
+      "Taking over",
+      "Working",
+      "Cached",
+      "Offline",
+      "Idle",
+    ]);
   });
 
   it("renders a moving visual heartbeat only while work is confirmed", () => {

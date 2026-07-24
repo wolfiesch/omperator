@@ -91,15 +91,16 @@ describe("deliberate instant states stay deliberate", () => {
   });
 });
 
-describe("transcript follow pins before paint", () => {
+describe("transcript follow coalesces layout writes", () => {
   const timeline = readFileSync(
     join(SRC, "features/transcript/TranscriptTimeline.tsx"),
     "utf8",
   );
 
-  it("pins in the layout phase and on layout-phase resizes, not post-paint timers", () => {
+  it("pins the React commit in layout and coalesces resize feedback onto one frame", () => {
     expect(timeline).toContain("useLayoutEffect");
-    expect(timeline).toContain("new ResizeObserver(pinToEnd)");
+    expect(timeline).toContain("new ResizeObserver(schedulePinToEnd)");
+    expect(timeline).toContain("requestAnimationFrame(() =>");
     // No timeout-driven scrolling anywhere in the follow path.
     expect(timeline).not.toMatch(/setTimeout\([^)]*scroll/i);
   });

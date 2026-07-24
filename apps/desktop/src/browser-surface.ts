@@ -539,6 +539,30 @@ export class BrowserSurface {
     return this.action(snapshotAfter);
   }
 
+  /**
+   * Electron rejects loadURL when a navigation becomes a download even though
+   * the previous document remains usable. Restore that document's projected
+   * state once the owning download controller confirms it accepted the item.
+   */
+  restoreAfterDownloadNavigation(previous: BrowserSurfaceState): BrowserSurfaceState {
+    const contents = this.view?.webContents;
+    if (contents && !contents.isDestroyed()) {
+      this.contentReadyContents = contents;
+      this.contentReadyFailure = null;
+    }
+    this.update({
+      url: previous.url,
+      title: previous.title,
+      lifecycle: previous.lifecycle,
+      readyState: previous.readyState,
+      loading: previous.loading,
+      progress: previous.progress,
+      canGoBack: previous.canGoBack,
+      canGoForward: previous.canGoForward,
+    });
+    return this.state;
+  }
+
   async reload(snapshotAfter = false): Promise<BrowserSurfaceAction> {
     const contents = this.view?.webContents;
     this.contentReadyContents = null;

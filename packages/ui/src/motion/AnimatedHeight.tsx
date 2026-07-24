@@ -31,11 +31,13 @@ export function AnimatedHeight({ children }: { readonly children: ReactNode }) {
 		// (scrollHeight reads), which profiled as the single largest app cost
 		// while scrolling a long transcript (every freshly mounted row runs
 		// this effect).
-		const resizeObserver = new ResizeObserver((entries) => {
-			const entry = entries[entries.length - 1];
-			if (entry === undefined) return;
-			const measured = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height;
-			const nextHeight = Math.ceil(measured);
+		let frame = 0;
+		let pendingHeight: number | null = null;
+		const commitHeight = () => {
+			frame = 0;
+			const nextHeight = pendingHeight;
+			pendingHeight = null;
+			if (nextHeight === null) return;
 			setHeightState((currentState) => {
 				if (currentState.height === nextHeight) return currentState;
 				return {
@@ -43,9 +45,17 @@ export function AnimatedHeight({ children }: { readonly children: ReactNode }) {
 					isClipping: currentState.height !== null,
 				};
 			});
+		};
+		const resizeObserver = new ResizeObserver((entries) => {
+			const entry = entries[entries.length - 1];
+			if (entry === undefined) return;
+			const measured = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height;
+			pendingHeight = Math.ceil(measured);
+			if (frame === 0) frame = requestAnimationFrame(commitHeight);
 		});
 		resizeObserver.observe(element);
 		return () => {
+			if (frame !== 0) cancelAnimationFrame(frame);
 			resizeObserver.disconnect();
 		};
 	}, []);

@@ -15,6 +15,28 @@ const electron = (() => {
   type Listener = (...args: unknown[]) => void;
   const loadFailures: unknown[] = [];
 
+  class FakeSession {
+    readonly listeners = new Map<string, Listener[]>();
+    on(event: string, listener: Listener): void {
+      const listeners = this.listeners.get(event) ?? [];
+      listeners.push(listener);
+      this.listeners.set(event, listeners);
+    }
+    removeListener(event: string, listener: Listener): void {
+      const listeners = this.listeners.get(event) ?? [];
+      this.listeners.set(
+        event,
+        listeners.filter((candidate) => candidate !== listener),
+      );
+    }
+    emit(event: string, ...args: unknown[]): void {
+      for (const listener of this.listeners.get(event) ?? []) listener(...args);
+    }
+    reset(): void {
+      this.listeners.clear();
+    }
+  }
+
 
   class FakeWebContents {
     readonly listeners = new Map<string, Listener[]>();
@@ -76,9 +98,12 @@ const electron = (() => {
     }
   }
 
+  const defaultSession = new FakeSession();
+
   return {
+    app: { getPath: () => "/tmp" },
     WebContentsView,
-    session: { defaultSession: {} },
+    session: { defaultSession },
     views,
     ipcMain: { on: () => {}, removeListener: () => {} },
     contentTracing: { startRecording: async () => {}, stopRecording: async () => "" },
@@ -86,11 +111,13 @@ const electron = (() => {
     reset: () => {
       views.length = 0;
       loadFailures.length = 0;
+      defaultSession.reset();
     },
   };
 })();
 
 vitest.vi.mock("electron", () => ({
+  app: electron.app,
   WebContentsView: electron.WebContentsView,
   contentTracing: electron.contentTracing,
   ipcMain: electron.ipcMain,
@@ -141,6 +168,210 @@ async function settleBackgroundWork(): Promise<void> {
 }
 
 describe("BrowserRuntime native view lifecycle", () => {
+  it("routes default download events through the owning workspace session", async () => {
+    electron.reset();
+    const emitted: BrowserEvent[] = [];
+    const runtime = new BrowserRuntime({
+      window: new FakeWindow() as never,
+      emit: (event) => {
+        emitted.push(event);
+      },
+      userDataPath: "/tmp/t4-browser-runtime-download-owner",
+      profileRegistry: {
+        getSession: () => electron.session.defaultSession,
+        markInUse: () => {},
+        release: () => {},
+      },
+      sessionStore: { save: () => {} },
+      installSecurity: () => ({
+        auth: null,
+        clearTrustGrants: () => {},
+        dispose: () => {},
+        grantCertificate: () => false,
+        setProfile: () => {},
+        configureProxy: async () => ({
+          ok: false,
+          code: "not_supported",
+          message: "Not used by this test",
+        }),
+      }),
+    });
+    const created = (await runtime.call(
+      browserCall("surface.create", {
+        profile: isolatedProfile,
+        url: "https://example.test/",
+      }),
+    )) as BrowserCallResult<"surface.create">;
+    const item = {
+      getURL: () => "https://example.test/download",
+      getFilename: () => "proof.txt",
+      getMimeType: () => "text/plain",
+      getTotalBytes: () => 0,
+      getReceivedBytes: () => 0,
+      setSavePath: () => {},
+      on() {
+        return this;
+      },
+      once() {
+        return this;
+      },
+      cancel: () => {},
+    };
+    const event = {
+      defaultPrevented: false,
+      preventDefault() {
+        this.defaultPrevented = true;
+      },
+    };
+
+    electron.session.defaultSession.emit(
+      "will-download",
+      event,
+      item,
+      electron.views[0]?.webContents,
+    );
+
+    expect(event.defaultPrevented).toBe(false);
+    const download = emitted.find((candidate) => candidate.type === "download");
+    expect(download).toMatchObject({
+      type: "download",
+      download: {
+        surfaceId: created.surface.surfaceId,
+        filename: "proof.txt",
+        state: "started",
+      },
+      ownerSessionId: OWNER_A,
+    });
+    await runtime.dispose();
+  });
+
+  it("treats an accepted download navigation as success and keeps the current page ready", async () => {
+    electron.reset();
+    const downloadUrl = "https://example.test/proof.txt";
+    let listCalls = 0;
+    const runtime = new BrowserRuntime({
+      window: new FakeWindow() as never,
+      emit: () => {},
+      userDataPath: "/tmp/t4-browser-runtime-download-navigation",
+      profileRegistry: {
+        getSession: () => electron.session.defaultSession,
+        markInUse: () => {},
+        release: () => {},
+      },
+      sessionStore: { save: () => {} },
+      downloadController: {
+        attach: () => {},
+        list: () => {
+          listCalls += 1;
+          return listCalls < 3
+            ? []
+            : [{ downloadId: "download-1", url: `${downloadUrl}?canonicalized=1` }];
+        },
+        disposeSurface: () => {},
+        dispose: () => {},
+      },
+      installSecurity: () => ({
+        auth: null,
+        clearTrustGrants: () => {},
+        dispose: () => {},
+        grantCertificate: () => false,
+        setProfile: () => {},
+        configureProxy: async () => ({
+          ok: false,
+          code: "not_supported",
+          message: "Not used by this test",
+        }),
+      }),
+    });
+    const created = (await runtime.call(
+      browserCall("surface.create", {
+        profile: isolatedProfile,
+        url: "https://example.test/current",
+      }),
+    )) as BrowserCallResult<"surface.create">;
+    const view = electron.views[0]!;
+    view.webContents.title = "Current page";
+    view.webContents.emit("did-finish-load");
+    electron.failNextLoad(new Error("ERR_FAILED (-2)"));
+
+    const navigated = (await runtime.call(
+      browserCall("surface.navigate", {
+        surfaceId: created.surface.surfaceId,
+        url: downloadUrl,
+      }),
+    )) as BrowserCallResult<"surface.navigate">;
+
+    expect(navigated.surface).toMatchObject({
+      url: "https://example.test/current",
+      title: "Current page",
+      lifecycle: "ready",
+      loading: false,
+    });
+    await runtime.dispose();
+  });
+
+  it("does not conceal a failed navigation when an unrelated download starts", async () => {
+    electron.reset();
+    const requestedUrl = "https://example.test/failing-page";
+    let listCalls = 0;
+    const runtime = new BrowserRuntime({
+      window: new FakeWindow() as never,
+      emit: () => {},
+      userDataPath: "/tmp/t4-browser-runtime-unrelated-download",
+      profileRegistry: {
+        getSession: () => electron.session.defaultSession,
+        markInUse: () => {},
+        release: () => {},
+      },
+      sessionStore: { save: () => {} },
+      downloadController: {
+        attach: () => {},
+        list: () => {
+          listCalls += 1;
+          return listCalls < 3
+            ? []
+            : [
+                {
+                  downloadId: "unrelated-download",
+                  url: "https://example.test/other-file.txt",
+                },
+              ];
+        },
+        disposeSurface: () => {},
+        dispose: () => {},
+      },
+      installSecurity: () => ({
+        auth: null,
+        clearTrustGrants: () => {},
+        dispose: () => {},
+        grantCertificate: () => false,
+        setProfile: () => {},
+        configureProxy: async () => ({
+          ok: false,
+          code: "not_supported",
+          message: "Not used by this test",
+        }),
+      }),
+    });
+    const created = (await runtime.call(
+      browserCall("surface.create", {
+        profile: isolatedProfile,
+        url: "https://example.test/current",
+      }),
+    )) as BrowserCallResult<"surface.create">;
+    electron.failNextLoad(new Error("certificate failure"));
+
+    await expect(
+      runtime.call(
+        browserCall("surface.navigate", {
+          surfaceId: created.surface.surfaceId,
+          url: requestedUrl,
+        }),
+      ),
+    ).rejects.toThrow("certificate failure");
+    await runtime.dispose();
+  });
+
   it("routes accessibility snapshots and design mode through the exact owner-scoped surface", async () => {
     electron.reset();
     const calls: unknown[] = [];

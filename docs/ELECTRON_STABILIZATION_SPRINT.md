@@ -40,9 +40,13 @@ planning resumes only after the Electron release and rollback are stable.
   inspection with 956 ASAR entries, and bundled executable arm64 `t4-host` and `omp` binaries.
   Its exact app bundle reports v0.1.31, launched with native macOS window chrome, connected to
   Local OMP, and loaded the live 1,000-session inventory and host controls.
-- Remaining evidence is release-bound: protected signed artifacts, a real prompt round trip, Linux
-  package launch, Android native smoke, and physical Tailnet Safari proof. No release or tag is
-  authorized by this document.
+- The exact-head unsigned package completed a real disposable prompt, relaunched onto seven unique
+  transcript entries, restarted its packaged host without duplicating them, and exercised native
+  Terminal, Browser, and Files surfaces. Connection, session activity, and ownership now occupy
+  stable non-conflicting status slots.
+- Remaining evidence is release-bound: protected signed artifacts, Linux package launch, Android
+  native smoke, physical Tailnet Safari proof, and the remaining native edge cases in the tracker.
+  No release or tag is authorized by this document.
 
 ## Current state at planning time
 

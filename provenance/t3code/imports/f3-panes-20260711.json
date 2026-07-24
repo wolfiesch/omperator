@@ -9,7 +9,7 @@
       "sourceBlobSha": "1641bb6b109b44f2c7b0f2576fcf0750a96da88f",
       "targetPath": "apps/web/src/features/terminal/TerminalViewport.tsx",
       "classification": "adapted",
-      "checksum": "sha256:40eeb5fc91c99b1f3f0c221037f6056f703837181f3cf5cd95b3e9110fac61a7"
+      "checksum": "sha256:5dd04d78d1d58b546f2c8ca67d269cee27a03b2ea3182f249b7692ae2b4229ac"
     },
     {
       "sourcePath": "apps/web/src/components/ThreadTerminalDrawer.tsx",

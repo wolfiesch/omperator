@@ -188,6 +188,43 @@ function hostConnection(
     ? { targetId: null, state: null }
     : { targetId, state: snapshot.connections.get(targetId) ?? null };
 }
+
+/**
+ * Confirmation challenges are volatile command handshakes, not durable
+ * session attention. Keep them visible only while they still target the
+ * current session revision and have no response. A cancel challenge can
+ * otherwise outlive the turn it tried to stop and leave the rail/header
+ * stuck on "Pending approval" after the transcript is already idle.
+ */
+function currentConfirmationCount(
+  warm: SessionProjection | undefined,
+  ref: Parameters<typeof sessionIsWorking>[0],
+): number {
+  if (
+    warm === undefined ||
+    ref === undefined ||
+    String(warm.revision) !== String(ref.revision)
+  ) {
+    return 0;
+  }
+  let count = 0;
+  for (const challenge of warm.confirmations.values()) {
+    if (String(challenge.revision) !== String(ref.revision)) continue;
+    let resolved = false;
+    for (const result of warm.results.values()) {
+      if (
+        result.commandId !== undefined &&
+        String(result.commandId) === String(challenge.commandId)
+      ) {
+        resolved = true;
+        break;
+      }
+    }
+    if (!resolved) count += 1;
+  }
+  return count;
+}
+
 function clusterHostTarget(
   snapshot: DesktopRuntimeSnapshot,
   hostId: string,
@@ -320,14 +357,19 @@ export function deriveWorkspaceData(snapshot: DesktopRuntimeSnapshot): Workspace
     }
     const connection = hostConnection(snapshot, hostId);
     const warm = warmSessionProjection(snapshot, hostId, sessionId);
-    const offline = connection.state !== "connected";
     const inventoryReady = sessionRefIsCurrent(snapshot, hostId, sessionId);
-    const freshness = offline
-      ? "offline"
-      : !inventoryReady || (warm !== undefined && warm.freshness !== "fresh")
+    const freshness =
+      connection.state === "connecting"
+        ? "cached"
+        : connection.state !== "connected"
+          ? "offline"
+          : !inventoryReady || (warm !== undefined && warm.freshness !== "fresh")
         ? "cached"
         : "live";
-    const pendingApprovals = warm?.confirmations.size ?? (ref.pendingApproval === true ? 1 : 0);
+    const pendingApprovals = Math.max(
+      currentConfirmationCount(warm, ref),
+      ref.pendingApproval === true ? 1 : 0,
+    );
     const rawArchivedAt = (ref as unknown as { readonly archivedAt?: unknown }).archivedAt;
     const archivedAt =
       typeof rawArchivedAt === "string" && Number.isFinite(Date.parse(rawArchivedAt))
@@ -350,8 +392,7 @@ export function deriveWorkspaceData(snapshot: DesktopRuntimeSnapshot): Workspace
     else if (ref.status === "idle") lifecycle = "idle";
     else if (ref.status === "closed") lifecycle = "closed";
     let status: SessionStatus | null = null;
-    if (connection.state === "connecting") status = "connecting";
-    else if (freshness === "live") {
+    if (freshness === "live") {
       if (controlKind === undefined) {
         if (pendingApprovals > 0) status = "pendingApproval";
         else if (ref.pendingUserInput === true) status = "awaitingInput";

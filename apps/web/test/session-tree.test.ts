@@ -119,6 +119,20 @@ describe("buildProjectGroups", () => {
     ]);
   });
 
+  it("does not treat a host reconnect as per-session work or priority", () => {
+    const session = SHELL_FIXTURE.sessions[0]!;
+    const reconnecting = {
+      ...SHELL_FIXTURE,
+      sessions: [{ ...session, status: "connecting" as const }],
+    };
+
+    const running = buildProjectGroups(reconnecting, {}, {}, "current", {}, {
+      filter: "running",
+    });
+    expect(running).toEqual([]);
+    expect(sessionPriority({ session: reconnecting.sessions[0]!, unread: false })).toBe(0);
+  });
+
   it("matches uppercase ASCII queries under a Turkish locale", () => {
     // Simulate a Turkish/Azeri locale, where ASCII "I" lowercases to dotless "ı".
     String.prototype.toLocaleLowerCase = function (this: string) {

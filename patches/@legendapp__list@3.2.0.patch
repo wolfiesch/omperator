@@ -1,0 +1,70 @@
+diff --git a/react.js b/react.js
+--- a/react.js
++++ b/react.js
+@@ -4830,15 +4830,25 @@
+ // src/hooks/createResizeObserver.ts
+ var globalResizeObserver = null;
+ function getGlobalResizeObserver() {
+   if (!globalResizeObserver) {
++    let frame = 0;
++    const pendingEntries = /* @__PURE__ */ new Map();
+     globalResizeObserver = new ResizeObserver((entries) => {
+-      for (const entry of entries) {
+-        const callbacks = callbackMap.get(entry.target);
+-        if (callbacks) {
+-          for (const callback of callbacks) {
+-            callback(entry);
++      for (const entry of entries) pendingEntries.set(entry.target, entry);
++      if (frame === 0) {
++        frame = requestAnimationFrame(() => {
++          frame = 0;
++          const currentEntries = Array.from(pendingEntries.values());
++          pendingEntries.clear();
++          for (const entry of currentEntries) {
++            const callbacks = callbackMap.get(entry.target);
++            if (callbacks) {
++              for (const callback of callbacks) {
++                callback(entry);
++              }
++            }
+           }
+-        }
++        });
+       }
+     });
+   }
+diff --git a/react.mjs b/react.mjs
+--- a/react.mjs
++++ b/react.mjs
+@@ -4809,15 +4809,25 @@
+ // src/hooks/createResizeObserver.ts
+ var globalResizeObserver = null;
+ function getGlobalResizeObserver() {
+   if (!globalResizeObserver) {
++    let frame = 0;
++    const pendingEntries = /* @__PURE__ */ new Map();
+     globalResizeObserver = new ResizeObserver((entries) => {
+-      for (const entry of entries) {
+-        const callbacks = callbackMap.get(entry.target);
+-        if (callbacks) {
+-          for (const callback of callbacks) {
+-            callback(entry);
++      for (const entry of entries) pendingEntries.set(entry.target, entry);
++      if (frame === 0) {
++        frame = requestAnimationFrame(() => {
++          frame = 0;
++          const currentEntries = Array.from(pendingEntries.values());
++          pendingEntries.clear();
++          for (const entry of currentEntries) {
++            const callbacks = callbackMap.get(entry.target);
++            if (callbacks) {
++              for (const callback of callbacks) {
++                callback(entry);
++              }
++            }
+           }
+-        }
++        });
+       }
+     });
+   }

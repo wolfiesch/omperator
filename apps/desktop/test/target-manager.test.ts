@@ -226,6 +226,26 @@ async function settlesBeforeTurnLimit<T>(promise: Promise<T>): Promise<T> {
 }
 
 describe("desktop target manager boundaries", () => {
+  it("publishes each public connection state transition once", async () => {
+    const states: string[] = [];
+    const runtime = new DesktopTargetManager({
+      cursorStore: new Store(),
+      localTransportFactory: () => new Transport() as never,
+      events: {
+        onEvent: () => {},
+        onState: (event) => {
+          states.push(event.state);
+        },
+        onError: () => {},
+      },
+    });
+
+    await runtime.connect("local");
+
+    expect(states).toEqual(["connecting", "connected"]);
+    await runtime.close();
+  });
+
   it("requests cluster.operator only after explicit desktop opt-in", async () => {
     const defaultTransport = new Transport();
     const defaultRuntime = new DesktopTargetManager({

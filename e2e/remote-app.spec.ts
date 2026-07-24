@@ -633,9 +633,7 @@ test("@soak recovers one live phone session across 20 network drops", async ({ p
   for (let cycle = 1; cycle <= 20; cycle += 1) {
     const before = await fixture.state();
     await fixture.disconnectClients();
-    await expect(
-      page.getByText("Connecting", { exact: true }).filter({ visible: true }).first(),
-    ).toBeVisible();
+    await expect(page.getByLabel("Reconnecting", { exact: true })).toBeVisible();
     await page.clock.fastForward(10_000);
     await expect
       .poll(async () => (await fixture.state()).connections, {
@@ -648,7 +646,7 @@ test("@soak recovers one live phone session across 20 network drops", async ({ p
       transcript.getByText("Hello world", { exact: true }).filter({ visible: true }),
     ).toHaveCount(1);
     await expect(composer).toBeEnabled();
-    await expect(page.getByText("Connecting", { exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("Reconnecting", { exact: true })).toHaveCount(0);
   }
 });
 
@@ -1446,7 +1444,9 @@ test("manages a session from a phone and converges another live client", async (
     expect(archivedFilterBox).not.toBeNull();
     expect(archivedFilterBox!.height).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
 
-    await expect(observer.getByText(/Archived · read-only/u).first()).toBeVisible();
+    await expect(
+      observer.getByLabel("Archived · read-only", { exact: true }),
+    ).toBeVisible();
     await expect(observer.getByRole("textbox", { name: "Message the session" })).toHaveCount(0);
     await expect(observer.getByRole("button", { name: "Run options", exact: true })).toHaveCount(0);
     await expect(
@@ -1474,7 +1474,7 @@ test("manages a session from a phone and converges another live client", async (
       }),
     ).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Message the session" })).toBeEnabled();
-    await expect(page.getByText(/Archived · read-only/u)).toHaveCount(0);
+    await expect(page.getByLabel("Archived · read-only", { exact: true })).toHaveCount(0);
 
     await page.getByRole("button", { name: "Show session list", exact: true }).click();
     await expect(rail).toBeVisible();
@@ -1505,7 +1505,7 @@ test("manages a session from a phone and converges another live client", async (
 
     await rail.getByRole("button", { name: "Archived · 1", exact: true }).click();
     await expect(rail).toBeHidden();
-    await expect(page.getByText(/Archived · read-only/u).first()).toBeVisible();
+    await expect(page.getByLabel("Archived · read-only", { exact: true })).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Message the session" })).toHaveCount(0);
 
     await page.getByRole("button", { name: "Show session list", exact: true }).click();
@@ -1624,7 +1624,7 @@ test("manages a session from a phone and converges another live client", async (
       const route = decodeURIComponent(url.hash.replace(/^#\/sessions\//u, ""));
       return route === createdViewId;
     });
-    await expect(page.getByText(/Archived · read-only/u).first()).toBeVisible();
+    await expect(page.getByLabel("Archived · read-only", { exact: true })).toBeVisible();
 
     await page.getByRole("button", { name: "Show session list", exact: true }).click();
     await expect(reloadedRail).toBeVisible();

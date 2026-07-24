@@ -190,10 +190,10 @@ export const TranscriptTimeline = memo(function TranscriptTimeline({
   // Follow pins at the TRUE max on every painted frame, not eventually:
   // 1. React-commit growth (streamed rows, composer/footer resize) pins in
   //    the layout phase below, before that commit paints.
-  // 2. LegendList's own async remeasure pins via a ResizeObserver on the
-  //    scroller content — RO callbacks run after layout, before paint.
-  // 3. One rAF fallback catches anything the list schedules for the next
-  //    frame. Never runs scrolled away or during a disclosure, so the
+  // 2. LegendList's own async remeasure schedules one coalesced rAF pin from
+  //    its ResizeObserver. Writing scrollTop inside the observer callback can
+  //    feed back into list measurement and produce ResizeObserver loop errors.
+  // 3. The rAF pin never runs scrolled away or during a disclosure, so the
   //    reading anchor is never yanked.
   // `rows` identity matters: streamed text grows within a row without
   // changing the count.
@@ -208,11 +208,22 @@ export const TranscriptTimeline = memo(function TranscriptTimeline({
     if (!listMounted || !following) return;
     const scroller = locateScroller();
     if (scroller === null) return;
-    const observer = new ResizeObserver(pinToEnd);
+    let frame = 0;
+    const schedulePinToEnd = () => {
+      if (frame !== 0) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        pinToEnd();
+      });
+    };
+    const observer = new ResizeObserver(schedulePinToEnd);
     observer.observe(scroller);
     const content = scroller.firstElementChild;
     if (content !== null) observer.observe(content);
-    return () => observer.disconnect();
+    return () => {
+      if (frame !== 0) cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
   }, [following, listMounted, locateScroller, pinToEnd]);
 
   const renderItem = useCallback(
@@ -228,14 +239,6 @@ export const TranscriptTimeline = memo(function TranscriptTimeline({
       </div>
     ),
     [imageSource, nowMs, onCaptureMessage, toolHost],
-  );
-
-  const maintainScrollAtEnd = useMemo(
-    () =>
-      following
-        ? { animated: false, on: { dataChange: true, itemLayout: true, layout: true } }
-        : false,
-    [following],
   );
 
   const jumpToLatest = useCallback(() => {
@@ -357,7 +360,11 @@ export const TranscriptTimeline = memo(function TranscriptTimeline({
             // viewport size.
             ListFooterComponent={<div style={{ height: bottomInset }} />}
             ListHeaderComponent={listHeader}
-            maintainScrollAtEnd={maintainScrollAtEnd}
+            // T4 owns follow behavior above. Enabling LegendList's additional
+            // item-layout scroll owner makes both systems write during the
+            // same ResizeObserver delivery, producing visible scroll churn
+            // and browser ResizeObserver loop errors while a row streams.
+            maintainScrollAtEnd={false}
             maintainVisibleContentPosition={{ data: true, size: false }}
             onScroll={handleScroll}
             ref={listRef}

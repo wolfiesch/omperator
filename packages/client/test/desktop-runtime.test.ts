@@ -1298,6 +1298,22 @@ describe("desktop runtime projection", () => {
     expect(calls).toBe(beforeStop);
     expect(runtime.getSnapshot().startState).toBe("stopped");
   });
+  it("does not publish a new snapshot for a duplicate connection state", async () => {
+    const shell = new FakeShell();
+    const runtime = createDesktopRuntimeController({ shell });
+    await runtime.start();
+    let calls = 0;
+    runtime.subscribe(() => {
+      calls += 1;
+    });
+
+    shell.emitState({ targetId: "local", state: "connecting" });
+    const afterTransition = calls;
+    shell.emitState({ targetId: "local", state: "connecting" });
+
+    expect(afterTransition).toBeGreaterThan(0);
+    expect(calls).toBe(afterTransition);
+  });
   it("activates sessions without exposing mutable maps", async () => {
     const shell = new FakeShell();
     const runtime = createDesktopRuntimeController({ shell });

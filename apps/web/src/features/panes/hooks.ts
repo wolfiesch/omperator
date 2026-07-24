@@ -42,11 +42,20 @@ export function useVirtualWindow(
     const element = containerRef.current;
     if (element === null) return;
     const onScroll = () => setScrollTop(element.scrollTop);
-    const observer = new ResizeObserver(() => setViewport(element.clientHeight));
+    let frame = 0;
+    const measureViewport = () => {
+      frame = 0;
+      setViewport(element.clientHeight);
+    };
+    const observer = new ResizeObserver(() => {
+      if (frame !== 0) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(measureViewport);
+    });
     setViewport(element.clientHeight);
     element.addEventListener("scroll", onScroll, { passive: true });
     observer.observe(element);
     return () => {
+      if (frame !== 0) cancelAnimationFrame(frame);
       element.removeEventListener("scroll", onScroll);
       observer.disconnect();
     };

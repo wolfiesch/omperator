@@ -103,6 +103,7 @@ export class DesktopTargetManager {
   private readonly targetQueues = new Map<string, { tail: Promise<void> }>();
   private readonly runtimes = new Map<string, Runtime>();
   private readonly localStates = new Map<string, DesktopTargetState>();
+  private readonly publishedStates = new Map<string, DesktopTargetState>();
   private closed = false;
   private readonly generations = new Map<string, number>();
   private readonly latestWelcomes = new Map<
@@ -184,6 +185,7 @@ export class DesktopTargetManager {
       await this.closeRuntime(targetId);
       if (this.credentials !== undefined) await this.credentials.revoke(targetId);
       await enqueue(this.registryQueue, async () => { if (this.registry !== undefined) await this.registry.remove(targetId); });
+      this.publishedStates.delete(targetId);
       this.targetQueues.delete(targetId);
     });
   }
@@ -420,8 +422,7 @@ export class DesktopTargetManager {
     client.onState((snapshot) => {
       if (this.generations.get(targetId) !== generation) return;
       const state = this.stateFor(snapshot.state);
-      if (local !== undefined) this.localStates.set(targetId, state);
-      this.events.onState({ targetId, state });
+      this.publishState(targetId, state);
     });
     client.onError((error) => {
       if (this.generations.get(targetId) !== generation) return;
@@ -461,6 +462,8 @@ export class DesktopTargetManager {
   }
   private publishState(targetId: string, state: DesktopTargetState): void {
     if (localProfileId(targetId) !== undefined) this.localStates.set(targetId, state);
+    if (state === "connecting" && this.publishedStates.get(targetId) === state) return;
+    this.publishedStates.set(targetId, state);
     this.events.onState({ targetId, state });
   }
   private stateFor(state: OmpClient["state"]): DesktopTargetState {

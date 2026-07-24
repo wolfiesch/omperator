@@ -59,7 +59,7 @@ function manualRank(order: readonly string[] | undefined, id: string): number {
 export function sessionPriority(row: SessionRow): number {
   if (row.session.pendingApprovals > 0 || row.session.status === "pendingApproval") return 6;
   if (row.session.status === "awaitingInput") return 5;
-  if (row.session.status === "working" || row.session.status === "connecting") return 4;
+  if (row.session.status === "working") return 4;
   if (row.unread) return 3;
   if (row.session.status === "error") return 2;
   if (row.session.status === "planReady") return 1;
@@ -78,7 +78,7 @@ function matchesFilter(row: SessionRow, filter: RailFilter): boolean {
     return row.session.pendingApprovals > 0 || row.session.status === "awaitingInput" || row.unread;
   }
   if (filter === "running") {
-    return row.session.status === "working" || row.session.status === "connecting";
+    return row.session.status === "working";
   }
   if (filter === "unread") return row.unread;
   return row.session.status === "error";

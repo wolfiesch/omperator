@@ -24,6 +24,9 @@ catalog:
 overrides:
   vite: "catalog:"
 
+patchedDependencies:
+  "@legendapp/list@3.2.0": patches/@legendapp__list@3.2.0.patch
+
 packageExtensions:
   vite-plus@*:
     dependencies:

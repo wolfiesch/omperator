@@ -150,14 +150,21 @@ export function TerminalViewport({
       attributeFilter: ["class"],
     });
 
-    const mountObserver = new ResizeObserver(() => {
+    let resizeFrame = 0;
+    const fitTerminal = () => {
+      resizeFrame = 0;
       const wasAtBottom = terminal.buffer.active.viewportY >= terminal.buffer.active.baseY;
       fitSafely(fitAddon);
       if (wasAtBottom) terminal.scrollToBottom();
+    };
+    const mountObserver = new ResizeObserver(() => {
+      if (resizeFrame !== 0) cancelAnimationFrame(resizeFrame);
+      resizeFrame = requestAnimationFrame(fitTerminal);
     });
     mountObserver.observe(mount);
 
     return () => {
+      if (resizeFrame !== 0) cancelAnimationFrame(resizeFrame);
       inputDisposable.dispose();
       resizeDisposable.dispose();
       selectionDisposable.dispose();
