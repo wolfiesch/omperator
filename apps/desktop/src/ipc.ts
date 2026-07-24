@@ -67,6 +67,34 @@ import { isTrustedNavigation, trustedSender, type TrustedRenderer } from "./secu
 import type { DesktopSpeechService } from "./speech.ts";
 import type { LocalTargetManager } from "./target-manager.ts";
 import type { LocalProfileRuntime } from "./profile-runtime.ts";
+
+/**
+ * Opt-in command trace, off unless T4_TRACE_COMMANDS is set.
+ *
+ * Records only the command NAME, a per-process sequence token, the duration,
+ * and the phase. Intent args can carry paths and other user data, so they are
+ * never written.
+ *
+ * Scope: this token is MAIN-PROCESS ONLY. It never crosses to the host, so it
+ * cannot assign ownership between main and host. It answers a narrower
+ * question: which command was in flight and for how long, which is enough to
+ * separate a lease acquisition from the command it guards. Cross-boundary
+ * ownership needs the OMP RPC request id logged at both client send and host
+ * receive.
+ */
+const COMMAND_TRACE_ENABLED = process.env.T4_TRACE_COMMANDS === "1";
+let commandTraceSeq = 0;
+
+function nextCommandTraceToken(): number {
+  commandTraceSeq += 1;
+  return commandTraceSeq;
+}
+
+function traceCommand(token: number, command: string, phase: string, startedAt?: number): void {
+  if (!COMMAND_TRACE_ENABLED) return;
+  const elapsed = startedAt === undefined ? "" : ` ms=${Date.now() - startedAt}`;
+  console.error(`[t4-trace] token=${token} command=${command} phase=${phase}${elapsed}`);
+}
 export interface IpcRuntime {
   readonly manager: LocalTargetManager;
   readonly window: BrowserWindow;
@@ -244,7 +272,18 @@ export class DesktopIpcRegistry {
     this.ipc.handle("omp:command", async (event, payload: unknown): Promise<CommandResult> => {
       this.assertSender(event);
       const input = decodeRequest("omp:command", payload).payload as CommandRequest;
-      return this.runtime.manager.command(input.targetId, input.intent);
+      if (!COMMAND_TRACE_ENABLED) return this.runtime.manager.command(input.targetId, input.intent);
+      const token = nextCommandTraceToken();
+      const startedAt = Date.now();
+      traceCommand(token, input.intent.command, "enter");
+      try {
+        const result = await this.runtime.manager.command(input.targetId, input.intent);
+        traceCommand(token, input.intent.command, result.accepted ? "accepted" : "refused", startedAt);
+        return result;
+      } catch (error) {
+        traceCommand(token, input.intent.command, "threw", startedAt);
+        throw error;
+      }
     });
     this.ipc.handle("omp:pair", async (event, payload: unknown): Promise<PairResult> => {
       this.assertSender(event);
