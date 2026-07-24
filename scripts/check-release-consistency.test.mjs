@@ -458,6 +458,33 @@ test("historical repair keeps trusted verification code separate from immutable 
   });
 });
 
+test("historical repair keeps trusted publication control separate from release content", () => {
+  const publishJob = requiredWorkflowJob(files.get(".github/workflows/release.yml"), "publish");
+  const controlCheckout = requiredNamedStep(
+    publishJob,
+    "Check out trusted publication-control source",
+  );
+  const contentCheckout = requiredNamedStep(publishJob, "Check out verified release content");
+  const tagStep = requiredNamedStep(
+    publishJob,
+    "Confirm the release tag still resolves to the verified source",
+  );
+  const prepareStep = requiredNamedStep(
+    publishJob,
+    "Preserve an exact release or prepare an incomplete release for repair",
+  );
+  const publishStep = requiredNamedStep(publishJob, "Publish GitHub release");
+  const verifyStep = requiredNamedStep(publishJob, "Verify the exact remote release bundle");
+
+  assert.equal(controlCheckout.with.ref, "${{ github.sha }}");
+  assert.equal(contentCheckout.with.ref, "${{ needs.verify.outputs.source_sha }}");
+  assert.equal(contentCheckout.with.path, ".release-source");
+  assert.equal(tagStep["working-directory"], ".release-source");
+  assert.match(prepareStep.run, /^node scripts\/reconcile-release-assets\.mjs/u);
+  assert.equal(publishStep.with.body_path, ".release-source/docs/CURRENT_RELEASE_NOTES.md");
+  assert.match(verifyStep.run, /^node scripts\/reconcile-release-assets\.mjs/u);
+});
+
 test("rejects published app-wire version drift until release surfaces agree", () => {
   const drifted = changedRuntime("publishedAppWire", (record) => {
     record.version = "0.5.1";

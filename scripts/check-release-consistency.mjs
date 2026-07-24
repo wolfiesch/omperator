@@ -1151,7 +1151,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   );
   requireText(
     releaseWorkflow,
-    "body_path: docs/CURRENT_RELEASE_NOTES.md",
+    "body_path: .release-source/docs/CURRENT_RELEASE_NOTES.md",
     ".github/workflows/release.yml",
     errors,
   );

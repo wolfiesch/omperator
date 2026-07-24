@@ -379,15 +379,23 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Check out verified release source
+      - name: Check out trusted publication-control source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Check out verified release content
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ needs.verify.outputs.source_sha }}
+          path: .release-source
           fetch-depth: 0
           persist-credentials: false
 
       - name: Confirm the release tag still resolves to the verified source
         shell: bash
+        working-directory: .release-source
         env:
           SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
         run: |
@@ -444,7 +452,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           generate_release_notes: true
           fail_on_unmatched_files: true
-          body_path: docs/CURRENT_RELEASE_NOTES.md
+          body_path: .release-source/docs/CURRENT_RELEASE_NOTES.md
           files: |
             artifacts/T4-Code-*.apk
             artifacts/T4-Code-*.deb
