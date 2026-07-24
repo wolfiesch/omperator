@@ -14,6 +14,7 @@ const GROUP_PATTERNS = Object.freeze({
     /^\.github\/workflows\/ci\.yml$/u,
     /^\.woodpecker\.yml$/u,
     /^compat\/omp-app-matrix\.json$/u,
+    /^packages\/client\/src\//u,
     /^packages\/host-service\/bin\/current-omp-bridge-proof\.ts$/u,
     /^packages\/host-service\/src\//u,
     /^packages\/host-service\/package\.json$/u,

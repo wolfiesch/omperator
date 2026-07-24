@@ -196,6 +196,19 @@ function semanticSessionState(): Record<string, unknown> {
     fastActive: false,
   };
 }
+function createdSessionResult(): Record<string, unknown> {
+  return {
+    session: {
+      hostId: HOST,
+      sessionId: SESSION,
+      project: { projectId: "project-fixture" },
+      revision: "rev-a",
+      title: "Created session",
+      status: "active",
+      updatedAt: "2026-07-24T00:00:00.000Z",
+    },
+  };
+}
 function snapshot(seq = 0, session = SESSION): ServerFrame {
   return {
     v: V,
@@ -1080,11 +1093,41 @@ describe("OmpClient reconnect stability", () => {
     await client.close();
   });
 
+  it("does not claim an existing session merely to hydrate attachment state", async () => {
+    const transport = new FakeTransport({
+      welcome: welcome(),
+      onSend: (frame, current) => {
+        if (frame.type === "command" && frame.command === "session.attach") {
+          current.emit(responseFor(frame));
+        }
+      },
+    });
+    const client = new OmpClient({
+      transport: () => transport,
+      hostId: HOST,
+      reconnect: { baseMs: 0, maxMs: 0 },
+    });
+
+    await client.connect();
+    await client.attach(HOST, SESSION);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(
+      transport.sent
+        .map((serialized) => decodeClientFrame(serialized))
+        .filter((frame): frame is CommandFrame => frame.type === "command")
+        .map((frame) => frame.command),
+    ).toEqual(["session.attach"]);
+    await client.close();
+  });
+
   it("hydrates semantic session state after initial and reconnect attachments", async () => {
     const clock = new FakeClock();
     const respond = (frame: ClientFrame, transport: FakeTransport): void => {
       if (frame.type !== "command") return;
-      if (frame.command === "session.attach") {
+      if (frame.command === "session.create") {
+        transport.emit(responseFor(frame, createdSessionResult()));
+      } else if (frame.command === "session.attach") {
         transport.emit(responseFor(frame));
       } else if (frame.command === "session.state.get") {
         transport.emit(responseFor(frame, semanticSessionState()));
@@ -1106,6 +1149,11 @@ describe("OmpClient reconnect stability", () => {
     });
 
     await client.connect();
+    await client.command({
+      hostId: HOST,
+      command: "session.create",
+      args: { projectId: "project-fixture" },
+    });
     await client.attach(HOST, SESSION);
     await Promise.resolve();
     await Promise.resolve();
@@ -1114,7 +1162,7 @@ describe("OmpClient reconnect stability", () => {
         .map((serialized) => decodeClientFrame(serialized))
         .filter((frame): frame is CommandFrame => frame.type === "command")
         .map((frame) => frame.command),
-    ).toEqual(["session.attach", "session.state.get"]);
+    ).toEqual(["session.create", "session.attach", "session.state.get"]);
 
     first.drop();
     await flushReconnect(clock);
@@ -1135,7 +1183,9 @@ describe("OmpClient reconnect stability", () => {
     const clock = new FakeClock();
     const respond = (frame: ClientFrame, transport: FakeTransport): void => {
       if (frame.type !== "command") return;
-      if (frame.command === "session.attach") {
+      if (frame.command === "session.create") {
+        transport.emit(responseFor(frame, createdSessionResult()));
+      } else if (frame.command === "session.attach") {
         transport.emit(responseFor(frame));
       } else if (frame.command === "session.state.get") {
         transport.emit(failureFor(frame, "unsupported"));
@@ -1159,6 +1209,11 @@ describe("OmpClient reconnect stability", () => {
     client.onError((error) => errors.push(error.message));
 
     await client.connect();
+    await client.command({
+      hostId: HOST,
+      command: "session.create",
+      args: { projectId: "project-fixture" },
+    });
     await client.attach(HOST, SESSION);
     await Promise.resolve();
     await Promise.resolve();
@@ -1167,7 +1222,7 @@ describe("OmpClient reconnect stability", () => {
         .map((serialized) => decodeClientFrame(serialized))
         .filter((frame): frame is CommandFrame => frame.type === "command")
         .map((frame) => frame.command),
-    ).toEqual(["session.attach", "session.state.get"]);
+    ).toEqual(["session.create", "session.attach", "session.state.get"]);
     expect(errors).toEqual([]);
 
     first.drop();
@@ -1190,9 +1245,10 @@ describe("OmpClient reconnect stability", () => {
     const transport = new FakeTransport({
       welcome: welcome(),
       onSend: (frame, current) => {
-        if (frame.type === "command" && frame.command === "session.attach") {
-          current.emit(responseFor(frame));
-        }
+        if (frame.type !== "command") return;
+        if (frame.command === "session.create")
+          current.emit(responseFor(frame, createdSessionResult()));
+        else if (frame.command === "session.attach") current.emit(responseFor(frame));
       },
     });
     const client = new OmpClient({
@@ -1202,6 +1258,11 @@ describe("OmpClient reconnect stability", () => {
     });
 
     await client.connect();
+    await client.command({
+      hostId: HOST,
+      command: "session.create",
+      args: { projectId: "project-fixture" },
+    });
     await expect(client.attach(HOST, SESSION)).resolves.toMatchObject({ ok: true });
     expect(client.state).toBe("ready");
     expect(
@@ -1209,7 +1270,7 @@ describe("OmpClient reconnect stability", () => {
         .map((serialized) => decodeClientFrame(serialized))
         .filter((frame): frame is CommandFrame => frame.type === "command")
         .map((frame) => frame.command),
-    ).toEqual(["session.attach", "session.state.get"]);
+    ).toEqual(["session.create", "session.attach", "session.state.get"]);
     await client.close();
   });
 
@@ -1273,7 +1334,7 @@ describe("OmpClient reconnect stability", () => {
         .map((serialized) => decodeClientFrame(serialized))
         .filter((frame): frame is CommandFrame => frame.type === "command")
         .map((frame) => frame.command),
-    ).toEqual(["session.attach", "session.state.get", "preview.state"]);
+    ).toEqual(["session.attach", "preview.state"]);
     first.drop();
     await flushReconnect(clock);
     await Promise.resolve();
@@ -1286,7 +1347,7 @@ describe("OmpClient reconnect stability", () => {
         .map((serialized) => decodeClientFrame(serialized))
         .filter((frame): frame is CommandFrame => frame.type === "command")
         .map((frame) => frame.command),
-    ).toEqual(["session.attach", "session.state.get", "preview.state"]);
+    ).toEqual(["session.attach", "preview.state"]);
 
     second.drop();
     await flushReconnect(clock);
@@ -1299,7 +1360,7 @@ describe("OmpClient reconnect stability", () => {
         .map((serialized) => decodeClientFrame(serialized))
         .filter((frame): frame is CommandFrame => frame.type === "command")
         .map((frame) => frame.command),
-    ).toEqual(["session.attach", "session.state.get", "preview.state"]);
+    ).toEqual(["session.attach", "preview.state"]);
     await client.close();
   });
 
@@ -1332,7 +1393,7 @@ describe("OmpClient reconnect stability", () => {
         .map((serialized) => decodeClientFrame(serialized))
         .filter((frame): frame is CommandFrame => frame.type === "command")
         .map((frame) => frame.command),
-    ).toEqual(["session.attach", "session.state.get"]);
+    ).toEqual(["session.attach"]);
     await client.close();
   });
 });
