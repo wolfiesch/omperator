@@ -38,6 +38,17 @@ test("site workflow deploys the React demo independently from release publicatio
   assert.match(workflow, /run: pnpm deploy:demo/u);
   assert.match(workflow, /run: pnpm deploy:site/u);
   assert.doesNotMatch(workflow, /deploy:site-bundle/u);
+  assert.equal(
+    workflow.match(/name: Authenticate to AWS with deployment credentials/gu)?.length,
+    2,
+  );
+  assert.equal(workflow.match(/aws-access-key-id: \$\{\{ secrets\.AWS_ACCESS_KEY_ID \}\}/gu)?.length, 2);
+  assert.equal(
+    workflow.match(/aws-secret-access-key: \$\{\{ secrets\.AWS_SECRET_ACCESS_KEY \}\}/gu)?.length,
+    2,
+  );
+  assert.equal(workflow.match(/vars\.AWS_ROLE_ARN == ''/gu)?.length, 2);
+  assert.equal(workflow.match(/vars\.AWS_ROLE_ARN != ''/gu)?.length, 2);
   assert.match(infrastructure, /PathPattern: demo\*/u);
   assert.match(infrastructure, /connect-src 'self' https:\/\/fonts\.gstatic\.com/u);
 });

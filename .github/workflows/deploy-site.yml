@@ -69,9 +69,18 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Authenticate to AWS with GitHub OIDC
+        if: ${{ vars.AWS_ROLE_ARN != '' }}
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Authenticate to AWS with deployment credentials
+        if: ${{ vars.AWS_ROLE_ARN == '' }}
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
       - name: Build and deploy current React demo
@@ -201,10 +210,18 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Authenticate to AWS with GitHub OIDC
-        if: ${{ steps.published_release.outcome == 'success' || steps.existing_release.outcome == 'success' }}
+        if: ${{ (steps.published_release.outcome == 'success' || steps.existing_release.outcome == 'success') && vars.AWS_ROLE_ARN != '' }}
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Authenticate to AWS with deployment credentials
+        if: ${{ (steps.published_release.outcome == 'success' || steps.existing_release.outcome == 'success') && vars.AWS_ROLE_ARN == '' }}
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
       - name: Build and deploy immutable release site
