@@ -138,6 +138,30 @@ test("signed macOS packaging is explicit, credentialed, and release-gated", asyn
   assert.doesNotMatch(releaseWorkflow, /Build unsigned macOS packages/u);
 });
 
+test("desktop release builders install the pinned Bun compiler before packaging", () => {
+  const releaseWorkflow = readFileSync(resolve(repoRoot, ".github/workflows/release.yml"), "utf8");
+  const jobs = [
+    ["build-linux", "build-android", "pnpm package:linux"],
+    ["build-macos", "publish", "pnpm package:mac"],
+  ];
+
+  for (const [jobName, nextJobName, packageCommand] of jobs) {
+    const job = releaseWorkflow.slice(
+      releaseWorkflow.indexOf(`  ${jobName}:`),
+      releaseWorkflow.indexOf(`  ${nextJobName}:`),
+    );
+    const setupBun = job.indexOf(
+      "uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6",
+    );
+    const pinnedVersion = job.indexOf("bun-version: 1.3.14");
+    const packaging = job.indexOf(packageCommand);
+
+    assert.ok(setupBun >= 0, `${jobName} must install Bun`);
+    assert.ok(pinnedVersion > setupBun, `${jobName} must pin the Bun version`);
+    assert.ok(packaging > pinnedVersion, `${jobName} must install Bun before packaging`);
+  }
+});
+
 test("signed macOS packaging relaxes library validation only for the bundled OMP runtime", () => {
   const appPath = "/tmp/T4 Code.app";
   const inherited = () => ({
