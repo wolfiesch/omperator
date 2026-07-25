@@ -15,7 +15,7 @@ import {
 } from "@t4-code/host-wire";
 
 /**
- * Opt-in host ingress trace, off unless T4_TRACE_COMMANDS is set.
+ * Opt-in host command trace, off unless T4_TRACE_COMMANDS is set.
  *
  * Emits ONLY the wire requestId, the command name, a phase, and elapsed time.
  * Terminal and file commands cross a trust boundary, so session ids, args, cwd,
@@ -24,8 +24,8 @@ import {
  *
  * The wire requestId is the correlator: log the same id where the client
  * constructs and sends the CommandFrame to match the two sides under
- * concurrency. Phases distinguish a command the host never sees from one it
- * receives and then stalls on inside the authority.
+ * concurrency. Server receipt and operation-dispatch phases distinguish
+ * pre-dispatch stalls from stalls inside the authority.
  */
 export type HostTraceSink = (line: string) => void;
 
@@ -43,7 +43,7 @@ export function formatHostTrace(
  * Diagnostics must never change dispatch behaviour, so a sink that throws is
  * swallowed rather than surfaced as a command failure.
  */
-function emitHostTrace(
+export function emitHostTrace(
 	sink: HostTraceSink | undefined,
 	requestId: string,
 	command: string,
@@ -371,12 +371,11 @@ export class DesktopOperationDispatcher implements OperationCommandHandler {
 
 	async dispatch(command: CommandFrame, context: OperationContext): Promise<CommandResult> {
 		if (!this.trace) return this.dispatchInner(command, context);
-		// Trace on entry, before any validation, so a command rejected during
-		// validation stays distinguishable from one that never reached the host.
-		// Every path below emits a terminal phase, otherwise a rejection and an
-		// interrupted process would look identical.
+		// Trace before operation validation. The server emits `received` at its
+		// command entry, so absence of this phase localizes a stall to server
+		// pre-dispatch work rather than transport receipt.
 		const startedAt = performance.now();
-		emitHostTrace(this.trace, command.requestId, command.command, "ingress");
+		emitHostTrace(this.trace, command.requestId, command.command, "operation-ingress");
 		try {
 			const result = await this.dispatchInner(command, context);
 			const ms = Math.round(performance.now() - startedAt);

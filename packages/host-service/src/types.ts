@@ -22,7 +22,7 @@ import type {
 	TranscriptSearchResult,
 	UsageReadResult,
 } from "@t4-code/host-wire";
-import type { DesktopOperationsAuthority } from "./operations/dispatcher.ts";
+import type { DesktopOperationsAuthority, HostTraceSink } from "./operations/dispatcher.ts";
 import type { BunRemoteListener } from "./remote/listener.ts";
 import type {
 	ListenerPeerContext,
@@ -241,6 +241,8 @@ export interface AppserverOptions {
 	discovery?: SessionDiscovery;
 	sessionAuthority?: SessionAuthority;
 	operationsAuthority?: DesktopOperationsAuthority;
+	/** Opt-in privacy-bounded command trace sink. */
+	trace?: HostTraceSink;
 	usageAuthority?: AppserverUsageAuthority;
 	/** Rebuildable, profile-local index for bounded transcript search and read-around. */
 	transcriptSearchAuthority?: AppserverTranscriptSearchAuthority;

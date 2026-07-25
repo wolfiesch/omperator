@@ -1,4 +1,4 @@
-// The host ingress trace is diagnostic code that is meant to stay. Terminal
+// The host command trace is diagnostic code that is meant to stay. Terminal
 // commands cross a trust boundary, so this pins its privacy contract: the trace
 // may carry the wire request id, the command name, a phase, and elapsed time,
 // and nothing else. A comment alone would not stop a later change from logging
@@ -29,15 +29,15 @@ function collectingDispatcher() {
 	return { dispatcher, lines };
 }
 
-describe("host ingress trace", () => {
+describe("host command trace", () => {
 	it("emits only request id, command, phase and elapsed", () => {
-		const line = formatHostTrace("req-1", "term.open", "ingress", 42);
-		expect(line).toBe("[t4-host-trace] req=req-1 command=term.open phase=ingress ms=42");
+		const line = formatHostTrace("req-1", "term.open", "operation-ingress", 42);
+		expect(line).toBe("[t4-host-trace] req=req-1 command=term.open phase=operation-ingress ms=42");
 	});
 
 	it("omits elapsed when it is not supplied", () => {
-		expect(formatHostTrace("req-1", "term.open", "ingress")).toBe(
-			"[t4-host-trace] req=req-1 command=term.open phase=ingress",
+		expect(formatHostTrace("req-1", "term.open", "operation-ingress")).toBe(
+			"[t4-host-trace] req=req-1 command=term.open phase=operation-ingress",
 		);
 	});
 
@@ -77,7 +77,7 @@ describe("host ingress trace", () => {
 		}
 	});
 
-	it("traces ingress before validation so a rejected command is still visible", async () => {
+	it("traces operation ingress before validation so a rejected operation is still visible", async () => {
 		const { dispatcher, lines } = collectingDispatcher();
 		const frame = {
 			v: 1,
@@ -102,7 +102,7 @@ describe("host ingress trace", () => {
 			dispatcher.dispatch(frame as never, context as never),
 		).rejects.toBeDefined();
 
-		expect(lines.some(line => line.includes("phase=ingress"))).toBe(true);
+		expect(lines.some(line => line.includes("phase=operation-ingress"))).toBe(true);
 		// A rejected command must still settle, otherwise it is indistinguishable
 		// from a hang.
 		expect(lines.some(line => line.includes("phase=threw"))).toBe(true);
@@ -155,7 +155,7 @@ describe("host ingress trace", () => {
 		// what separates a host-side stall from an authority-side one, and the
 		// run must end in `returned`, never `threw`.
 		const phases = lines.map(line => (line.match(/phase=(\S+)/) ?? [])[1]);
-		expect(phases).toEqual(["ingress", "authority-invoke", "authority-ok", "returned"]);
+		expect(phases).toEqual(["operation-ingress", "authority-invoke", "authority-ok", "returned"]);
 	});
 
 	it("does not let a throwing sink break the command it observes", async () => {

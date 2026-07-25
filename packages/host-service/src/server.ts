@@ -83,6 +83,8 @@ import { SessionOwnershipStore } from "./session-ownership-store.ts";
 import {
 	commandFeature,
 	DesktopOperationDispatcher,
+	emitHostTrace,
+	type HostTraceSink,
 	type OperationContext,
 	operationCapabilities,
 	operationFeatures,
@@ -913,6 +915,7 @@ export class LocalAppserver implements AppserverHandle {
 	#workspaceAuthority?: WorkspaceAuthority;
 	#workspaceTargetPathForProject?: AppserverOptions["workspaceTargetPathForProject"];
 	#onOwnerAcquired?: AppserverOptions["onOwnerAcquired"];
+	#trace?: HostTraceSink;
 	constructor(options: AppserverOptions = {}) {
 		if (options.testControl && (options.remoteEndpoint || options.remoteListener)) {
 			throw new Error("appserver test control is local-only");
@@ -947,12 +950,24 @@ export class LocalAppserver implements AppserverHandle {
 		this.#clock = options.clock ?? clock;
 		this.#idempotency = new IdempotencyStore({ now: () => this.#clock.now().getTime() });
 		this.#authority = options.sessionAuthority;
+		this.#trace =
+			options.trace ??
+			(process.env.T4_TRACE_COMMANDS === "1"
+				? line => {
+						console.error(line);
+					}
+				: undefined);
 		this.#operations = options.operationsAuthority
-			? new DesktopOperationDispatcher(options.operationsAuthority, undefined, (frame, owner) => {
-					for (const ws of this.#clients)
-						if (ws.connectionId === owner.connectionId && ws.deviceId === owner.deviceId)
-							void this.#sendFrame(ws, frame as ServerFrame);
-				})
+			? new DesktopOperationDispatcher(
+					options.operationsAuthority,
+					undefined,
+					(frame, owner) => {
+						for (const ws of this.#clients)
+							if (ws.connectionId === owner.connectionId && ws.deviceId === owner.deviceId)
+								void this.#sendFrame(ws, frame as ServerFrame);
+					},
+					this.#trace,
+				)
 			: undefined;
 		this.#usageAuthority = options.usageAuthority;
 		this.#transcriptSearch = options.transcriptSearchAuthority;
@@ -1492,6 +1507,7 @@ export class LocalAppserver implements AppserverHandle {
 		return this.#supervisors.get(sessionId)?.child();
 	}
 	async #command(command: CommandFrame, ws?: AppWs, approved = false): Promise<CommandOutcome> {
+		emitHostTrace(this.#trace, command.requestId, command.command, "received");
 		if (command.hostId !== this.hostId)
 			return {
 				frame: response(this.hostId, command, false, undefined, {
