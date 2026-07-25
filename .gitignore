@@ -18,9 +18,7 @@ dist-electron/
 !.env.example
 
 # Test and runtime output
-/artifacts/legacy-bridge-continuity/
-/artifacts/official-omp-gate0/
-/artifacts/current-omp-bridge/
+/artifacts/
 /.continuity/
 /.current-continuity/
 /evidence/wire/
