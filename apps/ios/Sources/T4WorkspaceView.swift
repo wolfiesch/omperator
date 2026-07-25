@@ -108,7 +108,15 @@ struct T4WorkspaceView: View {
                 try? await Task.sleep(for: .milliseconds(500))
             }
             guard store.connected, let session = store.selectedSession ?? store.sessions.first else { return }
-            await store.sendPrompt(sessionId: session.sessionId, text: text)
+            // The socket can be mid-reconnect when we get here; retry a few
+            // times before giving up (errors surface via store.lastError).
+            for attempt in 0..<3 {
+                let before = store.lastError
+                await store.sendPrompt(sessionId: session.sessionId, text: text)
+                if store.lastError == before { return }   // no new error → sent
+                try? await Task.sleep(for: .seconds(2))
+                if attempt == 2 { return }
+            }
         }
     }
 
