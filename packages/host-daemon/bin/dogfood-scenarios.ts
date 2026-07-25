@@ -52,12 +52,17 @@ function parseArguments(argv: readonly string[], repoRoot: string): Options {
 }
 
 async function next(client: RawUdsWebSocket, label: string): Promise<ServerFrame> {
-  return Promise.race([
-    client.nextServer(),
-    Bun.sleep(TIMEOUT_MS).then(() => {
-      throw new Error(`${label} timed out`);
-    }),
-  ]);
+  try {
+    return await Promise.race([
+      client.nextServer(),
+      Bun.sleep(TIMEOUT_MS).then(() => {
+        throw new Error(`${label} timed out`);
+      }),
+    ]);
+  } catch (error) {
+    if (error instanceof Error && error.message === `${label} timed out`) throw error;
+    throw new Error(`${label}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+  }
 }
 
 async function waitForSocket(path: string, child: Bun.Subprocess): Promise<void> {
@@ -79,7 +84,7 @@ async function connectClient(socketPath: string, label: string): Promise<Connect
     type: "hello",
     protocol: { min: "omp-app/1", max: "omp-app/1" },
     client: { name: label, version: "1", build: "dogfood", platform: process.platform },
-    requestedFeatures: [],
+    requestedFeatures: ["session.delta"],
     capabilities: {
       client: ["sessions.read", "sessions.prompt", "sessions.control", "sessions.manage", "catalog.read"],
     },
@@ -93,23 +98,6 @@ async function connectClient(socketPath: string, label: string): Promise<Connect
   }
 }
 
-async function waitForInventory(
-  socketPath: string,
-  sessionId: string,
-  predicate: (session: SessionsFrame["sessions"][number] | undefined) => boolean,
-): Promise<void> {
-  const deadline = Date.now() + TIMEOUT_MS;
-  let attempt = 0;
-  while (Date.now() < deadline) {
-    const connection = await connectClient(socketPath, `dogfood-inventory-${attempt}`);
-    const session = connection.sessions.sessions.find((item) => item.sessionId === sessionId);
-    await connection.client.close();
-    if (predicate(session)) return;
-    attempt += 1;
-    await Bun.sleep(50);
-  }
-  throw new Error("session inventory did not converge");
-}
 
 let commandSequence = 0;
 function sendCommand(
@@ -243,6 +231,17 @@ function recordedDelta(
       (frame): frame is SessionDeltaFrame =>
         frame.type === "session.delta" && frame.sessionId === sessionId && predicate(frame),
     );
+}
+
+async function recordedOrAwaitedDelta(
+  connection: ConnectedClient,
+  sessionId: string,
+  start: number,
+  predicate: (frame: SessionDeltaFrame) => boolean,
+  journal: ServerFrame[],
+): Promise<SessionDeltaFrame> {
+  return recordedDelta(journal, start, sessionId, predicate) ??
+    await waitForDelta(connection, sessionId, predicate, journal);
 }
 
 async function lifecycleCommand(
@@ -446,6 +445,8 @@ async function main(): Promise<void> {
   const stateRoot = join(root, "state");
   const runtimeRoot = join(root, "run");
   const profile = `dogfood-${randomUUID().slice(0, 12)}`;
+  const profileKey = createHash("sha256").update(profile, "utf8").digest("hex").slice(0, 24);
+  const officialMetadataPath = join(stateRoot, "profiles", profileKey, "official-omp-sessions.json");
   const agentDir = join(home, ".omp", "profiles", profile, "agent");
   const authorityMode = options.runtimePath === undefined ? "official" : "bridge";
   const sessionsRoot = authorityMode === "official" ? join(root, "sessions") : join(agentDir, "sessions");
@@ -617,11 +618,26 @@ async function main(): Promise<void> {
                 )
               ).revision,
             );
+      const renameJournalStart = journal.length;
       revision = await renameSession(
         controller,
         lifecycleSession.sessionId,
         revision,
         "Omperator dogfood renamed",
+        journal,
+      );
+      const controllerRename = await recordedOrAwaitedDelta(
+        controller,
+        lifecycleSession.sessionId,
+        renameJournalStart,
+        (frame) => frame.upsert?.title === "Omperator dogfood renamed",
+        journal,
+      );
+      revision = String(controllerRename.revision);
+      const observerRename = await waitForDelta(
+        observer,
+        lifecycleSession.sessionId,
+        (frame) => frame.upsert?.title === "Omperator dogfood renamed",
         journal,
       );
       if (lifecycleSession.path !== undefined) {
@@ -639,14 +655,21 @@ async function main(): Promise<void> {
         ),
         "session.close",
       );
-      revision = String(
-        recordedDelta(
-          journal,
-          closeJournalStart,
-          lifecycleSession.sessionId,
-          (frame) => frame.upsert !== undefined,
-        )?.revision ?? revision,
+      const controllerClose = await recordedOrAwaitedDelta(
+        controller,
+        lifecycleSession.sessionId,
+        closeJournalStart,
+        (frame) => frame.upsert?.status === "closed",
+        journal,
       );
+      revision = String(controllerClose.revision);
+      const observerClose = await waitForDelta(
+        observer,
+        lifecycleSession.sessionId,
+        (frame) => frame.upsert?.status === "closed",
+        journal,
+      );
+      const archiveJournalStart = journal.length;
       revision = await lifecycleCommand(
         controller,
         lifecycleSession.sessionId,
@@ -655,15 +678,25 @@ async function main(): Promise<void> {
         {},
         journal,
       );
-      await waitForInventory(
-        socketPath,
+      const controllerArchive = await recordedOrAwaitedDelta(
+        controller,
         lifecycleSession.sessionId,
-        (session) => session?.archivedAt !== undefined,
+        archiveJournalStart,
+        (frame) => frame.upsert?.archivedAt !== undefined,
+        journal,
+      );
+      revision = String(controllerArchive.revision);
+      const observerArchive = await waitForDelta(
+        observer,
+        lifecycleSession.sessionId,
+        (frame) => frame.upsert?.archivedAt !== undefined,
+        journal,
       );
       const archivedPromptId = `archived-prompt-${randomUUID()}`;
       sendCommand(controller, archivedPromptId, "session.prompt", lifecycleSession.sessionId, { message: "must not run" });
       const archivedPrompt = await responseFor(controller.client, archivedPromptId, journal);
       if (archivedPrompt.ok) throw new Error("archived session accepted a prompt");
+      const restoreJournalStart = journal.length;
       revision = await lifecycleCommand(
         controller,
         lifecycleSession.sessionId,
@@ -672,13 +705,43 @@ async function main(): Promise<void> {
         {},
         journal,
       );
-      await waitForInventory(
-        socketPath,
+      if (authorityMode === "official") {
+        const metadata = JSON.parse(await readFile(officialMetadataPath, "utf8")) as {
+          archived?: Record<string, string>;
+        };
+        if (metadata.archived?.[lifecycleSession.sessionId] !== undefined) {
+          throw new Error("restored session remained archived in authority metadata");
+        }
+      }
+      const controllerRestore = await recordedOrAwaitedDelta(
+        controller,
         lifecycleSession.sessionId,
-        (session) => session !== undefined && session.archivedAt === undefined,
+        restoreJournalStart,
+        (frame) => frame.upsert !== undefined && frame.upsert.archivedAt === undefined,
+        journal,
       );
+      revision = String(controllerRestore.revision);
+      const observerRestore = await waitForDelta(
+        observer,
+        lifecycleSession.sessionId,
+        (frame) => frame.upsert !== undefined && frame.upsert.archivedAt === undefined,
+        journal,
+      );
+      const deleteJournalStart = journal.length;
       await deleteSession(controller, lifecycleSession.sessionId, revision, journal);
-      await waitForInventory(socketPath, lifecycleSession.sessionId, (session) => session === undefined);
+      const controllerDelete = await recordedOrAwaitedDelta(
+        controller,
+        lifecycleSession.sessionId,
+        deleteJournalStart,
+        (frame) => frame.remove === lifecycleSession.sessionId,
+        journal,
+      );
+      const observerDelete = await waitForDelta(
+        observer,
+        lifecycleSession.sessionId,
+        (frame) => frame.remove === lifecycleSession.sessionId,
+        journal,
+      );
       if (lifecycleSession.path !== undefined) await waitForMissingFile(lifecycleSession.path);
       scenarioResults.lifecycle = {
         renamed: true,
@@ -686,7 +749,20 @@ async function main(): Promise<void> {
         archivedWriteRejected: true,
         restored: true,
         deleted: true,
-        observerConverged: true,
+        inventoryConverged:
+          controllerRename.upsert?.title === "Omperator dogfood renamed" &&
+          controllerClose.upsert?.status === "closed" &&
+          controllerArchive.upsert?.archivedAt !== undefined &&
+          controllerRestore.upsert !== undefined &&
+          controllerRestore.upsert.archivedAt === undefined &&
+          controllerDelete.remove === lifecycleSession.sessionId,
+        observerConverged:
+          observerRename.upsert?.title === "Omperator dogfood renamed" &&
+          observerClose.upsert?.status === "closed" &&
+          observerArchive.upsert?.archivedAt !== undefined &&
+          observerRestore.upsert !== undefined &&
+          observerRestore.upsert.archivedAt === undefined &&
+          observerDelete.remove === lifecycleSession.sessionId,
       };
     }
 

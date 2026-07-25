@@ -31,6 +31,7 @@ export function worktreeIdentity(slug, root = repoRoot) {
     branch: `worktree/${name}`,
     sandbox: name,
     metadataPath: resolve(root, ".artifacts", "worktrees", `${name}.json`),
+    environmentPath: resolve(path, ".artifacts", "worktree.env"),
   };
 }
 
@@ -38,6 +39,20 @@ export function candidatePorts(slug, offset = 0) {
   const seed = createHash("sha256").update(parseWorktreeSlug(slug)).digest().readUInt32BE(0);
   const slot = (seed + offset) % 1_000;
   return { renderer: 41_000 + slot, tailnet: 43_000 + slot, fixture: 45_000 + slot };
+}
+
+export function worktreePortEnvironment(ports) {
+  const entries = {
+    T4_DEV_RENDERER_PORT: ports?.renderer,
+    T4_GATEWAY_PORT: ports?.tailnet,
+    T4_FIXTURE_PORT: ports?.fixture,
+  };
+  for (const [name, port] of Object.entries(entries)) {
+    if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+      throw new Error(`${name} must be an integer from 1 through 65535`);
+    }
+  }
+  return Object.fromEntries(Object.entries(entries).map(([name, port]) => [name, String(port)]));
 }
 
 function git(args, options = {}) {
@@ -99,6 +114,12 @@ async function newWorktree(slug) {
     if (head !== baseCommit) throw new Error("new worktree does not match exact origin/main");
     const ports = await allocatedPorts(identity.slug);
     const sandbox = await prepareDevelopmentSandbox(identity.sandbox, identity.path);
+    const environment = worktreePortEnvironment(ports);
+    await writeFile(
+      identity.environmentPath,
+      `${Object.entries(environment).map(([name, value]) => `${name}=${value}`).join("\n")}\n`,
+      { mode: 0o600 },
+    );
     const metadata = {
       schemaVersion: 1,
       slug: identity.slug,
@@ -106,6 +127,7 @@ async function newWorktree(slug) {
       baseCommit,
       worktree: relative(repoRoot, identity.path),
       sandbox: relative(identity.path, sandbox.root),
+      environment: relative(identity.path, identity.environmentPath),
       ports,
       createdAt: new Date().toISOString(),
     };

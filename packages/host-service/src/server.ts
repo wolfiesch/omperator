@@ -2096,6 +2096,10 @@ export class LocalAppserver implements AppserverHandle {
 										: command.command === "session.rename"
 											? { renamed: true }
 											: { accepted: true };
+					if (command.command === "session.rename" && typeof command.args.name === "string") {
+						const frame = this.#projections.get(command.sessionId!)?.updateTitle(command.args.name);
+						if (frame) await this.broadcastIndex(frame);
+					}
 					if (
 						command.command === "session.model.set" ||
 						command.command === "session.thinking.set" ||

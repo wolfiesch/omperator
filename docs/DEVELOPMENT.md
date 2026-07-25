@@ -142,8 +142,10 @@ pnpm worktree remove --slug feature-name
 ```
 
 The helper allocates a `worktree/feature-name` branch, stable non-overlapping development ports,
-and project-owned sandbox metadata. Removal refuses dirty worktrees, unloads the sandbox service,
-and deletes only the named worktree and branch.
+and project-owned sandbox metadata. It writes the allocated ports to the worktree's ignored
+`.artifacts/worktree.env`; `pnpm dev` and `pnpm serve:tailnet` load that file automatically.
+Removal refuses dirty worktrees, unloads the sandbox service, and deletes only the named worktree
+and branch.
 
 ### Remote browser, iPhone/iPad, or Android work
 
@@ -153,9 +155,10 @@ enable Funnel or open a public firewall port for development.
 
 ## 4. Verify a change
 
-Use `pnpm verify:affected` while iterating to select checks from the changed paths. Unknown or
-cross-cutting paths fail closed to the full `pnpm check` and `pnpm test` gates. Before opening a
-pull request, run the repository gates:
+Use `pnpm verify:affected` while iterating to run checks selected from the changed paths, or
+`pnpm verify:affected:plan` to preview them without execution. Unknown or cross-cutting paths fail
+closed to the full `pnpm check` and `pnpm test` gates. Before opening a pull request, run the
+repository gates:
 
 ```sh
 pnpm check

@@ -61,6 +61,11 @@ tasks:
     cmds:
       - pnpm verify:affected
 
+  verify:affected:plan:
+    desc: Preview checks selected from changed paths
+    cmds:
+      - pnpm verify:affected:plan
+
   worktree:create:
     desc: Create an isolated worktree from current origin/main
     requires:
