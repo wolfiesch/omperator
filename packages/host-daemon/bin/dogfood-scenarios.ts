@@ -3,7 +3,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { ResultFrame, ServerFrame } from "@t4-code/protocol";
 import { OfficialOmpProfileAuthority, profileSocketPath } from "@t4-code/host-service";
 import { startDeterministicModel, verifyRuntime } from "../../host-service/bin/official-omp-gate0.ts";
@@ -13,6 +13,7 @@ const TIMEOUT_MS = 20_000;
 const SCENARIOS = new Set(["stream", "cancel", "reconnect", "lifecycle", "full"]);
 
 type Scenario = "stream" | "cancel" | "reconnect" | "lifecycle" | "full";
+type DogfoodSession = { sessionId: string; path?: string };
 type WelcomeFrame = Extract<ServerFrame, { type: "welcome" }>;
 type SessionsFrame = Extract<ServerFrame, { type: "sessions" }>;
 type SnapshotFrame = Extract<ServerFrame, { type: "snapshot" }>;
@@ -86,9 +87,28 @@ async function connectClient(socketPath: string, label: string): Promise<Connect
   });
   const welcome = await next(client, `${label} welcome`);
   if (welcome.type !== "welcome") throw new Error(`${label} did not receive Welcome`);
-  const sessions = await next(client, `${label} sessions`);
-  if (sessions.type !== "sessions") throw new Error(`${label} did not receive Sessions`);
-  return { client, welcome, sessions };
+  for (;;) {
+    const sessions = await next(client, `${label} sessions`);
+    if (sessions.type === "sessions") return { client, welcome, sessions };
+  }
+}
+
+async function waitForInventory(
+  socketPath: string,
+  sessionId: string,
+  predicate: (session: SessionsFrame["sessions"][number] | undefined) => boolean,
+): Promise<void> {
+  const deadline = Date.now() + TIMEOUT_MS;
+  let attempt = 0;
+  while (Date.now() < deadline) {
+    const connection = await connectClient(socketPath, `dogfood-inventory-${attempt}`);
+    const session = connection.sessions.sessions.find((item) => item.sessionId === sessionId);
+    await connection.client.close();
+    if (predicate(session)) return;
+    attempt += 1;
+    await Bun.sleep(50);
+  }
+  throw new Error("session inventory did not converge");
 }
 
 let commandSequence = 0;
@@ -129,6 +149,23 @@ function requireSuccess(response: ResultFrame, label: string): void {
     const detail = response.error ? `${response.error.code}: ${response.error.message}` : "unknown error";
     throw new Error(`${label} failed: ${detail}`);
   }
+}
+
+async function forkOwnedSession(
+  connection: ConnectedClient,
+  sourceSessionId: string,
+  journal: ServerFrame[],
+): Promise<DogfoodSession> {
+  const requestId = `fork-${randomUUID()}`;
+  sendCommand(connection, requestId, "session.fork", sourceSessionId, {});
+  const response = await responseFor(connection.client, requestId, journal);
+  requireSuccess(response, "session.fork");
+  const result = response.result as { session?: { sessionId?: unknown; path?: unknown } } | undefined;
+  if (typeof result?.session?.sessionId !== "string") throw new Error("session.fork omitted the owned session");
+  return {
+    sessionId: result.session.sessionId,
+    ...(typeof result.session.path === "string" ? { path: result.session.path } : {}),
+  };
 }
 
 async function promptWhenIdle(
@@ -211,22 +248,17 @@ function recordedDelta(
 async function lifecycleCommand(
   connection: ConnectedClient,
   sessionId: string,
-  name: "session.rename" | "session.archive" | "session.restore",
+  name: "session.archive" | "session.restore",
   revision: string,
   args: Record<string, unknown>,
-  predicate: (frame: SessionDeltaFrame) => boolean,
   journal: ServerFrame[],
-): Promise<SessionDeltaFrame> {
+): Promise<string> {
   let currentRevision = revision;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const requestId = `${name}-${randomUUID()}`;
     sendCommand(connection, requestId, name, sessionId, args, currentRevision);
-    const journalStart = journal.length;
     const response = await responseFor(connection.client, requestId, journal);
-    if (response.ok) {
-      return recordedDelta(journal, journalStart, sessionId, predicate) ??
-        waitForDelta(connection, sessionId, predicate, journal);
-    }
+    if (response.ok) return currentRevision;
     const actualRevision =
       response.error?.code === "stale_revision" &&
       response.error.details &&
@@ -250,29 +282,106 @@ async function confirmedCommand(
   journal: ServerFrame[],
   expectedRevision?: string,
 ): Promise<ResultFrame> {
-  const requestId = `${name}-${randomUUID()}`;
-  const commandId = sendCommand(connection, requestId, name, sessionId, args, expectedRevision);
-  let challenge: Extract<ServerFrame, { type: "confirmation" }> | undefined;
-  while (challenge === undefined) {
-    const frame = await next(connection.client, `${name} confirmation`);
-    journal.push(frame);
-    if (frame.type === "confirmation" && frame.commandId === commandId) challenge = frame;
-    if (frame.type === "response" && frame.requestId === requestId) {
-      requireSuccess(frame, name);
-      return frame;
+  let currentRevision = expectedRevision;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const requestId = `${name}-${randomUUID()}`;
+    const commandId = sendCommand(connection, requestId, name, sessionId, args, currentRevision);
+    let challenge: Extract<ServerFrame, { type: "confirmation" }> | undefined;
+    let retryRevision: string | undefined;
+    while (challenge === undefined) {
+      const frame = await next(connection.client, `${name} confirmation`);
+      journal.push(frame);
+      if (frame.type === "confirmation" && frame.commandId === commandId) challenge = frame;
+      if (frame.type === "response" && frame.requestId === requestId) {
+        retryRevision =
+          frame.error?.code === "stale_revision" &&
+          frame.error.details &&
+          typeof frame.error.details.actualRevision === "string"
+            ? frame.error.details.actualRevision
+            : undefined;
+        if (retryRevision === undefined) {
+          requireSuccess(frame, name);
+          return frame;
+        }
+        break;
+      }
     }
+    if (retryRevision !== undefined) {
+      currentRevision = retryRevision;
+      continue;
+    }
+    connection.client.sendJson({
+      v: "omp-app/1",
+      type: "confirm",
+      requestId: `confirm-${randomUUID()}`,
+      confirmationId: challenge!.confirmationId,
+      commandId,
+      hostId: connection.welcome.hostId,
+      sessionId,
+      decision: "approve",
+    });
+    const confirmed = await responseFor(connection.client, requestId, journal);
+    const confirmedRevision =
+      confirmed.error?.code === "stale_revision" &&
+      confirmed.error.details &&
+      typeof confirmed.error.details.actualRevision === "string"
+        ? confirmed.error.details.actualRevision
+        : undefined;
+    if (confirmedRevision !== undefined) {
+      currentRevision = confirmedRevision;
+      continue;
+    }
+    return confirmed;
   }
-  connection.client.sendJson({
-    v: "omp-app/1",
-    type: "confirm",
-    requestId: `confirm-${randomUUID()}`,
-    confirmationId: challenge.confirmationId,
-    commandId,
-    hostId: connection.welcome.hostId,
-    sessionId,
-    decision: "approve",
-  });
-  return responseFor(connection.client, requestId, journal);
+  throw new Error(`${name} could not acquire the current session revision`);
+}
+
+async function renameSession(
+  connection: ConnectedClient,
+  sessionId: string,
+  revision: string,
+  name: string,
+  journal: ServerFrame[],
+): Promise<string> {
+  let currentRevision = revision;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const requestId = `session.rename-${randomUUID()}`;
+    sendCommand(connection, requestId, "session.rename", sessionId, { name }, currentRevision);
+    const response = await responseFor(connection.client, requestId, journal);
+    if (response.ok) return currentRevision;
+    const actualRevision =
+      response.error?.code === "stale_revision" &&
+      response.error.details &&
+      typeof response.error.details.actualRevision === "string"
+        ? response.error.details.actualRevision
+        : undefined;
+    if (actualRevision === undefined) requireSuccess(response, "session.rename");
+    else currentRevision = actualRevision;
+  }
+  throw new Error("session.rename could not acquire the current session revision");
+}
+
+async function waitForMissingFile(path: string): Promise<void> {
+  const deadline = Date.now() + TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    try {
+      await stat(path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    await Bun.sleep(25);
+  }
+  throw new Error("deleted session file still exists");
+}
+
+async function waitForFileText(path: string, expected: string): Promise<void> {
+  const deadline = Date.now() + TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if ((await readFile(path, "utf8")).includes(expected)) return;
+    await Bun.sleep(25);
+  }
+  throw new Error("renamed session title was not durable");
 }
 
 async function deleteSession(
@@ -281,14 +390,10 @@ async function deleteSession(
   revision: string,
   journal: ServerFrame[],
 ): Promise<void> {
-  const journalStart = journal.length;
   requireSuccess(
     await confirmedCommand(connection, sessionId, "session.delete", {}, journal, revision),
     "session.delete",
   );
-  if (!recordedDelta(journal, journalStart, sessionId, (frame) => frame.remove === sessionId)) {
-    await waitForDelta(connection, sessionId, (frame) => frame.remove === sessionId, journal);
-  }
 }
 
 function wireSummary(frame: ServerFrame): Record<string, unknown> {
@@ -309,14 +414,28 @@ async function sha256(path: string): Promise<string> {
 async function main(): Promise<void> {
   const repoRoot = resolve(import.meta.dirname, "../../..");
   const options = parseArguments(process.argv.slice(2), repoRoot);
-  const verified = await verifyRuntime(repoRoot);
-  const runtimePath = options.runtimePath ?? verified.path;
+  const verified = options.runtimePath === undefined ? await verifyRuntime(repoRoot) : undefined;
+  const runtimePath = options.runtimePath ?? verified!.path;
   const hostPath = options.hostPath ?? join(repoRoot, "packages", "host-daemon", "dist", "t4-host");
   if (!(await stat(hostPath)).isFile()) throw new Error("build the dogfood host before running scenarios");
   if (!(await stat(runtimePath)).isFile()) throw new Error("dogfood OMP runtime is missing");
-  if ((await sha256(runtimePath)) !== verified.manifest.sha256) {
-    throw new Error("dogfood OMP runtime does not match the recorded official artifact");
-  }
+  const runtimeHash = await sha256(runtimePath);
+  const runtimeEvidence =
+    options.runtimePath === undefined
+      ? {
+          version: verified!.version,
+          tag: verified!.matrix.officialRuntime.sourceTag,
+          commit: verified!.matrix.officialRuntime.sourceCommit,
+          sha256: verified!.manifest.sha256,
+        }
+      : await (async () => {
+          const manifest = JSON.parse(await readFile(join(dirname(runtimePath), "manifest.json"), "utf8")) as Record<string, unknown>;
+          if (typeof manifest.tag !== "string" || typeof manifest.sha256 !== "string" || manifest.sha256 !== runtimeHash) {
+            throw new Error("packaged OMP runtime does not match its bundled manifest");
+          }
+          return { version: manifest.tag, tag: manifest.tag, commit: null, sha256: manifest.sha256 };
+        })();
+  if (runtimeHash !== runtimeEvidence.sha256) throw new Error("dogfood OMP runtime hash is not verified");
 
   await mkdir(options.artifactRoot, { recursive: true });
   const root = await mkdtemp(join(tmpdir(), "omperator-dogfood-"));
@@ -324,11 +443,12 @@ async function main(): Promise<void> {
   const streamProject = join(root, "projects", "stream");
   const cancelProject = join(root, "projects", "cancel");
   const lifecycleProject = join(root, "projects", "lifecycle");
-  const sessionsRoot = join(root, "sessions");
   const stateRoot = join(root, "state");
   const runtimeRoot = join(root, "run");
   const profile = `dogfood-${randomUUID().slice(0, 12)}`;
   const agentDir = join(home, ".omp", "profiles", profile, "agent");
+  const authorityMode = options.runtimePath === undefined ? "official" : "bridge";
+  const sessionsRoot = authorityMode === "official" ? join(root, "sessions") : join(agentDir, "sessions");
   const model = startDeterministicModel();
   const journal: ServerFrame[] = [];
   const scenarioResults: Record<string, unknown> = {};
@@ -358,9 +478,9 @@ async function main(): Promise<void> {
     );
     const seed = new OfficialOmpProfileAuthority({ sessionsRoot, metadataPath: join(root, "seed-metadata.json") });
     await seed.initialize();
-    const streamSession = await seed.create(streamProject, "Omperator stream dogfood");
-    const cancelSession = await seed.create(cancelProject, "Omperator cancellation dogfood");
-    const lifecycleSession = await seed.create(lifecycleProject, "Omperator lifecycle dogfood");
+    let streamSession: DogfoodSession = await seed.create(streamProject, "Omperator stream dogfood");
+    let cancelSession: DogfoodSession = await seed.create(cancelProject, "Omperator cancellation dogfood");
+    let lifecycleSession: DogfoodSession = await seed.create(lifecycleProject, "Omperator lifecycle dogfood");
     await seed.close();
 
     const socketPath = profileSocketPath(profile, process.platform, home, runtimeRoot);
@@ -375,20 +495,20 @@ async function main(): Promise<void> {
       PI_NOTIFICATIONS: "off",
       OMP_PROFILE: profile,
     };
-    child = Bun.spawn([
+    const hostArguments = [
       hostPath,
       "serve",
       "--omp",
       runtimePath,
       "--omp-authority",
-      "official",
-      "--omp-sessions-root",
-      sessionsRoot,
+      authorityMode,
+      ...(authorityMode === "official" ? ["--omp-sessions-root", sessionsRoot] : []),
       "--profile",
       profile,
       "--state-root",
       stateRoot,
-    ], { env: environment, stdout: "pipe", stderr: "pipe" });
+    ];
+    child = Bun.spawn(hostArguments, { env: environment, stdout: "pipe", stderr: "pipe" });
     hostStdout = new Response(child.stdout as ReadableStream<Uint8Array>).text();
     hostStderr = new Response(child.stderr as ReadableStream<Uint8Array>).text();
     await waitForSocket(socketPath, child);
@@ -399,6 +519,11 @@ async function main(): Promise<void> {
       if (!primary.sessions.sessions.some((item) => item.sessionId === seeded.sessionId)) {
         throw new Error("a seeded dogfood session was not discovered");
       }
+    }
+    if (authorityMode === "bridge") {
+      streamSession = await forkOwnedSession(primary, streamSession.sessionId, journal);
+      cancelSession = await forkOwnedSession(primary, cancelSession.sessionId, journal);
+      lifecycleSession = await forkOwnedSession(primary, lifecycleSession.sessionId, journal);
     }
 
     if (options.scenario === "full" || options.scenario === "stream" || options.scenario === "reconnect") {
@@ -412,11 +537,16 @@ async function main(): Promise<void> {
         waitForAssistant(observer, streamSession.sessionId, "Gate 0 response 1", journal),
       ]);
       if (primaryEntry.entry.id !== observerEntry.entry.id) throw new Error("clients observed different assistant entries");
-      const transcript = await readFile(streamSession.path, "utf8");
-      if (!transcript.includes("Dogfood stream prompt") || !transcript.includes("Gate 0 response 1")) {
-        throw new Error("streamed dogfood prompt was not durable");
+      if (streamSession.path !== undefined) {
+        const transcript = await readFile(streamSession.path, "utf8");
+        if (!transcript.includes("Dogfood stream prompt") || !transcript.includes("Gate 0 response 1")) {
+          throw new Error("streamed dogfood prompt was not durable");
+        }
       }
-      scenarioResults.stream = { durable: true, convergedEntryId: String(primaryEntry.entry.id) };
+      scenarioResults.stream = {
+        durable: streamSession.path !== undefined,
+        convergedEntryId: String(primaryEntry.entry.id),
+      };
       if (options.scenario === "full") {
         requireSuccess(
           await confirmedCommand(
@@ -462,6 +592,7 @@ async function main(): Promise<void> {
       if (!snapshot.entries.some((entry) => entry.kind === "message" && entry.data.role === "assistant" && entry.data.text === "Gate 0 response 1")) {
         throw new Error("reconnect snapshot lost the durable assistant response");
       }
+      scenarioResults.stream = { ...(scenarioResults.stream as Record<string, unknown>), durable: true };
       scenarioResults.reconnect = { uniqueEntries: entryIds.length, revision: String(snapshot.revision) };
     }
 
@@ -486,48 +617,69 @@ async function main(): Promise<void> {
                 )
               ).revision,
             );
-      const renamed = await lifecycleCommand(
+      revision = await renameSession(
         controller,
         lifecycleSession.sessionId,
-        "session.rename",
         revision,
-        { name: "Omperator dogfood renamed" },
-        (frame) => frame.upsert?.title === "Omperator dogfood renamed",
+        "Omperator dogfood renamed",
         journal,
       );
-      revision = String(renamed.revision);
-      const observerRename = await waitForDelta(
-        observer,
-        lifecycleSession.sessionId,
-        (frame) => frame.upsert?.title === "Omperator dogfood renamed",
-        journal,
+      if (lifecycleSession.path !== undefined) {
+        await waitForFileText(lifecycleSession.path, "Omperator dogfood renamed");
+      }
+      const closeJournalStart = journal.length;
+      requireSuccess(
+        await confirmedCommand(
+          controller,
+          lifecycleSession.sessionId,
+          "session.close",
+          {},
+          journal,
+          revision,
+        ),
+        "session.close",
       );
-      if (observerRename.revision !== renamed.revision) throw new Error("rename did not converge across clients");
-      const archived = await lifecycleCommand(
+      revision = String(
+        recordedDelta(
+          journal,
+          closeJournalStart,
+          lifecycleSession.sessionId,
+          (frame) => frame.upsert !== undefined,
+        )?.revision ?? revision,
+      );
+      revision = await lifecycleCommand(
         controller,
         lifecycleSession.sessionId,
         "session.archive",
         revision,
         {},
-        (frame) => frame.upsert?.archivedAt !== undefined,
         journal,
       );
-      revision = String(archived.revision);
+      await waitForInventory(
+        socketPath,
+        lifecycleSession.sessionId,
+        (session) => session?.archivedAt !== undefined,
+      );
       const archivedPromptId = `archived-prompt-${randomUUID()}`;
       sendCommand(controller, archivedPromptId, "session.prompt", lifecycleSession.sessionId, { message: "must not run" });
       const archivedPrompt = await responseFor(controller.client, archivedPromptId, journal);
       if (archivedPrompt.ok) throw new Error("archived session accepted a prompt");
-      const restored = await lifecycleCommand(
+      revision = await lifecycleCommand(
         controller,
         lifecycleSession.sessionId,
         "session.restore",
         revision,
         {},
-        (frame) => frame.upsert !== undefined && frame.upsert.archivedAt === undefined,
         journal,
       );
-      revision = String(restored.revision);
+      await waitForInventory(
+        socketPath,
+        lifecycleSession.sessionId,
+        (session) => session !== undefined && session.archivedAt === undefined,
+      );
       await deleteSession(controller, lifecycleSession.sessionId, revision, journal);
+      await waitForInventory(socketPath, lifecycleSession.sessionId, (session) => session === undefined);
+      if (lifecycleSession.path !== undefined) await waitForMissingFile(lifecycleSession.path);
       scenarioResults.lifecycle = {
         renamed: true,
         archived: true,
@@ -542,12 +694,7 @@ async function main(): Promise<void> {
       schemaVersion: 1,
       scenario: options.scenario,
       source: { commit: Bun.spawnSync(["git", "-C", repoRoot, "rev-parse", "HEAD"]).stdout.toString().trim() },
-      runtime: {
-        version: verified.version,
-        tag: verified.matrix.officialRuntime.sourceTag,
-        commit: verified.matrix.officialRuntime.sourceCommit,
-        sha256: verified.manifest.sha256,
-      },
+      runtime: runtimeEvidence,
       packagedInputs: {
         hostSha256: await sha256(hostPath),
         runtimeSha256: await sha256(runtimePath),

@@ -46,8 +46,11 @@ function git(args, options = {}) {
     stdio: options.inherit ? "inherit" : "pipe",
   });
   if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error((result.stderr || result.stdout).trim() || `git ${args.join(" ")} failed`);
-  return result.stdout.trim();
+  if (result.status !== 0) {
+    const detail = result.stderr || result.stdout || "";
+    throw new Error(detail.trim() || `git ${args.join(" ")} failed`);
+  }
+  return (result.stdout ?? "").trim();
 }
 
 async function allocatedPorts(slug) {
@@ -90,8 +93,8 @@ async function newWorktree(slug) {
   const baseCommit = git(["rev-parse", "origin/main"]);
   if (!/^[0-9a-f]{40}$/u.test(baseCommit)) throw new Error("origin/main did not resolve to an exact commit");
   if (branchExists(identity.branch)) throw new Error(`branch ${identity.branch} already exists`);
-  git(["worktree", "add", "-b", identity.branch, identity.path, baseCommit], { inherit: true });
   try {
+    git(["worktree", "add", "-b", identity.branch, identity.path, baseCommit], { inherit: true });
     const head = git(["rev-parse", "HEAD"], { cwd: identity.path });
     if (head !== baseCommit) throw new Error("new worktree does not match exact origin/main");
     const ports = await allocatedPorts(identity.slug);
@@ -135,23 +138,39 @@ async function removeWorktree(slug) {
   return { removed: true, slug: identity.slug };
 }
 
+async function listWorktrees() {
+  await mkdir(metadataRoot, { recursive: true, mode: 0o700 });
+  const worktrees = [];
+  for (const entry of await readdir(metadataRoot, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+    try {
+      worktrees.push(JSON.parse(await readFile(join(metadataRoot, entry.name), "utf8")));
+    } catch {}
+  }
+  worktrees.sort((left, right) => String(left.slug).localeCompare(String(right.slug)));
+  return { worktrees };
+}
+
 function parseArguments(argv) {
   const [command, ...rest] = argv;
+  if (command === "list" && rest.length === 0) return { command };
   const index = rest.indexOf("--slug");
   const slug = index === -1 ? undefined : rest[index + 1];
-  if (!["new", "status", "remove"].includes(command) || slug === undefined || rest.length !== 2) {
-    throw new Error("Usage: node scripts/worktree-sandbox.mjs <new|status|remove> --slug <name>");
+  if (!["create", "status", "remove"].includes(command) || slug === undefined || rest.length !== 2) {
+    throw new Error("Usage: node scripts/worktree-sandbox.mjs <create|status|remove> --slug <name> | list");
   }
   return { command, slug: parseWorktreeSlug(slug) };
 }
 
 async function main() {
   const options = parseArguments(process.argv.slice(2));
-  const result = options.command === "new"
+  const result = options.command === "create"
     ? await newWorktree(options.slug)
     : options.command === "status"
       ? await worktreeStatus(options.slug)
-      : await removeWorktree(options.slug);
+      : options.command === "list"
+        ? await listWorktrees()
+        : await removeWorktree(options.slug);
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
 
