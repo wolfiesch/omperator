@@ -1208,6 +1208,7 @@ describe("app-wire authority", () => {
 			"transcript.page": "none",
 			"project.reveal": "none",
 			"session.create": "none",
+			"session.fork": "none",
 			"session.attach": "none",
 			"audit.read": "none",
 			"audit.tail": "none",

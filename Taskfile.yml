@@ -22,6 +22,30 @@ tasks:
     cmds:
       - pnpm dev
 
+  dev:live:pinned:
+    desc: Start live development with pinned OMP and disposable state
+    cmds:
+      - pnpm dev:live:pinned
+
+  dev:live:system:
+    desc: Start live development with system OMP and disposable state
+    cmds:
+      - pnpm dev:live:system
+
+  dev:sandbox:status:
+    desc: Show one disposable development sandbox
+    requires:
+      vars: [SANDBOX]
+    cmds:
+      - pnpm dev:sandbox status --sandbox {{.SANDBOX}}
+
+  dev:sandbox:reset:
+    desc: Delete one explicitly named disposable development sandbox
+    requires:
+      vars: [SANDBOX]
+    cmds:
+      - pnpm dev:sandbox reset --sandbox {{.SANDBOX}}
+
   dev:web:
     desc: Start the web app with sample data
     cmds:

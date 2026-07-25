@@ -85,16 +85,35 @@ real OMP host can connect or execute a command.
 
 ### Live desktop work
 
-Install the exact verified OMP integration shown by the setup check, then run:
+For routine Omperator development, use the pinned runtime and an explicitly named disposable
+sandbox:
 
 ```sh
-pnpm dev
+pnpm dev:live:pinned -- --sandbox feature-name
 ```
 
-T4 Code discovers OMP through `OMP_EXECUTABLE`, `PATH`, and its bounded list of common install
-locations. The desktop builds and starts `t4-host`, which launches the compatible OMP authority
-bridge. Do not point development at a personal production profile when testing destructive session
-lifecycle behavior; use a disposable OMP profile and session root.
+This stages the OMP version recorded in `compat/omp-app-matrix.json`, runs the setup check, and
+isolates OMP configuration, sessions, host state, Electron user data, temporary files, and logs
+under `.artifacts/dev/feature-name/`. Electron main/preload and host changes rebuild and restart
+their affected processes without restarting the renderer. Process output and lifecycle events are
+also recorded as credential-redacted NDJSON under the sandbox's `logs/processes/` directory. These
+local logs can still contain project and home paths; review and sanitize them before sharing.
+
+Use the compatible OMP already on `PATH` only when testing that explicit mode:
+
+```sh
+pnpm dev:live:system -- --sandbox system-runtime
+```
+
+Inspect or remove a sandbox by name:
+
+```sh
+pnpm dev:sandbox status --sandbox feature-name
+pnpm dev:sandbox reset --sandbox feature-name
+```
+
+`pnpm dev` remains the lower-level non-isolated development loop. Do not use it with a personal
+profile when testing destructive session lifecycle behavior.
 
 ### Remote browser, iPhone/iPad, or Android work
 

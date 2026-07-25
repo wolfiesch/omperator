@@ -283,6 +283,11 @@ export class OmpAuthorityBridgeClient {
 			archive: async (session, archivedAt) => { await call("session.archive", { session: sessionReference(session), archivedAt }); },
 			restore: async session => { await call("session.restore", { session: sessionReference(session) }); },
 			delete: async session => { await call("session.delete", { session: sessionReference(session) }); },
+			// OMP resolves the source from its own inventory by session id; the
+			// reference carries no authority of its own.
+			...(this.#methods.has("session.fork")
+				? { fork: async (source: SessionRecord) => call("session.fork", { session: sessionReference(source) }) as never }
+				: {}),
 		};
 		const discovery: SessionDiscovery = {
 			list: () => sessionAuthority.list(),

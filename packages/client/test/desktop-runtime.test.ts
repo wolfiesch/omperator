@@ -177,6 +177,7 @@ class FakeShell implements DesktopShellPort {
     workspaces: [workspaceInfrastructure()],
   };
   attachResult: unknown;
+  forkResult: unknown;
   private sessionListGateResolve: (() => void) | undefined;
   private workspaceListGateResolve: (() => void) | undefined;
   private attachGateResolve: (() => void) | undefined;
@@ -260,6 +261,9 @@ class FakeShell implements DesktopShellPort {
       this.attachGate = undefined;
       if (gate !== undefined) await gate;
       return { ...base, ...(this.attachResult === undefined ? {} : { result: this.attachResult }) };
+    }
+    if (request.intent.command === "session.fork") {
+      return { ...base, ...(this.forkResult === undefined ? {} : { result: this.forkResult }) };
     }
     return base;
   }
@@ -481,6 +485,35 @@ describe("desktop runtime projection", () => {
     await attached;
 
     expect(runtime.getSnapshot().projection.sessions.get("host-a\u0000session-a")?.freshness).toBe("fresh");
+  });
+  it("forks a source session with an empty args object and returns the new session ref", async () => {
+    const shell = new FakeShell();
+    const runtime = createDesktopRuntimeController({ shell });
+    await runtime.start();
+    shell.forkResult = {
+      session: {
+        hostId: "host-a",
+        sessionId: "session-fork",
+        project: { projectId: "project-a", name: "Project A" },
+        revision: "revision-fork",
+        // The copy inherits the source header's title; the client never
+        // sends one.
+        title: "Source title",
+        status: "idle",
+        updatedAt: "2026-07-21T00:00:00Z",
+      },
+    };
+    const forked = await runtime.forkSession("local", "host-a", "session-a");
+    expect(String(forked.sessionId)).toBe("session-fork");
+    expect(forked.title).toBe("Source title");
+    expect(shell.commands.find((command) => command.intent.command === "session.fork")).toEqual({
+      targetId: "local",
+      intent: { hostId: hostId("host-a"), sessionId: sessionId("session-a"), command: "session.fork", args: {} },
+    });
+    shell.forkResult = undefined;
+    await expect(runtime.forkSession("local", "host-a", "session-a")).rejects.toThrow(
+      "session.fork did not return a session",
+    );
   });
   it.each([
     { authority: "the feature is default-off and unnegotiated", enabled: false, capabilities: [], features: [], granted: false },

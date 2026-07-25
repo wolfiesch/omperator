@@ -205,6 +205,15 @@ export const COMMAND_DESCRIPTORS: Readonly<Record<string, CommandDescriptor>> = 
 		confirmation: "none",
 		desktopCatalog: true,
 	},
+	// Session-scoped because it names a source session, but it never writes to
+	// that session, so it takes no controller lease and no revision.
+	"session.fork": {
+		capability: "sessions.manage",
+		scope: "session",
+		revision: "none",
+		revisionOwner: "none",
+		confirmation: "none",
+	},
 	"session.attach": {
 		capability: "sessions.read",
 		scope: "session",
@@ -1658,6 +1667,7 @@ export const COMMAND_ARGUMENT_DECODERS: Readonly<Record<string, (value: unknown)
 			fail("INVALID_FRAME", "runtimeId and workspaceInstanceId must be provided together", "args");
 		return x;
 	},
+	"session.fork": noArgs,
 	"session.attach": value => {
 		const x = args(value);
 		if (x.cursor !== undefined) decodeCursor(x.cursor, "args.cursor");
@@ -1918,6 +1928,7 @@ export const COMMAND_RESULT_DECODERS: Readonly<Record<string, (value: unknown) =
 	"transcript.page": value => decodeTranscriptPageResult(value) as unknown as CommandResult,
 	"project.reveal": value => boolField(value, "revealed"),
 	"session.create": decodeCreate,
+	"session.fork": decodeCreate,
 	"session.attach": decodeAttach,
 	"session.prompt": value => boolField(value, "accepted"),
 	"session.image.begin": value => {

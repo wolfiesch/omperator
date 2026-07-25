@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { appendFile, mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DESKTOP_CATALOG_COMMANDS, type DurableEntry, hostId, projectId, sessionId } from "@t4-code/host-wire";
@@ -52,7 +52,9 @@ class FakeChild implements ChildHandle {
 }
 class FakeFactory implements RpcChildFactory {
 	children: FakeChild[] = [];
-	spawn() {
+	spawnedSessionPaths: string[] = [];
+	spawn(spec: { session: SessionRecord; argv: string[]; cwd: string }) {
+		this.spawnedSessionPaths.push(spec.session.path);
 		const child = new FakeChild();
 		this.children.push(child);
 		return child;
@@ -314,6 +316,36 @@ describe("appserver lifecycle", () => {
 			"session.unverified",
 			"artifacts.read",
 		]);
+	});
+	test("advertises session forking only with both a forking authority and a loader", () => {
+		const authority = {
+			create: async () => {
+				throw new Error("unused");
+			},
+			list: async () => [],
+			archive: async () => {},
+			restore: async () => {},
+			delete: async () => {},
+		};
+		const forking = {
+			...authority,
+			fork: async () => {
+				throw new Error("unused");
+			},
+		};
+		const withLoader = { list: async () => [], load: async (session: SessionRecord) => session };
+		const withoutLoader = { list: async () => [] };
+		expect(
+			appserverSupportedFeatures({ sessionAuthority: authority, discovery: withLoader }),
+		).not.toContain("session.fork");
+		// A fork answered without a transcript body needs the loader to read the
+		// copy's history back, so the feature stays off without one.
+		expect(
+			appserverSupportedFeatures({ sessionAuthority: forking, discovery: withoutLoader }),
+		).not.toContain("session.fork");
+		expect(appserverSupportedFeatures({ sessionAuthority: forking, discovery: withLoader })).toContain(
+			"session.fork",
+		);
 	});
 	test("advertises transcript image reads only with an explicit blob root", () => {
 		expect(appserverSupportedFeatures({})).not.toContain("transcript.images");
@@ -871,6 +903,306 @@ describe("appserver lifecycle", () => {
 				}),
 			]);
 			expect(factory.children).toHaveLength(1);
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+	test("forks an observed session into an owned copy without touching the source", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-fork-observed-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const sessionOwnershipPath = join(root, "profile", "owned-sessions.json");
+		const sourcePath = join(root, "observed-source.jsonl");
+		const forkPath = join(root, "forked-copy.jsonl");
+		const sourceId = sessionId("observed-source");
+		const forkId = sessionId("forked-copy");
+		const timestamp = "2026-07-24T00:00:00.000Z";
+		const sourceBody =
+			`${JSON.stringify({ type: "session", version: 3, id: sourceId, cwd: root, timestamp, title: "Observed" })}\n` +
+			`${JSON.stringify({
+				type: "message",
+				id: "source-entry",
+				parentId: null,
+				timestamp,
+				message: { role: "user", content: "carried history" },
+			})}\n`;
+		await writeFile(sourcePath, sourceBody);
+		const discovery = new FileSessionDiscovery(root, realFs, host, true);
+		const factory = new FakeFactory();
+		let forkedFrom: string | undefined;
+		const sessionAuthority = {
+			create: async () => {
+				throw new Error("create is not used by this test");
+			},
+			list: () => discovery.list(),
+			archive: async () => {},
+			restore: async () => {},
+			delete: async () => {},
+			fork: async (source: SessionRecord) => {
+				forkedFrom = source.path;
+				await writeFile(
+					forkPath,
+					`${JSON.stringify({
+						type: "session",
+						version: 3,
+						id: forkId,
+						cwd: root,
+						timestamp,
+						title: "Observed",
+						parentSession: sourceId,
+					})}\n`,
+				);
+				return { sessionId: forkId, path: forkPath, cwd: root, title: "Observed", entries: [] };
+			},
+		};
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "fork-observed-test",
+			socketPath,
+			sessionOwnershipPath,
+			discovery,
+			sessionAuthority,
+			childFactory: factory,
+			// The source stays owned by another writer for the whole test; the copy
+			// T4 makes is a different file and carries no lock.
+			lockStatus: session => (session.path === sourcePath ? "live" : "missing"),
+			lockCheck: async session => {
+				if (session.path === sourcePath) throw new Error("session lock is still live");
+			},
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "fork-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: ["session.observer", "session.fork"],
+				capabilities: { client: ["sessions.manage", "sessions.read"] },
+				savedCursors: [],
+			});
+			const welcome = await client.nextServer();
+			expect(welcome).toMatchObject({ type: "welcome" });
+			if (welcome.type !== "welcome") throw new Error("host did not send a welcome frame");
+			expect(welcome.grantedFeatures).toContain("session.fork");
+			expect((await client.nextServer()).type).toBe("sessions");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "attach-source",
+				commandId: "attach-source-command",
+				hostId: host,
+				sessionId: sourceId,
+				command: "session.attach",
+				args: {},
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "attach-source") {
+					expect(frame.ok).toBe(true);
+					break;
+				}
+			}
+			// Attach itself publishes the control state, so no settling wait is needed.
+			expect(appserver.snapshot(sourceId)?.ref.liveState?.sessionControl?.mode).toBe("observer");
+			// The observer barrier must not refuse a fork: it only reads the source.
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "fork-source",
+				commandId: "fork-source-command",
+				hostId: host,
+				sessionId: sourceId,
+				command: "session.fork",
+				args: {},
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "fork-source") {
+					expect(frame).toMatchObject({ ok: true, result: { session: { sessionId: forkId } } });
+					break;
+				}
+			}
+			expect(forkedFrom).toBe(sourcePath);
+			expect(await readFile(sourcePath, "utf8")).toBe(sourceBody);
+			// The source keeps its other writer; only the copy becomes ours.
+			expect(appserver.snapshot(sourceId)?.ref.liveState?.sessionControl?.mode).toBe("observer");
+			const owned = new SessionOwnershipStore(sessionOwnershipPath);
+			await owned.load();
+			expect(owned.owns(forkId, forkPath)).toBe(true);
+			expect(owned.owns(sourceId, sourcePath)).toBe(false);
+			// A writer was started for the copy, and never for the locked source.
+			expect(factory.spawnedSessionPaths).toContain(forkPath);
+			expect(factory.spawnedSessionPaths).not.toContain(sourcePath);
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+	test("forks an unverified lockless session, the historic-session install path", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-fork-unverified-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const sessionOwnershipPath = join(root, "profile", "owned-sessions.json");
+		const sourcePath = join(root, "historic-source.jsonl");
+		const forkPath = join(root, "historic-copy.jsonl");
+		const sourceId = sessionId("historic-source");
+		const forkId = sessionId("historic-copy");
+		const timestamp = "2026-03-02T00:00:00.000Z";
+		const sourceBody =
+			`${JSON.stringify({ type: "session", version: 3, id: sourceId, cwd: root, timestamp, title: "Historic" })}\n` +
+			`${JSON.stringify({
+				type: "message",
+				id: "historic-entry",
+				parentId: null,
+				timestamp,
+				message: { role: "user", content: "written months ago" },
+			})}\n`;
+		await writeFile(sourcePath, sourceBody);
+		const discovery = new FileSessionDiscovery(root, realFs, host, true);
+		const factory = new FakeFactory();
+		const sessionAuthority = {
+			create: async () => {
+				throw new Error("create is not used by this test");
+			},
+			list: () => discovery.list(),
+			archive: async () => {},
+			restore: async () => {},
+			delete: async () => {},
+			fork: async (source: SessionRecord) => {
+				expect(source.path).toBe(sourcePath);
+				// Mirror what SessionManager.forkFrom writes: a fresh header naming
+				// the parent, then the copied history.
+				await writeFile(
+					forkPath,
+					`${JSON.stringify({
+						type: "session",
+						version: 3,
+						id: forkId,
+						cwd: root,
+						timestamp,
+						title: "Historic",
+						parentSession: sourceId,
+					})}\n${JSON.stringify({
+						type: "message",
+						id: "historic-entry",
+						parentId: null,
+						timestamp,
+						message: { role: "user", content: "written months ago" },
+					})}\n`,
+				);
+				// A bridge authority answers without the transcript body.
+				return { sessionId: forkId, path: forkPath, cwd: root, title: "Historic", entries: [] };
+			},
+		};
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "fork-unverified-test",
+			socketPath,
+			sessionOwnershipPath,
+			discovery,
+			sessionAuthority,
+			childFactory: factory,
+			// No lock was ever written, and T4 did not create this session, so it
+			// classifies as unverified and stays read-only in place.
+			lockStatus: () => "missing",
+			lockCheck: async () => {},
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "fork-unverified-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: ["session.observer", "session.unverified", "session.fork"],
+				capabilities: { client: ["sessions.manage", "sessions.read"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect((await client.nextServer()).type).toBe("sessions");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "attach-historic",
+				commandId: "attach-historic-command",
+				hostId: host,
+				sessionId: sourceId,
+				command: "session.attach",
+				args: {},
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "attach-historic") {
+					expect(frame.ok).toBe(true);
+					break;
+				}
+			}
+			// A lockless observer needs one unchanged end-of-file sample before it
+			// publishes control, so wait on the host's own broadcast rather than a
+			// clock: every iteration blocks until the host sends the next frame.
+			while (appserver.snapshot(sourceId)?.ref.liveState?.sessionControl?.mode !== "unverified")
+				await client.nextServer();
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "fork-historic",
+				commandId: "fork-historic-command",
+				hostId: host,
+				sessionId: sourceId,
+				command: "session.fork",
+				args: {},
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "fork-historic") {
+					expect(frame).toMatchObject({ ok: true, result: { session: { sessionId: forkId } } });
+					break;
+				}
+			}
+			// The copy must carry the history, not just a new id. The authority
+			// returned no entries, so the host has to read them back from the file.
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "attach-copy",
+				commandId: "attach-copy-command",
+				hostId: host,
+				sessionId: forkId,
+				command: "session.attach",
+				args: {},
+			});
+			// The attach response is sent first and the snapshot follows it, so keep
+			// reading past the response. Bounded so a blank copy fails fast.
+			let copyTraffic = "";
+			let attachedToCopy = false;
+			for (let frames = 0; frames < 20 && !copyTraffic.includes("written months ago"); frames += 1) {
+				const frame = await client.nextServer();
+				copyTraffic += JSON.stringify(frame);
+				if (frame.type === "response" && frame.requestId === "attach-copy") {
+					expect(frame.ok).toBe(true);
+					attachedToCopy = true;
+				}
+			}
+			expect(attachedToCopy).toBe(true);
+			expect(copyTraffic).toContain("written months ago");
+			expect(await readFile(sourcePath, "utf8")).toBe(sourceBody);
+			// The historic session stays exactly as read-only as it was.
+			expect(appserver.snapshot(sourceId)?.ref.liveState?.sessionControl?.mode).toBe("unverified");
+			// The copy is ours and has a writer.
+			const owned = new SessionOwnershipStore(sessionOwnershipPath);
+			await owned.load();
+			expect(owned.owns(forkId, forkPath)).toBe(true);
+			expect(owned.owns(sourceId, sourcePath)).toBe(false);
+			// The copy is writable: it has its own RPC child, and the historic
+			// source never got one.
+			expect(factory.spawnedSessionPaths).toContain(forkPath);
+			expect(factory.spawnedSessionPaths).not.toContain(sourcePath);
 		} finally {
 			client.destroy();
 			await client.closed();

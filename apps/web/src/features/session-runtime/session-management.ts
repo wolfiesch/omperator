@@ -461,6 +461,27 @@ export async function restoreLiveSession(
   await runUnchallengedManagementCommand(controller, address, "session.restore");
 }
 
+/**
+ * Fork-on-adopt: copy a read-only session (observer or unverified) into a
+ * NEW session this app owns. The source transcript is only ever read — the
+ * host resolves it by id against its own inventory — and the copy inherits
+ * the source title. Resolves once the new session is present in the
+ * refreshed inventory, so navigation lands on a session the rail knows.
+ */
+export async function forkLiveSession(
+  controller: DesktopRuntimeController,
+  address: LiveSessionAddress,
+): Promise<LiveSessionAddress> {
+  const ref = await controller.forkSession(address.targetId, address.hostId, address.sessionId);
+  const forked: LiveSessionAddress = {
+    targetId: address.targetId,
+    hostId: String(ref.hostId),
+    sessionId: String(ref.sessionId),
+  };
+  await refreshSessionList(controller, address, (snapshot) => sessionRefForAddress(snapshot, forked) !== undefined);
+  return forked;
+}
+
 type ConfirmationPayload = Omit<ConfirmationChallenge, "v" | "type">;
 
 function matchingManagementChallenge(

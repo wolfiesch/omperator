@@ -22,11 +22,16 @@ class MockElectronApp {
   }
 
   quit(): void {}
+
+  setPath(): void {}
 }
 
 const vitest = await import("vitest") as unknown as VitestMockApi;
 vitest.vi.mock("electron", () => ({ app: new MockElectronApp() }));
-vitest.vi.mock("../src/lifecycle.ts", () => ({ DesktopLifecycle: MockDesktopLifecycle }));
+vitest.vi.mock("../src/lifecycle.ts", () => ({
+  DesktopLifecycle: MockDesktopLifecycle,
+  developmentSandboxServiceConfig: () => undefined,
+}));
 
 // Main bootstraps at module evaluation, so load it only after mocking native Electron.
 const { bootstrapDesktopMain } = await import("../src/main.ts");

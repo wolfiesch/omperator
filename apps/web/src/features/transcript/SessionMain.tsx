@@ -14,6 +14,7 @@ import {
   TooltipTrigger,
   useReducedMotion,
 } from "@t4-code/ui";
+import { useNavigate } from "@tanstack/react-router";
 import {
   useCallback,
   useEffect,
@@ -27,8 +28,8 @@ import {
 import { useActionRegistry } from "../../actions/index.ts";
 import { captureTranscriptContext } from "../context-packet/context-packet.ts";
 import type { WorkspaceProject, WorkspaceSession } from "../../lib/workspace-data.ts";
-import { useDesktopRuntimeSnapshot } from "../../platform/desktop-runtime.ts";
-import { resolveLiveSession } from "../../platform/live-workspace.ts";
+import { desktopRuntime, useDesktopRuntimeSnapshot } from "../../platform/desktop-runtime.ts";
+import { resolveLiveSession, sessionViewId } from "../../platform/live-workspace.ts";
 import { Composer } from "../composer/Composer.tsx";
 import { flattenFileIndex } from "../composer/file-refs.ts";
 import { getInspectorStore, type FileChildren } from "../panes/inspector-store.ts";
@@ -42,12 +43,14 @@ import {
 } from "../composer/panels.tsx";
 import type { SessionIntent } from "../session-runtime/intents.ts";
 import { ProviderTransportDiagnostics } from "../session-runtime/ProviderTransportDiagnostics.tsx";
+import { forkLiveSession } from "../session-runtime/session-management.ts";
 import {
   advanceRecordArrival,
   initialControlAnnouncerState,
   presentSessionControl,
   recordArrivalBaseline,
   reduceControlAnnouncement,
+  sessionForkAction,
   type ControlAnnouncerState,
   type SessionControlPresentation,
   type SessionControlState,
@@ -460,15 +463,26 @@ function useRecordArrivalPulse(
 /**
  * The one persistent ownership region. It stays mounted for as long as a
  * control state exists, renders byte-identical copy across transcript
- * live/snapshot churn, and never carries a writable affordance. The dot
- * slot is always present in observer mode (opacity only) so a pulse never
- * shifts the text.
+ * live/snapshot churn, and never carries a writable affordance of its own.
+ * The dot slot is always present in observer mode (opacity only) so a pulse
+ * never shifts the text. The only action it can host is the wired
+ * continue-in-a-copy affordance, and only when the caller passes one — the
+ * default renders exactly the affordance-free banner.
  */
+export interface SessionControlBannerAction {
+  readonly label: string;
+  readonly explanation: string;
+  readonly pending: boolean;
+  readonly onActivate: () => void;
+}
+
 export function SessionControlBanner({
+  action = null,
   mode,
   presentation,
   pulse,
 }: {
+  readonly action?: SessionControlBannerAction | null;
   readonly mode: SessionControlState["mode"];
   readonly presentation: SessionControlPresentation;
   readonly pulse: boolean;
@@ -493,6 +507,24 @@ export function SessionControlBanner({
         {" · "}
         {presentation.bannerDetail}
       </span>
+      {action !== null && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                aria-busy={action.pending || undefined}
+                className="inline-flex min-h-11 shrink-0 items-center rounded-md border border-border/60 bg-background px-2.5 font-medium text-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 sm:min-h-7"
+                disabled={action.pending}
+                onClick={action.onActivate}
+                type="button"
+              >
+                {action.label}
+              </button>
+            }
+          />
+          <TooltipPopup side="bottom">{action.explanation}</TooltipPopup>
+        </Tooltip>
+      )}
     </div>
   );
 }
@@ -505,6 +537,8 @@ export function SessionMain({
 }: SessionMainProps) {
   const archived = session.archivedAt !== undefined;
   const actionRegistry = useActionRegistry();
+  const controller = desktopRuntime();
+  const navigate = useNavigate();
   const { snapshot, runtime } = useSessionRuntime(sessionId, session.freshness);
   const projection = snapshot.projection;
   const desktopSnapshot = useDesktopRuntimeSnapshot();
@@ -595,6 +629,11 @@ export function SessionMain({
   const attention = useMemo(() => deriveAttention(projection), [projection]);
 
   const [revisingPlanId, setRevisingPlanId] = useState<string | null>(null);
+  const [forkBusy, setForkBusy] = useState(false);
+  const [forkError, setForkError] = useState<string | null>(null);
+  useEffect(() => {
+    setForkError(null);
+  }, [sessionId]);
   const onIntent = useCallback(
     (intent: SessionIntent) => {
       if (!archived) runtime.dispatch(intent);
@@ -641,6 +680,41 @@ export function SessionMain({
     sessionControl?.mode === "observer",
     projection.entries,
   );
+  // Continue-in-a-copy: offered only for read-only dead ends (observer /
+  // unverified) and only when this host negotiated `session.fork`. The
+  // source session is only ever read; the copy is a new session T4 owns.
+  const onForkSession = useCallback(() => {
+    if (forkBusy || controller === null || liveAddress === null) return;
+    setForkBusy(true);
+    setForkError(null);
+    void (async () => {
+      try {
+        const forked = await forkLiveSession(controller, liveAddress);
+        await navigate({
+          params: { sessionId: sessionViewId(forked.hostId, forked.sessionId) },
+          to: "/sessions/$sessionId",
+        });
+      } catch (cause) {
+        setForkError(cause instanceof Error ? cause.message : "The copy could not be started.");
+      } finally {
+        setForkBusy(false);
+      }
+    })();
+  }, [controller, forkBusy, liveAddress, navigate]);
+  const forkOffer = sessionForkAction(
+    sessionControl,
+    (liveAddress === null ? undefined : desktopSnapshot?.hosts.get(liveAddress.hostId))
+      ?.grantedFeatures ?? [],
+  );
+  const forkBannerAction =
+    forkOffer === null || controller === null || liveAddress === null
+      ? null
+      : {
+          label: forkOffer.label,
+          explanation: forkOffer.explanation,
+          pending: forkBusy,
+          onActivate: onForkSession,
+        };
   const sessionActivity = resolveSessionActivity({
     archived,
     catchingUp,
@@ -687,10 +761,19 @@ export function SessionMain({
       />
       {controlPresentation !== null && sessionControl !== null && (
         <SessionControlBanner
+          action={forkBannerAction}
           mode={sessionControl.mode}
           presentation={controlPresentation}
           pulse={observerPulse}
         />
+      )}
+      {forkError !== null && (
+        <div
+          className="flex min-h-8 shrink-0 items-center justify-center border-border/60 border-b bg-secondary px-3 text-center text-destructive-foreground text-xs"
+          role="alert"
+        >
+          {forkError}
+        </div>
       )}
       {archived && (
         <div

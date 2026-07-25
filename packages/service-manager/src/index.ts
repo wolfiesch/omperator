@@ -26,6 +26,7 @@ import {
   serviceLabelForProfile,
   validateAbsolutePath,
   validateProfileId,
+  validateServiceLabel,
   validateSpec,
 } from "./rendering.ts";
 
@@ -49,12 +50,14 @@ export type {
 
 export interface LinuxSystemdUserManagerOptions {
   readonly homeDirectory: string;
+  readonly label?: string;
   readonly fs: ServiceFileSystem;
   readonly runner: ServiceRunner;
 }
 
 export interface MacLaunchAgentManagerOptions {
   readonly homeDirectory: string;
+  readonly label?: string;
   readonly uid: number;
   readonly fs: ServiceFileSystem;
   readonly runner: ServiceRunner;
@@ -326,7 +329,7 @@ export class LinuxSystemdUserManager extends BaseManager {
   constructor(spec: ServiceSpec, options: LinuxSystemdUserManagerOptions) {
     super(spec, options.fs, options.runner);
     validateAbsolutePath(options.homeDirectory, "home directory");
-    this.label = serviceLabelForProfile(this.spec.profileId);
+    this.label = validateServiceLabel(options.label ?? serviceLabelForProfile(this.spec.profileId));
     this.definitionPath = join(
       options.homeDirectory,
       ".config/systemd/user",
@@ -405,7 +408,7 @@ export class MacLaunchAgentManager extends BaseManager {
     validateAbsolutePath(options.homeDirectory, "home directory");
     if (!Number.isInteger(options.uid) || options.uid < 0 || options.uid > 4_000_000_000)
       throw new ServiceValidationError("Invalid uid.");
-    this.label = serviceLabelForProfile(this.spec.profileId);
+    this.label = validateServiceLabel(options.label ?? serviceLabelForProfile(this.spec.profileId));
     this.domain = `gui/${options.uid}`;
     this.definitionPath = join(
       options.homeDirectory,

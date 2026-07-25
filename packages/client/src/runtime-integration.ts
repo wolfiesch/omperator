@@ -56,6 +56,7 @@ export const OMP_RUNTIME_INTEGRATION: RuntimeIntegrationDescriptor = Object.free
 export const T4_RUNTIME_FEATURES = Object.freeze({
   sessionInventory: "session.inventory",
   sessionCreate: "session.create",
+  sessionFork: "session.fork",
   sessionPrompt: "session.prompt",
   sessionCancel: "session.cancel",
   transcriptReplay: "transcript.replay",

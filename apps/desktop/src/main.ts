@@ -1,5 +1,5 @@
 import { app } from "electron";
-import { DesktopLifecycle } from "./lifecycle.ts";
+import { DesktopLifecycle, developmentSandboxServiceConfig } from "./lifecycle.ts";
 import { desktopClusterOperatorEnabled } from "./cluster-operator-flag.ts";
 
 const MAX_RUNTIME_REJECTION_REPORTS = 10;
@@ -123,6 +123,11 @@ export function bootstrapDesktopMain(options: MainRuntimeOptions): Promise<void>
     quitOnce(options.app);
     return Promise.resolve();
   }
+}
+
+const developmentSandbox = developmentSandboxServiceConfig();
+if (developmentSandbox !== undefined) {
+  app.setPath("userData", developmentSandbox.electronUserData);
 }
 
 const lifecycle = new DesktopLifecycle({

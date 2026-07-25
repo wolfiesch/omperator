@@ -102,11 +102,11 @@ test("workflow changes run tooling on the PR and the full matrix after merge", (
   });
 });
 
-test("Woodpecker continuity changes run the equivalent GitHub continuity gate", () => {
+test("Woodpecker changes run its manual cluster and tooling contracts only", () => {
   assert.deepEqual(classifyCiPaths([".woodpecker.yml"]), {
     ...none,
-    continuity: true,
     cluster: true,
+    tooling: true,
   });
 });
 

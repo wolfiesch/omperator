@@ -177,6 +177,9 @@ const SESSION_CANCEL_COMMAND = "session.cancel";
 const AGENT_CANCEL_COMMAND = "agent.cancel";
 const OBSERVER_READ_COMMANDS = new Set([
 	"session.attach",
+	// Reads the source transcript and writes a different file, so an observed or
+	// unverified session may still be forked while its writer keeps ownership.
+	"session.fork",
 	"session.image.read",
 	"artifact.read",
 	"files.read",
@@ -400,6 +403,7 @@ function argumentError(command: CommandFrame): string | undefined {
 		}
 		return "attach accepts only an optional cursor";
 	}
+	if (command.command === "session.fork" && keys.length > 0) return "fork accepts no arguments";
 	if (command.command === "session.create") {
 		if (keys.some(key => !["projectId", "title", "runtimeId", "workspaceInstanceId"].includes(key)))
 			return "create arguments are invalid";
@@ -754,6 +758,7 @@ export function appserverSupportedFeatures(
 		| "runtimeAdapters"
 		| "workspaceAuthority"
 		| "workspaceTargetPathForProject"
+		| "sessionAuthority"
 	> & { readonly remotePolicy?: AppserverOptions["remotePolicy"] },
 	includeRemotePolicy = false,
 ): string[] {
@@ -767,6 +772,11 @@ export function appserverSupportedFeatures(
 		SESSION_UNVERIFIED_FEATURE,
 		"artifacts.read",
 	]);
+	// Forking needs two things: an authority that can copy a transcript without
+	// touching the source, and a loader to read the copy's history back. A bridge
+	// authority answers a fork without the transcript body, so without the loader
+	// the copy would open blank.
+	if (options.sessionAuthority?.fork && options.discovery?.load) implementedFeatures.add("session.fork");
 	if (includeRemotePolicy) {
 		implementedFeatures.add("controller.lease");
 		implementedFeatures.add("prompt.lease");
@@ -1028,6 +1038,8 @@ export class LocalAppserver implements AppserverHandle {
 			throw new Error("unsupported capability has no handler");
 		this.#supportedCapabilities = new Set(requested);
 		this.#handlers.register("session.create", command => this.handleCreate(command));
+		if (this.#authority?.fork && this.#discovery.load)
+			this.#handlers.register("session.fork", command => this.handleFork(command));
 		if (this.#runtimeAdapters) this.#handlers.register("runtime.list", command => this.handleRuntimeList(command));
 		if (this.#workspaceAuthority) {
 			this.#handlers.register("workspace.list", command => this.handleWorkspaceList(command));
@@ -2935,6 +2947,52 @@ export class LocalAppserver implements AppserverHandle {
 				session: projection.value.ref,
 			}),
 		};
+	}
+	/**
+	 * Copy a source session's durable history into a new session this host owns.
+	 * The source file is only read: its writer, if any, keeps ownership and never
+	 * sees a second writer.
+	 */
+	private async forkSession(source: SessionRecord): Promise<SessionRecord> {
+		if (!this.#authority?.fork) throw new Error("session forking is unavailable");
+		const forked = await this.#authority.fork(source);
+		const record: SessionRecord = {
+			sessionId: forked.sessionId,
+			path: forked.path,
+			cwd: forked.cwd,
+			projectId: stableProjectId(forked.cwd),
+			projectName: projectNameFromCwd(forked.cwd),
+			title: forked.title ?? source.title ?? "Session",
+			updatedAt: this.#clock.now().toISOString(),
+			status: "idle",
+			entries: forked.entries,
+			// Unlike a brand-new session, a fork's file already holds the copied
+			// history, but a bridge authority answers without that body because it
+			// would not fit a bounded frame. Mark the record unloaded so the
+			// existing lazy loader reads it back before the first attach builds
+			// its snapshot. `session.fork` is only advertised when that loader
+			// exists, so this never leaves a permanently blank copy.
+			...(forked.entries.length === 0 ? { entriesLoaded: false } : {}),
+		};
+		try {
+			await this.#sessionOwnership?.add(record.sessionId, record.path);
+		} catch (error) {
+			await this.#authority.delete(record).catch(() => undefined);
+			throw error;
+		}
+		this.#records.set(record.sessionId, record);
+		this.#projections.set(record.sessionId, new SessionProjection(this.hostId, record, this.epoch, this.#ringSize));
+		this.#createdPending.set(record.sessionId, { record, refreshesRemaining: 1 });
+		return record;
+	}
+	private async handleFork(command: CommandFrame): Promise<CommandOutcome> {
+		const source = this.#records.get(command.sessionId!);
+		if (!source) throw new Error("source session is unavailable");
+		const record = await this.forkSession(source);
+		const projection = this.#projections.get(record.sessionId)!;
+		await this.ensureSupervisor(record.sessionId);
+		await this.broadcastIndex(projection.indexUpsert());
+		return { frame: response(this.hostId, command, true, { session: projection.value.ref }) };
 	}
 	private async handleClose(command: CommandFrame): Promise<CommandOutcome> {
 		const sessionId = command.sessionId!;
