@@ -53,7 +53,7 @@ The simplified rollout does not weaken the hard boundaries. We retain strict pro
 
 ## Released product state
 
-T4 v0.1.31 is paired with immutable OMP tag `t4code-17.0.5-appserver-15` at commit `ca2902bc095a0b17067f4b8b34ecf454390f85ff`. Its published Apple Silicon binary is 120,975,568 bytes with SHA-256 `a6be6316f2e8fc90c6512f21bdf90747592e0776a0ad383508ffd209dc702ffe`.
+T4 v0.1.33 is paired with immutable OMP tag `t4code-17.0.5-appserver-15` at commit `ca2902bc095a0b17067f4b8b34ecf454390f85ff`. Its published Apple Silicon binary is 120,975,568 bytes with SHA-256 `a6be6316f2e8fc90c6512f21bdf90747592e0776a0ad383508ffd209dc702ffe`.
 
 The standalone OMP release carries an ad-hoc integrity signature because the fork release workflow does not have a Developer ID identity. The protected T4 product build remains the distribution-signing boundary: it must sign both the bundled OMP executable and `t4-host` with T4's Developer ID identity before shipping the macOS app.
 

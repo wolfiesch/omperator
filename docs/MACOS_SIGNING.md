@@ -1,6 +1,6 @@
 # macOS signing and notarization
 
-T4 Code distributes its Mac build directly through GitHub Releases. It does not use the Mac App Store. Starting with v0.1.24, the protected release workflow must sign the application with Apple Developer ID and submit it to Apple's automated notarization service before publication.
+T4 Code distributes its Mac build directly through GitHub Releases. It does not use the Mac App Store. Starting with the independently owned v0.1.33 release, the protected release workflow must sign the application with the pinned Apple Developer ID and submit it to Apple's automated notarization service before publication.
 
 ```text
 source tag

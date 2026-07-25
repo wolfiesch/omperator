@@ -16,6 +16,13 @@ test("selects focused desktop and tooling checks", () => {
   ]);
 });
 
+test("builds package inputs before running packaging checks", () => {
+  const plan = planAffectedVerification(["scripts/inspect-macos-release.test.mjs"]);
+  const selected = plan.commands.map((item) => item.id);
+  assert.ok(selected.indexOf("build") >= 0);
+  assert.ok(selected.indexOf("build") < selected.indexOf("packaging"));
+});
+
 test("selects native proofs for shared host authority changes", () => {
   const plan = planAffectedVerification(["packages/host-service/src/server.ts"]);
   assert.deepEqual(plan.commands.map((item) => item.id), [

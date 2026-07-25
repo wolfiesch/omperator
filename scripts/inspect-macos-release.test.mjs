@@ -27,7 +27,7 @@ TeamIdentifier=WJLM3D3DK6
 
 test("macOS release identity pins the public Developer ID contract", () => {
   assert.doesNotThrow(() => validateMacosIdentityContract(identity));
-  assert.equal(identity.firstSignedReleaseTag, "v0.1.24");
+  assert.equal(identity.firstSignedReleaseTag, "v0.1.33");
   assert.equal(identity.notarizationRequired, true);
 });
 
