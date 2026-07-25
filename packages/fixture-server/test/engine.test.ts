@@ -71,6 +71,7 @@ describe("deterministic fixture engine", () => {
       "session.create",
       "session.delete",
       "session.fast.set",
+      "session.mode.set",
       "session.model.set",
       "session.rename",
       "session.restore",
