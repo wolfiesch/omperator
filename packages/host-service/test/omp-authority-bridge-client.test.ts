@@ -88,6 +88,9 @@ describe("OMP authority bridge client", () => {
 		const authorities = client.createAuthorities();
 		expect(authorities.operationsAuthority.filesRead).toBeUndefined();
 		expect(typeof authorities.operationsAuthority.termOpen).toBe("function");
+		// An OMP build that does not advertise forking exposes no fork method, so
+		// the host withholds the feature instead of calling into a missing one.
+		expect(authorities.sessionAuthority.fork).toBeUndefined();
 		const listed = authorities.sessionAuthority.list();
 		await Bun.sleep(0);
 		const request = child.request();
@@ -288,6 +291,7 @@ describe("OMP authority bridge client", () => {
 				"session.archive",
 				"session.restore",
 				"session.delete",
+				"session.fork",
 				"discovery.load",
 				"discovery.page",
 				"lock.check",
@@ -313,12 +317,15 @@ describe("OMP authority bridge client", () => {
 				data: { text: "x".repeat(300_000) },
 			}],
 		};
+		const forkResult = { sessionId: sessionId("forked-session"), path: "/tmp/forked-session.jsonl", cwd: "/tmp", title: "Large session", entries: [] };
 		const calls = [
 			{ method: "lock.status", pending: authorities.lockStatus(session), result: "missing" },
 			{ method: "lock.check", pending: Promise.resolve(authorities.lockCheck(session)), result: null },
 			{ method: "session.archive", pending: authorities.sessionAuthority.archive(session, "2026-07-22T00:00:00.000Z"), result: null },
 			{ method: "session.restore", pending: authorities.sessionAuthority.restore(session), result: null },
 			{ method: "session.delete", pending: authorities.sessionAuthority.delete(session), result: null },
+			// The source crosses as a sparse reference; OMP resolves it by id.
+			{ method: "session.fork", pending: authorities.sessionAuthority.fork!(session), result: forkResult },
 			{ method: "discovery.load", pending: authorities.discovery.load!(session), result: session },
 			{ method: "discovery.page", pending: authorities.discovery.page!(session, { limit: 10 }), result: { entries: [], hasMore: false } },
 		] as const;

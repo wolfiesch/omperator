@@ -56,26 +56,26 @@
     "package": "omp",
     "version": "17.0.5",
     "sourceRepository": "https://github.com/wolfiesch/oh-my-pi",
-    "sourceCommit": "fc0c391334c08ab260057756aa84bd2b07741ee7",
-    "sourceUrl": "https://github.com/wolfiesch/oh-my-pi/commit/fc0c391334c08ab260057756aa84bd2b07741ee7",
-    "sourceTag": "t4code-17.0.5-appserver-13",
+    "sourceCommit": "ca2902bc095a0b17067f4b8b34ecf454390f85ff",
+    "sourceUrl": "https://github.com/wolfiesch/oh-my-pi/commit/ca2902bc095a0b17067f4b8b34ecf454390f85ff",
+    "sourceTag": "t4code-17.0.5-appserver-15",
     "artifacts": {
       "darwin-arm64": {
         "name": "omp-darwin-arm64",
-        "size": 120893008,
-        "sha256": "60ce5193eadc2884a4313289ff1166b6a1daae97f3a3ec66dc260ea5c5713756",
+        "size": 120975568,
+        "sha256": "a6be6316f2e8fc90c6512f21bdf90747592e0776a0ad383508ffd209dc702ffe",
         "releaseCodeSignature": "adhoc",
         "distributionSigningBoundary": "t4-product-package"
       },
       "linux-arm64": {
         "name": "omp-linux-arm64",
-        "size": 150513808,
-        "sha256": "46d29f223a7481d42b3f7219e71afe389604c2b61f7d309369397a8932837770"
+        "size": 150579344,
+        "sha256": "69790fbd6f45f5d82dbfa58075eb3f708fce2f20c84569bdc761fb56cc3bec72"
       },
       "linux-x64": {
         "name": "omp-linux-x64",
-        "size": 175376512,
-        "sha256": "ef66a95a45185c35a19ed997b68f62f86de5497414f6a9b939c4f228a52471b8"
+        "size": 175450240,
+        "sha256": "336d6abe1f48429c0dd4303d3d46545d91d9fd531e67c5311f0a6f417229e93b"
       }
     },
     "upstreamRepository": "https://github.com/can1357/oh-my-pi",
@@ -154,7 +154,8 @@
       "atomic-xdev-mount-publication",
       "snapshot-consistent-authority-session-paging",
       "explicit-partial-authority-inventory",
-      "stale-session-lock-lifecycle-recovery"
+      "stale-session-lock-lifecycle-recovery",
+      "read-only-session-fork"
     ],
     "upstreamTagContainsIntegrationPatches": false
   },
@@ -162,26 +163,26 @@
     "package": "omp",
     "version": "17.0.5",
     "sourceRepository": "https://github.com/wolfiesch/oh-my-pi",
-    "sourceCommit": "fc0c391334c08ab260057756aa84bd2b07741ee7",
-    "sourceUrl": "https://github.com/wolfiesch/oh-my-pi/commit/fc0c391334c08ab260057756aa84bd2b07741ee7",
-    "sourceTag": "t4code-17.0.5-appserver-13",
+    "sourceCommit": "ca2902bc095a0b17067f4b8b34ecf454390f85ff",
+    "sourceUrl": "https://github.com/wolfiesch/oh-my-pi/commit/ca2902bc095a0b17067f4b8b34ecf454390f85ff",
+    "sourceTag": "t4code-17.0.5-appserver-15",
     "artifacts": {
       "darwin-arm64": {
         "name": "omp-darwin-arm64",
-        "size": 120893008,
-        "sha256": "60ce5193eadc2884a4313289ff1166b6a1daae97f3a3ec66dc260ea5c5713756",
+        "size": 120975568,
+        "sha256": "a6be6316f2e8fc90c6512f21bdf90747592e0776a0ad383508ffd209dc702ffe",
         "releaseCodeSignature": "adhoc",
         "distributionSigningBoundary": "t4-product-package"
       },
       "linux-arm64": {
         "name": "omp-linux-arm64",
-        "size": 150513808,
-        "sha256": "46d29f223a7481d42b3f7219e71afe389604c2b61f7d309369397a8932837770"
+        "size": 150579344,
+        "sha256": "69790fbd6f45f5d82dbfa58075eb3f708fce2f20c84569bdc761fb56cc3bec72"
       },
       "linux-x64": {
         "name": "omp-linux-x64",
-        "size": 175376512,
-        "sha256": "ef66a95a45185c35a19ed997b68f62f86de5497414f6a9b939c4f228a52471b8"
+        "size": 175450240,
+        "sha256": "336d6abe1f48429c0dd4303d3d46545d91d9fd531e67c5311f0a6f417229e93b"
       }
     },
     "upstreamRepository": "https://github.com/can1357/oh-my-pi",
@@ -260,7 +261,8 @@
       "atomic-xdev-mount-publication",
       "snapshot-consistent-authority-session-paging",
       "explicit-partial-authority-inventory",
-      "stale-session-lock-lifecycle-recovery"
+      "stale-session-lock-lifecycle-recovery",
+      "read-only-session-fork"
     ],
     "upstreamTagContainsIntegrationPatches": false
   },

@@ -20,8 +20,10 @@ import {
   reduceControlAnnouncement,
   SESSION_CONTROL_RETURN_BLIP_MS,
   SESSION_CONTROL_RETURNED_ANNOUNCEMENT,
+  SESSION_FORK_FEATURE,
   sessionControlDisplayKind,
   sessionControlForLink,
+  sessionForkAction,
   type ControlAnnouncerState,
   type SessionControlState,
 } from "./session-observer.ts";
@@ -148,7 +150,7 @@ describe("presentSessionControl", () => {
     for (const state of EVERY_STATE) {
       const presentation = presentSessionControl(state);
       for (const [key, value] of Object.entries(presentation)) {
-        if (key === "bannerBusy") continue;
+        if (key === "bannerBusy" || key === "forkAction") continue;
         expect(typeof value, `${JSON.stringify(state)}.${key}`).toBe("string");
         expect(value, `${JSON.stringify(state)}.${key}`).not.toBe("");
         expect(value, `${JSON.stringify(state)}.${key}`).not.toMatch(/\bundefined\b|\bnull\b/);
@@ -257,6 +259,42 @@ describe("presentSessionControl", () => {
     expect(presentation.railLabel).toContain("Read-only");
     expect(presentation.bannerDetail).toContain("t4-omp");
     expect(presentation.bannerDetail).not.toContain("Taking over");
+  });
+
+  it("offers Continue in a copy exactly for the read-only dead ends", () => {
+    for (const state of EVERY_STATE) {
+      const fork = presentSessionControl(state).forkAction;
+      // Observer (any lock status) and unverified are dead ends without a
+      // coordinated handoff; reconciling resolves on its own and unknown has
+      // no ownership truth to copy from.
+      const deadEnd = state.mode === "observer" || state.mode === "unverified";
+      expect(fork !== null, JSON.stringify(state)).toBe(deadEnd);
+      if (fork === null) continue;
+      expect(fork.label).toBe("Continue in a copy");
+      expect(fork.explanation).toBe(
+        "Starts a new session with this history. The original stays where it is and is never modified.",
+      );
+      // The copy promises a fork, nothing more: no takeover, no claims about
+      // the other writer, no engine internals.
+      for (const text of [fork.label, fork.explanation]) {
+        expect(text, JSON.stringify(state)).not.toMatch(
+          /TUI|terminal|CLI|lock|watermark|promot|take ?over|verif|pid/i,
+        );
+      }
+    }
+  });
+
+  it("gates the fork affordance on the negotiated session.fork feature", () => {
+    expect(SESSION_FORK_FEATURE).toBe("session.fork");
+    for (const state of EVERY_STATE) {
+      const granted = sessionForkAction(state, ["sessions.manage", SESSION_FORK_FEATURE]);
+      const withheld = sessionForkAction(state, ["sessions.manage"]);
+      expect(granted, JSON.stringify(state)).toEqual(presentSessionControl(state).forkAction);
+      // Without the feature the affordance vanishes for every state, so the
+      // UI renders exactly as it did before forking existed.
+      expect(withheld, JSON.stringify(state)).toBeNull();
+    }
+    expect(sessionForkAction(null, [SESSION_FORK_FEATURE])).toBeNull();
   });
 });
 

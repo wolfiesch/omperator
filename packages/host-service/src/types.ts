@@ -129,6 +129,13 @@ export interface SessionAuthority {
 	archive(session: SessionRecord, archivedAt: string): Promise<void>;
 	restore(session: SessionRecord): Promise<void>;
 	delete(session: SessionRecord): Promise<void>;
+	/**
+	 * Copy a session's durable history into a new session this host owns, leaving
+	 * the source file untouched. The copy inherits the source's title. Optional:
+	 * an authority that cannot fork safely omits it, and the host withholds the
+	 * `session.fork` feature.
+	 */
+	fork?(source: SessionRecord): Promise<SessionAuthoritySession>;
 }
 export interface SessionDiscovery {
 	list(): Promise<SessionRecord[]>;

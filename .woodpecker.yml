@@ -1,8 +1,7 @@
+# GitHub Actions owns ordinary push and pull-request verification.
+# Woodpecker is an explicitly dispatched portability and cluster proof.
 when:
-  - event:
-      - push
-      - pull_request
-      - manual
+  - event: manual
 
 clone:
   git:
@@ -193,9 +192,9 @@ steps:
     commands:
       - git init .current-continuity/omp
       - git -C .current-continuity/omp remote add origin https://github.com/wolfiesch/oh-my-pi.git
-      - git -C .current-continuity/omp fetch --depth=1 origin fc0c391334c08ab260057756aa84bd2b07741ee7
+      - git -C .current-continuity/omp fetch --depth=1 origin ca2902bc095a0b17067f4b8b34ecf454390f85ff
       - git -C .current-continuity/omp checkout --detach FETCH_HEAD
-      - test "$(git -C .current-continuity/omp rev-parse HEAD)" = fc0c391334c08ab260057756aa84bd2b07741ee7
+      - test "$(git -C .current-continuity/omp rev-parse HEAD)" = ca2902bc095a0b17067f4b8b34ecf454390f85ff
     backend_options:
       kubernetes:
         serviceAccountName: woodpecker-ci-untrusted

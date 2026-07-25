@@ -94,6 +94,14 @@ export function sessionControlForLink(
   return link === "live" ? state : null;
 }
 
+/** Label plus explanation for the continue-in-a-copy affordance. */
+export interface SessionControlForkAction {
+  /** Action label. */
+  readonly label: string;
+  /** One-line explanation rendered with the affordance. */
+  readonly explanation: string;
+}
+
 /** Everything the surfaces render for one control state; no nulls, no holes. */
 export interface SessionControlPresentation {
   /** Rail state text; shown where Idle/Cached/Offline appear today. */
@@ -113,6 +121,15 @@ export interface SessionControlPresentation {
   readonly slashReason: string;
   /** Rail lifecycle actions (rename/terminate/archive/delete) reason. */
   readonly managementReason: string;
+  /**
+   * Continue-in-a-copy affordance for read-only dead ends (observer with any
+   * lock status, and unverified). Null when the state resolves on its own
+   * (reconciling) or when no ownership truth exists at all (unknown).
+   * Rendering additionally gates on the host having negotiated the
+   * `session.fork` protocol feature (see `sessionForkAction`); without it
+   * every surface renders exactly as it did before this field existed.
+   */
+  readonly forkAction: SessionControlForkAction | null;
   /** Screen-reader announcement on entering this state. */
   readonly announcement: string;
 }
@@ -129,6 +146,15 @@ export const OFFLINE_WRITE_REASON =
 
 const TRANSFER_HINT = "To continue here, run /continue-in-t4 in the other app — or just exit it.";
 
+// Forking never touches the source: the copy is a NEW session this app owns,
+// and the original transcript is only ever read. The copy promises exactly
+// that — no takeover, and no claims about what the other writer is doing.
+const FORK_ACTION: SessionControlForkAction = Object.freeze({
+  label: "Continue in a copy",
+  explanation:
+    "Starts a new session with this history. The original stays where it is and is never modified.",
+});
+
 const OBSERVER_COMPOSER_REASON =
   "This session is active in another app. You can read everything here; input returns when the session is released. Run /continue-in-t4 there to move it here.";
 
@@ -137,7 +163,10 @@ const OBSERVER_COMPOSER_REASON =
 const UNCLEAR_DETAIL =
   "Ownership of this session is unclear right now. You can read everything here; T4 stays read-only until it's safe.";
 
-const UNCLEAR_PRESENTATION: Omit<SessionControlPresentation, "bannerDetail" | "bannerBusy"> = {
+const UNCLEAR_PRESENTATION: Omit<
+  SessionControlPresentation,
+  "bannerDetail" | "bannerBusy" | "forkAction"
+> = {
   railLabel: "Read-only",
   bannerTitle: "Read-only right now",
   composerReason: UNCLEAR_DETAIL,
@@ -163,6 +192,7 @@ export function presentSessionControl(state: SessionControlState): SessionContro
         bannerTitle: "Active in another app",
         bannerDetail: `Following saved output, not a token-by-token stream. Finished steps appear here as the other app saves them. ${TRANSFER_HINT}`,
         bannerBusy: false,
+        forkAction: FORK_ACTION,
         composerReason: OBSERVER_COMPOSER_REASON,
         cancelReason: "Only the app running this session can stop it.",
         controlReason: "This session is active in another app right now.",
@@ -181,6 +211,7 @@ export function presentSessionControl(state: SessionControlState): SessionContro
         bannerDetail:
           "The other app has gone quiet. T4 waits, then takes over on its own once the session settles.",
         bannerBusy: false,
+        forkAction: FORK_ACTION,
         composerReason:
           "The app running this session has gone quiet. T4 takes over on its own once the session settles; input returns then.",
         cancelReason: "Only the app running this session can stop it.",
@@ -194,6 +225,7 @@ export function presentSessionControl(state: SessionControlState): SessionContro
       ...UNCLEAR_PRESENTATION,
       bannerDetail: UNCLEAR_DETAIL,
       bannerBusy: false,
+      forkAction: FORK_ACTION,
     };
   }
   if (state.mode === "reconciling") {
@@ -205,6 +237,7 @@ export function presentSessionControl(state: SessionControlState): SessionContro
           ? "Confirming the transcript is complete. Input returns in a moment."
           : "Catching up from the last saved copy. Input returns once the transcript is confirmed complete.",
       bannerBusy: true,
+      forkAction: null,
       composerReason:
         "Taking over this session — input returns once the transcript is confirmed complete.",
       cancelReason: "Stopping returns when input does.",
@@ -221,6 +254,7 @@ export function presentSessionControl(state: SessionControlState): SessionContro
       bannerDetail:
         "This session did not publish a T4-compatible handoff signal. Keep using it in the terminal if it is still running. Start future terminal sessions with t4-omp to move them safely into T4 Code.",
       bannerBusy: false,
+      forkAction: FORK_ACTION,
       composerReason:
         "This session has no T4-compatible handoff signal. Start future terminal sessions with t4-omp.",
       cancelReason: "Only the terminal process that started this session can stop it.",
@@ -235,6 +269,7 @@ export function presentSessionControl(state: SessionControlState): SessionContro
     ...UNCLEAR_PRESENTATION,
     bannerDetail: UNCLEAR_DETAIL,
     bannerBusy: false,
+    forkAction: null,
   };
 }
 
@@ -273,6 +308,22 @@ export function presentSessionControlKind(
   kind: SessionControlDisplayKind,
 ): SessionControlPresentation {
   return presentSessionControl(DISPLAY_KIND_STATE[kind]);
+}
+
+/** The additive protocol feature that must be negotiated before forking. */
+export const SESSION_FORK_FEATURE = "session.fork";
+
+/**
+ * The continue-in-a-copy affordance for the current control state, gated on
+ * the host having negotiated `session.fork`. Without the feature this
+ * returns null for every state, so the UI renders exactly as it does today.
+ */
+export function sessionForkAction(
+  state: SessionControlState | null,
+  grantedFeatures: readonly string[],
+): SessionControlForkAction | null {
+  if (state === null || !grantedFeatures.includes(SESSION_FORK_FEATURE)) return null;
+  return presentSessionControl(state).forkAction;
 }
 
 /**

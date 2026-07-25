@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   appserverLogsDirectory,
   DesktopLifecycle,
+  developmentSandboxServiceConfig,
   type DesktopLifecycleOptions,
 } from "../src/lifecycle.ts";
 import { DesktopIpcRegistry, type IpcMainLike } from "../src/ipc.ts";
@@ -18,6 +19,45 @@ import {
   LocalProfileRegistry,
   type LocalProfileRegistryState,
 } from "../src/local-profiles.ts";
+
+describe("development sandbox service configuration", () => {
+  it("derives isolated service, runtime, log, and Electron paths from one root", () => {
+    const config = developmentSandboxServiceConfig({
+      T4_DEV_SANDBOX: "watch-loop",
+      T4_DEV_SANDBOX_ROOT: "/tmp/omperator-dev/watch-loop",
+    });
+
+    expect(config).toMatchObject({
+      homeDirectory: "/tmp/omperator-dev/watch-loop/home",
+      electronUserData: "/tmp/omperator-dev/watch-loop/electron/user-data",
+      logsDirectory: "/tmp/omperator-dev/watch-loop/logs/host",
+      stateRoot: "/tmp/omperator-dev/watch-loop/host-state",
+      serviceLabel: "dev.oh-my-pi.appserver.development.watch-loop",
+    });
+    expect(config?.environment).toMatchObject({
+      HOME: "/tmp/omperator-dev/watch-loop/home",
+      XDG_RUNTIME_DIR: "/tmp/omperator-dev/watch-loop/run",
+    });
+  });
+
+  it("rejects partial, relative, and malformed sandbox configuration", () => {
+    expect(() =>
+      developmentSandboxServiceConfig({ T4_DEV_SANDBOX: "watch-loop" }),
+    ).toThrow("invalid development sandbox");
+    expect(() =>
+      developmentSandboxServiceConfig({
+        T4_DEV_SANDBOX: "watch-loop",
+        T4_DEV_SANDBOX_ROOT: "relative",
+      }),
+    ).toThrow("invalid development sandbox");
+    expect(() =>
+      developmentSandboxServiceConfig({
+        T4_DEV_SANDBOX: "../escape",
+        T4_DEV_SANDBOX_ROOT: "/tmp/omperator-dev/escape",
+      }),
+    ).toThrow("invalid development sandbox");
+  });
+});
 
 describe("appserver log authority", () => {
   it("stays independent from Electron user-data overrides", () => {

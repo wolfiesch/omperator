@@ -12,6 +12,7 @@
     "check": "bun run typecheck",
     "test": "bun test test",
     "verify:official-omp-packaged": "node ../../scripts/stage-omp-runtime.mjs --runtime official && bun run build:binary && bun run bin/official-omp-packaged-proof.ts",
+    "dogfood": "node ../../scripts/stage-omp-runtime.mjs --runtime official && bun run build:binary && bun run bin/dogfood-scenarios.ts",
     "typecheck": "tsgo -p tsconfig.json --noEmit"
   },
   "dependencies": {

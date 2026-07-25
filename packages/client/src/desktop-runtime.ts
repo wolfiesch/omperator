@@ -290,6 +290,23 @@ export class DesktopRuntimeController {
     this.activateSession(hostIdValue, sessionIdValue);
     return result;
   }
+  /**
+   * Copy a read-only session into a new session this app owns. The command
+   * carries the SOURCE session id and no arguments; the host resolves the
+   * source against its own inventory and only ever reads it. The result is
+   * the authoritative ref of the new session (same shape as session.create).
+   */
+  async forkSession(targetId: string, hostIdValue: string, sessionIdValue: string): Promise<SessionRef> {
+    const result = await this.command(targetId, { hostId: hostId(hostIdValue), sessionId: sessionId(sessionIdValue), command: "session.fork", args: {} });
+    if (!result.accepted) {
+      throw new DesktopRuntimeError("command", result.error?.message ?? "the host could not start a copy of this session");
+    }
+    const session = asRecord(asRecord(result.result)?.session);
+    if (session === undefined || typeof session.hostId !== "string" || typeof session.sessionId !== "string" || session.sessionId === "") {
+      throw new DesktopRuntimeError("protocol", "session.fork did not return a session");
+    }
+    return session as unknown as SessionRef;
+  }
   async confirm(request: ConfirmRequest): Promise<ConfirmResult> {
     if (this.stopped) throw new DesktopRuntimeError("stopped", "desktop runtime is stopped");
     try { return freezeClone(await this.shell.confirm(freezeClone(request))); }

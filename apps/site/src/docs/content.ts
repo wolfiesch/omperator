@@ -254,8 +254,12 @@ const localSessions: DocTopic = {
       text: "The takeover is deliberate. The host must report the session lock gone — a live owner is never displaced — and T4 reconciles the complete transcript before the composer accepts input again. Nothing is typed into a session another app still owns.",
     },
     {
+      kind: "p",
+      text: "Any session T4 Code cannot write to offers **Continue in a copy**. That starts a new session holding the same history and leaves the original exactly where it is, so a conversation from months ago, or one open in a terminal right now, can be picked up without waiting for the other side to let go.",
+    },
+    {
       kind: "note",
-      text: "Ownership copy never guesses. Only a confirmed live lock is called active in another app. A lock that has gone quiet reads as waiting to take over. A malformed, unrecognized, or lockless session stays read-only. Start new terminal sessions with `t4-omp`; adopting historical lockless sessions is not yet supported.",
+      text: "Ownership copy never guesses. Only a confirmed live lock is called active in another app. A lock that has gone quiet reads as waiting to take over. A malformed, unrecognized, or lockless session stays read-only in place. Taking a session over where it sits still needs its writer to hand it off; copying it never does.",
     },
     { kind: "h2", id: "local-sessions-disconnects", text: "Disconnects" },
     {

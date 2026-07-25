@@ -4,9 +4,29 @@ const MAX_PATH = 4096;
 const MAX_ARG = 2048;
 const MAX_ARGS = 128;
 const MAX_PROFILE = 64;
-const SAFE_ENV_KEYS: Record<string, true> = { OMP_LOG_LEVEL: true, OMP_PROFILE: true };
+const SAFE_ENV_KEYS: Record<string, true> = {
+  HOME: true,
+  OMP_LOG_LEVEL: true,
+  OMP_PROFILE: true,
+  TMPDIR: true,
+  XDG_CACHE_HOME: true,
+  XDG_CONFIG_HOME: true,
+  XDG_DATA_HOME: true,
+  XDG_RUNTIME_DIR: true,
+  XDG_STATE_HOME: true,
+};
+const PATH_ENV_KEYS: Record<string, true> = {
+  HOME: true,
+  TMPDIR: true,
+  XDG_CACHE_HOME: true,
+  XDG_CONFIG_HOME: true,
+  XDG_DATA_HOME: true,
+  XDG_RUNTIME_DIR: true,
+  XDG_STATE_HOME: true,
+};
 const SECRET_KEY = /(token|secret|password|credential|authorization|api[_-]?key|private[_-]?key)/i;
 const PROFILE_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
+const SERVICE_LABEL = /^dev\.oh-my-pi\.appserver(?:\.(?:profile|development)\.[a-z0-9][a-z0-9.-]{0,79})?$/u;
 const WINDOWS_RESERVED_PROFILE = /^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\..*)?$/iu;
 
 function invalid(message: string): never {
@@ -55,6 +75,12 @@ export function validateProfileId(value: string): string {
   return value;
 }
 
+export function validateServiceLabel(value: string): string {
+  validateText(value, "service label", 128);
+  if (!SERVICE_LABEL.test(value)) invalid("Invalid service label.");
+  return value;
+}
+
 export function serviceLabelForProfile(profileId: string): string {
   const profile = validateProfileId(profileId);
   return profile === "default"
@@ -89,7 +115,9 @@ export function validateSpec(spec: ServiceSpec): ServiceSpec {
     validateText(key, "environment key", 128);
     if (!/^[A-Z_][A-Z0-9_]*$/.test(key) || SECRET_KEY.test(key) || SAFE_ENV_KEYS[key] !== true)
       invalid("Environment key is not permitted.");
-    environment[key] = validateText(value, `environment value for ${key}`, MAX_ARG);
+    environment[key] = PATH_ENV_KEYS[key] === true
+      ? validateAbsolutePath(value, `environment value for ${key}`)
+      : validateText(value, `environment value for ${key}`, MAX_ARG);
   }
   // Service managers can retain environment imported from an unrelated shell.
   // Explicitly selecting the default profile prevents ambient OMP_PROFILE state
