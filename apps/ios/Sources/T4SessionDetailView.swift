@@ -68,7 +68,7 @@ struct T4SessionDetailView: View {
         .sheet(isPresented: $showControls) {
             T4ControlsSheet(session: session, store: store).environmentObject(theme)
         }
-        .task { await store.attach(sessionId: session.sessionId) }
+        .task(id: session.sessionId) { await store.attach(sessionId: session.sessionId) }
     }
 
     /// Confirmation challenge: summary + approve/deny, matching the desktop

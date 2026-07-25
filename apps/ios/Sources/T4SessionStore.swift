@@ -268,8 +268,24 @@ final class T4SessionStore: ObservableObject {
         do {
             let result = try await client.sendCommand(CommandIntent(hostId: hostId, command: "session.list"))
             sessions = try result.sessionListResult().sessions
+            reconcileSelection()
         } catch {
             lastError = "\(error)"
+        }
+    }
+
+    /// Keep the selection honest across inventory updates: a stale selection
+    /// (e.g. auto-picked from the sample rail before connect) is replaced by
+    /// the most recent live session; a surviving one gets the fresh ref.
+    private func reconcileSelection() {
+        guard let selected = selectedSession else {
+            selectedSession = sessions.first
+            return
+        }
+        if let fresh = sessions.first(where: { $0.sessionId == selected.sessionId }) {
+            selectedSession = fresh
+        } else {
+            selectedSession = sessions.first
         }
     }
 
@@ -291,6 +307,7 @@ final class T4SessionStore: ObservableObject {
             switch frame {
             case .sessions(let inventory):
                 sessions = inventory.sessions
+                reconcileSelection()
             case .snapshot(let snapshot):
                 liveEntries[snapshot.sessionId] = snapshot.entries.map { TranscriptEntry(from: $0) }
             case .entry(let entryFrame):
