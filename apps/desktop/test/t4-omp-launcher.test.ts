@@ -8,7 +8,7 @@ async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "t4-omp-launcher-"));
   const home = join(root, "home");
   const runtimeRoot = join(root, "support", "runtime");
-  const current = join(runtimeRoot, "t4code-17.0.5-appserver-15", "omp");
+  const current = join(runtimeRoot, "t4code-17.0.5-appserver-16", "omp");
   const previous = join(runtimeRoot, "t4code-17.0.5-appserver-12", "omp");
   const launcherPath = join(home, ".local", "bin", "t4-omp");
   await mkdir(join(current, ".."), { recursive: true });
