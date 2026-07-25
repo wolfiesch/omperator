@@ -134,7 +134,14 @@ describe("phone touch targets", () => {
       join(import.meta.dirname, "../src/components/SessionScreen.tsx"),
       "utf8",
     );
-    const rail = readFileSync(join(import.meta.dirname, "../src/components/Rail.tsx"), "utf8");
+    const rail = [
+      "../src/components/Rail.tsx",
+      "../src/components/rail/SessionRowItem.tsx",
+      "../src/components/rail/ProjectHeaderRow.tsx",
+      "../src/components/rail/RailOptionsMenu.tsx",
+    ]
+      .map((path) => readFileSync(join(import.meta.dirname, path), "utf8"))
+      .join("\n");
     const css = readFileSync(join(import.meta.dirname, "../src/app.css"), "utf8");
 
     expect(controls).toContain("flex min-h-11 w-full cursor-pointer items-center");
