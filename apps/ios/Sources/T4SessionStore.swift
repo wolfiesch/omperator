@@ -22,6 +22,9 @@ final class T4SessionStore: ObservableObject {
     @Published private(set) var connecting = false
     @Published private(set) var connected = false
     @Published var lastError: String?
+    /// Human-readable endpoint the store is currently paired/connected to
+    /// (e.g. "ws://macbookpro.my-tailnet.ts.net:8787/v1/ws"), for UI display.
+    @Published private(set) var pairedEndpoint: String?
     @Published var selectedSession: SessionRef?
     /// Live transcripts by sessionId (snapshot + streamed entries). Present
     /// only for attached sessions while connected; the sample rail falls back
@@ -310,6 +313,7 @@ final class T4SessionStore: ObservableObject {
             hostId = welcome.hostId
             connected = welcome.authentication == .paired || welcome.authentication == .local
             if connected {
+                pairedEndpoint = endpoint.absoluteString
                 persist(endpoint: endpoint, authentication: authentication)
                 await refresh()
                 await loadCatalog()
@@ -318,6 +322,73 @@ final class T4SessionStore: ObservableObject {
         } catch {
             lastError = "\(error)"
         }
+    }
+
+    /// Pair a new device against a t4-host that requires pairing, then connect.
+    /// If the host is already open (welcome.authentication is .paired/.local —
+    /// e.g. a local UDS host or one that already trusts this device), this
+    /// behaves like `connect(...)` with no credentials. Otherwise it sends a
+    /// pair.start with the 6-digit code and persists the granted device token
+    /// on success, mirroring connect()'s post-connect refresh/catalog/observe.
+    func pairAndConnect(endpoint: URL, code: String, deviceName: String) async {
+        connecting = true
+        defer { connecting = false }
+        let transport = URLSessionHostWireTransport(endpoint: endpoint)
+        let identity = ClientIdentity(name: "t4-ios", version: "0.1", build: "dev", platform: "ios")
+        let c = HostClient(transport: transport, config: HostClient.Config(identity: identity, authentication: nil))
+        client = c
+        do {
+            let welcome = try await c.connect()
+            hostId = welcome.hostId
+            if welcome.authentication == .paired || welcome.authentication == .local {
+                // Open host — no pairing round-trip needed.
+                connected = true
+                pairedEndpoint = endpoint.absoluteString
+                persist(endpoint: endpoint, authentication: nil)
+                await refresh()
+                await loadCatalog()
+                Task { await observe() }
+                return
+            }
+            let slug = Self.slugify(deviceName)
+            let intent = PairStartIntent(
+                code: code,
+                deviceId: "ios-\(slug)",
+                deviceName: deviceName,
+                platform: "ios",
+                requestedCapabilities: ["sessions.read", "sessions.prompt", "sessions.manage"]
+            )
+            let ok = try await c.pair(intent)
+            let auth = DeviceAuthentication(deviceId: ok.deviceId, deviceToken: ok.deviceToken)
+            connected = true
+            pairedEndpoint = endpoint.absoluteString
+            persist(endpoint: endpoint, authentication: auth)
+            await refresh()
+            await loadCatalog()
+            Task { await observe() }
+        } catch {
+            lastError = "Pairing failed — check the code and that the host is running (\(error))"
+        }
+    }
+
+    /// Lowercase the device name into a host-safe id slug: alphanumerics
+    /// kept, every other run collapsed to a single hyphen, trimmed. Falls
+    /// back to "device" when the name has no usable characters.
+    private static func slugify(_ name: String) -> String {
+        let lowered = name.lowercased()
+        var slug = ""
+        var lastWasDash = true
+        for ch in lowered {
+            if ch.isLetter || ch.isNumber {
+                slug.append(ch)
+                lastWasDash = false
+            } else if !lastWasDash {
+                slug.append("-")
+                lastWasDash = true
+            }
+        }
+        if slug.hasSuffix("-") { slug.removeLast() }
+        return slug.isEmpty ? "device" : slug
     }
 
     /// Re-fetch the authoritative session list (session.list).
@@ -387,6 +458,7 @@ final class T4SessionStore: ObservableObject {
         await client?.close()
         client = nil
         connected = false
+        pairedEndpoint = nil
         let defaults = UserDefaults.standard
         defaults.removeObject(forKey: Self.savedEndpointKey)
         defaults.removeObject(forKey: Self.savedDeviceIdKey)

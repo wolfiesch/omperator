@@ -18,6 +18,7 @@ import {
   type SessionDiscovery,
 } from "@t4-code/host-service";
 import { COMMAND_DESCRIPTORS, type ProjectId, type SessionId } from "@t4-code/protocol";
+import { parsePairArgs, runPairAction } from "./pair.ts";
 
 export const T4_HOST_VERSION = "0.1.31";
 export const OFFICIAL_OMP_VERSION = "17.0.9";
@@ -415,7 +416,12 @@ export async function runHostDaemon(
 
 async function main(): Promise<void> {
   try {
-    await runHostDaemon(parseHostDaemonArgs(process.argv.slice(2)));
+    const argv = process.argv.slice(2);
+    if (argv[0] === "pair") {
+      await runPairAction(parsePairArgs(argv.slice(1)));
+    } else {
+      await runHostDaemon(parseHostDaemonArgs(argv));
+    }
   } catch (error) {
     process.stderr.write(
       `t4-host error: ${error instanceof Error ? error.message : String(error)}\n`,

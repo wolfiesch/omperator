@@ -19,6 +19,9 @@ struct T4WorkspaceView: View {
     @EnvironmentObject var store: T4SessionStore
     @State private var railProgress: CGFloat = 0   // 0 = closed, 1 = open
     @State private var showConnect = false
+    /// Prefilled pair from a t4-code://pair/... deep link; handed to the
+    /// connect sheet when it opens.
+    @State private var pendingPair: PendingPair?
     private var t: Theme { theme.t }
 
     private var railOpen: Bool { railProgress > 0.5 }
@@ -59,14 +62,30 @@ struct T4WorkspaceView: View {
         }
         .background(t.bg.ignoresSafeArea())
         .sheet(isPresented: $showConnect) {
-            T4ConnectView(store: store).environmentObject(theme)
+            T4ConnectView(store: store, pendingPair: pendingPair)
+                .environmentObject(theme)
         }
+        .onOpenURL { url in handleDeepLink(url) }
         .onAppear {
             if store.selectedSession == nil { store.select(store.sessions.first) }
             // UI-test seam: launch with -T4RailOpen to boot with the rail open.
             if ProcessInfo.processInfo.arguments.contains("-T4RailOpen") { railProgress = 1 }
         }
         .task { await store.restore() }
+    }
+
+    // MARK: - Deep links
+
+    /// Open the connect sheet prefilled from a `t4-code://pair/<host>/<code>`
+    /// link. Ignored when already connected — the user is paired already.
+    private func handleDeepLink(_ url: URL) {
+        guard !store.connected else { return }
+        guard let pair = PendingPair.parseDeepLink(
+            url.absoluteString,
+            issuedAtMs: Date().timeIntervalSince1970 * 1000
+        ) else { return }
+        pendingPair = pair
+        showConnect = true
     }
 
     // MARK: - Workspace (center column)

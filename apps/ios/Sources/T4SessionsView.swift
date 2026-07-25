@@ -102,9 +102,6 @@ struct StatusPill: View {
             .font(.system(size: 10, weight: .semibold))
             .textCase(.uppercase)
             .foregroundStyle(color)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.14), in: Capsule())
     }
     static func style(_ status: String) -> (String, Color) {
         switch status {
@@ -144,8 +141,5 @@ struct Tag: View {
             .font(.system(size: 9, weight: .semibold))
             .textCase(.uppercase)
             .foregroundStyle(color)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 1)
-            .background(color.opacity(0.14), in: Capsule())
     }
 }
