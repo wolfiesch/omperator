@@ -94,21 +94,50 @@ export function validateSpec(spec: ServiceSpec): ServiceSpec {
   if (!Array.isArray(spec.argv) || spec.argv.length > MAX_ARGS) invalid("Invalid argv.");
   const argv = spec.argv.map((value, index) => validateText(value, `argv[${index}]`, MAX_ARG));
   const executableName = executable.slice(executable.lastIndexOf("/") + 1);
-  if (executableName === "t4-host") {
+  if (executableName !== "t4-host") invalid("Executable must be t4-host.");
+  // `serve --omp <path>/omp --profile <id>`, then two optional blocks in this
+  // order: official authority, then the state root. Spelled out positionally on
+  // purpose. This argv is written into a service definition, so any shape not
+  // named here must not reach it.
+  if (
+    argv.length < 5 ||
+    argv[0] !== "serve" ||
+    argv[1] !== "--omp" ||
+    !argv[2]?.startsWith("/") ||
+    !argv[2].endsWith("/omp") ||
+    argv[3] !== "--profile" ||
+    argv[4] !== profileId
+  )
+    invalid("Unsupported T4 host argv.");
+  let next = 5;
+  let sessionsRoot: string | undefined;
+  if (argv[next] === "--omp-authority") {
+    sessionsRoot = argv[next + 3];
     if (
-      (argv.length !== 5 && argv.length !== 7) ||
-      argv[0] !== "serve" ||
-      argv[1] !== "--omp" ||
-      !argv[2]?.startsWith("/") ||
-      !argv[2].endsWith("/omp") ||
-      argv[3] !== "--profile" ||
-      argv[4] !== profileId ||
-      (argv.length === 7 && (argv[5] !== "--state-root" || !argv[6]?.startsWith("/")))
+      argv[next + 1] !== "official" ||
+      argv[next + 2] !== "--omp-sessions-root" ||
+      sessionsRoot === undefined ||
+      !sessionsRoot.startsWith("/")
     )
       invalid("Unsupported T4 host argv.");
-  } else {
-    invalid("Executable must be t4-host.");
+    next += 4;
   }
+  if (argv[next] === "--state-root") {
+    const stateRoot = argv[next + 1];
+    if (stateRoot === undefined || !stateRoot.startsWith("/")) invalid("Unsupported T4 host argv.");
+    // Official authority claims the whole root without a lock, so the root must
+    // be the one this profile derives from the declared state root. Accepting
+    // any other path would let a caller aim lockless authority at a sessions
+    // directory the OMP TUI co-owns.
+    if (sessionsRoot !== undefined && sessionsRoot !== `${stateRoot}/official-sessions/${profileId}`)
+      invalid("Unsupported T4 host argv.");
+    next += 2;
+  } else if (sessionsRoot !== undefined) {
+    // Without a declared state root the derived sessions root cannot be
+    // checked, so official authority must always declare one.
+    invalid("Unsupported T4 host argv.");
+  }
+  if (next !== argv.length) invalid("Unsupported T4 host argv.");
   const logsDirectory = validateAbsolutePath(spec.logsDirectory, "logs directory");
   const environment: Record<string, string> = {};
   for (const [key, value] of Object.entries(spec.environment ?? {})) {

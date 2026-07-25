@@ -367,6 +367,7 @@ function validateOfficialGate0Snapshot(snapshot, officialRuntime, path, errors) 
       "prompt",
       "durable-jsonl",
       "t4-wire-projection",
+      "terminal",
     ])
   ) {
     errors.push(`${path} packagedHostProof.requiredScenarios must match the packaged host contract`);
