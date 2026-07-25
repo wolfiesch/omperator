@@ -81,9 +81,17 @@ interface WinsizeShim {
  * side effects. Field initializers run only when the class is instantiated.
  */
 class PtyBindings {
-	readonly util = dlopen(DARWIN ? "libSystem.B.dylib" : "libutil.so.1", {
-		openpty: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
-	});
+	readonly util = (() => {
+		const spec = {
+			openpty: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+		};
+		if (DARWIN) return dlopen("libSystem.B.dylib", spec);
+		try {
+			return dlopen("libutil.so.1", spec);
+		} catch {
+			return dlopen("libc.so.6", spec);
+		}
+	})();
 	readonly libc = dlopen(DARWIN ? "libSystem.B.dylib" : "libc.so.6", {
 		posix_spawnattr_init: { args: [FFIType.ptr], returns: FFIType.i32 },
 		posix_spawnattr_setflags: { args: [FFIType.ptr, FFIType.i16], returns: FFIType.i32 },
