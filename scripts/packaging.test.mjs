@@ -46,7 +46,7 @@ const androidIdentity = JSON.parse(
 const macosIdentity = JSON.parse(
   readFileSync(resolve(repoRoot, ".github/macos-release-identity.json"), "utf8"),
 );
-const productionCertificate = "fa58f53c953a078d8db2b633ee8c226cfd2ad3f7220cd55dd03a2e195a81b0ac";
+const productionCertificate = "e44654621d495dc729ab69c95048a4f8ee60c3dd43e6c37fd1552babf2956645";
 
 function androidReleaseFixture(overrides = {}) {
   const packageVersion = overrides.packageVersion ?? "0.1.17";
@@ -179,8 +179,7 @@ test("Android release identity is public, pinned, and wired into the release wor
   assert.equal(androidIdentity.minSdkVersion, 24);
   assert.equal(androidIdentity.targetSdkVersion, 36);
   assert.equal(androidIdentity.signingCertificateSha256, productionCertificate);
-  assert.equal(androidIdentity.certificateBaseline.tag, "v0.1.13");
-  assert.equal(androidIdentity.certificateBaseline.asset, "T4-Code-0.1.13-android.apk");
+  assert.equal(androidIdentity.certificateBaseline, null);
 
   const releaseWorkflow = readFileSync(resolve(repoRoot, ".github/workflows/release.yml"), "utf8");
   assert.match(releaseWorkflow, /node scripts\/inspect-android-release\.mjs/u);
@@ -201,7 +200,12 @@ test("Android release identity is public, pinned, and wired into the release wor
 });
 
 test("Android certificate baseline must be declared, and may be null before a key has published history", () => {
-  const { certificateBaseline, ...withoutBaseline } = androidIdentity;
+  const { certificateBaseline: _certificateBaseline, ...withoutBaseline } = androidIdentity;
+  const publishedBaseline = {
+    tag: "v0.1.13",
+    asset: "T4-Code-0.1.13-android.apk",
+    assetSha256: "ce863c0c957ed7992393226d5f9aa7968d8c1bc748245f6e1d10de491247c5ef",
+  };
 
   // A newly minted signing key has no published APK to point at, and the
   // baseline is validated before the APK is built, so the first release under
@@ -219,7 +223,7 @@ test("Android certificate baseline must be declared, and may be null before a ke
     () =>
       validateIdentityContract({
         ...withoutBaseline,
-        certificateBaseline: { ...certificateBaseline, assetSha256: "not-a-digest" },
+        certificateBaseline: { ...publishedBaseline, assetSha256: "not-a-digest" },
       }),
     /assetSha256 must be 64 lowercase hexadecimal characters/u,
   );
@@ -227,7 +231,7 @@ test("Android certificate baseline must be declared, and may be null before a ke
     () =>
       validateIdentityContract({
         ...withoutBaseline,
-        certificateBaseline: { ...certificateBaseline, tag: "0.1.13" },
+        certificateBaseline: { ...publishedBaseline, tag: "0.1.13" },
       }),
     /baseline tag must be a stable/u,
   );
