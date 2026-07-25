@@ -1,4 +1,4 @@
-package com.lycaonsolutions.t4code;
+package net.t4code.app;
 
 /** Small synchronized state machine so bridge calls and the download worker cannot race. */
 final class T4UpdateStateMachine {

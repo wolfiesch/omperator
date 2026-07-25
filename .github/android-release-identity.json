@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "applicationId": "com.lycaonsolutions.t4code",
+  "applicationId": "net.t4code.app",
   "minSdkVersion": 24,
   "targetSdkVersion": 36,
   "signingCertificateSha256": "fa58f53c953a078d8db2b633ee8c226cfd2ad3f7220cd55dd03a2e195a81b0ac",

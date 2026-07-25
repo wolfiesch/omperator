@@ -1,5 +1,5 @@
 {
-  "appId": "com.lycaonsolutions.t4code",
+  "appId": "net.t4code.app",
   "appName": "T4 Code",
   "webDir": "dist",
   "loggingBehavior": "debug",
