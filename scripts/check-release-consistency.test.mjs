@@ -329,6 +329,22 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
     [
       ".github/workflows/ci.yml",
       (text) =>
+        text.replace(
+          "if: ${{ github.event_name != 'pull_request' && needs.changes.outputs.continuity == 'true' }}",
+          "if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.continuity == 'true' }}",
+        ),
+    ],
+    [
+      ".github/workflows/ci.yml",
+      (text) =>
+        text.replace(
+          "if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.maintainer == 'true' }}",
+          "if: ${{ github.event_name != 'pull_request' && needs.changes.outputs.maintainer == 'true' }}",
+        ),
+    ],
+    [
+      ".github/workflows/ci.yml",
+      (text) =>
         text.replaceAll(
           "ref: ${{ github.event.pull_request.head.sha || github.sha }}",
           "ref: ${{ github.ref }}",

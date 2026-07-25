@@ -139,9 +139,14 @@ jobs:
       - name: Check packaging contract
         run: pnpm test:packaging
 
+  # Release-time gates, deferred off pull requests. The legacy pin is a frozen
+  # historical compatibility proof and the gate0 matrix spans three runners
+  # including macOS. Pushes to main classify as --all, so both still run on
+  # every merge before any release, and `pnpm verify:affected` selects them
+  # locally for an affected change.
   legacy-bridge-continuity:
     needs: changes
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.continuity == 'true' }}
+    if: ${{ github.event_name != 'pull_request' && needs.changes.outputs.continuity == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -329,7 +334,7 @@ jobs:
 
   official-omp-gate0:
     needs: changes
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.official_omp_gate0 == 'true' }}
+    if: ${{ github.event_name != 'pull_request' && needs.changes.outputs.official_omp_gate0 == 'true' }}
     strategy:
       fail-fast: false
       matrix:

@@ -995,6 +995,30 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
       )
         errors.push(".github/workflows/ci.yml current bridge evidence upload is not fail-closed");
     }
+    // Release-time gates are deferred off pull requests and must stay covered by
+    // the merge run; every other leg must keep blocking pull requests.
+    for (const job of ["legacy-bridge-continuity", "official-omp-gate0"]) {
+      const expected = `\${{ github.event_name != 'pull_request' && needs.changes.outputs.${job === "official-omp-gate0" ? "official_omp_gate0" : "continuity"} == 'true' }}`;
+      if (workflow?.jobs?.[job]?.if !== expected)
+        errors.push(`.github/workflows/ci.yml ${job} must run only on merge runs for its affected paths`);
+    }
+    for (const [job, output] of [
+      ["current-bridge-continuity", "continuity"],
+      ["cluster", "cluster"],
+      ["tooling", "tooling"],
+      ["maintainer", "maintainer"],
+      ["android-debug", "android_debug"],
+    ]) {
+      if (
+        workflow?.jobs?.[job]?.if !==
+        `\${{ github.event_name != 'pull_request' || needs.changes.outputs.${output} == 'true' }}`
+      )
+        errors.push(`.github/workflows/ci.yml ${job} must keep blocking affected pull requests`);
+    }
+    for (const job of ["core", "t4-api-generation"]) {
+      if (workflow?.jobs?.[job]?.if !== undefined)
+        errors.push(`.github/workflows/ci.yml ${job} must run unconditionally`);
+    }
   } catch (error) {
     errors.push(`.github/workflows/ci.yml is invalid YAML: ${error instanceof Error ? error.message : error}`);
   }
