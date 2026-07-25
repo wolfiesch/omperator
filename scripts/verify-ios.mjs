@@ -13,6 +13,7 @@
 // worse than one that is absent, because the plan still claims the coverage.
 
 import { spawnSync } from "node:child_process";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -41,6 +42,50 @@ function capture(command, args) {
 function requireTool(command, hint) {
   if (capture(command, ["--version"]) === undefined && capture(command, ["-version"]) === undefined) {
     fail(`${command} is unavailable. ${hint}`);
+  }
+}
+
+// A runner image ships several Xcodes and preselects one that is not
+// necessarily the newest. When the selected SDK is older than the deployment
+// target, the compiler reports a missing iOS-26 type such as `Glass` as an
+// ordinary "cannot find type in scope", which reads like a source bug rather
+// than a toolchain mismatch. Select the newest Xcode, then check the SDK up
+// front and say plainly which two numbers disagree.
+function selectNewestXcode() {
+  if (process.env.DEVELOPER_DIR) return;
+  let candidates;
+  try {
+    candidates = readdirSync("/Applications").filter((entry) => /^Xcode.*\.app$/u.test(entry));
+  } catch {
+    return;
+  }
+  const versioned = candidates
+    .map((entry) => {
+      const developer = join("/Applications", entry, "Contents", "Developer");
+      const raw = capture("plutil", [
+        "-extract", "CFBundleShortVersionString", "raw", "-o", "-",
+        join("/Applications", entry, "Contents", "version.plist"),
+      ]);
+      if (raw === undefined || !existsSync(developer)) return undefined;
+      const parts = raw.trim().split(".").map(Number);
+      return { developer, order: (parts[0] ?? 0) * 1000 + (parts[1] ?? 0) };
+    })
+    .filter(Boolean)
+    .sort((left, right) => right.order - left.order);
+  if (versioned.length > 0) process.env.DEVELOPER_DIR = versioned[0].developer;
+}
+
+function assertSdkSupportsDeploymentTarget() {
+  const project = readFileSync(join(iosRoot, "project.yml"), "utf8");
+  const target = /^\s*iOS:\s*"?([\d.]+)"?\s*$/mu.exec(project)?.[1];
+  const sdk = capture("xcrun", ["--sdk", "iphonesimulator", "--show-sdk-version"])?.trim();
+  if (!target || !sdk) return;
+  const major = (value) => Number(value.split(".")[0]);
+  if (major(sdk) < major(target)) {
+    fail(
+      `the selected iOS simulator SDK is ${sdk} but project.yml targets iOS ${target}. ` +
+        `Select an Xcode whose SDK is at least ${target} (DEVELOPER_DIR overrides the choice).`,
+    );
   }
 }
 
@@ -83,8 +128,10 @@ function simulatorUdid(runtime, deviceType) {
 if (process.platform !== "darwin") {
   fail(`iOS verification needs macOS with Xcode; this host is ${process.platform}.`);
 }
+selectNewestXcode();
 requireTool("xcodebuild", "Install Xcode and select it with xcode-select.");
 requireTool("xcodegen", "Install it with: brew install xcodegen");
+assertSdkSupportsDeploymentTarget();
 
 const runtimes = JSON.parse(capture("xcrun", ["simctl", "list", "runtimes", "--json"]) ?? "{}").runtimes ?? [];
 const runtime = newestIosRuntime(runtimes);
@@ -94,7 +141,10 @@ const deviceTypes = JSON.parse(capture("xcrun", ["simctl", "list", "devicetypes"
 const deviceType = iphoneDeviceType(deviceTypes, runtime);
 if (!deviceType) fail(`no iPhone device type available for ${runtime.identifier}.`);
 
-process.stderr.write(`verify-ios: ${runtime.identifier} on ${deviceType.identifier}\n`);
+process.stderr.write(
+  `verify-ios: Xcode at ${process.env.DEVELOPER_DIR ?? "the selected developer directory"}, ` +
+    `${runtime.identifier} on ${deviceType.identifier}\n`,
+);
 const udid = simulatorUdid(runtime, deviceType);
 
 run("xcodegen", ["generate"]);
