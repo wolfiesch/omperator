@@ -1209,8 +1209,13 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     errors.push(".github/workflows/release.yml must resolve release source before CI authority");
   } else {
     const releaseVerify = releaseWorkflow.slice(releaseVerifyStart, releaseAuthorityStart);
+    requireText(
+      releaseVerify,
+      "pnpm install --frozen-lockfile",
+      ".github/workflows/release.yml source verification",
+      errors,
+    );
     for (const duplicate of [
-      "pnpm install",
       "pnpm check",
       "pnpm test",
       "pnpm build",

@@ -746,8 +746,13 @@ test("deploys release site source only after artifact publication", () => {
     releaseWorkflow.indexOf("  verify:"),
     releaseWorkflow.indexOf("  ci-authority:"),
   );
+  assert.ok(releaseVerify.includes("Install immutable release dependencies"));
+  assert.ok(releaseVerify.includes("pnpm install --frozen-lockfile"));
+  assert.ok(
+    releaseVerify.indexOf("pnpm install --frozen-lockfile") <
+      releaseVerify.indexOf("node scripts/check-release-consistency.mjs"),
+  );
   for (const duplicate of [
-    "pnpm install",
     "pnpm check",
     "pnpm test",
     "pnpm build",
