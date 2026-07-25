@@ -252,6 +252,15 @@ public actor HostClient {
         case .event(let ev):
             cursorJournal[SessionKey(hostId: ev.hostId, sessionId: ev.sessionId)] = ev.cursor
             frameContinuation.yield(frame)
+        case .entry(let f):
+            cursorJournal[SessionKey(hostId: f.hostId, sessionId: f.sessionId)] = f.cursor
+            frameContinuation.yield(frame)
+        case .snapshot(let f):
+            cursorJournal[SessionKey(hostId: f.hostId, sessionId: f.sessionId)] = f.cursor
+            frameContinuation.yield(frame)
+        case .gap(let f):
+            cursorJournal[SessionKey(hostId: f.hostId, sessionId: f.sessionId)] = f.to
+            frameContinuation.yield(frame)
         case .sessions, .confirmation:
             frameContinuation.yield(frame)
         }

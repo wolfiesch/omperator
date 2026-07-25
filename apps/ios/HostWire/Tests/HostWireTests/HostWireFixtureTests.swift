@@ -18,6 +18,9 @@ struct HostWireFixtureTests {
         "bye": false,
         "sessions": false,
         "sessions-cluster": false,
+        "snapshot": false,
+        "entry-frame": false,
+        "gap": false,
     ]
 
     private static let invalid: Set<String> = [
@@ -112,5 +115,15 @@ struct HostWireFixtureTests {
         #expect(throws: T4WireError.self) {
             _ = try CommandFrame(requestId: "r", commandId: "c", hostId: "h", command: "session.rename", sessionId: "s")
         }
+    }
+    @Test("Snapshot, entry, and gap frames decode; durable entry decodes standalone")
+    func transcriptFrames() throws {
+        // Snapshot, durable-entry, and gap server frames.
+        for name in ["snapshot", "entry-frame", "gap"] {
+            #expect(throws: Never.self) { _ = try ServerFrame.decode(try data(for: name)) }
+        }
+        // A bare durable entry (the body of an entry frame, no envelope wrapper).
+        let entry = try JSONDecoder().decode(DurableEntry.self, from: try data(for: "entry"))
+        #expect(entry.kind == "tool-result")
     }
 }

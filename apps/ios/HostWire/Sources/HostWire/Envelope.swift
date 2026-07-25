@@ -109,6 +109,9 @@ public enum ServerFrame: Equatable, Sendable {
     case bye(ByeFrame)
     case pairOk(PairOkFrame)
     case pairError(PairErrorFrame)
+    case snapshot(SnapshotFrame)
+    case entry(DurableEntryFrame)
+    case gap(GapFrame)
 
     public static func decode(_ data: Data) throws -> ServerFrame {
         let type = try wireDecode(TypePeek.self, from: data).type
@@ -123,6 +126,9 @@ public enum ServerFrame: Equatable, Sendable {
         case "bye": return .bye(try wireDecode(ByeFrame.self, from: data))
         case "pair.ok": return .pairOk(try wireDecode(PairOkFrame.self, from: data))
         case "pair.error": return .pairError(try wireDecode(PairErrorFrame.self, from: data))
+        case "snapshot": return .snapshot(try wireDecode(SnapshotFrame.self, from: data))
+        case "entry": return .entry(try wireDecode(DurableEntryFrame.self, from: data))
+        case "gap": return .gap(try wireDecode(GapFrame.self, from: data))
         default: throw T4WireError.unknownFrame(family: "not yet ported (server): \(type)")
         }
     }
