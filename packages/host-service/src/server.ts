@@ -5028,6 +5028,23 @@ export class LocalAppserver implements AppserverHandle {
 			this.#promotionFailures.delete(id);
 		}
 	}
+	/**
+	 * Seeded sessions are created through the authority rather than the
+	 * session.create command, so the ownership ledger must be updated here too.
+	 * Without the claim the host reads its own seeded transcript as a foreign
+	 * lockless session and never promotes it to a writable projection.
+	 *
+	 * This runs before any client can attach to a freshly seeded session, and
+	 * the lockless decision is made when attach builds the observer, so the
+	 * ledger is already current by the time it is read.
+	 */
+	async #claimTestSessions(control: AppserverTestControl, runId: string): Promise<void> {
+		if (!this.#sessionOwnership) return;
+		for (const id of await control.sessionIds(runId)) {
+			const record = this.#records.get(id);
+			if (record) await this.#sessionOwnership.add(id, record.path);
+		}
+	}
 	async #evictTestSession(sessionId: SessionId): Promise<void> {
 		const projection = this.#projections.get(sessionId);
 		if (projection) await this.broadcastIndex(projection.remove());
@@ -5037,6 +5054,7 @@ export class LocalAppserver implements AppserverHandle {
 		await this.#transcriptSearch?.deleteSession(sessionId);
 		this.#projections.delete(sessionId);
 		await this.#attentionOutcomes?.delete(sessionId);
+		await this.#sessionOwnership?.delete(sessionId);
 		this.#closedSessions.delete(sessionId);
 		this.#releaseAllMessageLifecycles(sessionId, "completed-without-entry");
 		this.#stateRefreshGenerations.delete(sessionId);
@@ -5119,6 +5137,7 @@ export class LocalAppserver implements AppserverHandle {
 			try {
 				await control.seed(seedRequest);
 				await this.refreshSessions();
+				await this.#claimTestSessions(control, seedRequest.runId);
 				const status = await this.#testControlStatus(
 					control,
 					seedRequest.runId,
