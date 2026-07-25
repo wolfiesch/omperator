@@ -135,7 +135,7 @@ test("Android updates use a registered native bridge with no renderer-supplied U
   assert.match(activity, /registerPlugin\(T4UpdatePlugin\.class\)/);
   assert.match(plugin, /@CapacitorPlugin\(name = "T4Update"\)/);
   assert.match(plugin, /https:\/\/t4code\.net\/releases\/latest\.json/);
-  assert.match(verifier, /https:\/\/github\.com\/LycaonLLC\/t4-code\/releases\/download\//);
+  assert.match(verifier, /https:\/\/github\.com\/wolfiesch\/omperator\/releases\/download\//);
   assert.match(plugin, /checkForUpdate\(PluginCall call\)/);
   assert.match(plugin, /openUpdate\(PluginCall call\)/);
   assert.match(plugin, /T4UpdateVerifier\.copyExact\(input, output, release\.apkSize, release\.apkSha256\)/);

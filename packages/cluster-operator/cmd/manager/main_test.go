@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LycaonLLC/t4-code/packages/cluster-operator/controllers"
+	"github.com/wolfiesch/omperator/packages/cluster-operator/controllers"
 )
 
 func TestManagerUsesLeaseLeaderElection(t *testing.T) {

@@ -8,7 +8,7 @@ export const DEFAULT_INTERVAL_MS = 15_000;
 export const DEFAULT_TIMEOUT_MS = 40 * 60 * 1_000;
 export const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 
-const REPOSITORY_URL = "https://github.com/LycaonLLC/t4-code";
+const REPOSITORY_URL = "https://github.com/wolfiesch/omperator";
 
 export function releaseAssetUrls(version) {
   const tag = `v${version}`;

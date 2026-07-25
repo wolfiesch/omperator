@@ -3,7 +3,7 @@
 
 export const SITE_URL = "https://t4code.net";
 export const DOCS_URL = `${SITE_URL}/docs`;
-export const REPO_URL = "https://github.com/LycaonLLC/t4-code";
+export const REPO_URL = "https://github.com/wolfiesch/omperator";
 export const OMP_URL = "https://github.com/can1357/oh-my-pi";
 export const OMP_RUNTIME_VERSION = "17.0.5";
 export const OMP_RUNTIME_COMMIT = "ca2902bc095a0b17067f4b8b34ecf454390f85ff";

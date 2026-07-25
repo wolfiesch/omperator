@@ -299,7 +299,7 @@ test("rejects version drift in a newly added workspace package", () => {
 
 test("rejects updater channel, stable manifest, and publication-contract drift", () => {
   const cases = [
-    ["electron-builder.config.mjs", (text) => text.replace('repo: "t4-code"', 'repo: "renamed"')],
+    ["electron-builder.config.mjs", (text) => text.replace('repo: "omperator"', 'repo: "renamed"')],
     [
       "scripts/generate-release-manifest.mjs",
       (text) =>
@@ -562,7 +562,7 @@ test("accepts a current app-wire update without rewriting published release surf
 
 test("rejects stale README release URLs while allowing historical prose", () => {
   const oldTag = ["v0", "1", "3"].join(".");
-  const oldReleaseUrl = `https://github.com/LycaonLLC/t4-code/releases/tag/${oldTag}`;
+  const oldReleaseUrl = `https://github.com/wolfiesch/omperator/releases/tag/${oldTag}`;
   const staleLink = changed("README.md", (text) => `${text}\n[Old release](${oldReleaseUrl})\n`);
   assert.ok(
     collectReleaseConsistencyErrors(staleLink).some((error) =>

@@ -14,8 +14,8 @@ import java.util.regex.Pattern;
 /** Pure-Java verification primitives shared by the Android updater and JVM tests. */
 final class T4UpdateVerifier {
     private static final int COPY_BUFFER_BYTES = 64 * 1024;
-    private static final String RELEASE_DOWNLOAD_ROOT = "https://github.com/LycaonLLC/t4-code/releases/download/";
-    private static final String RELEASE_PAGE_ROOT = "https://github.com/LycaonLLC/t4-code/releases/tag/";
+    private static final String RELEASE_DOWNLOAD_ROOT = "https://github.com/wolfiesch/omperator/releases/download/";
+    private static final String RELEASE_PAGE_ROOT = "https://github.com/wolfiesch/omperator/releases/tag/";
     private static final Pattern VERSION_PATTERN = Pattern.compile(
         "^(?:0|[1-9][0-9]{0,5})\\.(?:0|[1-9][0-9]{0,5})\\.(?:0|[1-9][0-9]{0,5})$"
     );

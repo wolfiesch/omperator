@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 
 import { formatAffectedPlan, planAffectedVerification } from "./verify-affected.mjs";
 
@@ -38,4 +39,10 @@ test("empty changes select no work and formatted plans explain requirements", ()
   const output = formatAffectedPlan(planAffectedVerification(["packages/client/src/index.ts"]));
   assert.match(output, /pnpm test:legacy-bridge-continuity \[requires T4_OMP_SOURCE_DIR\]/u);
   assert.match(output, /bridge continuity inputs changed/u);
+});
+
+test("the advertised affected verification command executes its plan", async () => {
+  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  assert.equal(packageJson.scripts["verify:affected"], "node scripts/verify-affected.mjs --run");
+  assert.equal(packageJson.scripts["verify:affected:plan"], "node scripts/verify-affected.mjs");
 });

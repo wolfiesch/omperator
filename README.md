@@ -4,7 +4,7 @@ T4 Code is a free, open-source (MIT) desktop app for [Oh My Pi](https://github.c
 
 ![T4 Code main window](docs/assets/t4-code-main.png)
 
-[**Download v0.1.31**](https://github.com/LycaonLLC/t4-code/releases/tag/v0.1.31) · [**Docs**](https://t4code.net/docs) · [**Get the source**](#build-from-source)
+[**Download v0.1.31**](https://github.com/wolfiesch/omperator/releases/tag/v0.1.31) · [**Docs**](https://t4code.net/docs) · [**Get the source**](#build-from-source)
 
 ## Requirements
 
@@ -53,7 +53,7 @@ access use the responsive Tailnet browser/PWA compatibility client.
 ### Android
 
 1. On the Android phone, sign in to Tailscale with an account that can reach the T4 Code host.
-2. Download [`T4-Code-0.1.31-android.apk`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.31/T4-Code-0.1.31-android.apk).
+2. Download [`T4-Code-0.1.31-android.apk`](https://github.com/wolfiesch/omperator/releases/download/v0.1.31/T4-Code-0.1.31-android.apk).
 3. If Android asks, allow your browser or file manager to install unknown apps, then install the APK.
 4. Open T4 Code and enter the host's HTTPS Tailscale address, including its port. The app saves the address; you can add more hosts later and switch between them.
 
@@ -62,7 +62,7 @@ The APK does not contain a host daemon or expose one to the public internet. It 
 ### Linux (Debian/Ubuntu)
 
 ```sh
-wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.31/T4-Code-0.1.31-linux-amd64.deb
+wget https://github.com/wolfiesch/omperator/releases/download/v0.1.31/T4-Code-0.1.31-linux-amd64.deb
 sudo apt install ./T4-Code-0.1.31-linux-amd64.deb
 ```
 
@@ -71,14 +71,14 @@ Use `apt install` rather than `dpkg -i` so system dependencies resolve automatic
 ### Linux (AppImage)
 
 ```sh
-wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.31/T4-Code-0.1.31-linux-x86_64.AppImage
+wget https://github.com/wolfiesch/omperator/releases/download/v0.1.31/T4-Code-0.1.31-linux-x86_64.AppImage
 chmod +x T4-Code-0.1.31-linux-x86_64.AppImage
 ./T4-Code-0.1.31-linux-x86_64.AppImage
 ```
 
 ### macOS (Apple Silicon)
 
-1. Download [`T4-Code-0.1.31-mac-arm64.dmg`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.31/T4-Code-0.1.31-mac-arm64.dmg) (or [`T4-Code-0.1.31-mac-arm64.zip`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.31/T4-Code-0.1.31-mac-arm64.zip)).
+1. Download [`T4-Code-0.1.31-mac-arm64.dmg`](https://github.com/wolfiesch/omperator/releases/download/v0.1.31/T4-Code-0.1.31-mac-arm64.dmg) (or [`T4-Code-0.1.31-mac-arm64.zip`](https://github.com/wolfiesch/omperator/releases/download/v0.1.31/T4-Code-0.1.31-mac-arm64.zip)).
 2. Drag `T4 Code.app` into `/Applications`.
 3. Open T4 Code normally. The release workflow verifies the pinned publisher, hardened runtime, secure timestamp, Apple notarization, stapled ticket, and Gatekeeper acceptance before publication.
 4. To start terminal or CMUX sessions that can hand off to T4 Code, open **Settings → Hosts** and choose **Install t4-omp**. This adds `~/.local/bin/t4-omp` and leaves any existing `omp` command unchanged.
@@ -117,8 +117,8 @@ Some actions depend on what the host supports. When a host can't do something (s
 Needs Node `^24.13.1` and pnpm `11.10.0`.
 
 ```sh
-git clone https://github.com/LycaonLLC/t4-code.git
-cd t4-code
+git clone https://github.com/wolfiesch/omperator.git
+cd omperator
 pnpm install
 pnpm dev              # web + desktop in watch mode
 pnpm check            # release contract, provenance, lint, typecheck
