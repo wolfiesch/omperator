@@ -34,6 +34,7 @@ export interface DoctorCheck {
 export interface SourceContract {
   readonly nodeEngine: string;
   readonly pnpmVersion: string;
+  readonly bunEngine: string;
   readonly ompVersion: string;
   readonly ompTag: string;
   readonly ompUrl: string;
@@ -47,6 +48,7 @@ export interface DoctorRuntime {
   readonly nodeVersion: string;
   readonly sourceContract: () => Promise<SourceContract>;
   readonly pnpmVersion: () => Promise<string | null>;
+  readonly bunVersion: () => Promise<string | null>;
   readonly discoverOmp: () => Promise<string | undefined>;
   readonly inspectPathOmp: () => Promise<PathOmpCompatibility>;
   readonly probeOmp: (executable: string) => Promise<boolean>;
@@ -91,6 +93,13 @@ export function satisfiesCaretVersion(version: string, range: string): boolean {
   return actual.major === 0 && actual.minor === 0 && actual.patch === required.patch;
 }
 
+export function satisfiesMinimumVersion(version: string, range: string): boolean {
+  const minimum = range.match(/^>=(\d+\.\d+\.\d+)$/u)?.[1];
+  const actual = parseVersion(version);
+  const required = minimum === undefined ? null : parseVersion(minimum);
+  return actual !== null && required !== null && compareVersion(actual, required) >= 0;
+}
+
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -106,10 +115,16 @@ export async function readSourceContract(
   repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../.."),
 ): Promise<SourceContract> {
   const manifest = record(JSON.parse(await readFile(resolve(repoRoot, "package.json"), "utf8")));
+  const hostManifest = record(
+    JSON.parse(
+      await readFile(resolve(repoRoot, "packages", "host-daemon", "package.json"), "utf8"),
+    ),
+  );
   const matrix = record(
     JSON.parse(await readFile(resolve(repoRoot, "compat/omp-app-matrix.json"), "utf8")),
   );
   const engines = record(manifest?.engines);
+  const hostEngines = record(hostManifest?.engines);
   const packageManager = requiredText(manifest?.packageManager, "package manager");
   const pnpmVersion = packageManager.match(/^pnpm@(\d+\.\d+\.\d+)$/u)?.[1];
   const verifiedRuntime = record(matrix?.verifiedRuntime);
@@ -122,17 +137,18 @@ export async function readSourceContract(
   return Object.freeze({
     nodeEngine: requiredText(engines?.node, "Node engine"),
     pnpmVersion,
+    bunEngine: requiredText(hostEngines?.bun, "Bun engine"),
     ompVersion: requiredText(verifiedRuntime?.version, "OMP version"),
     ompTag,
     ompUrl: `${ompRepository}/tree/${encodeURIComponent(ompTag)}`,
   });
 }
 
-async function installedPnpmVersion(): Promise<string | null> {
+async function installedToolVersion(command: "bun" | "pnpm"): Promise<string | null> {
   try {
     const result = await runProcess({
       runner: new NodeProcessRunner(),
-      command: "pnpm",
+      command,
       args: ["--version"],
       env: createSafeServiceEnvironment(),
       timeoutMs: 1_500,
@@ -194,7 +210,8 @@ export function createDoctorRuntime(): DoctorRuntime {
     arch: process.arch,
     nodeVersion: process.versions.node,
     sourceContract: () => readSourceContract(),
-    pnpmVersion: installedPnpmVersion,
+    pnpmVersion: () => installedToolVersion("pnpm"),
+    bunVersion: () => installedToolVersion("bun"),
     discoverOmp: () => discoverOmpExecutable(),
     inspectPathOmp: () => inspectPathOmpCompatibility(),
     probeOmp: (executable) => probeOmpAppserver(executable),
@@ -286,6 +303,21 @@ export async function collectDoctorReport(
             ? "pnpm is unavailable or did not report a valid version."
             : `pnpm ${pnpmVersion} does not match ${contract.pnpmVersion}.`,
           `Install pnpm ${contract.pnpmVersion}, then run pnpm install --frozen-lockfile.`,
+        ),
+  );
+
+  const bunVersion = await runtime.bunVersion();
+  checks.push(
+    bunVersion !== null && satisfiesMinimumVersion(bunVersion, contract.bunEngine)
+      ? check("bun", "Bun", "pass", `Bun ${bunVersion} satisfies ${contract.bunEngine}.`)
+      : check(
+          "bun",
+          "Bun",
+          "fail",
+          bunVersion === null
+            ? "Bun is unavailable or did not report a valid version."
+            : `Bun ${bunVersion} does not satisfy ${contract.bunEngine}.`,
+          `Install Bun ${contract.bunEngine} for the compiled T4 host development loop.`,
         ),
   );
 

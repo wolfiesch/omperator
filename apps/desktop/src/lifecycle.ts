@@ -1,5 +1,5 @@
 import { app, BrowserWindow } from "electron";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import type { CursorStore } from "@t4-code/client";
 import { parsePairDeepLink, PendingPairQueue, type PendingPair } from "@t4-code/protocol";
@@ -65,6 +65,49 @@ export function appserverLogsDirectory(
           return join(stateRoot, "t4-code", "appserver");
         })();
   return profile === "default" ? base : join(base, "profiles", profile);
+}
+
+export interface DevelopmentSandboxServiceConfig {
+  readonly homeDirectory: string;
+  readonly electronUserData: string;
+  readonly logsDirectory: string;
+  readonly stateRoot: string;
+  readonly serviceLabel: string;
+  readonly environment: Readonly<Record<string, string>>;
+}
+
+export function developmentSandboxServiceConfig(
+  environment: NodeJS.ProcessEnv = process.env,
+): DevelopmentSandboxServiceConfig | undefined {
+  const configuredRoot = environment.T4_DEV_SANDBOX_ROOT;
+  const sandbox = environment.T4_DEV_SANDBOX;
+  if (configuredRoot === undefined && sandbox === undefined) return undefined;
+  if (
+    configuredRoot === undefined ||
+    !isAbsolute(configuredRoot) ||
+    resolve(configuredRoot) !== configuredRoot ||
+    sandbox === undefined ||
+    !/^[a-z0-9][a-z0-9-]{0,39}$/u.test(sandbox)
+  ) {
+    throw new Error("invalid development sandbox configuration");
+  }
+  const homeDirectory = join(configuredRoot, "home");
+  return Object.freeze({
+    homeDirectory,
+    electronUserData: join(configuredRoot, "electron", "user-data"),
+    logsDirectory: join(configuredRoot, "logs", "host"),
+    stateRoot: join(configuredRoot, "host-state"),
+    serviceLabel: `dev.oh-my-pi.appserver.development.${sandbox}`,
+    environment: Object.freeze({
+      HOME: homeDirectory,
+      TMPDIR: join(configuredRoot, "tmp"),
+      XDG_CACHE_HOME: join(configuredRoot, "xdg", "cache"),
+      XDG_CONFIG_HOME: join(configuredRoot, "xdg", "config"),
+      XDG_DATA_HOME: join(configuredRoot, "xdg", "data"),
+      XDG_RUNTIME_DIR: join(configuredRoot, "run"),
+      XDG_STATE_HOME: join(configuredRoot, "xdg", "state"),
+    }),
+  });
 }
 
 export interface DesktopLifecycleOptions {
@@ -514,13 +557,30 @@ export class DesktopLifecycle {
       return undefined;
     }
     try {
+      const development = developmentSandboxServiceConfig();
+      const homeDirectory = development?.homeDirectory ?? homedir();
       const candidate = this.serviceFactory({
         profileId,
-        homeDirectory: homedir(),
-        logsDirectory: appserverLogsDirectory(homedir(), process.platform, process.env, profileId),
+        homeDirectory,
+        logsDirectory:
+          development?.logsDirectory ??
+          appserverLogsDirectory(homeDirectory, process.platform, process.env, profileId),
         executable: hostExecutable,
-        argv: ["serve", "--omp", executable, "--profile", profileId],
+        argv: [
+          "serve",
+          "--omp",
+          executable,
+          "--profile",
+          profileId,
+          ...(development === undefined ? [] : ["--state-root", development.stateRoot]),
+        ],
         fs: new NodeServiceFileSystem(),
+        ...(development === undefined
+          ? {}
+          : {
+              environment: development.environment,
+              serviceLabel: development.serviceLabel,
+            }),
       });
       this.assertServiceRecoveryActive();
       if (profileId !== "default") {

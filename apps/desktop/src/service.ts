@@ -20,7 +20,11 @@ export { NodeServiceFileSystem };
 export const SERVICE_ENVIRONMENT_KEYS = [
   "HOME",
   "PATH",
+  "XDG_CACHE_HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
   "XDG_RUNTIME_DIR",
+  "XDG_STATE_HOME",
   "DBUS_SESSION_BUS_ADDRESS",
   "TMPDIR",
 ] as const;
@@ -469,6 +473,8 @@ export function createAppserverServiceManager(options: {
   readonly argv: readonly string[];
   readonly fs: ServiceFileSystem;
   readonly runner?: ServiceRunner;
+  readonly environment?: Readonly<Record<string, string>>;
+  readonly serviceLabel?: string;
 }): ServiceManager {
   const profileId = decodeLocalProfileId(options.profileId ?? "default");
   const spec: ServiceSpec = {
@@ -480,12 +486,13 @@ export function createAppserverServiceManager(options: {
     // manager can retain an imported OMP_PROFILE from an unrelated shell; an
     // omitted value would let that ambient profile silently hijack T4's
     // default appserver.
-    environment: { OMP_PROFILE: profileId },
+    environment: { ...options.environment, OMP_PROFILE: profileId },
   };
   const runner = options.runner ?? new NodeServiceRunner();
   if (process.platform === "darwin") {
     return new MacLaunchAgentManager(spec, {
       homeDirectory: options.homeDirectory,
+      ...(options.serviceLabel === undefined ? {} : { label: options.serviceLabel }),
       uid: process.getuid?.() ?? 0,
       fs: options.fs,
       runner,
@@ -493,6 +500,7 @@ export function createAppserverServiceManager(options: {
   }
   return new LinuxSystemdUserManager(spec, {
     homeDirectory: options.homeDirectory,
+    ...(options.serviceLabel === undefined ? {} : { label: options.serviceLabel }),
     fs: options.fs,
     runner,
   });

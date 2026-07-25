@@ -8,6 +8,7 @@ import {
   inspectTailnet,
   readSourceContract,
   satisfiesCaretVersion,
+  satisfiesMinimumVersion,
   type DoctorRuntime,
   type SourceContract,
 } from "../src/doctor.ts";
@@ -16,6 +17,7 @@ import { OmpAppserverCompatibilityError } from "../src/service.ts";
 const contract: SourceContract = {
   nodeEngine: "^24.13.1",
   pnpmVersion: "11.10.0",
+  bunEngine: ">=1.3.14",
   ompVersion: "17.0.4",
   ompTag: "t4code-17.0.4-appserver-5",
   ompUrl: "https://example.test/verified-omp",
@@ -28,6 +30,7 @@ function runtime(overrides: Partial<DoctorRuntime> = {}): DoctorRuntime {
     nodeVersion: "24.17.0",
     sourceContract: async () => contract,
     pnpmVersion: async () => "11.10.0",
+    bunVersion: async () => "1.3.14",
     discoverOmp: async () => "/opt/omp/bin/omp",
     inspectPathOmp: async () => "compatible",
     probeOmp: async () => true,
@@ -43,6 +46,7 @@ describe("T4 setup doctor", () => {
 
     expect(source.ompVersion).toBe("17.0.5");
     expect(source.ompTag).toBe("t4code-17.0.5-appserver-13");
+    expect(source.bunEngine).toBe(">=1.3.14");
     expect(source.ompUrl).toBe(
       "https://github.com/wolfiesch/oh-my-pi/tree/t4code-17.0.5-appserver-13",
     );
@@ -56,6 +60,7 @@ describe("T4 setup doctor", () => {
       ["platform", "pass"],
       ["node", "pass"],
       ["pnpm", "pass"],
+      ["bun", "pass"],
       ["omp", "pass"],
       ["terminal-omp", "pass"],
       ["appserver", "pass"],
@@ -185,5 +190,12 @@ describe("T4 setup doctor", () => {
     expect(satisfiesCaretVersion("24.12.9", "^24.13.1")).toBe(false);
     expect(satisfiesCaretVersion("25.0.0", "^24.13.1")).toBe(false);
     expect(satisfiesCaretVersion("not-a-version", "^24.13.1")).toBe(false);
+  });
+
+  it("implements the minimum range used by Bun", () => {
+    expect(satisfiesMinimumVersion("1.3.14", ">=1.3.14")).toBe(true);
+    expect(satisfiesMinimumVersion("1.4.0", ">=1.3.14")).toBe(true);
+    expect(satisfiesMinimumVersion("1.3.13", ">=1.3.14")).toBe(false);
+    expect(satisfiesMinimumVersion("not-a-version", ">=1.3.14")).toBe(false);
   });
 });

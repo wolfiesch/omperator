@@ -94,6 +94,38 @@ describe("service-manager definitions", () => {
     expect(content).toContain("<key>OMP_PROFILE</key>");
     expect(content).toContain("<string>default</string>");
   });
+  it("isolates development service identity and path-valued environment", async () => {
+    const fs = new MemoryFs();
+    const runner = new MemoryRunner();
+    const developmentSpec: ServiceSpec = {
+      ...spec,
+      argv: [...spec.argv, "--state-root", "/tmp/omperator-dev/host-state"],
+      logsDirectory: "/tmp/omperator-dev/logs/host",
+      environment: {
+        HOME: "/tmp/omperator-dev/home",
+        OMP_PROFILE: "default",
+        XDG_RUNTIME_DIR: "/tmp/omperator-dev/run",
+      },
+    };
+    const manager = new MacLaunchAgentManager(developmentSpec, {
+      homeDirectory: "/tmp/omperator-dev/home",
+      label: "dev.oh-my-pi.appserver.development.watch-loop",
+      uid: 501,
+      fs,
+      runner,
+    });
+
+    await manager.install();
+    expect(manager.label).toBe("dev.oh-my-pi.appserver.development.watch-loop");
+    expect(manager.definitionPath).toBe(
+      "/tmp/omperator-dev/home/Library/LaunchAgents/dev.oh-my-pi.appserver.development.watch-loop.plist",
+    );
+    const definition = fs.files.get(manager.definitionPath);
+    expect(definition).toContain("<key>HOME</key>");
+    expect(definition).toContain("<string>/tmp/omperator-dev/run</string>");
+    expect(definition).toContain("<string>--state-root</string>");
+  });
+
   it("rejects path, argv, profile, uid and secret-bearing env injection", () => {
     expect(
       () =>
@@ -131,6 +163,14 @@ describe("service-manager definitions", () => {
         new MacLaunchAgentManager(spec, {
           ...options(new MemoryFs(), new MemoryRunner()),
           uid: -1,
+        }),
+    ).toThrow(ServiceValidationError);
+    expect(
+      () =>
+        new MacLaunchAgentManager(spec, {
+          ...options(new MemoryFs(), new MemoryRunner()),
+          label: "dev.oh-my-pi.appserver.bad/value",
+          uid: 501,
         }),
     ).toThrow(ServiceValidationError);
   });

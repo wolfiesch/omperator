@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "dev:live:pinned": "node scripts/dev-live.mjs --runtime pinned",
+    "dev:live:system": "node scripts/dev-live.mjs --runtime system",
+    "dev:sandbox": "node scripts/dev-sandbox.mjs",
     "dev:web": "vp run --filter @t4-code/web dev",
     "dev:desktop": "vp run --filter @t4-code/desktop dev",
     "dev:site": "vp run --filter @t4-code/site dev",
@@ -28,7 +31,7 @@
     "inspect:package": "node scripts/inspect-package.mjs",
     "inspect:dmg": "node scripts/inspect-macos-dmg.mjs",
     "test:packaging": "node --test scripts/packaging.test.mjs scripts/inspect-linux-update.test.mjs scripts/inspect-macos-dmg.test.mjs scripts/inspect-macos-release.test.mjs",
-    "test:tooling": "node --test scripts/benchmark-omp-codex-transport.test.mjs scripts/check-adr-numbering.test.mjs scripts/check-host-ownership.test.mjs scripts/check-release-consistency.test.mjs scripts/check-release-publication.test.mjs scripts/check-provenance.test.mjs scripts/deploy-demo.test.mjs scripts/deploy-site.test.mjs scripts/dispatch-site-deployment.test.mjs scripts/generate-release-manifest.test.mjs scripts/perf/perf.test.mjs scripts/reconcile-release-assets.test.mjs scripts/t4-maintainer-contract.test.mjs scripts/t4-maintainer-integration.test.mjs scripts/t4-maintainer-omp-publish.test.mjs scripts/test-temporary-directory.test.mjs scripts/tailnet-gateway.test.mjs scripts/tailnet-service.test.mjs scripts/wait-for-exact-ci.test.mjs scripts/wait-for-release-assets.test.mjs",
+    "test:tooling": "node --test scripts/benchmark-omp-codex-transport.test.mjs scripts/check-adr-numbering.test.mjs scripts/check-host-ownership.test.mjs scripts/check-release-consistency.test.mjs scripts/check-release-publication.test.mjs scripts/check-provenance.test.mjs scripts/deploy-demo.test.mjs scripts/deploy-site.test.mjs scripts/dev-log.test.mjs scripts/dev-sandbox.test.mjs scripts/dispatch-site-deployment.test.mjs scripts/generate-release-manifest.test.mjs scripts/perf/perf.test.mjs scripts/reconcile-release-assets.test.mjs scripts/t4-maintainer-contract.test.mjs scripts/t4-maintainer-integration.test.mjs scripts/t4-maintainer-omp-publish.test.mjs scripts/test-temporary-directory.test.mjs scripts/tailnet-gateway.test.mjs scripts/tailnet-service.test.mjs scripts/wait-for-exact-ci.test.mjs scripts/wait-for-release-assets.test.mjs",
     "check:release": "node scripts/check-release-consistency.mjs",
     "check:provenance": "node scripts/check-provenance.mjs",
     "lint": "vp lint --deny-warnings",
