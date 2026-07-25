@@ -263,7 +263,7 @@ test("Android artifact parsers preserve exact package, SDK, split, and certifica
   );
   assert.deepEqual(
     parseApkSignerReport(
-      `Verified using v2 scheme (APK Signature Scheme v2): true\nNumber of signers: 1\nSigner #1 certificate SHA-256 digest: FA:58:F5:3C:95:3A:07:8D:8D:B2:B6:33:EE:8C:22:6C:FD:2A:D3:F7:22:0C:D5:5D:D0:3A:2E:19:5A:81:B0:AC\n`,
+      `Verified using v2 scheme (APK Signature Scheme v2): true\nNumber of signers: 1\nSigner #1 certificate SHA-256 digest: E4:46:54:62:1D:49:5D:C7:29:AB:69:C9:50:48:A4:F8:EE:60:C3:DD:43:E6:C3:7F:D1:55:2B:AB:F2:95:66:45\n`,
     ),
     {
       signerCount: 1,
