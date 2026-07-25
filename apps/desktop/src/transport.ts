@@ -60,7 +60,14 @@ export function resolveUnixSocketPath(path: string): string {
   }
   const backingPath = join(parent, target);
   secureStat(backingPath, "socket");
-  return backingPath;
+  // Validate through the link but connect by the public path. The symlink is
+  // what keeps the socket inside the platform's sun_path limit (104 bytes on
+  // macOS); the backing file is UUID-named and roughly forty bytes longer, so
+  // returning it can push a deep runtime directory past the limit, which the
+  // kernel reports as connect EINVAL and the client retries forever. Both live
+  // in the same parent, already proven unsymlinked, user-owned, and not
+  // group- or other-writable, so the public path is no less trusted.
+  return path;
 }
 
 export function validateUnixSocketPath(path: string): void {
