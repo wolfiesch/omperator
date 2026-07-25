@@ -239,14 +239,32 @@ class LivePtySession implements PtySession {
         this.fail({ kind: "shell-error", message: error.reason });
         return;
       }
-      // A lease refusal happens before the command is sent — that is a
-      // clean, retryable rejection, not an unknown outcome.
-      const contested =
-        error instanceof DesktopRuntimeError && error.code !== "command";
-      this.fail({
-        kind: "shell-error",
-        message: contested ? MESSAGES.contested : MESSAGES.openDisconnected,
-      });
+      // Everything below happens BEFORE the request was accepted, so none of it
+      // may claim the connection dropped: that copy belongs to the
+      // post-acceptance correlation, which handles retry safety separately.
+      if (error instanceof DesktopRuntimeError) {
+        this.fail({
+          kind: "shell-error",
+          message:
+            // The open may have reached the host, so never invite a blind
+            // retry that could leave a second shell running.
+            error.code === "outcome_unknown"
+              ? MESSAGES.openOutcomeUnknown
+              : // "command" is the catch-all for command failures including
+                // host errors, so it stays neutral rather than transport-specific.
+                error.code === "command"
+                ? MESSAGES.openRequestFailed
+                : // Remaining codes (bootstrap, protocol, stopped, stale) keep
+                  // the pre-existing contention copy. That is imprecise -
+                  // "stopped" means the runtime is stopped, not that another
+                  // client holds the session - and each deserves its own
+                  // classification. Left unchanged here rather than guessed at.
+                  MESSAGES.contested,
+        });
+        return;
+      }
+      // Anything else threw inside this app before the request was sent.
+      this.fail({ kind: "shell-error", message: MESSAGES.openFailedLocally });
       return;
     }
     const correlation = await this.awaitResult(accepted.requestId);

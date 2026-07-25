@@ -48,6 +48,7 @@ import type {
 import { rendererServerEventFromFrame } from "@t4-code/protocol/desktop-ipc";
 import {
   createDesktopRuntimeController,
+  DesktopRuntimeError,
   type DesktopRuntimeController,
   type DesktopShellPort,
 } from "@t4-code/client";
@@ -813,6 +814,62 @@ describe("result correlation", () => {
       {
         kind: "shell-error",
         message: "The connection dropped before the host answered. Try again once you're back.",
+      },
+    ]);
+  });
+
+  // Pre-acceptance failures must never borrow the post-acceptance
+  // "connection dropped" copy: nothing was sent, so retry advice differs.
+  const openFailingWith = async (thrown: unknown) => {
+    const h = await harness();
+    const proxied = new Proxy(h.controller, {
+      get(target, prop, receiver) {
+        if (prop === "commandWithControllerLease") {
+          return async () => {
+            throw thrown;
+          };
+        }
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as DesktopRuntimeController;
+    const bridge = createLivePtySessionFactory(
+      proxied,
+      () => h.controller.getSnapshot(),
+      ADDRESS,
+    );
+    const events = watch(bridge.open(openRequest()));
+    await settle();
+    return { h, events };
+  };
+
+  it("does not blame the connection when the app itself fails to send the open", async () => {
+    const { h, events } = await openFailingWith(new TypeError("undefined is not an object"));
+    expect(events.errors).toEqual([
+      { kind: "shell-error", message: "This app couldn't send the shell request. Try again." },
+    ]);
+    expect(h.shell.termOpenRequests()).toHaveLength(0);
+  });
+
+  it("keeps a generic command failure neutral rather than transport-specific", async () => {
+    // `command` is the catch-all for command failures including host errors,
+    // so it must not tell the user their connection dropped.
+    const { events } = await openFailingWith(new DesktopRuntimeError("command", "send failed"));
+    expect(events.errors).toEqual([
+      { kind: "shell-error", message: "The shell request failed. Try again." },
+    ]);
+  });
+
+  it("warns to check for a shell when the open outcome is unknown", async () => {
+    // The open may have reached the host; a blind retry could leave two shells.
+    const { events } = await openFailingWith(
+      new DesktopRuntimeError("outcome_unknown", "request outcome is unknown"),
+    );
+    expect(events.errors).toEqual([
+      {
+        kind: "shell-error",
+        message:
+          "The shell request may have reached the host. Check for a new shell before trying again.",
       },
     ]);
   });

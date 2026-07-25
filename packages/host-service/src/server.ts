@@ -83,6 +83,8 @@ import { SessionOwnershipStore } from "./session-ownership-store.ts";
 import {
 	commandFeature,
 	DesktopOperationDispatcher,
+	emitHostTrace,
+	type HostTraceSink,
 	type OperationContext,
 	operationCapabilities,
 	operationFeatures,
@@ -923,6 +925,7 @@ export class LocalAppserver implements AppserverHandle {
 	#workspaceAuthority?: WorkspaceAuthority;
 	#workspaceTargetPathForProject?: AppserverOptions["workspaceTargetPathForProject"];
 	#onOwnerAcquired?: AppserverOptions["onOwnerAcquired"];
+	#trace?: HostTraceSink;
 	constructor(options: AppserverOptions = {}) {
 		if (options.testControl && (options.remoteEndpoint || options.remoteListener)) {
 			throw new Error("appserver test control is local-only");
@@ -957,12 +960,24 @@ export class LocalAppserver implements AppserverHandle {
 		this.#clock = options.clock ?? clock;
 		this.#idempotency = new IdempotencyStore({ now: () => this.#clock.now().getTime() });
 		this.#authority = options.sessionAuthority;
+		this.#trace =
+			options.trace ??
+			(process.env.T4_TRACE_COMMANDS === "1"
+				? line => {
+						console.error(line);
+					}
+				: undefined);
 		this.#operations = options.operationsAuthority
-			? new DesktopOperationDispatcher(options.operationsAuthority, undefined, (frame, owner) => {
-					for (const ws of this.#clients)
-						if (ws.connectionId === owner.connectionId && ws.deviceId === owner.deviceId)
-							void this.#sendFrame(ws, frame as ServerFrame);
-				})
+			? new DesktopOperationDispatcher(
+					options.operationsAuthority,
+					undefined,
+					(frame, owner) => {
+						for (const ws of this.#clients)
+							if (ws.connectionId === owner.connectionId && ws.deviceId === owner.deviceId)
+								void this.#sendFrame(ws, frame as ServerFrame);
+					},
+					this.#trace,
+				)
 			: undefined;
 		this.#usageAuthority = options.usageAuthority;
 		this.#transcriptSearch = options.transcriptSearchAuthority;
@@ -1504,6 +1519,31 @@ export class LocalAppserver implements AppserverHandle {
 		return this.#supervisors.get(sessionId)?.child();
 	}
 	async #command(command: CommandFrame, ws?: AppWs, approved = false): Promise<CommandOutcome> {
+		if (!this.#trace) return this.#commandInner(command, ws, approved);
+		const startedAt = performance.now();
+		emitHostTrace(this.#trace, command.requestId, command.command, "received");
+		try {
+			const outcome = await this.#commandInner(command, ws, approved);
+			emitHostTrace(
+				this.#trace,
+				command.requestId,
+				command.command,
+				"server-returned",
+				Math.round(performance.now() - startedAt),
+			);
+			return outcome;
+		} catch (error) {
+			emitHostTrace(
+				this.#trace,
+				command.requestId,
+				command.command,
+				"server-threw",
+				Math.round(performance.now() - startedAt),
+			);
+			throw error;
+		}
+	}
+	async #commandInner(command: CommandFrame, ws?: AppWs, approved = false): Promise<CommandOutcome> {
 		if (command.hostId !== this.hostId)
 			return {
 				frame: response(this.hostId, command, false, undefined, {
@@ -5046,6 +5086,36 @@ export class LocalAppserver implements AppserverHandle {
 			this.#promotionFailures.delete(id);
 		}
 	}
+	/**
+	 * Seeded sessions are created through the authority rather than the
+	 * session.create command, so the ownership ledger must be updated here too.
+	 * Without the claim the host reads its own seeded transcript as a foreign
+	 * lockless session and never promotes it to a writable projection.
+	 * This runs before any client can attach to a freshly seeded session, and
+	 * the lockless decision is made when attach builds the observer, so the
+	 * ledger is already current by the time it is read.
+	 *
+	 * A session that is still missing from the inventory cannot be claimed and
+	 * would surface later as an unowned foreign transcript, so it fails the
+	 * request instead of reporting a silent partial success.
+	 */
+	async #claimTestSessions(control: AppserverTestControl, runId: string): Promise<void> {
+		if (!this.#sessionOwnership) return;
+		for (const id of await control.sessionIds(runId)) {
+			const record = this.#records.get(id);
+			if (!record) throw new Error("seeded session is not indexed");
+			await this.#sessionOwnership.add(id, record.path);
+		}
+	}
+	/**
+	 * refreshSessions joins an in-flight refresh, and that refresh may have read
+	 * the inventory before this mutation touched the filesystem. Drain it first
+	 * so the refresh awaited here is guaranteed to have started afterwards.
+	 */
+	private async refreshInventoryAfterMutation(): Promise<void> {
+		while (this.#sessionRefresh) await this.#sessionRefresh.catch(() => undefined);
+		await this.refreshSessions();
+	}
 	async #evictTestSession(sessionId: SessionId): Promise<void> {
 		const projection = this.#projections.get(sessionId);
 		if (projection) await this.broadcastIndex(projection.remove());
@@ -5055,6 +5125,7 @@ export class LocalAppserver implements AppserverHandle {
 		await this.#transcriptSearch?.deleteSession(sessionId);
 		this.#projections.delete(sessionId);
 		await this.#attentionOutcomes?.delete(sessionId);
+		await this.#sessionOwnership?.delete(sessionId);
 		this.#closedSessions.delete(sessionId);
 		this.#releaseAllMessageLifecycles(sessionId, "completed-without-entry");
 		this.#stateRefreshGenerations.delete(sessionId);
@@ -5136,7 +5207,8 @@ export class LocalAppserver implements AppserverHandle {
 		return this.#runTestControlMutation(async () => {
 			try {
 				await control.seed(seedRequest);
-				await this.refreshSessions();
+				await this.refreshInventoryAfterMutation();
+				await this.#claimTestSessions(control, seedRequest.runId);
 				const status = await this.#testControlStatus(
 					control,
 					seedRequest.runId,
@@ -5175,8 +5247,14 @@ export class LocalAppserver implements AppserverHandle {
 				const sessionIds = await control.sessionIds(runId);
 				await this.#quiesceTestSessions(control, runId);
 				const result = await control.cleanup(runId);
-				for (const sessionId of sessionIds) await this.#evictTestSession(sessionId);
-				await this.refreshSessions();
+				// A session the control could not delete stays in its manifest, so
+				// it must keep its projection and ownership proof. Evicting it here
+				// would strand a still-present transcript as an unmanageable
+				// foreign session that no retry could reach.
+				const retained = new Set(await control.sessionIds(runId));
+				for (const sessionId of sessionIds)
+					if (!retained.has(sessionId)) await this.#evictTestSession(sessionId);
+				await this.refreshInventoryAfterMutation();
 				return Response.json(await this.#testControlStatus(control, runId, result));
 			} catch {
 				return this.adminError(500);

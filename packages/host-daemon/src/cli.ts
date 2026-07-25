@@ -10,6 +10,7 @@ import {
   OmpAuthorityBridgeClient,
   profileSocketPath,
   ProjectFileSearchAuthority,
+  SeedingTestControl,
   TranscriptSearchIndex,
   type AppserverHandle,
   type AppserverOptions,
@@ -57,6 +58,8 @@ export interface HostDaemonConfig {
   readonly ompSessionsRoot?: string;
   readonly profileId: string;
   readonly stateRoot: string;
+  /** Local-only deterministic seeding for integration runs. Never enabled by default. */
+  readonly testControl?: boolean;
   readonly remote?: {
     readonly mode: "direct" | "serve";
     readonly address: string;
@@ -73,6 +76,7 @@ export interface HostDaemonPaths {
   readonly sessionOwnershipPath: string;
   readonly transcriptSearchPath: string;
   readonly officialMetadataPath: string;
+  readonly testControlManifestPath: string;
   readonly remoteStateRoot: string;
   readonly socketPath: string;
 }
@@ -99,6 +103,18 @@ function boundedOrigin(input: string): string {
   return url.origin;
 }
 
+/**
+ * The appserver bounds this token to 32-256 bytes and refuses to expose the
+ * control routes without it, so a missing or short token must fail startup
+ * rather than silently serve an unauthenticated surface.
+ */
+function requiredTestControlToken(): string {
+  const token = process.env.OMP_APP_TEST_TOKEN ?? "";
+  if (Buffer.byteLength(token, "utf8") < 32)
+    throw new Error("--test-control requires OMP_APP_TEST_TOKEN of at least 32 bytes");
+  return token;
+}
+
 export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): HostDaemonConfig {
   if (argv[0] !== "serve") throw new Error("t4-host requires the serve action");
   let ompExecutable: string | undefined;
@@ -110,6 +126,7 @@ export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): 
   let remoteAddress: string | undefined;
   let remotePort = 8787;
   let trustedServeProxy = false;
+  let testControl = false;
   const origins: string[] = [];
   for (let index = 1; index < argv.length; index += 1) {
     const flag = argv[index]!;
@@ -136,6 +153,7 @@ export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): 
       if (origins.length >= ORIGIN_LIMIT) throw new Error("too many --remote-origin values");
       origins.push(boundedOrigin(value(argv, index++, flag)));
     } else if (flag === "--trusted-serve-proxy") trustedServeProxy = true;
+    else if (flag === "--test-control") testControl = true;
     else throw new Error(`unsupported t4-host argument: ${flag}`);
   }
   if (!ompExecutable || !isAbsolute(ompExecutable))
@@ -155,12 +173,22 @@ export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): 
     throw new Error("serve mode requires --trusted-serve-proxy");
   if (remoteMode === "direct" && trustedServeProxy)
     throw new Error("trusted Serve proxy is invalid in direct mode");
+  if (testControl) {
+    // Seeding writes disposable sessions into the profile it serves, so it must
+    // never reach the default profile a person actually works in, and it must
+    // never be reachable from a remote listener.
+    if (process.env.OMP_APP_TEST_MODE !== "1")
+      throw new Error("--test-control requires OMP_APP_TEST_MODE=1");
+    if (profileId === "default") throw new Error("--test-control refuses the default profile");
+    if (remoteMode) throw new Error("--test-control is local-only");
+  }
   return {
     ompExecutable: resolve(ompExecutable),
     authorityMode,
     ...(ompSessionsRoot ? { ompSessionsRoot: resolve(ompSessionsRoot) } : {}),
     profileId,
     stateRoot: resolve(stateRoot),
+    ...(testControl ? { testControl: true } : {}),
     ...(remoteMode
       ? {
           remote: {
@@ -190,6 +218,7 @@ export function hostDaemonPaths(
     sessionOwnershipPath: join(profileStateRoot, "owned-sessions.json"),
     transcriptSearchPath: join(profileStateRoot, "transcript-search.sqlite"),
     officialMetadataPath: join(profileStateRoot, "official-omp-sessions.json"),
+    testControlManifestPath: join(profileStateRoot, "test-control-manifest.json"),
     remoteStateRoot: join(profileStateRoot, "remote"),
     socketPath: profileSocketPath(config.profileId),
   };
@@ -332,6 +361,15 @@ export async function runHostDaemon(
     const projectFileSearchAuthority = new ProjectFileSearchAuthority(
       projectRootForSession,
     );
+    const testControl = config.testControl
+      ? new SeedingTestControl({
+          token: requiredTestControlToken(),
+          profile: config.profileId,
+          manifestPath: paths.testControlManifestPath,
+          authority: sessionAuthority,
+          lockStatus,
+        })
+      : undefined;
     const options: AppserverOptions = {
       ...identity,
       appserverVersion: T4_HOST_VERSION,
@@ -351,6 +389,7 @@ export async function runHostDaemon(
       projectRootForProject,
       lockCheck,
       lockStatus,
+      ...(testControl ? { testControl } : {}),
       ...(config.authorityMode === "official" ? { claimLocklessSessions: true } : {}),
       ...(transcriptImageRoot ? { transcriptImageRoot } : {}),
       rpcChildInvocation: { executable: config.ompExecutable, prefixArgv: [] },
