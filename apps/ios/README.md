@@ -131,4 +131,7 @@ package tests against.
 - [x] `HostWire` linked into the Xcode app project; `xcodegen` + iOS Simulator `xcodebuild` BUILD SUCCEEDED.
 - [x] Full server frame vocabulary ported (welcome/sessions/snapshot/entry/event/agent×6/terminal×3/files×6/review/audit×3/catalog/settings/preview×5/watch×4/lease×2/pair/confirmation/response/error/pong/bye/gap) — verified across ~25 wire fixtures.
 - [ ] Remaining protocol depth: per-command argument/result payload decoders (`command.ts` result bodies) and transcript entry `data` shapes (message/tool rows); today these decode as opaque `JSONValue`.
-- [x] Session rail (`T4SessionsView` + `T4SessionStore`) replaces the collab-guest `SessionsView`; verified rendering in the iOS Simulator. Remaining UI rework (transcript/composer/panes/hosts) + `EngineBridge` removal still pending.
+- [x] Session rail (`T4SessionsView` + `T4SessionStore`) replaces the collab-guest `SessionsView`; verified rendering in the iOS Simulator.
+- [x] Desktop-parity workspace: session detail is the root surface; the rail is a slide-over drawer opened by swiping right from the left edge (or the sidebar button), closed by backdrop tap or swiping left — mirrors the desktop narrow-width Sheet overlay. Flat, no card stacking.
+- [x] Composer ported from Enclave: glass capsule, photo attachments (session.image.begin/chunk upload → session.prompt image refs), on-device dictation, send/stop (session.cancel), cycling tips.
+- [x] Transcript matches the desktop web renderer: user messages right-aligned bubbles, assistant messages full-width markdown with fenced-code cards, tool/review rows as accent-rail cards.
