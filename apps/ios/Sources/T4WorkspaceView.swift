@@ -2,9 +2,14 @@
 //  Desktop-parity shell: the session workspace fills the screen and the
 //  session rail is a slide-over drawer — exactly like the T4 desktop app's
 //  narrow-width rail overlay. Swipe right from the left edge (or tap the
-//  sidebar button) to reveal sessions; tap the backdrop or swipe left to
-//  dismiss. The drawer tracks the finger interactively and settles with a
-//  spring, mirroring the desktop Sheet's drag-to-dismiss.
+//  sidebar button) to reveal sessions; tap the scrim or swipe left to dismiss.
+//
+//  Mechanics: the drawer is ALWAYS mounted, parked off-screen. One source of
+//  truth — `railProgress` (0…1) — drives the drawer offset, the scrim, and a
+//  subtle workspace parallax. Drags scrub the progress directly; release
+//  settles with an interpolating spring seeded with the finger's velocity, so
+//  a fling carries momentum like the iOS back gesture. (A conditionally
+//  inserted drawer + .animation(value:) can't interpolate — it snaps.)
 
 import SwiftUI
 import HostWire
@@ -12,27 +17,32 @@ import HostWire
 struct T4WorkspaceView: View {
     @EnvironmentObject var theme: ThemeStore
     @EnvironmentObject var store: T4SessionStore
-    @State private var railOpen = false
-    @State private var railDrag: CGFloat = 0   // live finger translation while dragging
+    @State private var railProgress: CGFloat = 0   // 0 = closed, 1 = open
     @State private var showConnect = false
     private var t: Theme { theme.t }
 
+    private var railOpen: Bool { railProgress > 0.5 }
     private func railWidth(for screen: CGFloat) -> CGFloat { min(320, screen * 0.84) }
 
     var body: some View {
         GeometryReader { geo in
             let width = railWidth(for: geo.size.width)
-            // Drawer rest position: 0 when open, -width when closed, plus the
-            // in-progress drag translation (clamped so it never overshoots).
-            let base: CGFloat = railOpen ? 0 : -width
-            let offset = min(width, max(-width, base + railDrag))
 
             ZStack(alignment: .leading) {
                 workspace
+                    .offset(x: railProgress * 12)            // parallax nudge
+                    .allowsHitTesting(railProgress < 0.02)
+
+                // Scrim tracks the drawer; hit-testable only when visible.
+                Color.black.opacity(0.5 * railProgress)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(railProgress > 0.02)
+                    .onTapGesture { closeRail() }
+                    .gesture(closeDrag(width: width))
 
                 // Edge hot zone: only hit-testable while the drawer is closed,
                 // so the workspace keeps its own horizontal gestures.
-                if !railOpen {
+                if railProgress == 0 {
                     Color.clear
                         .frame(width: 28)
                         .frame(maxHeight: .infinity)
@@ -41,20 +51,11 @@ struct T4WorkspaceView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                if railOpen || offset > -width {
-                    // Backdrop dims the workspace as the drawer slides in.
-                    Color.black.opacity(backdropOpacity(offset: offset, width: width))
-                        .ignoresSafeArea()
-                        .onTapGesture { closeRail() }
-                        .gesture(closeDrag(width: width))
-                        .offset(x: max(0, offset + width))
-
-                    rail(width: width)
-                        .offset(x: offset)
-                        .gesture(closeDrag(width: width))
-                }
+                rail(width: width)
+                    .offset(x: (railProgress - 1) * width)
+                    .gesture(closeDrag(width: width))
+                    .accessibilityHidden(railProgress == 0)
             }
-            .animation(.spring(response: 0.32, dampingFraction: 0.86), value: railOpen)
         }
         .background(t.bg.ignoresSafeArea())
         .sheet(isPresented: $showConnect) {
@@ -63,7 +64,7 @@ struct T4WorkspaceView: View {
         .onAppear {
             if store.selectedSession == nil { store.select(store.sessions.first) }
             // UI-test seam: launch with -T4RailOpen to boot with the rail open.
-            if ProcessInfo.processInfo.arguments.contains("-T4RailOpen") { railOpen = true }
+            if ProcessInfo.processInfo.arguments.contains("-T4RailOpen") { railProgress = 1 }
         }
     }
 
@@ -138,7 +139,7 @@ struct T4WorkspaceView: View {
 
     private func rail(width: CGFloat) -> some View {
         VStack(spacing: 0) {
-            // Rail header: product mark + actions, like the desktop rail top.
+            // Rail header: product mark + connection state.
             HStack(spacing: 10) {
                 Text("T4 Code")
                     .font(.system(size: 17, weight: .bold))
@@ -203,24 +204,28 @@ struct T4WorkspaceView: View {
         .overlay(alignment: .trailing) {
             Rectangle().fill(t.line).frame(width: 1)
         }
-        .shadow(color: .black.opacity(0.18), radius: 12, x: 4, y: 0)
+        .shadow(color: .black.opacity(0.18 * railProgress), radius: 12, x: 4, y: 0)
         .ignoresSafeArea(.container, edges: .bottom)
     }
 
     // MARK: - Gestures
 
+    /// Velocity-aware settle: fling keeps its momentum (progress/sec), a slow
+    /// release past the 40% mark coasts open, anything else falls back closed.
+    private func settle(velocity: CGFloat, width: CGFloat) {
+        let target: CGFloat = railProgress + velocity / width * 0.12 > 0.4 ? 1 : 0
+        withAnimation(.interpolatingSpring(mass: 1, stiffness: 170, damping: 22, initialVelocity: velocity / width)) {
+            railProgress = target
+        }
+    }
+
     private func openDrag(width: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 8)
             .onChanged { value in
                 guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                railDrag = min(width, max(0, value.translation.width))
+                railProgress = min(1, max(0, value.translation.width / width))
             }
-            .onEnded { value in
-                let predicted = value.predictedEndTranslation.width
-                let shouldOpen = railDrag + predicted * 0.4 > width * 0.4 || value.velocity.width > 400
-                railDrag = 0
-                railOpen = shouldOpen
-            }
+            .onEnded { value in settle(velocity: value.velocity.width, width: width) }
     }
 
     private func closeDrag(width: CGFloat) -> some Gesture {
@@ -228,27 +233,20 @@ struct T4WorkspaceView: View {
             .onChanged { value in
                 guard value.translation.width < 0,
                       abs(value.translation.width) > abs(value.translation.height) else { return }
-                railDrag = max(-width, value.translation.width)
+                railProgress = min(1, max(0, 1 + value.translation.width / width))
             }
-            .onEnded { value in
-                let closed = -railDrag + -value.predictedEndTranslation.width * 0.4 > width * 0.4
-                    || value.velocity.width < -400
-                railDrag = 0
-                if closed { railOpen = false }
-            }
-    }
-
-    private func backdropOpacity(offset: CGFloat, width: CGFloat) -> Double {
-        0.5 * Double((offset + width) / width)
+            .onEnded { value in settle(velocity: value.velocity.width, width: width) }
     }
 
     private func toggleRail() {
-        railDrag = 0
-        railOpen.toggle()
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+            railProgress = railOpen ? 0 : 1
+        }
     }
 
     private func closeRail() {
-        railDrag = 0
-        railOpen = false
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+            railProgress = 0
+        }
     }
 }
