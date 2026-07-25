@@ -122,12 +122,12 @@ desktop update feed, and the site deployment all resolve `wolfiesch/omperator`.
 Release tags and artifacts under `LycaonLLC/t4-code` are historical upstream
 records and are never queried or published to.
 
-Two things still gate a stable tag, and neither is repository ownership. The
-macOS build needs a Developer ID this project controls: `.github/macos-release-identity.json`
-still pins an upstream certificate, and notarization is required. The release
-also needs the operator proof in `docs/RELEASE_GATE.md`, whose installed-app
-step cannot run on a machine that already has T4 installed until a test build
-can adopt a service label of its own.
+Stable tags remain gated by successful exact-SHA main CI and the operator proof
+in `docs/RELEASE_GATE.md`. The repository now pins independently owned Android
+and Apple signing identities, and the protected `production` environment holds
+the website deployment targets and scoped AWS credentials. The release workflow
+publishes GitHub artifacts first and dispatches the immutable site deployment
+only when `T4_RELEASE_SITE_DEPLOY_ENABLED` is explicitly enabled.
 
 Application identifiers and artifact names remain `net.t4code.app`
 and `T4-Code-*`. Renaming them is a separate product decision and is not a
