@@ -127,7 +127,7 @@ package tests against.
 - [x] Plan of record (this file).
 - [x] HostWire foundation (envelope/handshake/pairing/result, bounded validators) — compiles + passes fixture tests.
 - [x] Session inventory (`SessionsFrame`/`SessionListResult`/`SessionRef`) + `CommandFrame` envelope (rail + core session descriptors).
-- [x] Client runtime (`HostClient`: connect/handshake, command dispatch + correlation, projection stream, heartbeat, reconnect) — 9/9 tests green.
+- [x] Client runtime (`HostClient`: connect/handshake, command dispatch + correlation, projection stream, heartbeat, reconnect) — 10/10 tests green.
 - [x] `HostWire` linked into the Xcode app project; `xcodegen` + iOS Simulator `xcodebuild` BUILD SUCCEEDED.
 - [ ] Remaining command/event/transcript typed decoders (command.ts/additive.ts long tail).
-- [ ] Session rail + UI rework (replace collab-guest `SessionsView`).
+- [x] Session rail (`T4SessionsView` + `T4SessionStore`) replaces the collab-guest `SessionsView`; verified rendering in the iOS Simulator. Remaining UI rework (transcript/composer/panes/hosts) + `EngineBridge` removal still pending.
