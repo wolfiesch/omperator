@@ -6,6 +6,6 @@
   "certificateSha256": "753d2fce58b7f542c119c21e086943d5f56cc39b101fea11a6b734bcd1e022e3",
   "certificateAuthority": "Developer ID Certification Authority",
   "architecture": "arm64",
-  "firstSignedReleaseTag": "v0.1.24",
+  "firstSignedReleaseTag": "v0.1.33",
   "notarizationRequired": true
 }

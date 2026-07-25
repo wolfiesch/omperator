@@ -58,6 +58,7 @@ export function planAffectedVerification(inputPaths) {
     add(commands, command("maintainer", ["pnpm", "test:maintainer"], "maintainer deployment surface changed"));
   }
   if (paths.some((path) => /^(?:electron-builder\.config\.mjs|apps\/desktop\/build\/|scripts\/(?:package|inspect-macos|inspect-package|run-electron-builder))/u.test(path))) {
+    add(commands, command("build", ["pnpm", "build"], "packaging checks require built desktop, web, and host inputs"));
     add(commands, command("packaging", ["pnpm", "test:packaging"], "packaging inputs changed"));
   }
   if (paths.some((path) => /^(?:e2e\/|apps\/(?:web|site)\/src\/)/u.test(path))) {

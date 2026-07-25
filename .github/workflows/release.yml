@@ -452,6 +452,7 @@ jobs:
   dispatch-site:
     name: Deploy and verify the production site after release publication
     needs: [verify, publish]
+    if: ${{ vars.T4_RELEASE_SITE_DEPLOY_ENABLED == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -477,3 +478,16 @@ jobs:
           node scripts/dispatch-site-deployment.mjs
           --tag "$RELEASE_TAG"
           --commit "$SOURCE_SHA"
+
+  record-deferred-site:
+    name: Record deferred production site handoff
+    needs: [verify, publish]
+    if: ${{ vars.T4_RELEASE_SITE_DEPLOY_ENABLED != 'true' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Record the independent GitHub release boundary
+        env:
+          SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
+        run: >-
+          echo "Published ${RELEASE_TAG} from ${SOURCE_SHA} on GitHub;
+          production website deployment remains deferred until its owner delegates deployment authority."

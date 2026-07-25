@@ -84,7 +84,7 @@ export function sendClientHello(
   } catch { fatal(); return; }
   const encoded = encodeOutgoingMessage(provider, {
     kind: "hello",
-    client: options.client ?? { name: "t4-code", version: "0.1.31", build: "client", platform: "electron" },
+    client: options.client ?? { name: "t4-code", version: "0.1.33", build: "client", platform: "electron" },
     requestedFeatures: [...(options.requestedFeatures ?? ["resume"])],
     savedCursors,
     ...(options.capabilities === undefined ? {} : { capabilities: options.capabilities }),
