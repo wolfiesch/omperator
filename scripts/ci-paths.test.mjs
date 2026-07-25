@@ -111,7 +111,7 @@ test("the maintainer deployment suite runs only for its own surface", () => {
     ...none,
     maintainer: true,
   });
-  assert.deepEqual(classifyCiPaths(["scripts/t4-maintainer-integration.test.mjs"]), {
+  assert.deepEqual(classifyCiPaths(["scripts/t4-maintainer-deploy.test.mjs"]), {
     ...none,
     tooling: true,
     maintainer: true,
