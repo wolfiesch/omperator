@@ -155,7 +155,8 @@
       "snapshot-consistent-authority-session-paging",
       "explicit-partial-authority-inventory",
       "stale-session-lock-lifecycle-recovery",
-      "read-only-session-fork"
+      "read-only-session-fork",
+      "caller-selected-session-fork-working-directory"
     ],
     "upstreamTagContainsIntegrationPatches": false
   },
@@ -262,18 +263,19 @@
       "snapshot-consistent-authority-session-paging",
       "explicit-partial-authority-inventory",
       "stale-session-lock-lifecycle-recovery",
-      "read-only-session-fork"
+      "read-only-session-fork",
+      "caller-selected-session-fork-working-directory"
     ],
     "upstreamTagContainsIntegrationPatches": false
   },
   "t4Host": {
     "wirePackage": "@t4-code/host-wire",
-    "wirePackageVersion": "0.1.33",
+    "wirePackageVersion": "0.1.34",
     "wireSchemaVersion": "0.7.0",
     "servicePackage": "@t4-code/host-service",
-    "servicePackageVersion": "0.1.33",
+    "servicePackageVersion": "0.1.34",
     "daemonPackage": "@t4-code/host-daemon",
-    "daemonPackageVersion": "0.1.33",
+    "daemonPackageVersion": "0.1.34",
     "protocol": "omp-app/1",
     "authorityBridgeProtocol": "t4-omp-authority/1",
     "sourcePaths": [
@@ -293,6 +295,6 @@
   },
   "desktop": {
     "package": "@t4-code/protocol",
-    "version": "0.1.33"
+    "version": "0.1.34"
   }
 }
