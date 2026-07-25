@@ -26,6 +26,27 @@ final class T4SessionStore: ObservableObject {
     private var client: HostClient?
     private var hostId: String = ""
 
+    /// Select a session (rail tap or auto-select of the most recent).
+    func select(_ session: SessionRef?) {
+        selectedSession = session
+    }
+
+    /// Send a user prompt to a session (session.prompt). No-op with a clear
+    /// error when not connected — the composer is disabled in that state.
+    func sendPrompt(sessionId: String, text: String) async {
+        guard let client, connected, !hostId.isEmpty else {
+            lastError = "Not connected to a host."
+            return
+        }
+        do {
+            _ = try await client.sendCommand(CommandIntent(
+                hostId: hostId, command: "session.prompt",
+                args: ["text": .string(text)], sessionId: sessionId))
+        } catch {
+            lastError = "\(error)"
+        }
+    }
+
     init() {
         self.sessions = Self.sample
     }
