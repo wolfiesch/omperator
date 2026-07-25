@@ -3,6 +3,9 @@ import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
 import { load as parseYaml } from "js-yaml";
+import { expectedReleaseAssetNames } from "./release-asset-names.mjs";
+
+export { expectedReleaseAssetNames };
 
 export const RELEASE_CONTRACT_PATHS = [
   ".woodpecker.yml",
@@ -55,16 +58,6 @@ const VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const PATCH_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
-
-export function expectedReleaseAssetNames(version) {
-  return [
-    `T4-Code-${version}-android.apk`,
-    `T4-Code-${version}-linux-amd64.deb`,
-    `T4-Code-${version}-linux-x86_64.AppImage`,
-    `T4-Code-${version}-mac-arm64.dmg`,
-    `T4-Code-${version}-mac-arm64.zip`,
-  ];
-}
 
 export function discoverReleasePackagePaths(repoRoot) {
   const paths = ["package.json"];
@@ -1002,6 +995,30 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
       )
         errors.push(".github/workflows/ci.yml current bridge evidence upload is not fail-closed");
     }
+    // Release-time gates are deferred off pull requests and must stay covered by
+    // the merge run; every other leg must keep blocking pull requests.
+    for (const job of ["legacy-bridge-continuity", "official-omp-gate0"]) {
+      const expected = `\${{ github.event_name != 'pull_request' && needs.changes.outputs.${job === "official-omp-gate0" ? "official_omp_gate0" : "continuity"} == 'true' }}`;
+      if (workflow?.jobs?.[job]?.if !== expected)
+        errors.push(`.github/workflows/ci.yml ${job} must run only on merge runs for its affected paths`);
+    }
+    for (const [job, output] of [
+      ["current-bridge-continuity", "continuity"],
+      ["cluster", "cluster"],
+      ["tooling", "tooling"],
+      ["maintainer", "maintainer"],
+      ["android-debug", "android_debug"],
+    ]) {
+      if (
+        workflow?.jobs?.[job]?.if !==
+        `\${{ github.event_name != 'pull_request' || needs.changes.outputs.${output} == 'true' }}`
+      )
+        errors.push(`.github/workflows/ci.yml ${job} must keep blocking affected pull requests`);
+    }
+    for (const job of ["core", "t4-api-generation"]) {
+      if (workflow?.jobs?.[job]?.if !== undefined)
+        errors.push(`.github/workflows/ci.yml ${job} must run unconditionally`);
+    }
   } catch (error) {
     errors.push(`.github/workflows/ci.yml is invalid YAML: ${error instanceof Error ? error.message : error}`);
   }
@@ -1035,6 +1052,9 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "artifacts/official-omp-gate0/${{ matrix.platform }}.json",
     "artifacts/official-omp-packaged-host/${{ matrix.platform }}.json",
     "tooling:",
+    "maintainer:",
+    "run: pnpm test:tooling",
+    "run: pnpm test:maintainer",
     "cluster:",
     "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16",
     "run: pnpm test:cluster:ci",
@@ -1043,7 +1063,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "android-debug:",
     "name: verify",
     "if: ${{ always() }}",
-    "needs: [changes, t4-api-generation, core, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]",
+    "needs: [changes, t4-api-generation, core, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, maintainer, android-debug]",
     'test "$CHANGES_RESULT" = success',
     'test "$T4_API_GENERATION_RESULT" = success',
     'test "$CORE_RESULT" = success',

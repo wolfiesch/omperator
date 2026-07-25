@@ -322,8 +322,24 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "needs: [changes, t4-api-generation, core, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]",
+          "needs: [changes, t4-api-generation, core, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, maintainer, android-debug]",
           "needs: [changes, core, tooling, android-debug]",
+        ),
+    ],
+    [
+      ".github/workflows/ci.yml",
+      (text) =>
+        text.replace(
+          "if: ${{ github.event_name != 'pull_request' && needs.changes.outputs.continuity == 'true' }}",
+          "if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.continuity == 'true' }}",
+        ),
+    ],
+    [
+      ".github/workflows/ci.yml",
+      (text) =>
+        text.replace(
+          "if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.maintainer == 'true' }}",
+          "if: ${{ github.event_name != 'pull_request' && needs.changes.outputs.maintainer == 'true' }}",
         ),
     ],
     [
@@ -621,7 +637,7 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("if: ${{ always() }}"));
   assert.ok(
     ciWorkflow.includes(
-      "needs: [changes, t4-api-generation, core, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]",
+      "needs: [changes, t4-api-generation, core, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, maintainer, android-debug]",
     ),
   );
   assert.ok(ciWorkflow.includes('test "$CHANGES_RESULT" = success'));

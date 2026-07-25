@@ -18,7 +18,6 @@ import {
 	decodeProviderTransportState,
 	decodeSessionPromptArguments,
 	decodeSessionStateResult,
-	decodeUsageReadResult,
 	type EntryId,
 	entryId,
 	type HelloFrame,
@@ -38,15 +37,9 @@ import {
 	revision as wireRevision,
 	type ServerFrame,
 	type SessionId,
-	type SessionImageReadArguments,
 	type SessionRef,
 	type SessionStateResult,
 	sessionId,
-	type TranscriptContextArguments,
-	type TranscriptPageArguments,
-	type TranscriptPageResult,
-	type TranscriptSearchArguments,
-	type UsageReadResult,
 	utf8ByteLength,
 } from "@t4-code/host-wire";
 import type {
@@ -55,10 +48,11 @@ import type {
 	RpcSubagentMessagesResult,
 } from "./omp-rpc-contract.ts";
 import { AgentTranscriptProjection } from "./agent-transcript-projection.ts";
-import { ArtifactReadError, ArtifactReader } from "./artifact-reader.ts";
+import { ArtifactReader } from "./artifact-reader.ts";
 import { completeAttachOutput, prepareAttachOutput } from "./attach-output.ts";
 import { AttentionOutcomeStore } from "./attention-outcome-store.ts";
 import { AppserverCommandHandlers } from "./command-handler.ts";
+import { executeReadCommand, isReadCommand } from "./read-command-handler.ts";
 import {
 	artifactDescriptorForRoot,
 	fallbackSessionTitle,
@@ -340,18 +334,6 @@ async function boundedOperationCapabilityRefresh(
 	}
 }
 
-async function raceAbortSignal<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
-	if (signal.aborted) throw new Error("operation aborted");
-	const gate = Promise.withResolvers<T>();
-	const onAbort = (): void => gate.reject(new Error("operation aborted"));
-	signal.addEventListener("abort", onAbort, { once: true });
-	operation.then(gate.resolve, gate.reject);
-	try {
-		return await gate.promise;
-	} finally {
-		signal.removeEventListener("abort", onAbort);
-	}
-}
 
 function queuedLifecycleWork(liveState: Record<string, unknown> | undefined): boolean {
 	if (!liveState) return false;
@@ -1788,102 +1770,36 @@ export class LocalAppserver implements AppserverHandle {
 			// leave a late upload behind for a dead connection.
 			const registered = this.#handlers.has(command.command) ? await this.#handlers.dispatch(command) : undefined;
 			if (registered) outcome = registered;
-			else if (command.command === "transcript.page") {
-				if (!this.#discovery.page)
-					outcome = {
-						frame: response(this.hostId, command, false, undefined, {
-							code: "unsupported",
-							message: "transcript paging is unavailable",
-						}),
-					};
-				else {
-					const args = decodeCommandArguments(
-						command.command,
-						command.args,
-					) as unknown as TranscriptPageArguments;
-					const record = this.#records.get(command.sessionId!);
-					if (!record) throw new TranscriptPageError("transcript_page_unavailable");
-					const authorityResult = await this.#discovery.page(record, args);
-					const result: TranscriptPageResult = {
-						...authorityResult,
-						entries: authorityResult.entries.map(entry => ({
-							...entry,
-							hostId: this.hostId,
-							sessionId: command.sessionId!,
-						})),
-					};
-					outcome = { frame: response(this.hostId, command, true, result) };
-				}
-			} else if (command.command === "transcript.search") {
-				if (!this.#transcriptSearch)
-					outcome = {
-						frame: response(this.hostId, command, false, undefined, {
-							code: "unsupported",
-							message: "transcript search is unavailable",
-						}),
-					};
-				else {
-					const args = decodeCommandArguments(
-						command.command,
-						command.args,
-					) as unknown as TranscriptSearchArguments;
-					const result = await this.#transcriptSearch.search(args, controller.signal);
-					outcome = { frame: response(this.hostId, command, true, result) };
-				}
-			} else if (command.command === "transcript.context") {
-				if (!this.#transcriptSearch)
-					outcome = {
-						frame: response(this.hostId, command, false, undefined, {
-							code: "unsupported",
-							message: "transcript context is unavailable",
-						}),
-					};
-				else {
-					const args = decodeCommandArguments(
-						command.command,
-						command.args,
-					) as unknown as TranscriptContextArguments;
-					const result = await this.#transcriptSearch.context(command.sessionId!, args, controller.signal);
-					outcome = { frame: response(this.hostId, command, true, result) };
-				}
-			} else if (command.command === "host.list" || command.command === "session.list")
+			else if (isReadCommand(command))
+				outcome = await executeReadCommand(
+					{
+						hostId: this.hostId,
+						response: (innerCommand, ok, result, error) =>
+							response(this.hostId, innerCommand, ok, result, error),
+						discovery: this.#discovery,
+						transcriptSearch: this.#transcriptSearch,
+						usageAuthority: this.#usageAuthority,
+						usageReadTimeoutMs: this.#usageReadTimeoutMs,
+						transcriptImages: this.#transcriptImages,
+						artifacts: this.#artifacts,
+						record: () => this.#records.get(command.sessionId!),
+						projection,
+						agentTranscript: () => this.#agentTranscripts.get(command.sessionId!),
+						attached: () => Boolean(ws && this.#attached.get(ws)?.has(command.sessionId!)),
+						agentTranscriptEnabled: () =>
+							Boolean(ws && this.#clientFeatures.get(ws)?.has("agent.transcript")),
+					},
+					command,
+					controller.signal,
+				);
+			else if (command.command === "host.list" || command.command === "session.list")
 				outcome = {
 					frame: response(this.hostId, command, true, {
 						cursor: { epoch: this.epoch, seq: 0 },
 						...this.sessionListResult(),
 					}),
 				};
-			else if (command.command === "usage.read") {
-				if (!this.#usageAuthority) {
-					outcome = {
-						frame: response(this.hostId, command, false, undefined, {
-							code: "unsupported",
-							message: "usage reading is unavailable",
-						}),
-					};
-				} else {
-					const timeoutSignal = AbortSignal.timeout(this.#usageReadTimeoutMs);
-					const usageSignal = AbortSignal.any([controller.signal, timeoutSignal]);
-					try {
-						const result: UsageReadResult = decodeUsageReadResult(
-							await raceAbortSignal(this.#usageAuthority.read(usageSignal), usageSignal),
-						);
-						outcome = { frame: response(this.hostId, command, true, result) };
-					} catch {
-						const code = controller.signal.aborted
-							? "aborted"
-							: timeoutSignal.aborted
-								? "timeout"
-								: "usage_unavailable";
-						outcome = {
-							frame: response(this.hostId, command, false, undefined, {
-								code,
-								message: code === "timeout" ? "usage read timed out" : "usage read failed",
-							}),
-						};
-					}
-				}
-			} else if (command.command === "session.attach") {
+			else if (command.command === "session.attach") {
 				await this.enqueueExternalRefresh(command.sessionId!);
 				const cursor = command.args.cursor;
 				const attachOutput = prepareAttachOutput(
@@ -1894,49 +1810,6 @@ export class LocalAppserver implements AppserverHandle {
 					frame: response(this.hostId, command, true, { attached: true, cursor: attachOutput.baseline }),
 					attachOutput,
 				};
-			} else if (command.command === "session.image.read") {
-				if (!ws || !this.#attached.get(ws)?.has(command.sessionId!))
-					throw new TranscriptImageError("session_not_attached", "session must be attached before reading images");
-				if (!this.#transcriptImages)
-					throw new TranscriptImageError("image_not_found", "transcript image reading is unavailable");
-				const args = decodeCommandArguments(command.command, command.args) as unknown as SessionImageReadArguments;
-				let metadata = projection!.transcriptImage(args.entryId, args.sha256);
-				if (!metadata && this.#clientFeatures.get(ws)?.has("agent.transcript"))
-					metadata = this.#agentTranscripts.get(command.sessionId!)?.transcriptImage(args.entryId, args.sha256);
-				if (!metadata)
-					throw new TranscriptImageError(
-						"image_not_found",
-						"transcript entry does not contain the requested image",
-					);
-				const result = await this.#transcriptImages.read(
-					metadata.sha256,
-					metadata.mimeType,
-					args.offset,
-					controller.signal,
-				);
-				outcome = { frame: response(this.hostId, command, true, result) };
-			} else if (command.command === "artifact.read") {
-				if (!ws || !this.#attached.get(ws)?.has(command.sessionId!))
-					throw new ArtifactReadError("session_not_attached", "session must be attached before reading artifacts");
-				const args = decodeCommandArguments(command.command, command.args) as {
-					artifactId: string;
-					offset: number;
-				};
-				let descriptor = projection!.artifact(args.artifactId);
-				if (!descriptor && this.#clientFeatures.get(ws)?.has("agent.transcript"))
-					descriptor = this.#agentTranscripts.get(command.sessionId!)?.artifact(args.artifactId);
-				if (!descriptor)
-					throw new ArtifactReadError("artifact_not_found", "artifact is not projected for this session");
-				const record = this.#records.get(command.sessionId!);
-				if (!record?.path.endsWith(".jsonl"))
-					throw new ArtifactReadError("artifact_not_found", "artifact session is unavailable");
-				const result = await this.#artifacts.read(
-					record.path.slice(0, -".jsonl".length),
-					descriptor,
-					args.offset,
-					controller.signal,
-				);
-				outcome = { frame: response(this.hostId, command, true, result) };
 			} else if (command.command === "session.image.begin") {
 				if (!ws) throw new ImageUploadError("image_invalid", "image upload requires a live connection");
 				if (controller.signal.aborted)
@@ -2096,6 +1969,10 @@ export class LocalAppserver implements AppserverHandle {
 										: command.command === "session.rename"
 											? { renamed: true }
 											: { accepted: true };
+					if (command.command === "session.rename" && typeof command.args.name === "string") {
+						const frame = this.#projections.get(command.sessionId!)?.updateTitle(command.args.name);
+						if (frame) await this.broadcastIndex(frame);
+					}
 					if (
 						command.command === "session.model.set" ||
 						command.command === "session.thinking.set" ||

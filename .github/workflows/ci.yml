@@ -22,6 +22,7 @@ jobs:
       cluster: ${{ steps.classify.outputs.cluster }}
       official_omp_gate0: ${{ steps.classify.outputs.official_omp_gate0 }}
       tooling: ${{ steps.classify.outputs.tooling }}
+      maintainer: ${{ steps.classify.outputs.maintainer }}
       android_debug: ${{ steps.classify.outputs.android_debug }}
     steps:
       - name: Check out source and base history
@@ -138,9 +139,14 @@ jobs:
       - name: Check packaging contract
         run: pnpm test:packaging
 
+  # Release-time gates, deferred off pull requests. The legacy pin is a frozen
+  # historical compatibility proof and the gate0 matrix spans three runners
+  # including macOS. Pushes to main classify as --all, so both still run on
+  # every merge before any release, and `pnpm verify:affected` selects them
+  # locally for an affected change.
   legacy-bridge-continuity:
     needs: changes
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.continuity == 'true' }}
+    if: ${{ github.event_name != 'pull_request' && needs.changes.outputs.continuity == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -190,11 +196,21 @@ jobs:
           ref: ${{ steps.authority.outputs.sha }}
           path: .continuity/omp
 
+      - name: Restore the pinned OMP native addon
+        id: legacy-native-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .continuity/omp/packages/natives/native
+          key: omp-native-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.authority.outputs.sha }}
+
       - name: Install OMP authority dependencies
         working-directory: .continuity/omp
         run: bun install --frozen-lockfile
 
+      # A pinned commit and a fixed runner platform produce a byte-identical
+      # addon, so a hit skips a ~7 minute cold Rust build (fat-LTO workspace).
       - name: Build OMP native addon
+        if: ${{ steps.legacy-native-cache.outputs.cache-hit != 'true' }}
         working-directory: .continuity/omp
         run: bun run build:native
 
@@ -202,6 +218,15 @@ jobs:
         env:
           T4_OMP_SOURCE_DIR: ${{ github.workspace }}/.continuity/omp
         run: pnpm test:legacy-bridge-continuity
+
+      # Cache entries are immutable per key, so only persist an addon the gate
+      # has already loaded and exercised. Bump the key salt to force a rebuild.
+      - name: Save the proven OMP native addon
+        if: ${{ steps.legacy-native-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .continuity/omp/packages/natives/native
+          key: ${{ steps.legacy-native-cache.outputs.cache-primary-key }}
 
       - name: Upload continuity evidence
         if: ${{ always() }}
@@ -261,11 +286,21 @@ jobs:
           ref: ${{ steps.current-authority.outputs.sha }}
           path: .current-continuity/omp
 
+      - name: Restore the current OMP native addon
+        id: current-native-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .current-continuity/omp/packages/natives/native
+          key: omp-native-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.current-authority.outputs.sha }}
+
       - name: Install current OMP authority dependencies
         working-directory: .current-continuity/omp
         run: bun install --frozen-lockfile
 
+      # A pinned commit and a fixed runner platform produce a byte-identical
+      # addon, so a hit skips a ~7 minute cold Rust build (fat-LTO workspace).
       - name: Build current OMP native addon
+        if: ${{ steps.current-native-cache.outputs.cache-hit != 'true' }}
         working-directory: .current-continuity/omp
         run: bun run build:native
 
@@ -278,6 +313,16 @@ jobs:
           T4_CURRENT_OMP_SOURCE_DIR: ${{ github.workspace }}/.current-continuity/omp
         run: pnpm --filter @t4-code/host-service verify:current-omp-bridge
 
+      # Cache entries are immutable per key, so only persist an addon that has
+      # already satisfied the bridge contract this job exists to prove. Bump the
+      # key salt to force a rebuild.
+      - name: Save the proven current OMP native addon
+        if: ${{ steps.current-native-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .current-continuity/omp/packages/natives/native
+          key: ${{ steps.current-native-cache.outputs.cache-primary-key }}
+
       - name: Upload current bridge evidence
         if: ${{ success() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -289,7 +334,7 @@ jobs:
 
   official-omp-gate0:
     needs: changes
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.official_omp_gate0 == 'true' }}
+    if: ${{ github.event_name != 'pull_request' && needs.changes.outputs.official_omp_gate0 == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -423,7 +468,7 @@ jobs:
     needs: changes
     if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.tooling == 'true' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 10
     steps:
       - name: Check out source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -444,6 +489,32 @@ jobs:
 
       - name: Run tooling regression tests
         run: pnpm test:tooling
+
+  maintainer:
+    needs: changes
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.maintainer == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.10.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.13.1
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run maintainer deployment regression tests
+        run: pnpm test:maintainer
 
   android-debug:
     needs: changes
@@ -490,7 +561,7 @@ jobs:
   verify:
     name: verify
     if: ${{ always() }}
-    needs: [changes, t4-api-generation, core, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]
+    needs: [changes, t4-api-generation, core, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, maintainer, android-debug]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -505,6 +576,7 @@ jobs:
           OFFICIAL_OMP_GATE0_RESULT: ${{ needs.official-omp-gate0.result }}
           CLUSTER_RESULT: ${{ needs.cluster.result }}
           TOOLING_RESULT: ${{ needs.tooling.result }}
+          MAINTAINER_RESULT: ${{ needs.maintainer.result }}
           ANDROID_RESULT: ${{ needs.android-debug.result }}
         run: |
           set -euo pipefail
@@ -517,6 +589,7 @@ jobs:
             "$OFFICIAL_OMP_GATE0_RESULT" \
             "$CLUSTER_RESULT" \
             "$TOOLING_RESULT" \
+            "$MAINTAINER_RESULT" \
             "$ANDROID_RESULT"
           do
             case "$result" in

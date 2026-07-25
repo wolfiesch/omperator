@@ -7,6 +7,7 @@ const none = {
   cluster: false,
   official_omp_gate0: false,
   tooling: false,
+  maintainer: false,
   android_debug: false,
 };
 
@@ -49,6 +50,7 @@ test("host wire changes run every dependent client and continuity gate", () => {
     cluster: true,
     official_omp_gate0: false,
     tooling: true,
+    maintainer: false,
     android_debug: true,
   });
 });
@@ -87,6 +89,7 @@ test("dependency graph changes conservatively run every leg", () => {
       cluster: true,
       official_omp_gate0: true,
       tooling: true,
+      maintainer: true,
       android_debug: true,
     });
   }
@@ -98,6 +101,23 @@ test("workflow changes run tooling on the PR and the full matrix after merge", (
     continuity: true,
     cluster: true,
     official_omp_gate0: true,
+    tooling: true,
+    maintainer: true,
+  });
+});
+
+test("the maintainer deployment suite runs only for its own surface", () => {
+  assert.deepEqual(classifyCiPaths(["ops/t4-maintainer/deploy-local.sh"]), {
+    ...none,
+    maintainer: true,
+  });
+  assert.deepEqual(classifyCiPaths(["scripts/t4-maintainer-deploy.test.mjs"]), {
+    ...none,
+    tooling: true,
+    maintainer: true,
+  });
+  assert.deepEqual(classifyCiPaths(["docs/DEVELOPMENT.md", "scripts/deploy-site.mjs"]), {
+    ...none,
     tooling: true,
   });
 });
@@ -114,6 +134,6 @@ test("paths are normalized and GitHub outputs are stable", () => {
   const result = classifyCiPaths(["./apps\\web\\package.json", "./apps/web/package.json"]);
   assert.equal(
     formatGitHubOutputs(result),
-    "continuity=false\ncluster=false\nofficial_omp_gate0=false\ntooling=false\nandroid_debug=true\n",
+    "continuity=false\ncluster=false\nofficial_omp_gate0=false\ntooling=false\nmaintainer=false\nandroid_debug=true\n",
   );
 });

@@ -106,6 +106,7 @@ steps:
       - apt-get update && apt-get install -y --no-install-recommends jq && rm -rf /var/lib/apt/lists/*
       - corepack enable
       - pnpm test:tooling
+      - pnpm test:maintainer
     backend_options:
       kubernetes:
         serviceAccountName: woodpecker-ci-untrusted

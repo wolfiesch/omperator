@@ -46,6 +46,45 @@ tasks:
     cmds:
       - pnpm dev:sandbox reset --sandbox {{.SANDBOX}}
 
+  scenario:full:
+    desc: Exercise streaming, cancellation, reconnect, and lifecycle behavior
+    cmds:
+      - pnpm scenario:full
+
+  dogfood:mac:
+    desc: Package and exercise the isolated macOS dogfood loop
+    cmds:
+      - pnpm dogfood:mac
+
+  verify:affected:
+    desc: Run checks selected from changed paths
+    cmds:
+      - pnpm verify:affected
+
+  verify:affected:plan:
+    desc: Preview checks selected from changed paths
+    cmds:
+      - pnpm verify:affected:plan
+
+  worktree:create:
+    desc: Create an isolated worktree from current origin/main
+    requires:
+      vars: [SLUG]
+    cmds:
+      - pnpm worktree create --slug {{.SLUG}}
+
+  worktree:remove:
+    desc: Remove one worktree created by the repository helper
+    requires:
+      vars: [SLUG]
+    cmds:
+      - pnpm worktree remove --slug {{.SLUG}}
+
+  worktree:list:
+    desc: List repository-managed worktrees and metadata
+    cmds:
+      - pnpm worktree list
+
   dev:web:
     desc: Start the web app with sample data
     cmds:
