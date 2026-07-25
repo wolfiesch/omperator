@@ -62,6 +62,8 @@ struct T4WorkspaceView: View {
         }
         .onAppear {
             if store.selectedSession == nil { store.select(store.sessions.first) }
+            // UI-test seam: launch with -T4RailOpen to boot with the rail open.
+            if ProcessInfo.processInfo.arguments.contains("-T4RailOpen") { railOpen = true }
         }
     }
 
