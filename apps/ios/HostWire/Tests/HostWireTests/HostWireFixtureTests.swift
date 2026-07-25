@@ -51,7 +51,11 @@ struct HostWireFixtureTests {
     @Test("Hello round-trips through encode")
     func helloRoundTrip() throws {
         let original = try data(for: "hello")
-        let frame = try #require(try ClientFrame.decode(original).hello)
+        let first = try ClientFrame.decode(original)
+        guard case .hello(let frame) = first else {
+            Issue.record("expected hello frame")
+            return
+        }
         let reencoded = try encodeFrame(frame)
         let again = try ClientFrame.decode(reencoded)
         #expect(again == .hello(frame))

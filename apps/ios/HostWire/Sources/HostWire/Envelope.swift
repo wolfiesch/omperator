@@ -68,6 +68,14 @@ public struct LiveEventFrame: Decodable, Equatable, Sendable {
     }
 }
 
+private struct TypePeek: Decodable {
+    let type: String
+}
+
+private func wireDecode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+    try JSONDecoder().decode(type, from: data)
+}
+
 /// A decoded client → host frame.
 public enum ClientFrame: Equatable, Sendable {
     case hello(HelloFrame)
@@ -76,12 +84,12 @@ public enum ClientFrame: Equatable, Sendable {
     case ping(PingFrame)
 
     public static func decode(_ data: Data) throws -> ClientFrame {
-        let type = try JSONDecoder().decode(TypePeek.self, from: data).type
+        let type = try wireDecode(TypePeek.self, from: data).type
         switch type {
-        case "hello": return .hello(try decode(HelloFrame.self, data))
-        case "confirm": return .confirm(try decode(ConfirmFrame.self, data))
-        case "pair.start": return .pairStart(try decode(PairStartFrame.self, data))
-        case "ping": return .ping(try decode(PingFrame.self, data))
+        case "hello": return .hello(try wireDecode(HelloFrame.self, from: data))
+        case "confirm": return .confirm(try wireDecode(ConfirmFrame.self, from: data))
+        case "pair.start": return .pairStart(try wireDecode(PairStartFrame.self, from: data))
+        case "ping": return .ping(try wireDecode(PingFrame.self, from: data))
         default: throw T4WireError.unknownFrame(family: "not yet ported (client): \(type)")
         }
     }
@@ -100,28 +108,20 @@ public enum ServerFrame: Equatable, Sendable {
     case pairError(PairErrorFrame)
 
     public static func decode(_ data: Data) throws -> ServerFrame {
-        let type = try JSONDecoder().decode(TypePeek.self, from: data).type
+        let type = try wireDecode(TypePeek.self, from: data).type
         switch type {
-        case "welcome": return .welcome(try decode(WelcomeFrame.self, data))
-        case "event": return .event(try decode(LiveEventFrame.self, data))
-        case "confirmation": return .confirmation(try decode(ConfirmationChallenge.self, data))
-        case "response": return .response(try decode(ResultFrame.self, data))
-        case "error": return .error(try decode(ErrorFrame.self, data))
-        case "pong": return .pong(try decode(PongFrame.self, data))
-        case "bye": return .bye(try decode(ByeFrame.self, data))
-        case "pair.ok": return .pairOk(try decode(PairOkFrame.self, data))
-        case "pair.error": return .pairError(try decode(PairErrorFrame.self, data))
+        case "welcome": return .welcome(try wireDecode(WelcomeFrame.self, from: data))
+        case "event": return .event(try wireDecode(LiveEventFrame.self, from: data))
+        case "confirmation": return .confirmation(try wireDecode(ConfirmationChallenge.self, from: data))
+        case "response": return .response(try wireDecode(ResultFrame.self, from: data))
+        case "error": return .error(try wireDecode(ErrorFrame.self, from: data))
+        case "pong": return .pong(try wireDecode(PongFrame.self, from: data))
+        case "bye": return .bye(try wireDecode(ByeFrame.self, from: data))
+        case "pair.ok": return .pairOk(try wireDecode(PairOkFrame.self, from: data))
+        case "pair.error": return .pairError(try wireDecode(PairErrorFrame.self, from: data))
         default: throw T4WireError.unknownFrame(family: "not yet ported (server): \(type)")
         }
     }
-}
-
-private struct TypePeek: Decodable {
-    let type: String
-}
-
-private func decode<T: Decodable>(_ type: T.Type, _ data: Data) throws -> T {
-    try JSONDecoder().decode(type, from: data)
 }
 
 /// Encode any encodable frame to the wire (one JSON object per message).
