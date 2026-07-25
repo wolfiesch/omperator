@@ -73,12 +73,18 @@ struct T4WorkspaceView: View {
         }
         .task { await store.restore() }
         .task {
-            // UI-test seam: launch with -T4PairCode <6-digit code> to run the
-            // pair handshake against the tailnet host on first boot.
+            // UI-test seam: launch with -T4PairCode <code> [-T4PairHost <host[:port]>]
+            // to run the pair handshake on first boot. Default host is the
+            // tailnet IP (the sim has no MagicDNS resolver).
             let args = ProcessInfo.processInfo.arguments
-            if let index = args.firstIndex(of: "-T4PairCode"), args.indices.contains(index + 1),
-               let endpoint = URL(string: "ws://macbookpro.tail871e8b.ts.net:8787/v1/ws") {
-                await store.pairAndConnect(endpoint: endpoint, code: args[index + 1], deviceName: "sim-ui-test")
+            if let index = args.firstIndex(of: "-T4PairCode"), args.indices.contains(index + 1) {
+                var host = "100.98.34.4"
+                if let hIndex = args.firstIndex(of: "-T4PairHost"), args.indices.contains(hIndex + 1) {
+                    host = args[hIndex + 1]
+                }
+                if let endpoint = URL(string: "ws://\(host):8787/v1/ws") {
+                    await store.pairAndConnect(endpoint: endpoint, code: args[index + 1], deviceName: "sim-ui-test")
+                }
             }
         }
     }
