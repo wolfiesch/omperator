@@ -7,8 +7,8 @@ const signedMacBuild = process.env.T4_MACOS_SIGNED_BUILD === "1";
 
 export const linuxUpdatePublish = {
   provider: "github",
-  owner: "LycaonLLC",
-  repo: "t4-code",
+  owner: "wolfiesch",
+  repo: "omperator",
   channel: "latest",
 };
 

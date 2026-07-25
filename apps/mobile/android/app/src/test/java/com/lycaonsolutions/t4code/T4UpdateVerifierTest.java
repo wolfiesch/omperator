@@ -206,7 +206,7 @@ public final class T4UpdateVerifierTest {
         );
 
         T4UpdateVerifier.requireAllowedAssetUrl(
-            new URL("https://github.com/LycaonLLC/t4-code/releases/download/v1.2.3/T4-Code-1.2.3-android.apk"),
+            new URL("https://github.com/wolfiesch/omperator/releases/download/v1.2.3/T4-Code-1.2.3-android.apk"),
             true
         );
         T4UpdateVerifier.requireAllowedAssetUrl(
@@ -256,7 +256,7 @@ public final class T4UpdateVerifierTest {
         T4UpdateVerifier.requireManifestReleaseIdentity(
             version,
             "v1.2.3",
-            "https://github.com/LycaonLLC/t4-code/releases/tag/v1.2.3",
+            "https://github.com/wolfiesch/omperator/releases/tag/v1.2.3",
             "2026-07-15T12:30:00.000Z"
         );
 
@@ -276,7 +276,7 @@ public final class T4UpdateVerifierTest {
                     asset[1],
                     asset[2],
                     asset[3],
-                    "https://github.com/LycaonLLC/t4-code/releases/download/v1.2.3/" + asset[3],
+                    "https://github.com/wolfiesch/omperator/releases/download/v1.2.3/" + asset[3],
                     1024,
                     digest,
                     2048
@@ -289,7 +289,7 @@ public final class T4UpdateVerifierTest {
             () -> T4UpdateVerifier.requireManifestReleaseIdentity(
                 version,
                 "v1.2.4",
-                "https://github.com/LycaonLLC/t4-code/releases/tag/v1.2.3",
+                "https://github.com/wolfiesch/omperator/releases/tag/v1.2.3",
                 "2026-07-15T12:30:00Z"
             )
         );
@@ -324,7 +324,7 @@ public final class T4UpdateVerifierTest {
                 "apk",
                 "universal",
                 "T4-Code-1.2.3-android.apk",
-                "https://github.com/LycaonLLC/t4-code/releases/download/v1.2.3/T4-Code-1.2.3-android.apk",
+                "https://github.com/wolfiesch/omperator/releases/download/v1.2.3/T4-Code-1.2.3-android.apk",
                 2049,
                 digest,
                 2048
@@ -338,7 +338,7 @@ public final class T4UpdateVerifierTest {
                 "apk",
                 "universal",
                 "T4-Code-1.2.3-android.apk",
-                "https://github.com/LycaonLLC/t4-code/releases/download/v1.2.3/T4-Code-1.2.3-android.apk",
+                "https://github.com/wolfiesch/omperator/releases/download/v1.2.3/T4-Code-1.2.3-android.apk",
                 1024,
                 digest.toUpperCase(java.util.Locale.ROOT),
                 2048

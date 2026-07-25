@@ -18,8 +18,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	clusterv1alpha1 "github.com/LycaonLLC/t4-code/packages/cluster-operator/api/v1alpha1"
-	"github.com/LycaonLLC/t4-code/packages/cluster-operator/controllers"
+	clusterv1alpha1 "github.com/wolfiesch/omperator/packages/cluster-operator/api/v1alpha1"
+	"github.com/wolfiesch/omperator/packages/cluster-operator/controllers"
 )
 
 var scheme = runtime.NewScheme()

@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import { readBoundedResponseBytes } from "./read-bounded-response.mjs";
 
-const REPOSITORY = "LycaonLLC/t4-code";
+const REPOSITORY = "wolfiesch/omperator";
 const WORKFLOW = "ci.yml";
 const WORKFLOW_NAME = "CI";
 const WORKFLOW_PATH = ".github/workflows/ci.yml";

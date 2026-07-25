@@ -32,7 +32,7 @@ function fixture() {
     state: "uploaded",
     size: name === deb ? 100 : name === appImage ? 200 : 300 + index,
     digest: `sha256:${name === CHECKSUMS_NAME ? digest("checksum-file") : digest(name)}`,
-    browser_download_url: `https://github.com/LycaonLLC/t4-code/releases/download/${tag}/${name}`,
+    browser_download_url: `https://github.com/wolfiesch/omperator/releases/download/${tag}/${name}`,
   }));
   return {
     checksumsText,
@@ -53,7 +53,7 @@ releaseDate: '2026-07-15T20:00:00Z'
       tag_name: tag,
       draft: false,
       prerelease: false,
-      html_url: `https://github.com/LycaonLLC/t4-code/releases/tag/${tag}`,
+      html_url: `https://github.com/wolfiesch/omperator/releases/tag/${tag}`,
       published_at: "2026-07-15T20:00:00Z",
       assets,
     },

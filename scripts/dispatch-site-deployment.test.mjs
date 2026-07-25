@@ -18,7 +18,7 @@ function run(id, overrides = {}) {
     display_title: `Deploy project site ${tag} ${dispatchNonce}`,
     status: "queued",
     conclusion: null,
-    html_url: `https://github.com/LycaonLLC/t4-code/actions/runs/${id}`,
+    html_url: `https://github.com/wolfiesch/omperator/actions/runs/${id}`,
     ...overrides,
   };
 }

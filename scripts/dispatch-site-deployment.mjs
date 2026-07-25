@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { readBoundedResponseBytes } from "./read-bounded-response.mjs";
 
-const REPOSITORY = "LycaonLLC/t4-code";
+const REPOSITORY = "wolfiesch/omperator";
 const WORKFLOW = "deploy-site.yml";
 const WORKFLOW_PATH = `.github/workflows/${WORKFLOW}`;
 const VERSION_TAG_PATTERN = /^v\d+\.\d+\.\d+$/u;
