@@ -10,6 +10,7 @@ import {
   OmpAuthorityBridgeClient,
   profileSocketPath,
   ProjectFileSearchAuthority,
+  PtyTerminalAuthority,
   SeedingTestControl,
   TranscriptSearchIndex,
   type AppserverHandle,
@@ -37,6 +38,7 @@ const OFFICIAL_CATALOG_COMMANDS = Object.freeze([
   "session.thinking.set",
   "session.cancel",
   "session.close",
+  "term.open",
 ]);
 
 function officialCatalogItems(): Record<string, unknown>[] {
@@ -295,6 +297,7 @@ export async function runHostDaemon(
   const paths = hostDaemonPaths(config);
   await mkdir(paths.profileStateRoot, { recursive: true, mode: 0o700 });
   let bridge: OmpAuthorityBridgeClient | undefined;
+  let terminals: PtyTerminalAuthority | undefined;
   let officialAuthority: OfficialOmpProfileAuthority | undefined;
   let sessionAuthority: SessionAuthority;
   let discovery: SessionDiscovery;
@@ -318,11 +321,17 @@ export async function runHostDaemon(
     officialAuthority = official;
     sessionAuthority = official;
     discovery = official;
+    // T4 owns terminals in official mode: stock OMP has no host-side pty seam.
+    // Bridge mode keeps using the fork's termOpen until the runtimes converge.
+    terminals = new PtyTerminalAuthority({
+      projectRootForSession: sessionId => official.projectRootForSession(sessionId),
+    });
     operationsAuthority = {
       catalogGet: async () => ({
         revision: `official-omp-${OFFICIAL_OMP_VERSION}`,
         items: officialCatalogItems(),
       }),
+      ...terminals.operations(),
     };
     projectRootForProject = projectId => official.projectRootForProject(projectId);
     projectRootForSession = sessionId => official.projectRootForSession(sessionId);
@@ -447,6 +456,7 @@ export async function runHostDaemon(
       if (!stopping) await appserver.stop().catch(() => undefined);
     }
   } finally {
+    terminals?.closeAll();
     await bridge?.stop();
     await officialAuthority?.close();
   }
