@@ -96,6 +96,15 @@ export class SeedingTestControl implements AppserverTestControl {
 	#manifest: SeedManifest = { version: MANIFEST_VERSION, runs: {} };
 	#loaded = false;
 	#errors: string[] = [];
+	/**
+	 * Seeding and cleanup read the manifest, mutate the filesystem, then write
+	 * the manifest back. Two concurrent runs would each build their write from
+	 * the same pre-mutation snapshot and the last rename would win, silently
+	 * dropping the other run's records and orphaning the session files it
+	 * created. The admin layer tracks these mutations but does not order them,
+	 * so the transaction is serialized here.
+	 */
+	#tail = Promise.resolve();
 
 	constructor(options: SeedingTestControlOptions) {
 		if (!isAbsolute(options.manifestPath)) throw new Error("test control manifest path must be absolute");
@@ -112,7 +121,11 @@ export class SeedingTestControl implements AppserverTestControl {
 		return (this.#manifest.runs[runId]?.sessions ?? []).map(session => session.sessionId);
 	}
 
-	async seed(request: AppserverTestSeedRequest): Promise<AppserverTestControlStatus> {
+	seed(request: AppserverTestSeedRequest): Promise<AppserverTestControlStatus> {
+		return this.#serialize(() => this.#seedLocked(request));
+	}
+
+	async #seedLocked(request: AppserverTestSeedRequest): Promise<AppserverTestControlStatus> {
 		await this.#load();
 		if (!RUN_ID.test(request.runId)) throw new Error("test control run id is invalid");
 		if (this.#manifest.runs[request.runId]) throw new Error("test control run id is already seeded");
@@ -136,6 +149,15 @@ export class SeedingTestControl implements AppserverTestControl {
 		}
 		await this.#persist(this.#run(request, projectRoot, sessions));
 		return this.status(request.runId);
+	}
+	/** Runs one manifest transaction at a time; a failed run never blocks the next. */
+	#serialize<T>(operation: () => Promise<T>): Promise<T> {
+		const result = this.#tail.then(operation, operation);
+		this.#tail = result.then(
+			() => undefined,
+			() => undefined,
+		);
+		return result;
 	}
 
 	async status(runId: string): Promise<AppserverTestControlStatus> {
@@ -182,7 +204,11 @@ export class SeedingTestControl implements AppserverTestControl {
 	 * trust a file to name an arbitrary absolute path. A session the authority
 	 * no longer lists is therefore retained and reported rather than removed.
 	 */
-	async cleanup(runId: string): Promise<AppserverTestControlStatus> {
+	cleanup(runId: string): Promise<AppserverTestControlStatus> {
+		return this.#serialize(() => this.#cleanupLocked(runId));
+	}
+
+	async #cleanupLocked(runId: string): Promise<AppserverTestControlStatus> {
 		await this.#load();
 		const run = this.#manifest.runs[runId];
 		this.#errors = [];

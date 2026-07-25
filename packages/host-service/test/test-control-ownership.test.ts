@@ -220,3 +220,74 @@ test("a seeded session is claimed and promoted instead of staying unverified", a
 		}
 	});
 });
+// refreshSessions joins an in-flight refresh. If that refresh read the
+// inventory before seeding wrote the transcript, the seeded id is missing from
+// records and the claim would silently skip it, leaving an unowned foreign
+// session behind while the endpoint still reported success.
+test("a seed whose inventory snapshot predates it fails instead of leaving the session unowned", async () => {
+	const root = await mkdtemp(join(tmpdir(), "t4-control-stale-"));
+	const transcriptPath = join(root, "seeded-owned-session.jsonl");
+	const ownershipPath = join(root, "state", "owned-sessions.json");
+	const discovery = new FileSessionDiscovery(root, undefined, HOST, true);
+	let releaseFirstList: (() => void) | undefined;
+	const gate = new Promise<void>(resolve => {
+		releaseFirstList = resolve;
+	});
+	let listCalls = 0;
+	const stalledDiscovery = {
+		list: async () => {
+			listCalls += 1;
+			// Hold the very first inventory read open across the seed write so a
+			// later join would observe a pre-seed snapshot.
+			if (listCalls === 1) await gate;
+			return discovery.list();
+		},
+	};
+	const control: AppserverTestControl = {
+		token: TOKEN,
+		async sessionIds() {
+			return [SEEDED];
+		},
+		async seed() {
+			releaseFirstList?.();
+			return controlStatus("run-stale", 1);
+		},
+		async status(runId) {
+			return controlStatus(runId, 1);
+		},
+		async cleanup(runId) {
+			return controlStatus(runId, 0);
+		},
+	};
+	await withTestMode(async () => {
+		const appserver = createAppserver({
+			hostId: HOST,
+			epoch: "control-stale-test",
+			socketPath: join(root, "run", "appserver.sock"),
+			discovery: stalledDiscovery,
+			sessionOwnershipPath: ownershipPath,
+			childFactory: new SpawnSignalFactory(),
+			lockStatus: () => "missing",
+			lockCheck: async () => {},
+			testControl: control,
+		});
+		await appserver.start();
+		try {
+			// The control reports a seeded session that was never written, so it
+			// can never be indexed. The endpoint must fail rather than answer 200
+			// with an unclaimed session.
+			expect(
+				await post(appserver.socketPath, "/admin/test/seed", {
+					runId: "run-stale",
+					projectRoot: root,
+					sessionCount: 1,
+					historyEntries: 0,
+				}),
+			).toBe(500);
+			expect(await Bun.file(ownershipPath).exists()).toBe(false);
+			expect(await Bun.file(transcriptPath).exists()).toBe(false);
+		} finally {
+			await appserver.stop();
+		}
+	});
+});

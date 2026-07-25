@@ -221,3 +221,25 @@ test("lock states of seeded sessions are reported", async () => {
 
 	expect(status.locks).toEqual({ live: 2, suspect: 0, stale: 0, malformed: 0 });
 });
+// Two integration runs can hit /admin/test/seed at once. The admin layer tracks
+// those mutations but does not order them, so without serialization here both
+// calls read the same manifest snapshot and the last write wins, dropping one
+// run's records and orphaning the session files it created.
+test("concurrent seeds both stay in the manifest", async () => {
+	const { root, authority, control } = await harness();
+
+	const [first, second] = await Promise.all([
+		control.seed({ runId: "run-parallel-a", projectRoot: root, sessionCount: 1, historyEntries: 1 }),
+		control.seed({ runId: "run-parallel-b", projectRoot: root, sessionCount: 1, historyEntries: 1 }),
+	]);
+
+	expect(first.sessions.seeded).toBe(1);
+	expect(second.sessions.seeded).toBe(1);
+	expect(await control.sessionIds("run-parallel-a")).toHaveLength(1);
+	expect(await control.sessionIds("run-parallel-b")).toHaveLength(1);
+
+	// Every created file must still be reachable by cleanup.
+	await control.cleanup("run-parallel-a");
+	await control.cleanup("run-parallel-b");
+	expect(authority.deleted.sort()).toEqual([...authority.created].sort());
+});

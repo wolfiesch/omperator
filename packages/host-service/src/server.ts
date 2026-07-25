@@ -5033,17 +5033,30 @@ export class LocalAppserver implements AppserverHandle {
 	 * session.create command, so the ownership ledger must be updated here too.
 	 * Without the claim the host reads its own seeded transcript as a foreign
 	 * lockless session and never promotes it to a writable projection.
-	 *
 	 * This runs before any client can attach to a freshly seeded session, and
 	 * the lockless decision is made when attach builds the observer, so the
 	 * ledger is already current by the time it is read.
+	 *
+	 * A session that is still missing from the inventory cannot be claimed and
+	 * would surface later as an unowned foreign transcript, so it fails the
+	 * request instead of reporting a silent partial success.
 	 */
 	async #claimTestSessions(control: AppserverTestControl, runId: string): Promise<void> {
 		if (!this.#sessionOwnership) return;
 		for (const id of await control.sessionIds(runId)) {
 			const record = this.#records.get(id);
-			if (record) await this.#sessionOwnership.add(id, record.path);
+			if (!record) throw new Error("seeded session is not indexed");
+			await this.#sessionOwnership.add(id, record.path);
 		}
+	}
+	/**
+	 * refreshSessions joins an in-flight refresh, and that refresh may have read
+	 * the inventory before this mutation touched the filesystem. Drain it first
+	 * so the refresh awaited here is guaranteed to have started afterwards.
+	 */
+	private async refreshInventoryAfterMutation(): Promise<void> {
+		while (this.#sessionRefresh) await this.#sessionRefresh.catch(() => undefined);
+		await this.refreshSessions();
 	}
 	async #evictTestSession(sessionId: SessionId): Promise<void> {
 		const projection = this.#projections.get(sessionId);
@@ -5136,7 +5149,7 @@ export class LocalAppserver implements AppserverHandle {
 		return this.#runTestControlMutation(async () => {
 			try {
 				await control.seed(seedRequest);
-				await this.refreshSessions();
+				await this.refreshInventoryAfterMutation();
 				await this.#claimTestSessions(control, seedRequest.runId);
 				const status = await this.#testControlStatus(
 					control,
@@ -5183,7 +5196,7 @@ export class LocalAppserver implements AppserverHandle {
 				const retained = new Set(await control.sessionIds(runId));
 				for (const sessionId of sessionIds)
 					if (!retained.has(sessionId)) await this.#evictTestSession(sessionId);
-				await this.refreshSessions();
+				await this.refreshInventoryAfterMutation();
 				return Response.json(await this.#testControlStatus(control, runId, result));
 			} catch {
 				return this.adminError(500);
