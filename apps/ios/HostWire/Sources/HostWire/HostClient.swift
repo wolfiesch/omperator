@@ -228,6 +228,7 @@ public actor HostClient {
     }
 
     private func ingest(_ data: Data) throws {
+        t4wireLog.notice("in: \(String(decoding: data, as: UTF8.self).prefix(600), privacy: .public)")
         let frame = try ServerFrame.decode(data)
         switch frame {
         case .welcome(let w):
