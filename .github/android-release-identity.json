@@ -4,5 +4,9 @@
   "minSdkVersion": 24,
   "targetSdkVersion": 36,
   "signingCertificateSha256": "e44654621d495dc729ab69c95048a4f8ee60c3dd43e6c37fd1552babf2956645",
-  "certificateBaseline": null
+  "certificateBaseline": {
+    "tag": "v0.1.33",
+    "asset": "T4-Code-0.1.33-android.apk",
+    "assetSha256": "c642c9ec646f9d8e3fab3cb203752c3cefb1c6a0cb9ced1c0f992bd7478f3100"
+  }
 }
