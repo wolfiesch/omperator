@@ -160,21 +160,28 @@ final class T4SessionStore: ObservableObject {
     }
 
     // MARK: - Prompt leases
-    // Remote hosts require a prompt lease for every mutation (session.prompt,
-    // model/thinking/fast, cancel, …): acquire with the session's current
-    // revision, pass leaseId + expectedRevision on the mutation, release after.
-    // Local UDS connections skip the gate, but the flow is valid there too.
+    // Remote hosts require a lease for every mutation, and the lease KIND
+    // matters: prompt leases cover prompt-ish commands (prompt/steer/
+    // followUp/ui.respond), controller leases cover everything else
+    // (cancel, model/thinking/fast/mode.set). Acquire with the session's
+    // current revision, pass leaseId on the mutation, release after (except
+    // prompts — turns start asynchronously, the 30s TTL covers turn start).
+
+    private enum LeaseKind: String {
+        case prompt = "prompt.lease"
+        case controller = "controller.lease"
+    }
 
     private func revision(of sessionId: String) -> String? {
         sessions.first(where: { $0.sessionId == sessionId })?.revision
     }
 
-    private func acquireLease(sessionId: String) async -> String? {
+    private func acquireLease(sessionId: String, kind: LeaseKind = .prompt) async -> String? {
         guard let client, connected, !hostId.isEmpty, var revision = revision(of: sessionId) else { return nil }
         for attempt in 0...1 {
             do {
                 let result = try await client.sendCommand(CommandIntent(
-                    hostId: hostId, command: "prompt.lease.acquire",
+                    hostId: hostId, command: "\(kind.rawValue).acquire",
                     args: ["ownerId": .string("t4-ios")],
                     sessionId: sessionId, expectedRevision: revision))
                 return try result.leaseResult()
@@ -185,7 +192,7 @@ final class T4SessionStore: ObservableObject {
                     revision = fresh
                     continue
                 }
-                t4log.error("acquireLease failed: \(error)")
+                t4log.error("acquireLease(\(kind.rawValue)) failed: \(error)")
                 lastError = "\(error)"
                 return nil
             }
@@ -199,25 +206,22 @@ final class T4SessionStore: ObservableObject {
         return revision(of: sessionId)
     }
 
-    private func releaseLease(sessionId: String, leaseId: String) async {
+    private func releaseLease(sessionId: String, leaseId: String, kind: LeaseKind = .prompt) async {
         guard let client, connected, !hostId.isEmpty, let revision = revision(of: sessionId) else { return }
         _ = try? await client.sendCommand(CommandIntent(
-            hostId: hostId, command: "prompt.lease.release",
+            hostId: hostId, command: "\(kind.rawValue).release",
             args: ["leaseId": .string(leaseId)],
             sessionId: sessionId, expectedRevision: revision))
     }
 
-    /// Run a mutation under a freshly acquired prompt lease. Prompts pass
-    /// `release: false`: the turn starts asynchronously and the host drops it
-    /// if the lease is already gone — the 30s TTL covers turn start instead.
-    /// Synchronous controls release immediately.
-    private func withLease(sessionId: String, release: Bool = true, mutation: (String) async -> Void) async {
-        guard let leaseId = await acquireLease(sessionId: sessionId) else { return }
+    /// Run a mutation under a freshly acquired lease of the right kind.
+    private func withLease(sessionId: String, kind: LeaseKind = .prompt, release: Bool = true, mutation: (String) async -> Void) async {
+        guard let leaseId = await acquireLease(sessionId: sessionId, kind: kind) else { return }
         // Lease acquire bumps the session revision; refresh so the mutation
         // carries the current one (the host rejects stale revisions).
         await refresh()
         await mutation(leaseId)
-        if release { await releaseLease(sessionId: sessionId, leaseId: leaseId) }
+        if release { await releaseLease(sessionId: sessionId, leaseId: leaseId, kind: kind) }
     }
 
     /// Revision-tracked session control command. Returns true on success.
@@ -225,7 +229,7 @@ final class T4SessionStore: ObservableObject {
     private func control(sessionId: String, command: String, args: [String: JSONValue]) async -> Bool {
         guard let client, connected, !hostId.isEmpty else { return false }
         var succeeded = false
-        await withLease(sessionId: sessionId) { leaseId in
+        await withLease(sessionId: sessionId, kind: .controller) { leaseId in
             guard let revision = revision(of: sessionId) else {
                 lastError = "session revision unknown"
                 return
@@ -293,7 +297,7 @@ final class T4SessionStore: ObservableObject {
     /// Interrupt a running turn (session.cancel).
     func cancel(sessionId: String) async {
         guard let client, connected, !hostId.isEmpty else { return }
-        await withLease(sessionId: sessionId) { leaseId in
+        await withLease(sessionId: sessionId, kind: .controller) { leaseId in
             do {
                 _ = try await client.sendCommand(CommandIntent(
                     hostId: hostId, command: "session.cancel",
@@ -433,7 +437,7 @@ final class T4SessionStore: ObservableObject {
                 deviceId: "ios-\(slug)",
                 deviceName: deviceName,
                 platform: "ios",
-                requestedCapabilities: ["sessions.read", "sessions.prompt", "sessions.manage", "catalog.read"]
+                requestedCapabilities: ["sessions.read", "sessions.prompt", "sessions.control", "sessions.manage", "catalog.read"]
             )
             let ok = try await c.pair(intent)
             // The paired connection is inert by design (the host rejects

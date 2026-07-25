@@ -1,4 +1,5 @@
-// Plan-mode end-to-end test: set mode, prompt, verify behavior.
+// Plan-mode end-to-end driver: controller-lease for session.mode.set,
+// prompt-lease for the prompt (the lease-kind split the host enforces).
 // Usage: node scripts/mode-t4-session.mjs <ws-url> <deviceId> <token> <sessionId> <mode> <message>
 import WebSocket from "ws";
 
@@ -8,7 +9,19 @@ const ws = new WebSocket(url);
 const pend = new Map();
 let n = 0;
 let hostId;
-const raw = (obj) => new Promise((res, rej) => { pend.set(obj.requestId, { res, rej }); ws.send(JSON.stringify(obj)); });
+const raw = (command, args = {}, sid, rev) => new Promise((res, rej) => {
+  const requestId = `r${++n}`;
+  pend.set(requestId, { res, rej });
+  ws.send(JSON.stringify({
+    v: "omp-app/1", type: "command", requestId, commandId: `c${requestId}-${Date.now()}`,
+    hostId, command, args, ...(sid ? { sessionId: sid } : {}), ...(rev ? { expectedRevision: rev } : {}),
+  }));
+});
+
+async function revisionOf(sid) {
+  const list = await raw("session.list");
+  return list.sessions.find((s) => s.sessionId === sid).revision;
+}
 
 ws.on("message", async (d) => {
   const f = JSON.parse(d.toString());
@@ -19,12 +32,15 @@ ws.on("message", async (d) => {
   if (f.type !== "welcome") return;
   hostId = f.hostId;
   try {
-    const list = (await raw({ v: "omp-app/1", type: "command", requestId: "r1", commandId: "c1" + Date.now(), hostId, command: "session.list", args: {} })).sessions;
-    const sess = list.find((s) => s.sessionId === sessionId);
-    const lease = (await raw({ v: "omp-app/1", type: "command", requestId: "r2", commandId: "c2" + Date.now(), hostId, command: "prompt.lease.acquire", args: { ownerId: "mode-test" }, sessionId, expectedRevision: sess.revision })).leaseId;
-    const modeResp = await raw({ v: "omp-app/1", type: "command", requestId: "r3", commandId: "c3" + Date.now(), hostId, command: "session.mode.set", args: { mode, leaseId: lease }, sessionId, expectedRevision: sess.revision });
+    let rev = await revisionOf(sessionId);
+    const cLease = (await raw("controller.lease.acquire", { ownerId: "mode-test" }, sessionId, rev)).leaseId;
+    rev = await revisionOf(sessionId);
+    const modeResp = await raw("session.mode.set", { mode, leaseId: cLease }, sessionId, rev);
     console.log("mode.set →", JSON.stringify(modeResp));
-    await raw({ v: "omp-app/1", type: "command", requestId: "r4", commandId: "c4" + Date.now(), hostId, command: "session.prompt", args: { message, leaseId: lease }, sessionId });
+
+    rev = await revisionOf(sessionId);
+    const pLease = (await raw("prompt.lease.acquire", { ownerId: "mode-test" }, sessionId, rev)).leaseId;
+    await raw("session.prompt", { message, leaseId: pLease }, sessionId);
     console.log(`prompt sent in ${mode} mode — waiting for turn`);
     setTimeout(() => process.exit(0), 45_000);
   } catch (e) { console.error("failed:", e.message); process.exit(1); }
