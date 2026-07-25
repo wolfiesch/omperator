@@ -55,7 +55,9 @@ async function run() {
   if (!session) throw new Error("session not in inventory");
   const lease = await command("prompt.lease.acquire", { ownerId: "prompt-script" }, sessionId, session.revision);
   console.log(`lease ${lease.leaseId}`);
-  await command("session.prompt", { message, leaseId: lease.leaseId }, sessionId, session.revision);
+  // Lease acquire bumps the session revision — re-read before mutating.
+  const fresh = (await command("session.list")).sessions.find((s) => s.sessionId === sessionId);
+  await command("session.prompt", { message, leaseId: lease.leaseId }, sessionId, fresh.revision);
   console.log("prompt accepted — streaming");
   idle(45_000);
 }

@@ -141,6 +141,9 @@ final class T4SessionStore: ObservableObject {
     /// Run a mutation under a freshly acquired prompt lease.
     private func withLease(sessionId: String, mutation: (String) async -> Void) async {
         guard let leaseId = await acquireLease(sessionId: sessionId) else { return }
+        // Lease acquire bumps the session revision; refresh so the mutation
+        // carries the current one (the host rejects stale revisions).
+        await refresh()
         await mutation(leaseId)
         await releaseLease(sessionId: sessionId, leaseId: leaseId)
     }
