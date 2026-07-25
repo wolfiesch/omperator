@@ -212,10 +212,10 @@ final class T4SessionStore: ObservableObject {
                 var args: [String: JSONValue] = ["message": .string(text), "leaseId": .string(leaseId)]
                 if !refs.isEmpty { args["images"] = .array(refs) }
                 do {
-                    let response = try await client.sendCommand(CommandIntent(
+                    _ = try await client.sendCommand(CommandIntent(
                         hostId: hostId, command: "session.prompt", args: args,
                         sessionId: sessionId, expectedRevision: revision(of: sessionId)))
-                    t4log.notice("prompt response: \(String(describing: response.result), privacy: .public)")
+                    t4log.notice("prompt accepted for \(sessionId, privacy: .public)")
                 } catch {
                     t4log.error("prompt failed: \(error)")
                     lastError = "\(error)"

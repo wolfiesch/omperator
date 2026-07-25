@@ -234,7 +234,18 @@ public actor HostClient {
         case .welcome(let w):
             resumeWelcome(with: .success(w))
         case .response(let r):
-            if let cont = pending.removeValue(forKey: r.requestId) { cont.resume(returning: r) }
+            if let cont = pending.removeValue(forKey: r.requestId) {
+                // A host rejection is an error, not a result: ok:false carries
+                // error.code/message and MUST surface to the caller (the TS
+                // client throws; swallowing it hid session_busy/stale_revision
+                // for weeks of UI behavior).
+                if r.ok {
+                    cont.resume(returning: r)
+                } else {
+                    cont.resume(throwing: HostClientError.commandFailed(
+                        code: r.error?.code ?? "unknown", message: r.error?.message ?? "command failed"))
+                }
+            }
         case .pong(let p):
             if p.nonce == heartbeatNonce {
                 heartbeatNonce = nil
@@ -417,6 +428,8 @@ public enum HostClientError: Error, Sendable {
     case timeout(String)
     case closed
     case invalidState(String)
+    /// Host answered ok:false — error.code/message from the response frame.
+    case commandFailed(code: String, message: String)
 
     /// `protocol` is reserved in Swift; this maps the readable name to the `protocol_` case.
     public static func `protocol`(_ s: String) -> HostClientError { .protocol_(s) }
