@@ -104,6 +104,31 @@ describeUnix("Unix socket ownership and resolution", () => {
     }
   });
 
+  it("reports the errno code for an unreachable socket without leaking its path", async () => {
+    const directory = fixtureDirectory();
+    const socketPath = join(directory, "absent.sock");
+    const transport = new UnixWebSocketTransport({
+      socketPath,
+      validatePath: false,
+      handshakeTimeoutMs: 2_000,
+    });
+    const messages: string[] = [];
+    transport.onError((error) => {
+      if (error instanceof Error) messages.push(error.message);
+    });
+    try {
+      // Nothing is listening, so `ws` fails the upgrade with an errno error.
+      await expect(transport.open()).rejects.toThrow();
+      // The code is the whole point: a bare "local transport error" left the
+      // desktop retrying with nothing to diagnose.
+      expect(messages).toContain("local transport error (ENOENT)");
+      for (const message of messages) expect(message).not.toContain(directory);
+    } finally {
+      transport.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("rejects absolute, traversal, malformed, and symlink-to-symlink targets", async () => {
     const directory = fixtureDirectory();
     const publicPath = join(directory, "appserver.sock");

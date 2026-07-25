@@ -7,6 +7,15 @@ import { localSocketPath } from "./socket-path.ts";
 
 const OMP_SOCKET_NAME = /^\.appserver-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.sock$/;
 
+/** Errno-style codes only: bounded, uppercase, and free of paths or user text. */
+const TRANSPORT_ERROR_CODE = /^[A-Z][A-Z0-9_]{1,31}$/u;
+
+function transportErrorCode(error: unknown): string | undefined {
+  if (error === null || typeof error !== "object" || !("code" in error)) return undefined;
+  const code = error.code;
+  return typeof code === "string" && TRANSPORT_ERROR_CODE.test(code) ? code : undefined;
+}
+
 function secureStat(path: string, kind: "directory" | "socket"): void {
   const stat = lstatSync(path);
   if (kind === "directory" && !stat.isDirectory()) throw new Error("runtime parent is not a directory");
@@ -145,7 +154,14 @@ export class UnixWebSocketTransport implements OmpTransport {
     });
     socket.on("error", (error) => {
       fail();
-      for (const listener of this.errors) listener(error instanceof Error ? new Error("local transport error") : new Error("local transport error"));
+      // The raw errno message embeds the socket path, so only the bounded code
+      // crosses this boundary. Dropping it entirely (the previous behavior)
+      // left a silent reconnect loop with nothing to diagnose.
+      const code = transportErrorCode(error);
+      const reported = new Error(
+        code === undefined ? "local transport error" : `local transport error (${code})`,
+      );
+      for (const listener of this.errors) listener(reported);
     });
     return promise;
   }
