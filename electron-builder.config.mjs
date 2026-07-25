@@ -14,7 +14,7 @@ export const linuxUpdatePublish = {
 
 /** @type {import("electron-builder").Configuration} */
 const config = {
-  appId: "com.lycaonsolutions.t4code",
+  appId: "net.t4code.app",
   productName: "T4 Code",
   executableName: "t4-code",
   electronVersion: "41.5.0",

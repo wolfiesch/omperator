@@ -322,16 +322,32 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "needs: [changes, t4-api-generation, core, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, maintainer, android-debug]",
-          "needs: [changes, core, tooling, android-debug]",
+          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]",
+          "needs: [changes, check, tooling, android-debug]",
         ),
     ],
     [
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
+          "needs: [changes, legacy-bridge-continuity, official-omp-gate0]",
+          "needs: [changes, legacy-bridge-continuity]",
+        ),
+    ],
+    [
+      ".github/workflows/ci.yml",
+      (text) =>
+        text.replace(
+          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]",
+          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, maintainer, android-debug]",
+        ),
+    ],
+    [
+      ".github/workflows/ci.yml",
+      (text) =>
+        text.replace(
+          "if: ${{ github.event_name == 'push' && needs.changes.outputs.continuity == 'true' }}",
           "if: ${{ github.event_name != 'pull_request' && needs.changes.outputs.continuity == 'true' }}",
-          "if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.continuity == 'true' }}",
         ),
     ],
     [
@@ -594,7 +610,18 @@ test("deploys release site source only after artifact publication", () => {
   const deployWorkflow = files.get(".github/workflows/deploy-site.yml");
 
   assert.ok(ciWorkflow.includes("android-debug:"));
-  assert.ok(ciWorkflow.includes("core:"));
+  assert.ok(ciWorkflow.includes("check:"));
+  assert.ok(ciWorkflow.includes("unit-tests:"));
+  assert.ok(ciWorkflow.includes("build-e2e:"));
+  assert.ok(ciWorkflow.includes("path: ~/.cache/ms-playwright"));
+  assert.ok(
+    ciWorkflow.includes(
+      "key: playwright-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}",
+    ),
+  );
+  assert.ok(ciWorkflow.includes("run: pnpm exec playwright install --with-deps chromium"));
+  assert.ok(ciWorkflow.includes("run: pnpm exec playwright install-deps chromium"));
+  assert.ok(ciWorkflow.includes("key: ${{ steps.playwright-cache.outputs.cache-primary-key }}"));
   assert.ok(ciWorkflow.includes("legacy-bridge-continuity:"));
   assert.ok(ciWorkflow.includes("current-bridge-continuity:"));
   assert.ok(ciWorkflow.includes("ref: ${{ github.event.pull_request.head.sha || github.sha }}"));
@@ -637,12 +664,19 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("if: ${{ always() }}"));
   assert.ok(
     ciWorkflow.includes(
-      "needs: [changes, t4-api-generation, core, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, maintainer, android-debug]",
+      "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]",
     ),
   );
+  assert.ok(ciWorkflow.includes("name: release-gates"));
+  assert.ok(ciWorkflow.includes("needs: [changes, legacy-bridge-continuity, official-omp-gate0]"));
   assert.ok(ciWorkflow.includes('test "$CHANGES_RESULT" = success'));
   assert.ok(ciWorkflow.includes('test "$T4_API_GENERATION_RESULT" = success'));
-  assert.ok(ciWorkflow.includes('test "$CORE_RESULT" = success'));
+  assert.ok(ciWorkflow.includes('test "$CHECK_RESULT" = success'));
+  assert.ok(ciWorkflow.includes('test "$UNIT_TESTS_RESULT" = success'));
+  assert.ok(ciWorkflow.includes('test "$BUILD_E2E_RESULT" = success'));
+  assert.ok(
+    ciWorkflow.includes("OFFICIAL_OMP_GATE0_RESULT: ${{ needs.official-omp-gate0.result }}"),
+  );
   assert.ok(
     ciWorkflow.includes("CURRENT_CONTINUITY_RESULT: ${{ needs.current-bridge-continuity.result }}"),
   );

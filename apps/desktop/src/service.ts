@@ -265,6 +265,26 @@ export async function discoverOmpExecutable(
   return undefined;
 }
 
+/**
+ * Accept an explicitly supplied official OMP runtime.
+ *
+ * Official authority deliberately skips `discoverOmpExecutable`, whose probe
+ * requires the fork-only `omp bridge --stdio` capability that official OMP does
+ * not implement. Running that probe here would reject every official runtime
+ * before the host ever starts, so the only checks left are the ones that still
+ * mean something for a supplied path: it must be absolute and executable.
+ *
+ * This does NOT verify the build. `t4-host` compares `--version` against the
+ * version it expects when it starts the authority, and that check stays where
+ * it is.
+ */
+export async function resolveOfficialOmpRuntime(executable: string): Promise<string> {
+  if (!executable.startsWith("/") || executable.includes("\0"))
+    throw new Error("the official OMP runtime must be an absolute path");
+  await access(executable, fsConstants.X_OK);
+  return executable;
+}
+
 export async function discoverT4HostExecutable(
   options: T4HostExecutableDiscoveryOptions = {},
 ): Promise<string | undefined> {

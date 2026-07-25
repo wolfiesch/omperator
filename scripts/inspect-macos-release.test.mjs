@@ -15,7 +15,7 @@ const identity = JSON.parse(
 
 const displayFixture = `
 Executable=/Applications/T4 Code.app/Contents/MacOS/t4-code
-Identifier=com.lycaonsolutions.t4code
+Identifier=net.t4code.app
 Format=app bundle with Mach-O thin (arm64)
 CodeDirectory v=20500 size=640 flags=0x10000(runtime) hashes=10+7 location=embedded
 Authority=Developer ID Application: Michael Schoenberger (WJLM3D3DK6)
@@ -52,7 +52,7 @@ test("library validation is relaxed for the bundled runtime but not the app", ()
 
 test("codesign display parser preserves identity, runtime, and timestamp", () => {
   assert.deepEqual(parseCodesignDisplay(displayFixture), {
-    identifier: "com.lycaonsolutions.t4code",
+    identifier: "net.t4code.app",
     teamIdentifier: "WJLM3D3DK6",
     timestamp: "Jul 18, 2026 at 8:30:00 PM",
     authorities: [

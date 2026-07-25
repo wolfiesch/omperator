@@ -24,13 +24,13 @@ def hasReleaseSigning = [
 ].every { value -> value != null && !value.isBlank() }
 
 android {
-    namespace = "com.lycaonsolutions.t4code"
+    namespace = "net.t4code.app"
     compileSdk = rootProject.ext.compileSdkVersion
     buildFeatures {
         buildConfig = true
     }
     defaultConfig {
-        applicationId "com.lycaonsolutions.t4code"
+        applicationId "net.t4code.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode mobileVersionCode

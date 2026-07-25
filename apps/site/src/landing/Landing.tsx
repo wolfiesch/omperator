@@ -272,7 +272,7 @@ export function Landing() {
 
       <footer className="site-footer">
         <div className="container footer-inner">
-          <span>MIT License · © 2026 Lycaon Solutions</span>
+          <span>MIT License · © 2026 Wolfgang Schoenberger</span>
           <nav className="footer-links" aria-label="Footer">
             <a href="/docs/">Docs</a>
             <a href={REPO_URL} rel="noopener">

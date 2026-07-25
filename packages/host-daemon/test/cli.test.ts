@@ -221,6 +221,7 @@ describe("T4 host daemon CLI", () => {
       ompBuild: OFFICIAL_OMP_BUILD,
       rpcDialect: "official-17.0.9",
       claimLocklessSessions: true,
+      observerIndependentTerminalOperations: true,
       sessionOwnershipPath: expect.stringContaining("/owned-sessions.json"),
     });
     const operations = captured?.operationsAuthority as {

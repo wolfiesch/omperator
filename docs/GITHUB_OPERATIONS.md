@@ -77,10 +77,17 @@ set passes locally, and keep major upgrades in individual pull requests.
 
 ## CI and merges
 
-The `verify` job is the stable required check. It aggregates core, OMP
-continuity, official OMP platform, cluster, tooling, and Android lanes while
-allowing path-irrelevant lanes to skip. Do not require every matrix job directly;
-that would make path-based CI brittle.
+The `verify` job is the stable required check. It aggregates the check,
+unit-test, build and end-to-end, current OMP continuity, cluster, tooling,
+maintainer, and Android lanes while allowing path-irrelevant lanes to skip. Do
+not require every matrix job directly; that would make path-based CI brittle.
+
+The deferred release gates, legacy bridge continuity and the three-platform
+official OMP matrix, do not run on pull requests and are aggregated by
+`release-gates` instead, so a queued macOS or arm64 runner never delays the
+required check. Both aggregates still set the workflow run conclusion that the
+release authority check requires, so a deferred gate that fails on `main`
+blocks publication.
 
 Enable automatic head-branch updates and delete merged branches. Prefer squash
 merges for ordinary feature work; use a merge commit only when preserving a
@@ -105,6 +112,6 @@ also needs the operator proof in `docs/RELEASE_GATE.md`, whose installed-app
 step cannot run on a machine that already has T4 installed until a test build
 can adopt a service label of its own.
 
-Application identifiers and artifact names remain `com.lycaonsolutions.t4code`
+Application identifiers and artifact names remain `net.t4code.app`
 and `T4-Code-*`. Renaming them is a separate product decision and is not a
 prerequisite for publishing from this repository.

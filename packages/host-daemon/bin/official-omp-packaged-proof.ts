@@ -10,6 +10,25 @@ import { RawUdsWebSocket } from "../../host-service/test/raw-uds-client.ts";
 
 const TIMEOUT_MS = 15_000;
 
+function stringField(value: unknown, key: string): string | undefined {
+	if (!value || typeof value !== "object" || !(key in value)) return undefined;
+	const field = (value as Record<string, unknown>)[key];
+	return typeof field === "string" ? field : undefined;
+}
+
+function numberField(value: unknown, key: string): number | undefined {
+	if (!value || typeof value !== "object" || !(key in value)) return undefined;
+	const field = (value as Record<string, unknown>)[key];
+	return typeof field === "number" ? field : undefined;
+}
+
+/** The host only merges terminal commands into the catalog when the feature and all three capabilities are live. */
+function catalogAdvertises(result: unknown, command: string): boolean {
+	if (!result || typeof result !== "object" || !("items" in result)) return false;
+	const items = (result as { items: unknown }).items;
+	return Array.isArray(items) && items.some(item => stringField(item, "name") === command);
+}
+
 async function next(client: RawUdsWebSocket): Promise<ServerFrame> {
 	return Promise.race([
 		client.nextServer(),
@@ -19,10 +38,33 @@ async function next(client: RawUdsWebSocket): Promise<ServerFrame> {
 	]);
 }
 
+/**
+ * Resolves a command, approving any confirmation challenge on the way.
+ * `term.open` is declared `confirmation: "challenge"`, so a client that only
+ * waits for a response frame hangs forever. A direct authority call cannot
+ * surface that: it is purely a wire contract.
+ */
 async function responseFor(client: RawUdsWebSocket, requestId: string): Promise<ResultFrame> {
 	for (;;) {
 		const frame = await next(client);
 		if (frame.type === "response" && frame.requestId === requestId) return frame;
+		if (frame.type === "confirmation") {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "confirm",
+				requestId,
+				confirmationId: frame.confirmationId,
+				commandId: frame.commandId,
+				hostId: frame.hostId,
+				...(frame.sessionId === undefined ? {} : { sessionId: frame.sessionId }),
+				decision: "approve",
+			});
+			continue;
+		}
+		// A rejected command answers with an error frame, not a response. Without
+		// this the loop would spin to a bare timeout and hide the reason.
+		if (frame.type === "error")
+			throw new Error(`host rejected ${requestId}: ${stringField(frame, "code")} ${stringField(frame, "message")}`);
 	}
 }
 
@@ -54,6 +96,7 @@ async function main(): Promise<void> {
 	const model = startDeterministicModel();
 	let child: Bun.Subprocess | undefined;
 	let client: RawUdsWebSocket | undefined;
+	let hostStderr: Promise<string> | undefined;
 	try {
 		await Promise.all([
 			mkdir(project, { recursive: true }),
@@ -105,6 +148,7 @@ async function main(): Promise<void> {
 		);
 		const stdout = new Response(child.stdout).text();
 		const stderr = new Response(child.stderr).text();
+		hostStderr = stderr;
 		await waitForSocket(socketPath, child);
 		client = await RawUdsWebSocket.connect(socketPath);
 		client.sendJson({
@@ -112,8 +156,10 @@ async function main(): Promise<void> {
 			type: "hello",
 			protocol: { min: "omp-app/1", max: "omp-app/1" },
 			client: { name: "official-packaged-proof", version: "1", build: "proof", platform: process.platform },
-			requestedFeatures: [],
-			capabilities: { client: ["sessions.read", "sessions.prompt", "sessions.manage", "catalog.read"] },
+			requestedFeatures: ["terminal.io"],
+			capabilities: {
+				client: ["sessions.read", "sessions.prompt", "sessions.manage", "catalog.read", "term.open", "term.input", "term.resize"],
+			},
 			savedCursors: [],
 		});
 		const welcome = await next(client);
@@ -167,6 +213,61 @@ async function main(): Promise<void> {
 		const transcript = await readFile(session.path, "utf8");
 		if (!transcript.includes("Packaged host prompt") || !transcript.includes("Gate 0 response 1"))
 			throw new Error("packaged host turn was not durable in official OMP JSONL");
+
+		// Terminal end-to-end. A direct module smoke cannot catch CLI wiring,
+		// dispatcher capability gating, terminal-ownership claiming, or catalog
+		// advertisement, so drive term.open over the real socket instead.
+		// catalog.get is host-scoped: the wire rejects a sessionId on it.
+		command += 1;
+		client.sendJson({
+			v: "omp-app/1",
+			type: "command",
+			requestId: "catalog",
+			commandId: `packaged-${command}`,
+			hostId: welcome.hostId,
+			command: "catalog.get",
+			args: {},
+		});
+		const catalog = await responseFor(client, "catalog");
+		if (!catalog.ok) throw new Error(`packaged catalog.get failed: ${catalog.error.message}`);
+		if (!catalogAdvertises(catalog.result, "term.open"))
+			throw new Error("packaged host did not advertise term.open in its catalog");
+
+		send("term", "term.open", {});
+		const openedTerminal = await responseFor(client, "term");
+		if (!openedTerminal.ok) throw new Error(`packaged term.open failed: ${openedTerminal.error.message}`);
+		const openedId = stringField(openedTerminal.result, "terminalId");
+		if (openedId === undefined) throw new Error("packaged term.open returned no terminalId");
+		const terminalFrame = (type: string, extra: Record<string, unknown>): void =>
+			client!.sendJson({
+				v: "omp-app/1",
+				type,
+				hostId: welcome.hostId,
+				sessionId: session.sessionId,
+				terminalId: openedId,
+				...extra,
+			});
+
+		terminalFrame("terminal.input", { data: "echo PACKAGED_TERMINAL_OK\n" });
+		let terminalOutput = "";
+		const seen: string[] = [];
+		const terminalDeadline = Date.now() + TIMEOUT_MS;
+		while (Date.now() < terminalDeadline && !terminalOutput.includes("PACKAGED_TERMINAL_OK")) {
+			const frame = await next(client);
+			seen.push(frame.type);
+			if (frame.type === "terminal.output") terminalOutput += stringField(frame, "data") ?? "";
+		}
+		if (!terminalOutput.includes("PACKAGED_TERMINAL_OK"))
+			throw new Error(`packaged terminal did not stream output; frames seen: ${seen.join(",") || "none"}`);
+
+		terminalFrame("terminal.input", { data: "exit 4\n" });
+		let terminalExit: number | undefined;
+		const exitDeadline = Date.now() + TIMEOUT_MS;
+		while (Date.now() < exitDeadline && terminalExit === undefined) {
+			const frame = await next(client);
+			if (frame.type === "terminal.exit") terminalExit = numberField(frame, "exitCode");
+		}
+		if (terminalExit !== 4) throw new Error(`packaged terminal exit was ${String(terminalExit)}, expected 4`);
 		const result = {
 			schemaVersion: 1,
 			runtime: {
@@ -177,7 +278,14 @@ async function main(): Promise<void> {
 			},
 			platform: { os: process.platform, arch: process.arch },
 			packagedHost: { binary: "t4-host", authority: "official", exclusiveSessionsRoot: true },
-			scenarios: { discovery: true, attach: true, prompt: true, durableJsonl: true, t4WireProjection: true },
+			scenarios: {
+				discovery: true,
+				attach: true,
+				prompt: true,
+				durableJsonl: true,
+				t4WireProjection: true,
+				terminal: true,
+			},
 			passed: true,
 		};
 		const evidenceRoot = join(repoRoot, "artifacts", "official-omp-packaged-host");
@@ -190,6 +298,15 @@ async function main(): Promise<void> {
 		if ((await child.exited) !== 0) throw new Error(`packaged T4 host failed: ${(await stderr).trim().slice(-4_096)}`);
 		child = undefined;
 		await stdout;
+	} catch (error) {
+		// Without the host's own stderr a stalled scenario looks like a bare
+		// client timeout and says nothing about why the host went quiet.
+		if (child) {
+			child.kill("SIGKILL");
+			await child.exited.catch(() => undefined);
+			console.error(`[host stderr]\n${((await hostStderr) ?? "").trim().slice(-4_096)}`);
+		}
+		throw error;
 	} finally {
 		client?.destroy();
 		if (child) {

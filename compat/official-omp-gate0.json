@@ -40,7 +40,7 @@
   },
   "packagedHostProof": {
     "requiredPlatforms": ["darwin-arm64", "linux-x64", "linux-arm64"],
-    "requiredScenarios": ["discovery", "attach", "prompt", "durable-jsonl", "t4-wire-projection"],
+    "requiredScenarios": ["discovery", "attach", "prompt", "durable-jsonl", "t4-wire-projection", "terminal"],
     "authorityMode": "official-exclusive-profile",
     "releasedDefault": "lycaon-authority-bridge"
   },
