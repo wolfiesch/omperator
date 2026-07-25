@@ -1,13 +1,13 @@
-name: Enclave
+name: T4Code
 options:
-  bundleIdPrefix: xyz.epsilver
+  bundleIdPrefix: sh.t4code
   deploymentTarget:
     iOS: "26.0"
 packages:
   HostWire:
     path: HostWire
 targets:
-  Enclave:
+  T4Code:
     type: application
     platform: iOS
     sources:
@@ -15,33 +15,15 @@ targets:
       - Shared
       - Resources
     dependencies:
-      - target: EnclaveWidgets
-        embed: true
       - package: HostWire
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: xyz.epsilver.enclave
-        MARKETING_VERSION: "1.0"
+        PRODUCT_BUNDLE_IDENTIFIER: sh.t4code.ios
+        MARKETING_VERSION: "0.1"
         CURRENT_PROJECT_VERSION: "1"
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Enclave-Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        SWIFT_VERSION: "5.0"
-        TARGETED_DEVICE_FAMILY: "1"
-        CODE_SIGNING_ALLOWED: YES
-  EnclaveWidgets:
-    type: app-extension
-    platform: iOS
-    sources:
-      - WidgetSources
-      - Shared
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: xyz.epsilver.enclave.widgets
-        MARKETING_VERSION: "1.0"
-        CURRENT_PROJECT_VERSION: "1"
-        GENERATE_INFOPLIST_FILE: NO
-        INFOPLIST_FILE: EnclaveWidgets-Info.plist
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGNING_ALLOWED: YES

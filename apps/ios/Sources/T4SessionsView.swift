@@ -1,13 +1,14 @@
 //  T4SessionsView.swift
-//  The authoritative T4 Code session rail — sessions grouped by working folder
-//  (project), with status, model, and context-usage. Replaces Enclave's
-//  collab-guest SessionsView. Backed by T4SessionStore (host-wire inventory).
+//  The authoritative T4 Code session rail — sessions grouped by project, with
+//  status, model, context meter, and pending tags. Tapping a row selects it for
+//  the detail destination. Backed by T4SessionStore (host-wire inventory).
 
 import SwiftUI
 import HostWire
 
 struct T4SessionsView: View {
     @ObservedObject var store: T4SessionStore
+    var onSelect: (SessionRef) -> Void = { _ in }
     @EnvironmentObject var theme: ThemeStore
     private var t: Theme { theme.t }
 
@@ -25,9 +26,12 @@ struct T4SessionsView: View {
             ForEach(store.groups) { group in
                 Section {
                     ForEach(group.sessions, id: \.sessionId) { session in
-                        T4SessionRow(session: session, theme: t)
-                            .listRowBackground(t.bg2)
-                            .listRowSeparatorTint(t.lineFaint)
+                        Button { onSelect(session) } label: {
+                            T4SessionRow(session: session, theme: t)
+                        }
+                        .buttonStyle(.plain)
+                        .listRowBackground(t.bg2)
+                        .listRowSeparatorTint(t.lineFaint)
                     }
                 } header: {
                     HStack(spacing: 6) {
@@ -53,7 +57,7 @@ struct T4SessionsView: View {
     }
 }
 
-private struct T4SessionRow: View {
+struct T4SessionRow: View {
     let session: SessionRef
     let theme: Theme
 
@@ -90,7 +94,7 @@ private struct T4SessionRow: View {
     }
 }
 
-private struct StatusPill: View {
+struct StatusPill: View {
     let status: String
     let theme: Theme
     var body: some View {
@@ -103,7 +107,7 @@ private struct StatusPill: View {
             .padding(.vertical, 2)
             .background(color.opacity(0.14), in: Capsule())
     }
-    private static func style(_ status: String) -> (String, Color) {
+    static func style(_ status: String) -> (String, Color) {
         switch status {
         case "active": return ("active", Color.green)
         case "idle": return ("idle", Color.yellow)
@@ -113,7 +117,7 @@ private struct StatusPill: View {
     }
 }
 
-private struct ContextMeter: View {
+struct ContextMeter: View {
     let used: Int
     let limit: Int
     let theme: Theme
@@ -132,7 +136,7 @@ private struct ContextMeter: View {
     }
 }
 
-private struct Tag: View {
+struct Tag: View {
     let text: String
     let color: Color
     let theme: Theme

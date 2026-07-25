@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>Enclave</string>
+	<string>T4 Code</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -23,14 +23,8 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSCameraUsageDescription</key>
-	<string>Scan the QR code from omp /collab to join a session.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Dictate messages to the agent instead of typing.</string>
-	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Transcribe your dictation into the message composer.</string>
+	<string>Scan a T4 Code pairing code to connect a host.</string>
 	<key>LSRequiresIPhoneOS</key>
-	<true/>
-	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>UILaunchScreen</key>
 	<dict/>

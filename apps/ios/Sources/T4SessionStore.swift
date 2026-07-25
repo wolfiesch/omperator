@@ -21,6 +21,7 @@ final class T4SessionStore: ObservableObject {
     @Published private(set) var connecting = false
     @Published private(set) var connected = false
     @Published var lastError: String?
+    @Published var selectedSession: SessionRef?
 
     private var client: HostClient?
     private var hostId: String = ""
