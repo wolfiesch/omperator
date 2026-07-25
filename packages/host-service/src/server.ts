@@ -385,7 +385,17 @@ function argumentError(command: CommandFrame): string | undefined {
 		}
 		return "attach accepts only an optional cursor";
 	}
-	if (command.command === "session.fork" && keys.length > 0) return "fork accepts no arguments";
+	// A copy may need a working directory of its own when the source's recorded
+	// project directory no longer exists.
+	if (command.command === "session.fork") {
+		if (keys.some(key => key !== "cwd")) return "fork arguments are invalid";
+		if (args.cwd !== undefined) {
+			if (typeof args.cwd !== "string" || args.cwd.length === 0 || utf8ByteLength(args.cwd) > 4096)
+				return "fork cwd must be a bounded non-empty UTF-8 string";
+			// eslint-disable-next-line no-control-regex -- reject control characters in a filesystem path.
+			if (/[\u0000-\u001F\u007F]/.test(args.cwd)) return "fork cwd must not contain control characters";
+		}
+	}
 	if (command.command === "session.create") {
 		if (keys.some(key => !["projectId", "title", "runtimeId", "workspaceInstanceId"].includes(key)))
 			return "create arguments are invalid";
@@ -606,6 +616,23 @@ class SessionStartError extends Error {
 	constructor(reason: string) {
 		super(`session runtime did not start: ${reason}`);
 		this.name = "SessionStartError";
+	}
+}
+
+class ForkWorkingDirectoryError extends Error {
+	readonly code: string;
+	constructor(code: string, message: string) {
+		super(message);
+		this.name = "ForkWorkingDirectoryError";
+		this.code = code;
+	}
+}
+
+async function directoryExists(path: string): Promise<boolean> {
+	try {
+		return (await fsStat(path)).isDirectory();
+	} catch {
+		return false;
 	}
 }
 
@@ -2242,6 +2269,7 @@ export class LocalAppserver implements AppserverHandle {
 				error instanceof ImageUploadError || error instanceof TranscriptImageError ? error : undefined;
 			const externalRuntimeError = error instanceof ExternalRuntimeCommandError ? error : undefined;
 			const sessionStartError = error instanceof SessionStartError ? error : undefined;
+			const forkCwdError = error instanceof ForkWorkingDirectoryError ? error : undefined;
 			const transcriptSearchError = error instanceof TranscriptSearchError ? error : undefined;
 			const transcriptPageError = error instanceof TranscriptPageError ? error : undefined;
 			const officialOmpOperationError = error instanceof OfficialOmpOperationError ? error : undefined;
@@ -2257,7 +2285,9 @@ export class LocalAppserver implements AppserverHandle {
 					"session.list",
 					"host.list",
 				].includes(command.command);
-			const code = sessionStartError
+			const code = forkCwdError
+				? forkCwdError.code
+				: sessionStartError
 				? sessionStartError.code
 				: officialOmpOperationError
 				? officialOmpOperationError.code
@@ -2295,7 +2325,8 @@ export class LocalAppserver implements AppserverHandle {
 									: transcriptSearchError.code === "transcript_cursor_stale"
 										? "transcript search cursor is stale"
 										: "transcript search cursor is invalid"
-								: (sessionStartError?.message ??
+								: (forkCwdError?.message ??
+									sessionStartError?.message ??
 									externalRuntimeError?.message ??
 									imageError?.message ??
 									(operation ? "operation failed" : "command failed")),
@@ -2309,6 +2340,7 @@ export class LocalAppserver implements AppserverHandle {
 						: {}),
 				}),
 				unknown:
+					!forkCwdError &&
 					!sessionStartError &&
 					!officialOmpOperationError &&
 					!operation &&
@@ -2868,9 +2900,9 @@ export class LocalAppserver implements AppserverHandle {
 	 * The source file is only read: its writer, if any, keeps ownership and never
 	 * sees a second writer.
 	 */
-	private async forkSession(source: SessionRecord): Promise<SessionRecord> {
+	private async forkSession(source: SessionRecord, cwdOverride?: string): Promise<SessionRecord> {
 		if (!this.#authority?.fork) throw new Error("session forking is unavailable");
-		const forked = await this.#authority.fork(source);
+		const forked = await this.#authority.fork(source, cwdOverride);
 		const cwd = forked.cwd;
 		const record: SessionRecord = {
 			sessionId: forked.sessionId,
@@ -2901,10 +2933,35 @@ export class LocalAppserver implements AppserverHandle {
 		this.#createdPending.set(record.sessionId, { record, refreshesRemaining: 1 });
 		return record;
 	}
+	/**
+	 * Where the copy will live. Historic transcripts routinely name a project
+	 * directory that has since been deleted, and a copy needs somewhere real to
+	 * run. The caller may name an existing directory; the authority writes it
+	 * into the copy's own header, so the choice survives rediscovery. Nothing is
+	 * substituted silently: without a choice, a vanished source directory is
+	 * reported as such so the caller can ask and retry.
+	 */
+	private async resolveForkWorkingDirectory(source: SessionRecord, requested: unknown): Promise<string | undefined> {
+		if (requested !== undefined) {
+			if (typeof requested !== "string" || !requested.startsWith("/") || requested.includes("\0"))
+				throw new ForkWorkingDirectoryError(
+					"session_cwd_invalid",
+					"the chosen working directory must be an absolute path",
+				);
+			if (!(await directoryExists(requested)))
+				throw new ForkWorkingDirectoryError("session_cwd_invalid", "the chosen working directory does not exist");
+			return requested;
+		}
+		if (await directoryExists(source.cwd)) return undefined;
+		throw new ForkWorkingDirectoryError(
+			"session_cwd_missing",
+			"this session's project directory no longer exists; choose a working directory for the copy",
+		);
+	}
 	private async handleFork(command: CommandFrame): Promise<CommandOutcome> {
 		const source = this.#records.get(command.sessionId!);
 		if (!source) throw new Error("source session is unavailable");
-		const record = await this.forkSession(source);
+		const record = await this.forkSession(source, await this.resolveForkWorkingDirectory(source, command.args?.cwd));
 		const projection = this.#projections.get(record.sessionId)!;
 		try {
 			await this.ensureSupervisor(record.sessionId);

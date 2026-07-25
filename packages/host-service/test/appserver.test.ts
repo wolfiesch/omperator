@@ -1348,6 +1348,135 @@ describe("appserver lifecycle", () => {
 			await rm(scenario.root, { recursive: true, force: true });
 		}
 	});
+	// A historic transcript often names a project directory that has since been
+	// deleted. The copy needs somewhere real to run, so the caller chooses; the
+	// host never substitutes a directory on its own.
+	async function forkIntoDirectory(sourceCwd: string, requestedCwd: string | undefined) {
+		const root = await mkdtemp(join(tmpdir(), "t4-fork-cwd-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const sessionOwnershipPath = join(root, "profile", "owned-sessions.json");
+		const sourcePath = join(root, "source.jsonl");
+		const forkPath = join(root, "copy.jsonl");
+		const sourceId = sessionId("cwd-source");
+		const forkId = sessionId("cwd-copy");
+		const timestamp = "2026-07-25T00:00:00.000Z";
+		await writeFile(
+			sourcePath,
+			`${JSON.stringify({ type: "session", version: 3, id: sourceId, cwd: sourceCwd, timestamp, title: "Source" })}\n`,
+		);
+		const discovery = new FileSessionDiscovery(root, realFs, host, true);
+		let forkedInto: string | undefined;
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "fork-cwd-test",
+			socketPath,
+			sessionOwnershipPath,
+			discovery,
+			sessionAuthority: {
+				create: async () => {
+					throw new Error("create is not used by this test");
+				},
+				list: () => discovery.list(),
+				archive: async () => {},
+				restore: async () => {},
+				delete: async (session: SessionRecord) => {
+					await rm(session.path, { force: true });
+				},
+				fork: async (_source: SessionRecord, cwd?: string) => {
+					forkedInto = cwd;
+					const effective = cwd ?? sourceCwd;
+					await writeFile(
+						forkPath,
+						`${JSON.stringify({ type: "session", version: 3, id: forkId, cwd: effective, timestamp, title: "Source" })}\n`,
+					);
+					return { sessionId: forkId, path: forkPath, cwd: effective, title: "Source", entries: [] };
+				},
+			},
+			// Any spawn fails; these tests only care about the directory decision.
+			rpcChildInvocation: { executable: "/bin/sh", prefixArgv: ["-c", "exit 1"] },
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		client.sendJson({
+			v: "omp-app/1",
+			type: "hello",
+			protocol: { min: "omp-app/1", max: "omp-app/1" },
+			client: { name: "fork-cwd", version: "1", build: "test", platform: "linux" },
+			requestedFeatures: ["session.observer", "session.unverified", "session.fork"],
+			capabilities: { client: ["sessions.manage", "sessions.read"] },
+			savedCursors: [],
+		});
+		while ((await client.nextServer()).type !== "sessions") {
+			/* drain welcome */
+		}
+		client.sendJson({
+			v: "omp-app/1",
+			type: "command",
+			requestId: "fork-cwd",
+			commandId: "fork-cwd-command",
+			hostId: host,
+			sessionId: sourceId,
+			command: "session.fork",
+			args: requestedCwd === undefined ? {} : { cwd: requestedCwd },
+		});
+		let response: Record<string, unknown> | undefined;
+		for (;;) {
+			const frame = await client.nextServer();
+			if (frame.type === "response" && frame.requestId === "fork-cwd") {
+				response = frame as unknown as Record<string, unknown>;
+				break;
+			}
+		}
+		return { appserver, client, root, response, forkedInto: () => forkedInto };
+	}
+
+	test("asks for a working directory when the source project directory is gone", async () => {
+		const scenario = await forkIntoDirectory(join(tmpdir(), "t4-deleted-project-fixture"), undefined);
+		try {
+			const error = scenario.response?.error as { code?: string; message?: string } | undefined;
+			expect(scenario.response?.ok).toBe(false);
+			// Actionable, so the caller can prompt and retry, not a raw ENOENT.
+			expect(error?.code).toBe("session_cwd_missing");
+			expect(error?.message).toContain("choose a working directory");
+			// Nothing was copied: the decision comes before any write.
+			expect(scenario.forkedInto()).toBeUndefined();
+		} finally {
+			scenario.client.destroy();
+			await scenario.client.closed();
+			await scenario.appserver.stop();
+			await rm(scenario.root, { recursive: true, force: true });
+		}
+	});
+
+	test("forks a session with a gone directory into the one the caller chose", async () => {
+		const chosen = await mkdtemp(join(tmpdir(), "t4-chosen-project-"));
+		const scenario = await forkIntoDirectory(join(tmpdir(), "t4-deleted-project-fixture"), chosen);
+		try {
+			// The authority receives the choice, so it lands in the copy's header
+			// rather than living only in this process's memory.
+			expect(scenario.forkedInto()).toBe(chosen);
+		} finally {
+			scenario.client.destroy();
+			await scenario.client.closed();
+			await scenario.appserver.stop();
+			await rm(scenario.root, { recursive: true, force: true });
+			await rm(chosen, { recursive: true, force: true });
+		}
+	});
+
+	test("refuses a chosen working directory that does not exist", async () => {
+		const scenario = await forkIntoDirectory(tmpdir(), join(tmpdir(), "t4-absent-choice-fixture"));
+		try {
+			const error = scenario.response?.error as { code?: string; message?: string } | undefined;
+			expect(error?.code).toBe("session_cwd_invalid");
+			expect(scenario.forkedInto()).toBeUndefined();
+		} finally {
+			scenario.client.destroy();
+			await scenario.client.closed();
+			await scenario.appserver.stop();
+			await rm(scenario.root, { recursive: true, force: true });
+		}
+	});
 	test("persists ownership after safely promoting an external session", async () => {
 		const root = await mkdtemp(join(tmpdir(), "t4-promoted-session-restart-"));
 		const socketPath = join(root, "run", "appserver.sock");
