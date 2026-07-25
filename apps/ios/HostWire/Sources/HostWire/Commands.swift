@@ -53,6 +53,7 @@ public enum Commands {
         "session.image.read":     .init(capability: .sessionsRead,   scope: .session, revision: .none, confirmation: .none),
         "artifact.read":          .init(capability: .sessionsRead,   scope: .session, revision: .none, confirmation: .none),
         "session.state.get":      .init(capability: .sessionsRead,   scope: .session, revision: .none, confirmation: .none),
+        "transcript.page":     .init(capability: .sessionsRead,   scope: .session, revision: .none,     confirmation: .none),
         "session.rename":      .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .none),
         "session.retry":       .init(capability: .sessionsControl, scope: .session, revision: .required, confirmation: .none),
         "session.compact":     .init(capability: .sessionsControl, scope: .session, revision: .required, confirmation: .none),
@@ -64,7 +65,6 @@ public enum Commands {
         "session.delete":      .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .none),
         "session.model.set":    .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .none),
         "session.thinking.set": .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .none),
-        "session.fast.set":     .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .none),
         "session.ui.respond":   .init(capability: .sessionsPrompt, scope: .session, revision: .optional, confirmation: .none),
         "session.cancel":       .init(capability: .sessionsControl, scope: .session, revision: .optional, confirmation: .challenge),
         "session.close":        .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .challenge),
@@ -75,6 +75,8 @@ public enum Commands {
         "controller.lease.renew":    .init(capability: .sessionsControl, scope: .session, revision: .required, confirmation: .none),
         "controller.lease.release":  .init(capability: .sessionsControl, scope: .session, revision: .required, confirmation: .none),
         "catalog.get":          .init(capability: .catalogRead,   scope: .host,    revision: .none,     confirmation: .none),
+        "files.list":           .init(capability: .filesList,     scope: .session, revision: .optional, confirmation: .none),
+        "files.read":           .init(capability: .filesRead,     scope: .session, revision: .optional, confirmation: .none),
     ]
 
     public static func descriptor(for command: String) -> CommandDescriptor? {
@@ -230,4 +232,83 @@ extension ResultFrame {
         let data = try JSONEncoder().encode(result)
         return try JSONDecoder().decode(SessionListResult.self, from: data)
     }
+
+    /// Decode a `session.create` / `session.fork` result body: `{session}`.
+    /// Used by the store's `createSession` to surface the freshly created
+    /// `SessionRef` (e.g. to select it in the rail) without waiting for the
+    /// next `session.list` refresh.
+    public func sessionCreateResult() throws -> SessionRef {
+        guard ok, let result else {
+            throw T4WireError.invalidFrame(path: "result", reason: "response has no result")
+        }
+        let data = try JSONEncoder().encode(result)
+        return try JSONDecoder().decode(SessionCreateResult.self, from: data).session
+    }
+
+    /// Decode a `transcript.page` result body: `{entries, nextCursor?,
+    /// hasMore, generation}`. Used by the store's `loadEarlier` to prepend
+    /// older transcript history.
+    public func transcriptPageResult() throws -> TranscriptPageResult {
+        guard ok, let result else {
+            throw T4WireError.invalidFrame(path: "result", reason: "response has no result")
+        }
+        let data = try JSONEncoder().encode(result)
+        return try JSONDecoder().decode(TranscriptPageResult.self, from: data)
+    }
+
+    /// Decode a `files.list` result body: `{ entries: [FileListEntry], ... }`.
+    /// The host may also push a `files.list` additive frame for the same
+    /// listing; this accessor reads the command result body only.
+    public func filesListResult() throws -> [FileListEntry] {
+        guard ok, let result, case .object(let o) = result, let entries = o["entries"]
+        else {
+            throw T4WireError.invalidFrame(path: "result", reason: "response has no files list result")
+        }
+        let data = try JSONEncoder().encode(entries)
+        let raw = try JSONDecoder().decode([JSONValue].self, from: data)
+        return try raw.enumerated().map { (i, value) in
+            try FileListEntry(from: value, at: "entries[\(i)]")
+        }
+    }
+
+    /// Decode a `files.read` result body: `{ content, encoding?, revision? }`.
+    /// `content` is bounded UTF-8 text, or standard base64 when
+    /// `encoding == "base64"`. Returns the (already-validated) content string
+    /// plus the optional revision pin.
+    public func filesReadResult() throws -> (content: String, revision: Revision?) {
+        guard ok, let result, case .object(let o) = result
+        else {
+            throw T4WireError.invalidFrame(path: "result", reason: "response has no files read result")
+        }
+        let data = try JSONEncoder().encode(result)
+        let body = try JSONDecoder().decode(FilesReadResultBody.self, from: data)
+        return (body.content, body.revision)
+    }
+}
+
+/// Result-body shape for `files.read` (command.ts `files.read` result decoder):
+/// `{ content, encoding?, revision? }`. Reuses the Files family's bounded
+/// content validation via `FilesReadFrame`'s decoder by routing through the
+/// additive frame shape — but the result body carries no `v`/`type`/`hostId`/
+/// `sessionId`, so decode the bounded fields directly here.
+private struct FilesReadResultBody: Decodable {
+    let content: String
+    let encoding: String?
+    let revision: Revision?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let enc = try c.decodeIfPresent(String.self, forKey: .encoding)
+        if let e = enc {
+            guard e == "utf8" || e == "base64" else {
+                throw T4WireError.invalidFrame(path: "encoding", reason: "expected utf8 or base64")
+            }
+            encoding = e
+        } else { encoding = nil }
+        let raw = try c.decode(String.self, forKey: .content)
+        content = try Files.fileContent(raw, encoding: encoding, path: "content")
+        revision = try c.decodeIfPresent(String.self, forKey: .revision)
+    }
+
+    private enum CodingKeys: String, CodingKey { case content, encoding, revision }
 }

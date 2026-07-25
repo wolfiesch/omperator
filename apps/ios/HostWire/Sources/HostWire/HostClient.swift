@@ -25,7 +25,7 @@ public actor HostClient {
         public init(
             identity: ClientIdentity,
             authentication: DeviceAuthentication? = nil,
-            requestedFeatures: [String] = ["resume", "prompt.lease", "controller.lease", "prompt.images", "transcript.page", "session.delta"],
+            requestedFeatures: [String] = ["resume", "prompt.lease", "controller.lease", "prompt.images", "transcript.page", "session.delta", "files.list"],
             capabilities: Capabilities? = nil
         ) {
             self.identity = identity
