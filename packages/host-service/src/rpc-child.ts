@@ -18,6 +18,7 @@ const RPC_CHUNK_PAYLOAD_BYTES = 256 * 1024;
 const STDERR_BYTES = 64 * 1024;
 const FAILURE_STOP_GRACE_MS = 2_000;
 const PROTOCOL_NEGOTIATION_TIMEOUT_MS = 10_000;
+const STDERR_DRAIN_TIMEOUT_MS = 500;
 const TRANSCRIPT_READ_BYTES = 64 * 1024;
 const MAX_PENDING_DURABLE_CORRELATIONS = 64;
 
@@ -505,6 +506,7 @@ export class RpcChildSupervisor {
 	#loadedWatermark?: RpcLoadedTranscriptWatermark;
 	#counter = 0;
 	#stderr = "";
+	#stderrDrained: Promise<void> = Promise.resolve();
 	#ready = false;
 	#supportsProtocolV2 = false;
 	#protocolV2 = false;
@@ -545,9 +547,12 @@ export class RpcChildSupervisor {
 		const ready = Promise.withResolvers<void>();
 		this.#readyReject = ready.reject;
 		void this.readStdout(ready);
-		void this.readStderr();
-		void this.#child.exited.then(code => {
-			if (!this.#closed && code !== 0) this.fail(new Error(`rpc child exited (${code}): ${this.#stderr}`));
+		this.#stderrDrained = this.readStderr();
+		void this.#child.exited.then(async code => {
+			// Same race as the stdout-EOF path: without the drain this can reject
+			// `ready` before the child's diagnostic has been read.
+			if (!this.#closed && code !== 0)
+				this.fail(new Error(`rpc child exited (${code}): ${await this.drainedStderr()}`));
 		});
 		const timer = setTimeout(() => ready.reject(new Error("rpc child ready timeout")), 10_000);
 		try {
@@ -762,12 +767,44 @@ export class RpcChildSupervisor {
 				this.dispatch(frame);
 				await this.#transcript.reconcile();
 			}
-			if (!this.#closed) this.fail(new Error("rpc child stdout EOF"), true);
+			// A child that dies during startup closes stdout without ever sending
+			// ready. Its stderr is the only statement of why, so carry it rather
+			// than reporting a bare EOF that explains nothing. Callers classify
+			// this into fixed operator text; it is never echoed verbatim.
+			if (!this.#closed) {
+				const diagnostic = await this.drainedStderr();
+				this.fail(
+					new Error(diagnostic.length > 0 ? `rpc child stdout EOF: ${diagnostic}` : "rpc child stdout EOF"),
+					true,
+				);
+			}
 		} catch (error) {
 			const failure = error instanceof Error ? error : new Error(String(error));
 			ready.reject(failure);
 			this.fail(failure, true);
 		}
+	}
+	/**
+	 * stdout can reach EOF before the stderr reader has drained, so the
+	 * diagnostic is only reliably present once the child has exited and that
+	 * reader has finished. Bounded so a child holding stderr open cannot stall
+	 * the failure path.
+	 */
+	private async drainedStderr(): Promise<string> {
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const deadline = new Promise<void>(resolve => {
+			timer = setTimeout(resolve, STDERR_DRAIN_TIMEOUT_MS);
+			timer.unref?.();
+		});
+		try {
+			await Promise.race([
+				Promise.allSettled([this.#stderrDrained, this.#child?.exited ?? Promise.resolve()]),
+				deadline,
+			]);
+		} finally {
+			if (timer) clearTimeout(timer);
+		}
+		return this.#stderr;
 	}
 	private async readStderr(): Promise<void> {
 		if (!this.#child?.stderr) return;

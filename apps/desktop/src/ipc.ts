@@ -1,4 +1,4 @@
-import { ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from "electron";
+import { dialog, ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from "electron";
 import {
   decodeDesktopEvent,
   decodeDesktopInvokeRequest,
@@ -33,6 +33,7 @@ import {
   type PairResult,
   type PhoneSetupState,
   type PairLinksDrainResult,
+  type DirectoryChooseResult,
   type ProjectionCacheLoadResult,
   type ProjectionCacheSaveRequest,
   type ProjectionCacheSaveResult,
@@ -193,10 +194,17 @@ export class DesktopIpcRegistry {
   private serviceInspectionPromise: Promise<ServiceInspection> | undefined;
   private updateUnsubscribe: (() => void) | undefined;
   private readonly ipc: IpcMainLike;
-  constructor(runtime: IpcRuntime, ipc: IpcMainLike = ipcMain) {
+  /** Narrow seam so tests can drive the chooser without a real window. */
+  private readonly dialog: Pick<typeof dialog, "showOpenDialog">;
+  constructor(
+    runtime: IpcRuntime,
+    ipc: IpcMainLike = ipcMain,
+    dialogApi: Pick<typeof dialog, "showOpenDialog"> = dialog,
+  ) {
     this.runtime = runtime;
     this.browserTarget = runtime.browser;
     this.ipc = ipc;
+    this.dialog = dialogApi;
   }
 
   updateBrowserTarget(target: BrowserCallTarget): void {
@@ -406,6 +414,20 @@ export class DesktopIpcRegistry {
         openSettings: this.runtime.drainPendingUpdateOpen?.() ?? false,
       });
     });
+    // The renderer may ask for a directory but never names one: the main
+    // process runs the dialog and returns only what the operator picked.
+    this.ipc.handle("app:directory:choose", async (event, payload: unknown): Promise<DirectoryChooseResult> => {
+      this.assertSender(event);
+      decodeRequest("app:directory:choose", payload);
+      // Parent it to the requesting window so it stays modal to that window
+      // rather than appearing behind it.
+      const chosen = await this.dialog.showOpenDialog(this.runtime.window, {
+        properties: ["openDirectory", "createDirectory"],
+        message: "Choose a working directory for this copy",
+      });
+      const path = chosen.canceled ? undefined : chosen.filePaths[0];
+      return path === undefined ? {} : { path };
+    });
     this.ipc.handle("app:projection-cache:load", async (event, payload: unknown): Promise<ProjectionCacheLoadResult> => {
       this.assertSender(event);
       decodeRequest("app:projection-cache:load", payload);
@@ -445,7 +467,7 @@ export class DesktopIpcRegistry {
       "app:update:get-state", "app:update:check", "app:update:download", "app:update:restart",
       "app:update:renderer-ready",
       "app:projection-cache:load", "app:projection-cache:save",
-      "app:phone-setup:inspect", "app:phone-setup:configure",
+      "app:phone-setup:inspect", "app:phone-setup:configure", "app:directory:choose",
     ] as const) this.ipc.removeHandler(channel);
     this.installed = false;
   }

@@ -1667,7 +1667,13 @@ export const COMMAND_ARGUMENT_DECODERS: Readonly<Record<string, (value: unknown)
 			fail("INVALID_FRAME", "runtimeId and workspaceInstanceId must be provided together", "args");
 		return x;
 	},
-	"session.fork": noArgs,
+	// A copy of a historic session may need a working directory of its own: the
+	// transcript's recorded project directory is often long gone.
+	"session.fork": value => {
+		const x = strictArgs(value, ["cwd"]);
+		if (x.cwd !== undefined) boundedText(x.cwd, "args.cwd", 4096);
+		return x as CommandArguments;
+	},
 	"session.attach": value => {
 		const x = args(value);
 		if (x.cursor !== undefined) decodeCursor(x.cursor, "args.cursor");

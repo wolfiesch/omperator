@@ -135,7 +135,12 @@ export interface SessionAuthority {
 	 * an authority that cannot fork safely omits it, and the host withholds the
 	 * `session.fork` feature.
 	 */
-	fork?(source: SessionRecord): Promise<SessionAuthoritySession>;
+	/**
+	 * `cwd` names where the copy should live. A historic transcript often
+	 * records a project directory that has since been deleted, and a copy needs
+	 * somewhere real to run; omitting it keeps the source's own directory.
+	 */
+	fork?(source: SessionRecord, cwd?: string): Promise<SessionAuthoritySession>;
 }
 export interface SessionDiscovery {
 	list(): Promise<SessionRecord[]>;

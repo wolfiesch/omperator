@@ -43,7 +43,7 @@ import {
 } from "../composer/panels.tsx";
 import type { SessionIntent } from "../session-runtime/intents.ts";
 import { ProviderTransportDiagnostics } from "../session-runtime/ProviderTransportDiagnostics.tsx";
-import { forkLiveSession } from "../session-runtime/session-management.ts";
+import { forkLiveSessionWithDirectoryFallback, targetIsLocal } from "../session-runtime/session-management.ts";
 import {
   advanceRecordArrival,
   initialControlAnnouncerState,
@@ -689,7 +689,17 @@ export function SessionMain({
     setForkError(null);
     void (async () => {
       try {
-        const forked = await forkLiveSession(controller, liveAddress);
+        // A historic session whose project directory is gone cannot start
+        // anywhere, so the host refuses by code and we offer a folder instead
+        // of leaving a dead end.
+        const forked = await forkLiveSessionWithDirectoryFallback(
+          controller,
+          liveAddress,
+          targetIsLocal(liveAddress.targetId) ? () => controller.chooseWorkingDirectory() : undefined,
+        );
+        // A dismissed chooser is a decision, not a failure: leave the session
+        // as it was rather than raising a banner the operator just answered.
+        if (forked === "cancelled") return;
         await navigate({
           params: { sessionId: sessionViewId(forked.hostId, forked.sessionId) },
           to: "/sessions/$sessionId",
