@@ -16,17 +16,29 @@ struct T4ControlsSheet: View {
 
     private static let thinkingLevels = ["auto", "off", "minimal", "low", "medium", "high", "xhigh", "max"]
 
+    struct ProviderGroup: Identifiable {
+        let provider: String
+        let models: [CatalogItem]
+        var id: String { provider }
+    }
+
     /// Catalog models grouped by provider prefix, providers sorted A–Z.
-    private var providers: [(provider: String, models: [CatalogItem])] {
-        let grouped = Dictionary(grouping: store.catalogModels) { splitModelSelector($0.id).provider ?? "other" }
-        return grouped.keys.sorted().map { ($0, grouped[$0]!.sorted { $0.id < $1.id }) }
+    private var providers: [ProviderGroup] {
+        var byProvider: [String: [CatalogItem]] = [:]
+        for item in store.catalogModels {
+            let provider = splitModelSelector(item.id).provider ?? "other"
+            byProvider[provider, default: []].append(item)
+        }
+        return byProvider.keys.sorted().map { key in
+            ProviderGroup(provider: key, models: byProvider[key] ?? [])
+        }
     }
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    ForEach(providers, id: \.provider) { group in
+                    ForEach(providers) { group in
                         Section {
                             ForEach(group.models, id: \.id) { item in
                                 Button {
