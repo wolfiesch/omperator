@@ -200,6 +200,39 @@ test("Android release identity is public, pinned, and wired into the release wor
   );
 });
 
+test("Android certificate baseline must be declared, and may be null before a key has published history", () => {
+  const { certificateBaseline, ...withoutBaseline } = androidIdentity;
+
+  // A newly minted signing key has no published APK to point at, and the
+  // baseline is validated before the APK is built, so the first release under
+  // that key declares the absence explicitly.
+  assert.doesNotThrow(() =>
+    validateIdentityContract({ ...withoutBaseline, certificateBaseline: null }),
+  );
+
+  // Omitting the field is not the same as declaring null: a typo must not
+  // silently skip the gate.
+  assert.throws(() => validateIdentityContract(withoutBaseline), /must declare certificateBaseline/u);
+
+  // A present baseline is still validated in full.
+  assert.throws(
+    () =>
+      validateIdentityContract({
+        ...withoutBaseline,
+        certificateBaseline: { ...certificateBaseline, assetSha256: "not-a-digest" },
+      }),
+    /assetSha256 must be 64 lowercase hexadecimal characters/u,
+  );
+  assert.throws(
+    () =>
+      validateIdentityContract({
+        ...withoutBaseline,
+        certificateBaseline: { ...certificateBaseline, tag: "0.1.13" },
+      }),
+    /baseline tag must be a stable/u,
+  );
+});
+
 test("Android versionCode is derived from the package version without a release-specific constant", () => {
   assert.equal(deriveAndroidVersionCode("0.1.13"), 10_013);
   assert.equal(deriveAndroidVersionCode("0.1.17"), 10_017);
