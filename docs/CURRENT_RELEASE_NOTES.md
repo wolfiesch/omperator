@@ -4,8 +4,8 @@ T4 Code v0.1.33 is the first release published from
 [`wolfiesch/omperator`](https://github.com/wolfiesch/omperator). Its Android package uses the
 project's new `net.t4code.app` signing key, and its macOS packages use Michael Schoenberger's pinned
 Developer ID certificate and notarization credentials. GitHub Releases is the authoritative
-download surface. The existing `t4code.net` website may continue to show the historical upstream
-release until its owner delegates deployment authority.
+download surface, and the protected release workflow publishes the same immutable release manifest
+and checksums to `t4code.net`.
 
 ## Electron and React are the product authority
 
