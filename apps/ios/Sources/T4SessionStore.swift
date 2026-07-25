@@ -324,8 +324,11 @@ final class T4SessionStore: ObservableObject {
                 await refresh()
                 await loadCatalog()
                 Task { await observe() }
+            } else {
+                t4log.error("connect: auth not accepted (\(welcome.authentication.rawValue, privacy: .public))")
             }
         } catch {
+            t4log.error("connect failed: \(error)")
             lastError = "\(error)"
         }
     }
