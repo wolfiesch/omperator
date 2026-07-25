@@ -1,0 +1,1 @@
+{"v":"omp-app/1","type":"hello","protocol":{"min":"omp-app/1","max":"omp-app/1"},"client":{"name":"omp-desktop","version":"1.0","build":"dev","platform":"linux"},"requestedFeatures":[],"savedCursors":[],"authentication":{"deviceId":"device-1","deviceToken":"not-a-token","extra":"reject"}}
