@@ -80,7 +80,7 @@ struct T4WorkspaceView: View {
     /// link. Ignored when already connected — the user is paired already.
     private func handleDeepLink(_ url: URL) {
         guard !store.connected else { return }
-        guard let pair = PendingPair.parseDeepLink(
+        guard let pair = Pairing.parseDeepLink(
             url.absoluteString,
             issuedAtMs: Date().timeIntervalSince1970 * 1000
         ) else { return }
