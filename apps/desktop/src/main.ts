@@ -82,6 +82,32 @@ function installWindowCloseHandler(electronApp: DesktopApp, platform: string): v
   windowCloseHandlers.set(electronApp, handler);
 }
 
+type SandboxApp = {
+  setPath(name: string, path: string): void;
+  commandLine: { appendSwitch(name: string): void };
+};
+
+/**
+ * macOS resolves the default keychain from `$HOME`, and the development
+ * sandbox redirects `HOME` to a disposable directory that has none. Without
+ * the mock keychain, `safeStorage` fails to store its `<product> Key` item and
+ * securityd raises a modal on every launch, after which the app silently runs
+ * with no credential store and no projection cache.
+ *
+ * The switch follows the sandbox, not the packaging mode: `pnpm dogfood:mac`
+ * launches the packaged app inside a sandbox and has no keychain either. Any
+ * launch outside a sandbox keeps its real `HOME` and its real keychain.
+ */
+export function applyDevelopmentSandbox(
+  target: SandboxApp,
+  sandbox: { readonly electronUserData: string } | undefined,
+  platform: string = process.platform,
+): void {
+  if (sandbox === undefined) return;
+  target.setPath("userData", sandbox.electronUserData);
+  if (platform === "darwin") target.commandLine.appendSwitch("use-mock-keychain");
+}
+
 export function bootstrapDesktopMain(options: MainRuntimeOptions): Promise<void> {
   const report = options.report ?? console.error;
   installWindowCloseHandler(options.app, options.process.platform);
@@ -125,10 +151,7 @@ export function bootstrapDesktopMain(options: MainRuntimeOptions): Promise<void>
   }
 }
 
-const developmentSandbox = developmentSandboxServiceConfig();
-if (developmentSandbox !== undefined) {
-  app.setPath("userData", developmentSandbox.electronUserData);
-}
+applyDevelopmentSandbox(app as unknown as SandboxApp, developmentSandboxServiceConfig());
 
 const lifecycle = new DesktopLifecycle({
   clusterOperatorEnabled: desktopClusterOperatorEnabled(),
