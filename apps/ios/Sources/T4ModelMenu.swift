@@ -25,11 +25,11 @@ private func groupByProvider(_ items: [CatalogItem]) -> [T4ProviderGroup] {
     return byProvider.keys.sorted().map { T4ProviderGroup(name: $0, models: byProvider[$0] ?? []) }
 }
 
-struct T4ModelMenuButton<Label: View>: View {
+struct T4ModelMenuButton<Content: View>: View {
     let session: SessionRef
     @ObservedObject var store: T4SessionStore
     let theme: Theme
-    @ViewBuilder let label: () -> Label
+    @ViewBuilder let label: () -> Content
 
     private var providers: [T4ProviderGroup] { groupByProvider(store.catalogModels) }
 
@@ -52,8 +52,7 @@ struct T4ModelMenuButton<Label: View>: View {
                     } label: {
                         Label(splitModelSelector(item.id).model,
                               systemImage: item.id == session.model ? "checkmark" : "circle")
-                            .symbolVariant(item.id == session.model ? .none : .none)
-                    }
+                                                }
                 }
             }
         }
