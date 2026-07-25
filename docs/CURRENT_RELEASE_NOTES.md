@@ -28,7 +28,7 @@ The workspace shell, transcript, home pane, composer, and supporting panes now s
 
 When a bundled OMP upgrade temporarily fails to stop the existing macOS service, T4 Code now retries the stop-and-replace sequence. This avoids leaving the installed backend half-updated during normal desktop upgrades while preserving the existing signed-runtime checks.
 
-The bundled backend now also recovers from an inactive Unix socket when the crashed owner's process ID still appears alive. It confirms the endpoint is unreachable more than once and revalidates every ownership file before reclaiming it, while leaving a responsive backend untouched.
+The bundled backend now also recovers from an inactive Unix socket when the crashed owner's process ID still appears alive, and after a restart that renumbers the disk identifiers recorded in the leftover ownership files. Previously such a reboot could leave the backend permanently unable to reclaim its own socket, so the app opened with an empty session list. Recovery still confirms the endpoint is unreachable more than once and revalidates every ownership file before reclaiming it, while leaving a responsive backend untouched.
 
 ## T4 now owns the host service
 
