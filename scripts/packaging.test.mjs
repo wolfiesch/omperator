@@ -179,7 +179,11 @@ test("Android release identity is public, pinned, and wired into the release wor
   assert.equal(androidIdentity.minSdkVersion, 24);
   assert.equal(androidIdentity.targetSdkVersion, 36);
   assert.equal(androidIdentity.signingCertificateSha256, productionCertificate);
-  assert.equal(androidIdentity.certificateBaseline, null);
+  assert.deepEqual(androidIdentity.certificateBaseline, {
+    tag: "v0.1.33",
+    asset: "T4-Code-0.1.33-android.apk",
+    assetSha256: "c642c9ec646f9d8e3fab3cb203752c3cefb1c6a0cb9ced1c0f992bd7478f3100",
+  });
 
   const releaseWorkflow = readFileSync(resolve(repoRoot, ".github/workflows/release.yml"), "utf8");
   assert.match(releaseWorkflow, /node scripts\/inspect-android-release\.mjs/u);
@@ -202,9 +206,9 @@ test("Android release identity is public, pinned, and wired into the release wor
 test("Android certificate baseline must be declared, and may be null before a key has published history", () => {
   const { certificateBaseline: _certificateBaseline, ...withoutBaseline } = androidIdentity;
   const publishedBaseline = {
-    tag: "v0.1.13",
-    asset: "T4-Code-0.1.13-android.apk",
-    assetSha256: "ce863c0c957ed7992393226d5f9aa7968d8c1bc748245f6e1d10de491247c5ef",
+    tag: "v0.1.33",
+    asset: "T4-Code-0.1.33-android.apk",
+    assetSha256: "c642c9ec646f9d8e3fab3cb203752c3cefb1c6a0cb9ced1c0f992bd7478f3100",
   };
 
   // A newly minted signing key has no published APK to point at, and the
