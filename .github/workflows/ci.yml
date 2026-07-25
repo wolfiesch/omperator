@@ -96,7 +96,64 @@ jobs:
 
 
 
-  core:
+  # `core` used to run setup, browser download, lint and types, unit tests,
+  # build, end-to-end, and packaging as one serial 2m30s job. These three run
+  # in parallel: two extra ~20s setups buy lint and type feedback at ~30s
+  # instead of ~65s, and the critical path becomes build-e2e.
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.10.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.13.1
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check source and types
+        run: pnpm check
+
+  unit-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.10.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.13.1
+          cache: pnpm
+
+      - name: Install Bun for the T4 host packages
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run tests
+        run: pnpm test
+
+  build-e2e:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -122,14 +179,23 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # The browser bundle is keyed by the lockfile, so it changes only when the
+      # pinned Playwright version does. System libraries belong to the runner
+      # image rather than the cache, so `install-deps` still runs on a hit.
+      - name: Restore the pinned Playwright browser
+        id: playwright-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+
       - name: Install browser for end-to-end tests
+        if: ${{ steps.playwright-cache.outputs.cache-hit != 'true' }}
         run: pnpm exec playwright install --with-deps chromium
 
-      - name: Check source and types
-        run: pnpm check
-
-      - name: Run tests
-        run: pnpm test
+      - name: Install browser system dependencies
+        if: ${{ steps.playwright-cache.outputs.cache-hit == 'true' }}
+        run: pnpm exec playwright install-deps chromium
 
       - name: Build all workspaces
         run: pnpm build
@@ -140,14 +206,27 @@ jobs:
       - name: Check packaging contract
         run: pnpm test:packaging
 
-  # Release-time gates, deferred off pull requests. The legacy pin is a frozen
+      # Cache entries are immutable per key, so only persist a browser bundle
+      # the end-to-end suite has already driven. Bump the key salt to force a
+      # fresh download.
+      - name: Save the proven Playwright browser
+        if: ${{ steps.playwright-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ steps.playwright-cache.outputs.cache-primary-key }}
+
+  # Release-time gates, deferred to pushes. The legacy pin is a frozen
   # historical compatibility proof and the gate0 matrix spans three runners
   # including macOS. Pushes to main classify as --all, so both still run on
   # every merge before any release, and `pnpm verify:affected` selects them
-  # locally for an affected change.
+  # locally for an affected change. They are keyed on `push` rather than on
+  # "not a pull request" because `verify` no longer waits on them: running a
+  # macOS and arm64 matrix inside a merge group would occupy scarce runners
+  # without gating the queue.
   legacy-bridge-continuity:
     needs: changes
-    if: ${{ github.event_name != 'pull_request' && needs.changes.outputs.continuity == 'true' }}
+    if: ${{ github.event_name == 'push' && needs.changes.outputs.continuity == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -335,7 +414,7 @@ jobs:
 
   official-omp-gate0:
     needs: changes
-    if: ${{ github.event_name != 'pull_request' && needs.changes.outputs.official_omp_gate0 == 'true' }}
+    if: ${{ github.event_name == 'push' && needs.changes.outputs.official_omp_gate0 == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -559,10 +638,15 @@ jobs:
       - name: Verify unsigned Android debug application
         run: pnpm --filter @t4-code/mobile check:android:debug
 
+  # The branch-protection gate. It waits only on legs that run on ubuntu-24.04
+  # for a pull request, so a merge run's macOS and arm64 matrix cannot hold the
+  # required check behind a queued runner. The deferred release gates are
+  # aggregated separately below and still decide the workflow run conclusion,
+  # which is what `scripts/wait-for-exact-ci.mjs` requires before a release.
   verify:
     name: verify
     if: ${{ always() }}
-    needs: [changes, t4-api-generation, core, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, maintainer, android-debug]
+    needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -571,10 +655,10 @@ jobs:
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
           T4_API_GENERATION_RESULT: ${{ needs.t4-api-generation.result }}
-          CORE_RESULT: ${{ needs.core.result }}
-          CONTINUITY_RESULT: ${{ needs.legacy-bridge-continuity.result }}
+          CHECK_RESULT: ${{ needs.check.result }}
+          UNIT_TESTS_RESULT: ${{ needs.unit-tests.result }}
+          BUILD_E2E_RESULT: ${{ needs.build-e2e.result }}
           CURRENT_CONTINUITY_RESULT: ${{ needs.current-bridge-continuity.result }}
-          OFFICIAL_OMP_GATE0_RESULT: ${{ needs.official-omp-gate0.result }}
           CLUSTER_RESULT: ${{ needs.cluster.result }}
           TOOLING_RESULT: ${{ needs.tooling.result }}
           MAINTAINER_RESULT: ${{ needs.maintainer.result }}
@@ -583,15 +667,44 @@ jobs:
           set -euo pipefail
           test "$CHANGES_RESULT" = success
           test "$T4_API_GENERATION_RESULT" = success
-          test "$CORE_RESULT" = success
+          test "$CHECK_RESULT" = success
+          test "$UNIT_TESTS_RESULT" = success
+          test "$BUILD_E2E_RESULT" = success
           for result in \
-            "$CONTINUITY_RESULT" \
             "$CURRENT_CONTINUITY_RESULT" \
-            "$OFFICIAL_OMP_GATE0_RESULT" \
             "$CLUSTER_RESULT" \
             "$TOOLING_RESULT" \
             "$MAINTAINER_RESULT" \
             "$ANDROID_RESULT"
+          do
+            case "$result" in
+              success|skipped) ;;
+              *) exit 1 ;;
+            esac
+          done
+
+  # The deferred release-time legs. They are skipped on pull requests, so this
+  # only ever fails a merge run, and a failure here fails the run that
+  # `scripts/wait-for-exact-ci.mjs` demands be green before publishing.
+  release-gates:
+    name: release-gates
+    if: ${{ always() }}
+    needs: [changes, legacy-bridge-continuity, official-omp-gate0]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every deferred release gate
+        shell: bash
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          CONTINUITY_RESULT: ${{ needs.legacy-bridge-continuity.result }}
+          OFFICIAL_OMP_GATE0_RESULT: ${{ needs.official-omp-gate0.result }}
+        run: |
+          set -euo pipefail
+          test "$CHANGES_RESULT" = success
+          for result in \
+            "$CONTINUITY_RESULT" \
+            "$OFFICIAL_OMP_GATE0_RESULT"
           do
             case "$result" in
               success|skipped) ;;

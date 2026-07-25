@@ -77,10 +77,17 @@ set passes locally, and keep major upgrades in individual pull requests.
 
 ## CI and merges
 
-The `verify` job is the stable required check. It aggregates core, OMP
-continuity, official OMP platform, cluster, tooling, and Android lanes while
-allowing path-irrelevant lanes to skip. Do not require every matrix job directly;
-that would make path-based CI brittle.
+The `verify` job is the stable required check. It aggregates the check,
+unit-test, build and end-to-end, current OMP continuity, cluster, tooling,
+maintainer, and Android lanes while allowing path-irrelevant lanes to skip. Do
+not require every matrix job directly; that would make path-based CI brittle.
+
+The deferred release gates, legacy bridge continuity and the three-platform
+official OMP matrix, do not run on pull requests and are aggregated by
+`release-gates` instead, so a queued macOS or arm64 runner never delays the
+required check. Both aggregates still set the workflow run conclusion that the
+release authority check requires, so a deferred gate that fails on `main`
+blocks publication.
 
 Enable automatic head-branch updates and delete merged branches. Prefer squash
 merges for ordinary feature work; use a merge commit only when preserving a
