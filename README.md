@@ -118,7 +118,7 @@ Needs Node `^24.13.1` and pnpm `11.10.0`.
 
 ```sh
 git clone https://github.com/wolfiesch/omperator.git
-cd t4-code
+cd omperator
 pnpm install
 pnpm dev              # web + desktop in watch mode
 pnpm check            # release contract, provenance, lint, typecheck
