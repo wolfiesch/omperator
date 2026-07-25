@@ -54,6 +54,9 @@ export function planAffectedVerification(inputPaths) {
   if (classifications.tooling || paths.some((path) => /^(?:Taskfile\.yml|package\.json|scripts\/)/u.test(path))) {
     add(commands, command("tooling", ["pnpm", "test:tooling"], "repository tooling or its command surface changed"));
   }
+  if (classifications.maintainer) {
+    add(commands, command("maintainer", ["pnpm", "test:maintainer"], "maintainer deployment surface changed"));
+  }
   if (paths.some((path) => /^(?:electron-builder\.config\.mjs|apps\/desktop\/build\/|scripts\/(?:package|inspect-macos|inspect-package|run-electron-builder))/u.test(path))) {
     add(commands, command("packaging", ["pnpm", "test:packaging"], "packaging inputs changed"));
   }
