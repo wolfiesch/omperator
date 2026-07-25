@@ -776,6 +776,16 @@ test("deploys release site source only after artifact publication", () => {
     );
     assert.ok(releaseBuild.includes("bun-version: 1.3.14"));
   }
+  const releasePublish = releaseWorkflow.slice(
+    releaseWorkflow.indexOf("  publish:"),
+    releaseWorkflow.indexOf("  dispatch-site:"),
+  );
+  assert.ok(releasePublish.includes("Install release reconciliation dependencies"));
+  assert.ok(releasePublish.includes("pnpm install --frozen-lockfile"));
+  assert.ok(
+    releasePublish.indexOf("pnpm install --frozen-lockfile") <
+      releasePublish.indexOf("node scripts/reconcile-release-assets.mjs"),
+  );
   assert.ok(releaseWorkflow.includes("pnpm --filter @t4-code/mobile build:android:release"));
   assert.ok(releaseWorkflow.includes("T4_ANDROID_KEYSTORE_BASE64"));
   assert.ok(releaseWorkflow.includes("node scripts/inspect-android-release.mjs"));
