@@ -139,46 +139,24 @@ struct T4WorkspaceView: View {
 
     private func rail(width: CGFloat) -> some View {
         VStack(spacing: 0) {
-            // Rail header: product mark + connection state.
-            HStack(spacing: 10) {
-                Text("T4 Code")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(t.txt)
-                Spacer()
-                if store.connected {
-                    LiveDot(t: t)
-                    Text("Live").font(.system(size: 11, weight: .semibold)).foregroundStyle(t.diffAdd)
+            NavigationStack {
+                T4SessionsView(store: store) { session in
+                    store.select(session)
+                    closeRail()
                 }
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 14)
-            .padding(.bottom, 10)
-
-            // Search — same inventory filter as the desktop rail's filter box.
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 13))
-                    .foregroundStyle(t.txtLabel)
-                TextField("Search sessions", text: $store.query)
-                    .font(.system(size: 14))
-                    .foregroundStyle(t.txt)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                if !store.query.isEmpty {
-                    Button { store.query = "" } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 13))
-                            .foregroundStyle(t.txtLabel)
+                .navigationTitle("T4 Code")
+                .navigationBarTitleDisplayMode(.inline)
+                .searchable(text: $store.query, prompt: "Search sessions")
+                .toolbar {
+                    if store.connected {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            HStack(spacing: 5) {
+                                LiveDot(t: t)
+                                Text("Live").font(.system(size: 11, weight: .semibold)).foregroundStyle(t.diffAdd)
+                            }
+                        }
                     }
                 }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .overlay(alignment: .bottom) { Rectangle().fill(t.lineFaint).frame(height: 1) }
-
-            T4SessionsView(store: store) { session in
-                store.select(session)
-                closeRail()
             }
 
             // Bottom bar: connect / connection state.
