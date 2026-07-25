@@ -312,15 +312,13 @@ struct RootView: View {
     @EnvironmentObject var app: AppModel
     @Environment(\.colorScheme) private var colorScheme
     @State private var showPair = ProcessInfo.processInfo.environment["ENCLAVE_SHOW_PAIR"] == "1"
-    @State private var searchText = ""
+    @StateObject private var t4 = T4SessionStore()
     private var t: Theme { theme.t }
 
     var body: some View {
         NavigationStack {
-            SessionsView(query: $searchText)
+            T4SessionsView(store: t4)
                 .background(t.bg.ignoresSafeArea())
-                .searchable(text: $searchText, prompt: "Search sessions")
-                .searchToolbarBehavior(.minimize)
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button { theme.toggle() } label: {
@@ -369,17 +367,6 @@ struct RootView: View {
         }
         .tint(t.accent)
         .onChange(of: colorScheme, initial: true) { _, new in theme.systemDark = (new == .dark) }
-        .task {
-            // Launch seam / deep-link: auto-join a collab session from an env var,
-            // or fall back to the most recently saved session so the user lands in
-            // the live room without an extra tap after a cold launch.
-            guard app.active == nil else { return }
-            if let link = ProcessInfo.processInfo.environment["ENCLAVE_COLLAB_LINK"] {
-                app.connect(link: link, name: UIDevice.current.name)
-            } else if let latest = app.sessions.max(by: { $0.savedAt < $1.savedAt }) {
-                app.connect(link: latest.link, name: UIDevice.current.name)
-            }
-        }
     }
 
 }
