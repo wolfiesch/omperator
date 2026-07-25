@@ -80,6 +80,7 @@ export const DESKTOP_IPC_CHANNELS = [
   "app:projection-cache:save",
   "app:phone-setup:inspect",
   "app:phone-setup:configure",
+  "app:directory:choose",
 ] as const;
 export type DesktopInvokeChannel = (typeof DESKTOP_IPC_CHANNELS)[number];
 export const DESKTOP_IPC_EVENTS = [
@@ -545,6 +546,7 @@ export interface DesktopInvokeRequestMap {
   "app:projection-cache:save": ProjectionCacheSaveRequest;
   "app:phone-setup:inspect": PhoneSetupRequest;
   "app:phone-setup:configure": PhoneSetupRequest;
+  "app:directory:choose": DirectoryChooseRequest;
 }
 export interface DesktopInvokeResponseMap {
   "omp:targets:list": TargetListResult;
@@ -588,7 +590,15 @@ export interface DesktopInvokeResponseMap {
   "app:projection-cache:save": ProjectionCacheSaveResult;
   "app:phone-setup:inspect": PhoneSetupState;
   "app:phone-setup:configure": PhoneSetupState;
+  "app:directory:choose": DirectoryChooseResult;
 }
+/** The renderer asks; the main process alone decides which path comes back. */
+export interface DirectoryChooseRequest {}
+export interface DirectoryChooseResult {
+  /** Absolute path the operator picked, or undefined when the dialog was dismissed. */
+  readonly path?: string;
+}
+
 export interface RendererServerEventEnvelope {
   targetId: string;
   event: RendererServerEvent;
@@ -984,6 +994,7 @@ export function decodeDesktopInvokeRequest(input: unknown): DesktopInvokeRequest
       exact(payload, []);
       return { channel, payload: {} };
     case "app:projection-cache:load":
+    case "app:directory:choose":
       exact(payload, []);
       return { channel, payload: {} };
     case "app:projection-cache:save":

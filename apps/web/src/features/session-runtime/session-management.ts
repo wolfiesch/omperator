@@ -467,12 +467,16 @@ export async function restoreLiveSession(
  * host resolves it by id against its own inventory — and the copy inherits
  * the source title. Resolves once the new session is present in the
  * refreshed inventory, so navigation lands on a session the rail knows.
+ *
+ * `cwd` retries a fork the host refused because the source session's original
+ * project directory no longer exists.
  */
 export async function forkLiveSession(
   controller: DesktopRuntimeController,
   address: LiveSessionAddress,
+  cwd?: string,
 ): Promise<LiveSessionAddress> {
-  const ref = await controller.forkSession(address.targetId, address.hostId, address.sessionId);
+  const ref = await controller.forkSession(address.targetId, address.hostId, address.sessionId, cwd);
   const forked: LiveSessionAddress = {
     targetId: address.targetId,
     hostId: String(ref.hostId),

@@ -168,6 +168,23 @@ describe("desktop IPC lifecycle proof", () => {
     )).rejects.toThrow();
     expect(saves).toEqual([value]);
   });
+  it("takes no path from the renderer when choosing a directory", async () => {
+    const ipc = new FakeIpc();
+    const { runtime: baseRuntime } = makeRuntime();
+    new DesktopIpcRegistry(baseRuntime, ipc).install();
+    const event = { sender: baseRuntime.window.webContents, senderFrame: baseRuntime.window.webContents.mainFrame };
+    // The renderer may ask, but it may not name a directory: the main process
+    // runs the dialog and returns only what the operator picked.
+    await expect(ipc.handlers.get("app:directory:choose")!(
+      event,
+      request("app:directory:choose", { path: "/etc" }),
+    )).rejects.toThrow();
+    // An untrusted sender cannot reach the dialog at all.
+    await expect(ipc.handlers.get("app:directory:choose")!(
+      { sender: {}, senderFrame: {} } as never,
+      request("app:directory:choose"),
+    )).rejects.toThrow();
+  });
   it("serializes concurrent service actions", async () => {
     const ipc = new FakeIpc();
     const order: string[] = [];

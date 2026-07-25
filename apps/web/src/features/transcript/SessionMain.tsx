@@ -43,6 +43,8 @@ import {
 } from "../composer/panels.tsx";
 import type { SessionIntent } from "../session-runtime/intents.ts";
 import { ProviderTransportDiagnostics } from "../session-runtime/ProviderTransportDiagnostics.tsx";
+import { DesktopRuntimeError } from "@t4-code/client";
+import type { LiveSessionAddress } from "../../platform/live-workspace.ts";
 import { forkLiveSession } from "../session-runtime/session-management.ts";
 import {
   advanceRecordArrival,
@@ -689,7 +691,21 @@ export function SessionMain({
     setForkError(null);
     void (async () => {
       try {
-        const forked = await forkLiveSession(controller, liveAddress);
+        let forked: LiveSessionAddress;
+        try {
+          forked = await forkLiveSession(controller, liveAddress);
+        } catch (cause) {
+          // A historic session whose project directory is gone cannot start
+          // anywhere. The host says so by code, so offer a directory and retry
+          // rather than leaving a dead end.
+          if (!(cause instanceof DesktopRuntimeError) || cause.hostCode !== "session_cwd_missing") throw cause;
+          const chosen = await controller.chooseWorkingDirectory();
+          if (chosen === undefined) {
+            setForkError("This session's original folder is gone. Choose a folder to continue in a copy.");
+            return;
+          }
+          forked = await forkLiveSession(controller, liveAddress, chosen);
+        }
         await navigate({
           params: { sessionId: sessionViewId(forked.hostId, forked.sessionId) },
           to: "/sessions/$sessionId",

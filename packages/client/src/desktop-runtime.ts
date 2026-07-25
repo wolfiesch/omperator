@@ -296,6 +296,14 @@ export class DesktopRuntimeController {
    * source against its own inventory and only ever reads it. The result is
    * the authoritative ref of the new session (same shape as session.create).
    */
+  /**
+   * Ask the desktop to run a directory chooser. Undefined when the shell has no
+   * chooser or the operator dismissed it.
+   */
+  async chooseWorkingDirectory(): Promise<string | undefined> {
+    const chosen = await this.shell.chooseDirectory?.();
+    return chosen?.path;
+  }
   /** `cwd` re-runs a refused fork against a directory the operator chose. */
   async forkSession(targetId: string, hostIdValue: string, sessionIdValue: string, cwd?: string): Promise<SessionRef> {
     const result = await this.command(targetId, {

@@ -87,6 +87,8 @@ export interface DesktopShellPort {
   readonly downloadUpdate?: () => Promise<DesktopUpdateState>;
   readonly restartToUpdate?: () => Promise<DesktopUpdateState>;
   readonly updateRendererReady?: () => Promise<DesktopUpdateRendererReadyResult>;
+  /** Ask the desktop to run a directory chooser. Absent on shells that cannot. */
+  readonly chooseDirectory?: () => Promise<{ readonly path?: string }>;
   readonly loadProjectionCache?: () => Promise<ProjectionCacheLoadResult>;
   readonly saveProjectionCache?: (request: ProjectionCacheSaveRequest) => Promise<ProjectionCacheSaveResult>;
   readonly inspectPhoneSetup?: () => Promise<PhoneSetupState>;

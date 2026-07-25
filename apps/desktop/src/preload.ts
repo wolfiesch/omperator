@@ -45,6 +45,7 @@ import {
   type TerminalResult,
   type SpeechRequest,
   type SpeechResult,
+  type DirectoryChooseResult,
   type ProjectionCacheLoadResult,
   type ProjectionCacheSaveRequest,
   type ProjectionCacheSaveResult,
@@ -88,6 +89,7 @@ export interface OmpShellBridge {
   readonly listTargets: () => Promise<TargetListResult>;
   readonly addTarget: (request: TargetAddRequest) => Promise<TargetAddResult>;
   readonly removeTarget: (request: TargetRequest) => Promise<TargetRemoveResult>;
+  readonly chooseDirectory: () => Promise<DirectoryChooseResult>;
   readonly connectTarget: (request: TargetRequest) => Promise<ConnectResult>;
   readonly disconnectTarget: (request: TargetRequest) => Promise<DisconnectResult>;
   readonly listProfiles: () => Promise<LocalProfileListResult>;
@@ -111,6 +113,11 @@ export interface OmpShellBridge {
 
 function invoke<C extends "omp:bootstrap" | "omp:connect" | "omp:disconnect" | "omp:command" | "omp:confirm" | "omp:terminal:input" | "omp:terminal:resize" | "omp:terminal:close" | "omp:pair" | "omp:pair-links:drain" | "omp:speech:speak" | "omp:speech:stop" | "omp:service:inspect" | "omp:service:install" | "omp:service:start" | "omp:service:stop" | "omp:service:restart" | "omp:service:uninstall" | "omp:targets:list" | "omp:targets:add" | "omp:targets:remove" | "omp:profiles:list" | "omp:profiles:add" | "omp:profiles:update" | "omp:profiles:remove" | "omp:profiles:status" | "omp:profiles:start" | "omp:profiles:stop" | "omp:profiles:restart" | "app:update:get-state" | "app:update:check" | "app:update:download" | "app:update:restart" | "app:update:renderer-ready" | "app:phone-setup:inspect" | "app:phone-setup:configure" | "app:t4-omp:inspect" | "app:t4-omp:install" | "app:t4-omp:remove", R>(channel: C, payload: unknown): Promise<R> {
   return ipcRenderer.invoke(channel, { channel, payload }) as Promise<R>;
+}
+
+function invokeDirectoryChoose(): Promise<DirectoryChooseResult> {
+  const channel = "app:directory:choose";
+  return ipcRenderer.invoke(channel, { channel, payload: {} }) as Promise<DirectoryChooseResult>;
 }
 
 function invokeProjectionCache<R>(
@@ -207,6 +214,7 @@ const bridge: OmpShellBridge = {
     invokeProjectionCache<unknown>("app:projection-cache:load", {}).then(decodeProjectionCacheLoadResult),
   saveProjectionCache: (request) =>
     invokeProjectionCache<unknown>("app:projection-cache:save", request).then(decodeProjectionCacheSaveResult),
+  chooseDirectory: () => invokeDirectoryChoose(),
   listTargets: () => invoke("omp:targets:list", {}),
   addTarget: (request) => invoke("omp:targets:add", request),
   removeTarget: (request) => invoke("omp:targets:remove", request),
