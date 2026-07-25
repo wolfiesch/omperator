@@ -51,6 +51,15 @@ const GROUP_PATTERNS = Object.freeze({
     /^scripts\//u,
     /^packages\/host-(?:daemon|service|wire)\//u,
   ],
+  // The maintainer deployment suite spawns ~150 bash fixtures and costs minutes.
+  // Its only subject is the ops/t4-maintainer surface, so keep it off the broad
+  // tooling trigger and run it when that surface or its harness actually moves.
+  maintainer: [
+    /^\.github\/workflows\/ci\.yml$/u,
+    /^ops\/t4-maintainer\//u,
+    /^scripts\/t4-maintainer-/u,
+    /^scripts\/test-temporary-directory\.mjs$/u,
+  ],
   android_debug: [
     /^apps\/(?:mobile|web)\//u,
     /^packages\/(?:client|ui)\//u,
