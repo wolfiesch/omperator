@@ -3,7 +3,7 @@
 // recorded, it must survive a restart through its manifest, and it must never
 // write caller-supplied text into a transcript.
 import { expect, test } from "bun:test";
-import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sessionId } from "@t4-code/host-wire";
@@ -155,6 +155,33 @@ test("a manifest written by an earlier process still bounds cleanup", async () =
 	expect(await restarted.sessionIds("run-c")).toHaveLength(1);
 	await restarted.cleanup("run-c");
 	expect(authority.deleted).toEqual([authority.created[0]!]);
+});
+// The manifest names the only files cleanup is allowed to delete. Failing open
+// on a damaged one would let the next seed overwrite it and strand whatever it
+// still named, so every state except "absent" must refuse.
+test("a damaged manifest is refused rather than silently replaced", async () => {
+	const { root, authority, control } = await harness();
+	await control.seed({ runId: "run-h", projectRoot: root, sessionCount: 1, historyEntries: 1 });
+	const manifestPath = join(root, "state", "manifest.json");
+	const original = await readFile(manifestPath, "utf8");
+	await writeFile(manifestPath, "{ not json", { mode: 0o600 });
+
+	const restarted = new SeedingTestControl({
+		token: "seeding-control-token-000000000000",
+		profile: "disposable",
+		manifestPath,
+		authority,
+		lockStatus: () => "missing",
+	});
+
+	await expect(
+		restarted.seed({ runId: "run-i", projectRoot: root, sessionCount: 1, historyEntries: 1 }),
+	).rejects.toBeDefined();
+	expect(await readFile(manifestPath, "utf8")).toBe("{ not json");
+
+	await writeFile(manifestPath, original);
+	await chmod(manifestPath, 0o644);
+	await expect(restarted.sessionIds("run-h")).rejects.toThrow("unsafe");
 });
 
 test("a partial seed still records what it created", async () => {

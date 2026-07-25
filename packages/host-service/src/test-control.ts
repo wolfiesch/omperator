@@ -269,23 +269,29 @@ export class SeedingTestControl implements AppserverTestControl {
 		}
 	}
 
+	/**
+	 * The manifest is the only record of which sessions this control may delete,
+	 * so it fails closed. A missing file is a legitimate empty state; anything
+	 * else - wrong mode, oversize, unreadable, or invalid - is refused so a
+	 * later seed can never overwrite a damaged ledger and strand the sessions
+	 * it still names.
+	 */
 	async #load(): Promise<void> {
 		if (this.#loaded) return;
-		this.#loaded = true;
 		let metadata: Stats;
 		try {
 			metadata = await fs.lstat(this.#manifestPath);
-		} catch {
+		} catch (error) {
+			if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
+			this.#loaded = true;
 			return;
 		}
-		if (!metadata.isFile() || (metadata.mode & 0o777) !== 0o600 || metadata.size > MAX_MANIFEST_BYTES) return;
-		let parsed: unknown;
-		try {
-			parsed = JSON.parse(await fs.readFile(this.#manifestPath, "utf8")) as unknown;
-		} catch {
-			return;
-		}
-		this.#manifest = decodeManifest(parsed) ?? this.#manifest;
+		if (!metadata.isFile() || (metadata.mode & 0o777) !== 0o600 || metadata.size > MAX_MANIFEST_BYTES)
+			throw new Error("test control manifest is unsafe");
+		const manifest = decodeManifest(JSON.parse(await fs.readFile(this.#manifestPath, "utf8")) as unknown);
+		if (!manifest) throw new Error("test control manifest is invalid");
+		this.#manifest = manifest;
+		this.#loaded = true;
 	}
 
 	async #persistRuns(runs: Readonly<Record<string, SeededRun>>): Promise<void> {
