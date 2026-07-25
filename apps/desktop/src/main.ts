@@ -93,6 +93,10 @@ type SandboxApp = {
  * the mock keychain, `safeStorage` fails to store its `<product> Key` item and
  * securityd raises a modal on every launch, after which the app silently runs
  * with no credential store and no projection cache.
+ *
+ * The switch follows the sandbox, not the packaging mode: `pnpm dogfood:mac`
+ * launches the packaged app inside a sandbox and has no keychain either. Any
+ * launch outside a sandbox keeps its real `HOME` and its real keychain.
  */
 export function applyDevelopmentSandbox(
   target: SandboxApp,
