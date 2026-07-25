@@ -56,6 +56,7 @@ import { executeReadCommand, isReadCommand } from "./read-command-handler.ts";
 import {
 	artifactDescriptorForRoot,
 	fallbackSessionTitle,
+	OVERSIZED_RECORD_OMISSION_SUMMARY,
 	projectMessageText,
 	projectNameFromCwd,
 	SessionEntryProjector,
@@ -3693,7 +3694,7 @@ export class LocalAppserver implements AppserverHandle {
 						kind: "compaction",
 						timestamp: this.#clock.now().toISOString(),
 						data: {
-							summary: "One transcript record was omitted because it exceeded the 1 MiB safety limit.",
+							summary: OVERSIZED_RECORD_OMISSION_SUMMARY,
 							oversizedRecordOmission: true,
 						},
 					};

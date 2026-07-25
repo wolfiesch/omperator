@@ -19,7 +19,9 @@ import {
 	decodeTurnReviewSnapshot,
 	entryId,
 	hostId,
+	MAX_TRANSCRIPT_LINE_BYTES,
 	parseBounded,
+	parseBoundedTranscriptLine,
 	projectId,
 	sessionId,
 	TRANSCRIPT_IMAGE_MAX_COUNT,
@@ -33,7 +35,12 @@ import { type XdevWriteCall, xdevExecutionMatches, xdevResultEnvelope, xdevWrite
 
 const MAX_TRANSCRIPT_BYTES = 64 * 1024 * 1024;
 const MAX_METADATA_BYTES = 128 * 1024;
-const MAX_LINE_BYTES = 1024 * 1024;
+const MAX_LINE_BYTES = MAX_TRANSCRIPT_LINE_BYTES;
+/**
+ * Derived from the limit so the diagnostic cannot drift from the threshold that
+ * produced it. Both this observer and the RPC supervisor report the same text.
+ */
+export const OVERSIZED_RECORD_OMISSION_SUMMARY = `One transcript record was omitted because it exceeded the ${MAX_TRANSCRIPT_LINE_BYTES / (1024 * 1024)} MiB safety limit.`;
 const MAX_TEXT_BYTES = 64 * 1024;
 const MAX_RESULT_BYTES = 64 * 1024;
 const MAX_RESULT_DETAILS_BYTES = 128 * 1024;
@@ -887,7 +894,7 @@ function parseTranscript(input: string | Uint8Array, path: string, host: HostId)
 	const parseTranscriptObject = (line: string | Uint8Array): Record<string, unknown> => {
 		if ((typeof line === "string" ? encoder.encode(line).byteLength : line.byteLength) > MAX_LINE_BYTES)
 			throw new Error("transcript line exceeds limit");
-		const value = parseBounded(line);
+		const value = parseBoundedTranscriptLine(line);
 		if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid transcript entry");
 		return value as Record<string, unknown>;
 	};
@@ -964,7 +971,7 @@ export function parseSessionTranscriptMetadata(input: string | Uint8Array, path:
 	for (const line of text.split(/\r?\n/u)) {
 		if (!line) continue;
 		if (encoder.encode(line).byteLength > MAX_LINE_BYTES) throw new Error("transcript line exceeds limit");
-		const value = parseBounded(line);
+		const value = parseBoundedTranscriptLine(line);
 		if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid transcript entry");
 		const entry = value as Record<string, unknown>;
 		if (!header && entry.type === "title") {
@@ -1171,7 +1178,7 @@ export class SessionTranscriptObserver {
 			kind: "compaction",
 			timestamp: new Date(info.mtimeMs).toISOString(),
 			data: {
-				summary: "One transcript record was omitted because it exceeded the 1 MiB safety limit.",
+				summary: OVERSIZED_RECORD_OMISSION_SUMMARY,
 				oversizedRecordOmission: true,
 			},
 		};
