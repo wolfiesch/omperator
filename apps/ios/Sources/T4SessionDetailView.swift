@@ -48,17 +48,28 @@ struct T4SessionDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    header
-                    if let challenge = store.pendingConfirmation {
-                        confirmationBanner(challenge)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        header
+                        if let challenge = store.pendingConfirmation {
+                            confirmationBanner(challenge)
+                        }
+                        if showFacts { facts }
+                        Divider().overlay(t.lineFaint)
+                        T4TranscriptView(entries: store.transcript(for: session.sessionId), theme: t)
+                        Color.clear
+                            .frame(height: 1)
+                            .id("transcript-bottom")
                     }
-                    if showFacts { facts }
-                    Divider().overlay(t.lineFaint)
-                    T4TranscriptView(entries: store.transcript(for: session.sessionId), theme: t)
+                    .padding()
                 }
-                .padding()
+                .onAppear { proxy.scrollTo("transcript-bottom", anchor: .bottom) }
+                .onChange(of: store.transcript(for: session.sessionId).count) { _, _ in
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo("transcript-bottom", anchor: .bottom)
+                    }
+                }
             }
             composer
         }
