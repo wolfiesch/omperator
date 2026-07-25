@@ -130,7 +130,7 @@ test("offers the Android APK without hiding desktop downloads", async ({ page })
   await expect(androidDownload).toBeVisible();
   await expect(androidDownload).toHaveAttribute(
     "href",
-    "https://github.com/wolfiesch/omperator/releases/download/v0.1.33/T4-Code-0.1.33-android.apk",
+    "https://github.com/wolfiesch/omperator/releases/download/v0.1.34/T4-Code-0.1.34-android.apk",
   );
   await expect(page.getByRole("link", { name: /Linux/u }).first()).toBeVisible();
   await expect(page.getByRole("link", { name: /macOS/u }).first()).toBeVisible();

@@ -4,13 +4,13 @@ T4 Code is a free, open-source (MIT) desktop app for [Oh My Pi](https://github.c
 
 ![T4 Code main window](docs/assets/t4-code-main.png)
 
-[**Download v0.1.33**](https://github.com/wolfiesch/omperator/releases/tag/v0.1.33) · [**Docs**](https://t4code.net/docs) · [**Get the source**](#build-from-source)
+[**Download v0.1.34**](https://github.com/wolfiesch/omperator/releases/tag/v0.1.34) · [**Docs**](https://t4code.net/docs) · [**Get the source**](#build-from-source)
 
 ## Requirements
 
 The installed Apple Silicon Mac app packages its own standalone `t4-host` and matching OMP authority runtime. Source builds, Linux hosts, and remote hosts need the matching OMP build with the smaller authority bridge.
 
-T4 Code v0.1.33 was verified with OMP 17.0.5 built from [`675499f4`](https://github.com/wolfiesch/oh-my-pi/commit/675499f428ada2d116088b6a6ceae6586aba137a), tagged [`t4code-17.0.5-appserver-16`](https://github.com/wolfiesch/oh-my-pi/tree/t4code-17.0.5-appserver-16). That integration is based on the official upstream [`v17.0.5`](https://github.com/can1357/oh-my-pi/tree/v17.0.5) tag at [`9fd6e971`](https://github.com/can1357/oh-my-pi/commit/9fd6e97113f5ed3a847e66d346970efdf8afcad9). It exposes the bounded `t4-omp-authority/1` bridge used by T4's standalone host and removes the old public OMP appserver launchers. It also includes snapshot-consistent paged authority inventories with explicit partial-state metadata, stale-lock lifecycle recovery, sparse authority-side session lists, atomic `xd://` mount publication, bounded newest-first transcript paging, stale-owner recovery, privacy-safe project reveal, fast lazy session indexing, cross-session attention and transcript search, the negotiated browser-preview command surface, redacted Codex transport diagnostics, the versioned Agent View lifecycle contract, session-owned cancellation, lock-aware session observation, complete transcript reconciliation, the cooperative `/continue-in-t4` handoff, caller-selected working directories for copied sessions, and deterministic session ordering. Fork CI verifies the exact upstream base, ancestry, release gates, and published binaries. The official upstream v17.0.5 tag has no `appserver` command, so it cannot host T4 Code. It also does not include the authority bridge needed by T4's standalone host. T4 Code vendors `@oh-my-pi/app-wire` 0.7.0 from integration commit [`796bb7dc`](https://github.com/lyc-aon/oh-my-pi/commit/796bb7dca45027bd4b7b94017cdf41ef214a11f2), source tree `0c195a01ba0bb98fbf4d4863aee59bf23a6e81b7`.
+T4 Code v0.1.34 was verified with OMP 17.0.5 built from [`675499f4`](https://github.com/wolfiesch/oh-my-pi/commit/675499f428ada2d116088b6a6ceae6586aba137a), tagged [`t4code-17.0.5-appserver-16`](https://github.com/wolfiesch/oh-my-pi/tree/t4code-17.0.5-appserver-16). That integration is based on the official upstream [`v17.0.5`](https://github.com/can1357/oh-my-pi/tree/v17.0.5) tag at [`9fd6e971`](https://github.com/can1357/oh-my-pi/commit/9fd6e97113f5ed3a847e66d346970efdf8afcad9). It exposes the bounded `t4-omp-authority/1` bridge used by T4's standalone host and removes the old public OMP appserver launchers. It also includes snapshot-consistent paged authority inventories with explicit partial-state metadata, stale-lock lifecycle recovery, sparse authority-side session lists, atomic `xd://` mount publication, bounded newest-first transcript paging, stale-owner recovery, privacy-safe project reveal, fast lazy session indexing, cross-session attention and transcript search, the negotiated browser-preview command surface, redacted Codex transport diagnostics, the versioned Agent View lifecycle contract, session-owned cancellation, lock-aware session observation, complete transcript reconciliation, the cooperative `/continue-in-t4` handoff, caller-selected working directories for copied sessions, and deterministic session ordering. Fork CI verifies the exact upstream base, ancestry, release gates, and published binaries. The official upstream v17.0.5 tag has no `appserver` command, so it cannot host T4 Code. It also does not include the authority bridge needed by T4's standalone host. T4 Code vendors `@oh-my-pi/app-wire` 0.7.0 from integration commit [`796bb7dc`](https://github.com/lyc-aon/oh-my-pi/commit/796bb7dca45027bd4b7b94017cdf41ef214a11f2), source tree `0c195a01ba0bb98fbf4d4863aee59bf23a6e81b7`.
 
 T4 owns the client wire, generic host service, and standalone daemon in `@t4-code/host-wire`, `@t4-code/host-service`, and `@t4-code/host-daemon`. The frozen `@oh-my-pi/app-wire` 0.7.0 tarball remains only as compatibility evidence. The released package still launches `t4-host` against the strict `t4-omp-authority/1` bridge, while OMP owns session files, locks, agent execution, and takeover decisions. A separately pinned unmodified official OMP 17.0.9 now passes T4's direct RPC and packaged-host behavior gates on macOS ARM64 and Linux x64/ARM64; packaged desktop and managed-session cutover proofs remain before that path replaces the released fallback.
 
@@ -23,7 +23,7 @@ T4 owns the client wire, generic host service, and standalone daemon in `@t4-cod
 No Windows build, Intel Mac build, or native iOS application is currently shipped. iPhone and iPad
 access use the responsive Tailnet browser/PWA compatibility client.
 
-## What changed in v0.1.33
+## What changed in v0.1.34
 
 - The session rail now matches the Codex desktop organization model: search, activity filters, sort controls, collapsible projects, flat and grouped views, and persistent preferences.
 - Project menus can create sessions, open folders in the system file manager, collapse a group, or hide it from the rail. Hidden projects remain recoverable through the filter menu.
@@ -53,7 +53,7 @@ access use the responsive Tailnet browser/PWA compatibility client.
 ### Android
 
 1. On the Android phone, sign in to Tailscale with an account that can reach the T4 Code host.
-2. Download [`T4-Code-0.1.33-android.apk`](https://github.com/wolfiesch/omperator/releases/download/v0.1.33/T4-Code-0.1.33-android.apk).
+2. Download [`T4-Code-0.1.34-android.apk`](https://github.com/wolfiesch/omperator/releases/download/v0.1.34/T4-Code-0.1.34-android.apk).
 3. If Android asks, allow your browser or file manager to install unknown apps, then install the APK.
 4. Open T4 Code and enter the host's HTTPS Tailscale address, including its port. The app saves the address; you can add more hosts later and switch between them.
 
@@ -62,8 +62,8 @@ The APK does not contain a host daemon or expose one to the public internet. It 
 ### Linux (Debian/Ubuntu)
 
 ```sh
-wget https://github.com/wolfiesch/omperator/releases/download/v0.1.33/T4-Code-0.1.33-linux-amd64.deb
-sudo apt install ./T4-Code-0.1.33-linux-amd64.deb
+wget https://github.com/wolfiesch/omperator/releases/download/v0.1.34/T4-Code-0.1.34-linux-amd64.deb
+sudo apt install ./T4-Code-0.1.34-linux-amd64.deb
 ```
 
 Use `apt install` rather than `dpkg -i` so system dependencies resolve automatically.
@@ -71,14 +71,14 @@ Use `apt install` rather than `dpkg -i` so system dependencies resolve automatic
 ### Linux (AppImage)
 
 ```sh
-wget https://github.com/wolfiesch/omperator/releases/download/v0.1.33/T4-Code-0.1.33-linux-x86_64.AppImage
-chmod +x T4-Code-0.1.33-linux-x86_64.AppImage
-./T4-Code-0.1.33-linux-x86_64.AppImage
+wget https://github.com/wolfiesch/omperator/releases/download/v0.1.34/T4-Code-0.1.34-linux-x86_64.AppImage
+chmod +x T4-Code-0.1.34-linux-x86_64.AppImage
+./T4-Code-0.1.34-linux-x86_64.AppImage
 ```
 
 ### macOS (Apple Silicon)
 
-1. Download [`T4-Code-0.1.33-mac-arm64.dmg`](https://github.com/wolfiesch/omperator/releases/download/v0.1.33/T4-Code-0.1.33-mac-arm64.dmg) (or [`T4-Code-0.1.33-mac-arm64.zip`](https://github.com/wolfiesch/omperator/releases/download/v0.1.33/T4-Code-0.1.33-mac-arm64.zip)).
+1. Download [`T4-Code-0.1.34-mac-arm64.dmg`](https://github.com/wolfiesch/omperator/releases/download/v0.1.34/T4-Code-0.1.34-mac-arm64.dmg) (or [`T4-Code-0.1.34-mac-arm64.zip`](https://github.com/wolfiesch/omperator/releases/download/v0.1.34/T4-Code-0.1.34-mac-arm64.zip)).
 2. Drag `T4 Code.app` into `/Applications`.
 3. Open T4 Code normally. The release workflow verifies the pinned publisher, hardened runtime, secure timestamp, Apple notarization, stapled ticket, and Gatekeeper acceptance before publication.
 4. To start terminal or CMUX sessions that can hand off to T4 Code, open **Settings → Hosts** and choose **Install t4-omp**. This adds `~/.local/bin/t4-omp` and leaves any existing `omp` command unchanged.

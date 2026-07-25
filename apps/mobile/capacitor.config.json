@@ -3,7 +3,7 @@
   "appName": "T4 Code",
   "webDir": "dist",
   "loggingBehavior": "debug",
-  "appendUserAgent": " T4CodeMobile/0.1.33",
+  "appendUserAgent": " T4CodeMobile/0.1.34",
   "android": {
     "path": "android",
     "minWebViewVersion": 60,

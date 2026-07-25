@@ -1,6 +1,6 @@
 ## First independently owned release
 
-T4 Code v0.1.33 is the first release published from
+T4 Code v0.1.34 is the current release published from
 [`wolfiesch/omperator`](https://github.com/wolfiesch/omperator). Its Android package uses the
 project's new `net.t4code.app` signing key, and its macOS packages use Michael Schoenberger's pinned
 Developer ID certificate and notarization credentials. GitHub Releases is the authoritative
@@ -21,7 +21,7 @@ inside Electron, eliminating a second product implementation.
 
 ## A session rail built for large libraries
 
-T4 Code v0.1.33 makes a large session library easier to navigate. The rail now supports text search, activity filters, newest/oldest sorting, grouped and flat layouts, collapsible project folders, and saved display preferences. Those controls follow the Codex desktop organization model while keeping OMP as the source of truth.
+T4 Code v0.1.34 makes a large session library easier to navigate. The rail now supports text search, activity filters, newest/oldest sorting, grouped and flat layouts, collapsible project folders, and saved display preferences. Those controls follow the Codex desktop organization model while keeping OMP as the source of truth.
 
 Project menus can create a session in that folder, reveal the folder in the system file manager, collapse the group, or hide it from the rail. Hidden projects are not deleted and can be restored from the filter menu. The reveal action is deliberately narrow: the host accepts only project paths already present in its session catalog.
 
@@ -57,7 +57,7 @@ Session-linked Host Browser Previews continue to open in their dedicated workspa
 
 ## Runtime provenance
 
-T4 Code v0.1.33 vendors app-wire 0.7.0 from integration commit [796bb7dc](https://github.com/lyc-aon/oh-my-pi/commit/796bb7dca45027bd4b7b94017cdf41ef214a11f2), source tree `0c195a01ba0bb98fbf4d4863aee59bf23a6e81b7`. The frozen package remains compatibility evidence; T4 owns the active `omp-app/1` wire schema.
+T4 Code v0.1.34 vendors app-wire 0.7.0 from integration commit [796bb7dc](https://github.com/lyc-aon/oh-my-pi/commit/796bb7dca45027bd4b7b94017cdf41ef214a11f2), source tree `0c195a01ba0bb98fbf4d4863aee59bf23a6e81b7`. The frozen package remains compatibility evidence; T4 owns the active `omp-app/1` wire schema.
 
 The verified OMP 17.0.5 runtime is built from commit [675499f4](https://github.com/wolfiesch/oh-my-pi/commit/675499f428ada2d116088b6a6ceae6586aba137a) and tagged [t4code-17.0.5-appserver-16](https://github.com/wolfiesch/oh-my-pi/tree/t4code-17.0.5-appserver-16). It provides the bounded authority bridge used by T4's standalone host and no longer exposes the old public appserver launchers. It pages snapshot-consistent session inventories across bounded frames, marks over-limit inventories partial, and allows lifecycle actions only when a lock is missing or provably stale. It also keeps session-list metadata sparse before bridge encoding, publishes `xd://` mounts atomically with their transport tools, preserves bounded newest-first transcript paging, and lets a copied historic session use a caller-selected existing working directory when its recorded directory is gone. Unsupported optional capabilities remain hidden when the host does not advertise them.
 
