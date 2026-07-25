@@ -66,6 +66,19 @@ test("current source tree has one consistent release version", () => {
   assert.deepEqual(collectReleaseConsistencyErrors(files), []);
 });
 
+test("bundled runtime pins the current macOS release certificate", () => {
+  const macosIdentity = JSON.parse(files.get(".github/macos-release-identity.json"));
+  const drifted = changed("apps/desktop/src/bundled-runtime.ts", (text) =>
+    replaceRequired(text, macosIdentity.certificateSha256, "0".repeat(64)),
+  );
+
+  assert.ok(
+    collectReleaseConsistencyErrors(drifted).some((error) =>
+      error.includes("apps/desktop/src/bundled-runtime.ts"),
+    ),
+  );
+});
+
 test("release package discovery ignores non-Node package directories", () => {
   assert.equal(discoverReleasePackagePaths(repoRoot).includes("packages/cluster-operator/package.json"), false);
 });
