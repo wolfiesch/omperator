@@ -1256,6 +1256,9 @@ describe("appserver lifecycle", () => {
 			// The real factory, spawning a real process that fails the way a
 			// misconfigured runtime does.
 			rpcChildInvocation: { executable: "/bin/sh", prefixArgv: ["-c", childScript] },
+			// Keep the SIGTERM-to-SIGKILL escalation quick when a child ignores the
+			// first signal.
+			lifecycleQuiesceTimeoutMs: 300,
 		});
 		await appserver.start();
 		const client = await RawUdsWebSocket.connect(socketPath);
@@ -1341,6 +1344,24 @@ describe("appserver lifecycle", () => {
 			expect(error?.code).toBe("session_start_failed");
 			expect(error?.message).toContain("no model is configured");
 			expect(await Bun.file(scenario.forkPath).exists()).toBe(false);
+		} finally {
+			scenario.client.destroy();
+			await scenario.client.closed();
+			await scenario.appserver.stop();
+			await rm(scenario.root, { recursive: true, force: true });
+		}
+	});
+	// `stop()` only signals. A child that ignores SIGTERM must still be gone
+	// before the copy is deleted, or it can rewrite the lock afterwards.
+	test("escalates to SIGKILL before removing the copy of a child that ignores SIGTERM", async () => {
+		const scenario = await forkWithFailingRuntime("trap '' TERM; echo not-json; sleep 30");
+		try {
+			const error = scenario.response?.error as { code?: string; message?: string } | undefined;
+			expect(scenario.response?.ok).toBe(false);
+			expect(error?.code).toBe("session_start_failed");
+			// The copy is gone, which is only sound because the child is gone too.
+			expect(await Bun.file(scenario.forkPath).exists()).toBe(false);
+			expect(scenario.appserver.snapshot(scenario.forkId)).toBeUndefined();
 		} finally {
 			scenario.client.destroy();
 			await scenario.client.closed();

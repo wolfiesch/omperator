@@ -619,6 +619,19 @@ class SessionStartError extends Error {
 	}
 }
 
+/**
+ * A runtime that would not die. Its child still owns the session's lock and can
+ * still write the file, so nothing may delete that session on its behalf.
+ */
+class SessionRuntimeStuckError extends Error {
+	readonly cause: unknown;
+	constructor(cause: unknown) {
+		super("session runtime did not stop");
+		this.name = "SessionRuntimeStuckError";
+		this.cause = cause;
+	}
+}
+
 class ForkWorkingDirectoryError extends Error {
 	readonly code: string;
 	constructor(code: string, message: string) {
@@ -2969,7 +2982,12 @@ export class LocalAppserver implements AppserverHandle {
 			// The copy is already on disk and in the ledger by this point, so a
 			// runtime that cannot start would otherwise strand an orphan session
 			// and the lock its short-lived child took on the way down.
-			const reason = sessionStartReason(error);
+			const reason = sessionStartReason(error instanceof SessionRuntimeStuckError ? error.cause : error);
+			if (error instanceof SessionRuntimeStuckError) {
+				// The copy stays: an undead child still holds its lock, and the
+				// record is what lets an operator see and retry it.
+				throw new SessionStartError(`${reason}; its runtime did not stop, so the copy was kept`);
+			}
 			try {
 				await this.discardFailedFork(record);
 			} catch (cleanupError) {
@@ -3851,7 +3869,10 @@ export class LocalAppserver implements AppserverHandle {
 			supervisor.stop("SIGTERM");
 			if (child && !(await this.childExitedWithinLifecycleTimeout(child))) {
 				supervisor.stop("SIGKILL");
-				await this.childExitedWithinLifecycleTimeout(child);
+				if (!(await this.childExitedWithinLifecycleTimeout(child)))
+					// A child that survives SIGKILL still owns its lock and can
+					// rewrite the file, so its session must not be deleted.
+					throw new SessionRuntimeStuckError(error);
 			}
 			throw error;
 		}
