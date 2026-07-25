@@ -87,6 +87,17 @@ struct T4WorkspaceView: View {
                 }
             }
         }
+        .task {
+            // UI-test seam: launch with -T4Send <message> to send one prompt
+            // from the app's own send path once connected (proves the Swift
+            // lease flow end-to-end without touch injection).
+            let args = ProcessInfo.processInfo.arguments
+            guard let index = args.firstIndex(of: "-T4Send"), args.indices.contains(index + 1) else { return }
+            let text = args[index + 1]
+            for _ in 0..<40 where !store.connected { try? await Task.sleep(for: .milliseconds(500)) }
+            guard store.connected, let session = store.selectedSession ?? store.sessions.first else { return }
+            await store.sendPrompt(sessionId: session.sessionId, text: text)
+        }
     }
 
     // MARK: - Deep links
