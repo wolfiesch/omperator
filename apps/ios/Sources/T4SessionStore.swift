@@ -48,6 +48,10 @@ final class T4SessionStore: ObservableObject {
 
     private var client: HostClient?
     private var hostId: String = ""
+    /// Capabilities the host granted at welcome — gates optional commands
+    /// (e.g. catalog.get needs catalog.read; an unauthorized command gets
+    /// the connection closed by the remote policy).
+    private var grantedCapabilities: [String] = []
 
     // Persisted connection (dev-grade: UserDefaults, not Keychain).
     private static let savedEndpointKey = "t4.endpoint"
@@ -349,6 +353,7 @@ final class T4SessionStore: ObservableObject {
         do {
             let welcome = try await c.connect()
             hostId = welcome.hostId
+            grantedCapabilities = welcome.grantedCapabilities
             connected = welcome.authentication == .paired || welcome.authentication == .local
             if connected {
                 pairedEndpoint = endpoint.absoluteString
@@ -397,7 +402,7 @@ final class T4SessionStore: ObservableObject {
                 deviceId: "ios-\(slug)",
                 deviceName: deviceName,
                 platform: "ios",
-                requestedCapabilities: ["sessions.read", "sessions.prompt", "sessions.manage"]
+                requestedCapabilities: ["sessions.read", "sessions.prompt", "sessions.manage", "catalog.read"]
             )
             let ok = try await c.pair(intent)
             // The paired connection is inert by design (the host rejects
@@ -462,8 +467,10 @@ final class T4SessionStore: ObservableObject {
     }
 
     /// Fetch the host catalog (models, tools, …) once after connecting.
+    /// Skipped when the device lacks catalog.read — an unauthorized command
+    /// gets the connection closed by the remote policy.
     private func loadCatalog() async {
-        guard let client, connected, !hostId.isEmpty else { return }
+        guard let client, connected, !hostId.isEmpty, grantedCapabilities.contains("catalog.read") else { return }
         do {
             let result = try await client.sendCommand(CommandIntent(hostId: hostId, command: "catalog.get"))
             catalog = try result.catalogItems()
