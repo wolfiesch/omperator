@@ -70,8 +70,11 @@ final class T4CodeUITests: XCTestCase {
     func testComposerIsHonestWhenDisconnected() throws {
         let app = launch()
         XCTAssertTrue(app.staticTexts["iOS session rail"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.textViews["Connect a host to message"].waitForExistence(timeout: 3)
-            || app.staticTexts["Connect a host to message"].exists)
+        // The composer prompt is honest about needing a host (placeholder
+        // text is the field's own value, not a static label).
+        let field = app.textFields["Connect a host to message"].firstMatch
+        let fieldView = app.textViews["Connect a host to message"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 3) || fieldView.exists)
         // Send is disabled with no host.
         XCTAssertFalse(app.buttons["Send message"].isEnabled)
     }
