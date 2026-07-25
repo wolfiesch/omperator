@@ -123,18 +123,33 @@ final class T4SessionStore: ObservableObject {
     }
 
     private func acquireLease(sessionId: String) async -> String? {
-        guard let client, connected, !hostId.isEmpty, let revision = revision(of: sessionId) else { return nil }
-        do {
-            let result = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "prompt.lease.acquire",
-                args: ["ownerId": .string("t4-ios")],
-                sessionId: sessionId, expectedRevision: revision))
-            return try result.leaseResult()
-        } catch {
-            t4log.error("acquireLease failed: \(error)")
-            lastError = "\(error)"
-            return nil
+        guard let client, connected, !hostId.isEmpty, var revision = revision(of: sessionId) else { return nil }
+        for attempt in 0...1 {
+            do {
+                let result = try await client.sendCommand(CommandIntent(
+                    hostId: hostId, command: "prompt.lease.acquire",
+                    args: ["ownerId": .string("t4-ios")],
+                    sessionId: sessionId, expectedRevision: revision))
+                return try result.leaseResult()
+            } catch {
+                // Revision churn is normal (attach/list bumps it): refresh once
+                // and retry with the current revision before giving up.
+                if attempt == 0, let fresh = try? await refreshRevision(of: sessionId) {
+                    revision = fresh
+                    continue
+                }
+                t4log.error("acquireLease failed: \(error)")
+                lastError = "\(error)"
+                return nil
+            }
         }
+        return nil
+    }
+
+    /// Re-fetch the inventory and return one session's current revision.
+    private func refreshRevision(of sessionId: String) async throws -> String? {
+        await refresh()
+        return revision(of: sessionId)
     }
 
     private func releaseLease(sessionId: String, leaseId: String) async {
@@ -212,9 +227,11 @@ final class T4SessionStore: ObservableObject {
                 var args: [String: JSONValue] = ["message": .string(text), "leaseId": .string(leaseId)]
                 if !refs.isEmpty { args["images"] = .array(refs) }
                 do {
+                    // session.prompt: revision is optional on the wire —
+                    // omitting it sidesteps stale_revision churn entirely.
                     _ = try await client.sendCommand(CommandIntent(
                         hostId: hostId, command: "session.prompt", args: args,
-                        sessionId: sessionId, expectedRevision: revision(of: sessionId)))
+                        sessionId: sessionId))
                     t4log.notice("prompt accepted for \(sessionId, privacy: .public)")
                 } catch {
                     t4log.error("prompt failed: \(error)")
@@ -234,7 +251,7 @@ final class T4SessionStore: ObservableObject {
                 _ = try await client.sendCommand(CommandIntent(
                     hostId: hostId, command: "session.cancel",
                     args: ["leaseId": .string(leaseId)],
-                    sessionId: sessionId, expectedRevision: revision(of: sessionId)))
+                    sessionId: sessionId))
             } catch {
                 lastError = "\(error)"
             }
