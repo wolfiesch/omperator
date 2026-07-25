@@ -41,6 +41,7 @@ struct T4SessionDetailView: View {
     @State private var showFacts = false
     @State private var attachments: [ComposerAttachment] = []
     @State private var pickerItems: [PhotosPickerItem] = []
+    @State private var askDraft = ""
     @FocusState private var composerFocused: Bool
     private var t: Theme { theme.t }
     private static let maxImages = 8   // PROMPT_IMAGE_MAX_COUNT on the wire
@@ -53,6 +54,9 @@ struct T4SessionDetailView: View {
                         header
                         if let challenge = store.pendingConfirmation {
                             confirmationBanner(challenge)
+                        }
+                        if let ask = store.pendingAsk, ask.sessionId == session.sessionId {
+                            askBanner(ask)
                         }
                         if showFacts { facts }
                         Divider().overlay(t.lineFaint)
@@ -114,7 +118,72 @@ struct T4SessionDetailView: View {
         .background(t.diffDelBG, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
+    /// Mode badge: plain text in the header when mode ≠ build. Plan uses the
+    /// task accent, read-only the advisor accent — text only, no capsule.
+    private var modeBadgeText: (text: String, color: Color)? {
+        switch session.mode ?? "build" {
+        case "plan":     return ("PLAN", t.cTask)
+        case "readOnly": return ("READ-ONLY", t.cAdvisor)
+        default:         return nil
+        }
+    }
+
+    /// Question-mode ask banner: option buttons when the host offered a fixed
+    /// choice, otherwise a text field + Answer button for free-text replies.
+    private func askBanner(_ ask: T4SessionStore.PendingAsk) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "questionmark.bubble.fill")
+                    .font(.system(size: 14))
+                    .foregroundStyle(t.cTask)
+                Text("Question")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(t.txt)
+            }
+            if let question = ask.request.question {
+                Text(question)
+                    .font(.system(size: 13))
+                    .foregroundStyle(t.txtBody)
+            }
+            if ask.request.options.isEmpty {
+                HStack(spacing: 10) {
+                    TextField("Answer", text: $askDraft, axis: .vertical)
+                        .textFieldStyle(.roundedBorder)
+                        .lineLimit(1...4)
+                    Button {
+                        let value = askDraft
+                        askDraft = ""
+                        Task { await store.respondAsk(value: value) }
+                    } label: {
+                        Text("Answer")
+                            .font(.system(size: 13, weight: .semibold))
+                            .padding(.horizontal, 12)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(t.cTask)
+                    .disabled(askDraft.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(ask.request.options) { option in
+                        Button {
+                            Task { await store.respondAsk(value: option.id) }
+                        } label: {
+                            Text(option.label)
+                                .font(.system(size: 13, weight: .semibold))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(t.cTask)
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .background(t.highlightBG, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
     private var header: some View {
+
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             StatusPill(status: session.status, theme: t)
             if let model = session.model {
@@ -122,6 +191,11 @@ struct T4SessionDetailView: View {
                     T4ModelLabel(selector: model, theme: t)
                 }
                 .accessibilityLabel("Model and session controls")
+            }
+            if let badge = modeBadgeText {
+                Text(badge.text)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(badge.color)
             }
             Spacer()
             Button { withAnimation(.easeInOut(duration: 0.2)) { showFacts.toggle() } } label: {

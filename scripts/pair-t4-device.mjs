@@ -4,7 +4,7 @@
 // Usage: node scripts/pair-t4-device.mjs <ws-url> <code>
 import WebSocket from "ws";
 
-const [url, code] = process.argv.slice(2);
+const [url, code, deviceName] = process.argv.slice(2);
 if (!url || !code) { console.error("usage: pair-t4-device.mjs <ws-url> <code>"); process.exit(2); }
 const CAPS = ["sessions.read", "sessions.prompt", "sessions.manage"];
 
@@ -57,7 +57,7 @@ await new Promise((r) => first.ws.once("message", r)); // welcome
 console.log(`hello: host=${first.hostId} auth=${first.authentication}`);
 first.ws.send(JSON.stringify({
   v: "omp-app/1", type: "pair.start", requestId: "req-pair-1",
-  code, deviceId: "iphone-17-pro-sim", deviceName: "iPhone 17 Pro (Simulator)",
+  code, deviceId: (deviceName ?? "iphone-17-pro-sim").toLowerCase().replace(/[^a-z0-9]+/g, "-"), deviceName: deviceName ?? "iPhone 17 Pro (Simulator)",
   platform: "ios", requestedCapabilities: CAPS,
 }));
 const pairOk = await new Promise((resolve, reject) => {

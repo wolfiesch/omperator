@@ -54,11 +54,12 @@ public struct SessionRef: Decodable, Equatable, Sendable {
     public let contextUsage: ContextUsage?
     public let attention: JSONValue?
     public let runtime: JSONValue?
-
+    public let proposedPlan: String?
+    public let mode: String?
     private enum CodingKeys: String, CodingKey {
         case hostId, sessionId, project, revision, title, status, updatedAt, archivedAt
         case liveState, model, thinking, pendingApproval, pendingUserInput, proposedPlan
-        case contextUsage, attention, runtime
+        case contextUsage, attention, runtime, mode
     }
 
     public init(from decoder: Decoder) throws {
@@ -87,6 +88,7 @@ public struct SessionRef: Decodable, Equatable, Sendable {
         pendingApproval = try c.decodeIfPresent(Bool.self, forKey: .pendingApproval)
         pendingUserInput = try c.decodeIfPresent(Bool.self, forKey: .pendingUserInput)
         proposedPlan = try c.decodeIfPresent(String.self, forKey: .proposedPlan).map { try Bounded.string($0, path: "proposedPlan", maxBytes: 4096) }
+        mode = try c.decodeIfPresent(String.self, forKey: .mode).map { try Bounded.controlFree($0, path: "mode", maxBytes: 32) }
         contextUsage = try c.decodeIfPresent(ContextUsage.self, forKey: .contextUsage)
         attention = try c.decodeIfPresent(JSONValue.self, forKey: .attention)
         runtime = try c.decodeIfPresent(JSONValue.self, forKey: .runtime)

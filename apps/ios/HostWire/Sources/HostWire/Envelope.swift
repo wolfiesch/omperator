@@ -36,6 +36,45 @@ public struct ErrorFrame: Decodable, Equatable, Sendable {
 public struct SessionEvent: Equatable, Sendable {
     public let type: String
     public let fields: [String: JSONValue]
+
+    /// Typed view of an `ask.request` event's fields, or nil when this event
+    /// is not an ask. Asks carry either `options` (a fixed choice the user
+    /// taps) or a free-text `question`; the host clears them with
+    /// `ask.resolved`.
+    public var askRequest: AskRequest? {
+        guard type == "ask.request" else { return nil }
+        guard case .string(let askId) = fields["askId"] else { return nil }
+        var question: String?
+        if case .string(let q) = fields["question"] { question = q }
+        var options: [AskOption] = []
+        if case .array(let arr) = fields["options"] {
+            for item in arr {
+                guard case .object(let obj) = item,
+                      case .string(let id) = obj["id"],
+                      case .string(let label) = obj["label"] else { continue }
+                options.append(AskOption(id: id, label: label))
+            }
+        }
+        return AskRequest(askId: askId, question: question, options: options)
+    }
+
+    /// True for `ask.resolved` events — clears any pending ask on the client.
+    public var isAskResolved: Bool { type == "ask.resolved" }
+}
+
+/// One selectable answer in an `ask.request` (host-wire ask surface).
+public struct AskOption: Equatable, Sendable, Identifiable {
+    public let id: String
+    public let label: String
+}
+
+/// A host-asked question awaiting the user's answer (question mode). Either
+/// `options` is non-empty (tap a choice) or `question` is set (free text).
+public struct AskRequest: Equatable, Sendable {
+    public let askId: String
+    public let question: String?
+    public let options: [AskOption]
+    public var isFreeText: Bool { options.isEmpty }
 }
 
 /// Host → client: one live session event with its cursor.

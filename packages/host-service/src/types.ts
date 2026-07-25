@@ -111,6 +111,7 @@ export interface SessionRecord {
 	archivedAt?: string;
 	model?: string;
 	thinking?: string;
+	mode?: string;
 	runtime?: { readonly id: string; readonly workspaceInstanceId?: string };
 	/** False when discovery intentionally deferred loading the transcript body. */
 	entriesLoaded?: boolean;

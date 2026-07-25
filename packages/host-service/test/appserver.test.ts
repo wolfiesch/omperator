@@ -1900,4 +1900,120 @@ describe("appserver lifecycle", () => {
 			await rm(root, { recursive: true, force: true });
 		}
 	});
+	test("session.mode.set shapes forwarded prompts, persists, and echoes on the ref", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-session-mode-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const sessionOwnershipPath = join(root, "profile", "owned-sessions.json");
+		let createCount = 0;
+		const sessionAuthority = {
+			create: async () => {
+				const id = `mode-session-${++createCount}`;
+				return {
+					...record(id),
+					path: join(root, `${id}.jsonl`),
+					cwd: root,
+					projectId: stableProjectId(root),
+				};
+			},
+			list: async () => [],
+			archive: async () => {},
+			restore: async () => {},
+			delete: async () => {},
+		};
+		const factory = new DeferredPromptFactory();
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "session-mode-test",
+			socketPath,
+			discovery: sessionAuthority,
+			sessionAuthority,
+			sessionOwnershipPath,
+			projectRootForProject: () => root,
+			childFactory: factory,
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		const nextResponse = async (requestId: string) => {
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === requestId) return frame;
+			}
+		};
+		const PLAN_PREFIX =
+			"[PLAN MODE — you may inspect but MUST NOT modify anything: no file writes, edits, patches, or state-changing commands. Analyze the request, then propose a concrete step-by-step plan and stop.]\n\n";
+		const READONLY_PREFIX =
+			"[READ-ONLY MODE — answer by inspection only: no writes, edits, patches, builds, or commands of any kind.]\n\n";
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "mode-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: [],
+				capabilities: { client: ["sessions.manage", "sessions.read", "sessions.prompt"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect((await client.nextServer()).type).toBe("sessions");
+
+			const runPrompt = async (mode: "build" | "plan" | "readOnly"): Promise<string> => {
+				const projectRoot = stableProjectId(root);
+				const reqCreate = `create-${mode}-${createCount + 1}`;
+				client.sendJson({
+					v: "omp-app/1",
+					type: "command",
+					requestId: reqCreate,
+					commandId: `${reqCreate}-command`,
+					hostId: host,
+					command: "session.create",
+					args: { projectId: projectRoot },
+				});
+				const createResp = await nextResponse(reqCreate);
+				expect(createResp).toMatchObject({ ok: true });
+				const sid = sessionId((createResp.result as { session: { sessionId: string } }).session.sessionId);
+
+				const reqMode = `mode-${mode}-${createCount}`;
+				client.sendJson({
+					v: "omp-app/1",
+					type: "command",
+					requestId: reqMode,
+					commandId: `${reqMode}-command`,
+					hostId: host,
+					sessionId: sid,
+					command: "session.mode.set",
+					args: { mode },
+				});
+				const modeResp = await nextResponse(reqMode);
+				expect(modeResp).toMatchObject({ ok: true, result: { mode } });
+				expect(appserver.snapshot(sid)?.ref.mode).toBe(mode === "build" ? undefined : mode);
+
+				const reqPrompt = `prompt-${mode}-${createCount}`;
+				client.sendJson({
+					v: "omp-app/1",
+					type: "command",
+					requestId: reqPrompt,
+					commandId: `${reqPrompt}-command`,
+					hostId: host,
+					sessionId: sid,
+					command: "session.prompt",
+					args: { message: "hello" },
+				});
+				const child = factory.children.at(-1);
+				if (!child) throw new Error("created session did not start its writer");
+				const promptFrame = await child.promptReceived;
+				child.replyToPrompt();
+				await nextResponse(reqPrompt);
+				return promptFrame.message as string;
+			};
+
+			expect(await runPrompt("plan")).toBe(PLAN_PREFIX + "hello");
+			expect(await runPrompt("readOnly")).toBe(READONLY_PREFIX + "hello");
+			expect(await runPrompt("build")).toBe("hello");
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
 });

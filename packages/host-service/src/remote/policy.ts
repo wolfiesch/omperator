@@ -143,6 +143,7 @@ function mutation(command: string): boolean {
 		"session.model.set",
 		"session.thinking.set",
 		"session.fast.set",
+		"session.mode.set",
 		"session.close",
 		"session.cancel",
 		"files.write",

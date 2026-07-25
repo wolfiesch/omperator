@@ -108,6 +108,7 @@ export class SessionProjection {
 				...(record.archivedAt ? { archivedAt: record.archivedAt } : {}),
 				...(record.model ? { model: record.model } : {}),
 				...(record.thinking ? { thinking: record.thinking } : {}),
+				...(record.mode ? { mode: record.mode } : {}),
 				...(record.runtime ? { runtime: record.runtime } : {}),
 			},
 			indexCursor: { epoch, seq: 0 },
@@ -171,6 +172,17 @@ export class SessionProjection {
 		if (!title || this.value.ref.title === title) return undefined;
 		return this.updateRef({ ...this.value.ref, title }, `title:${title}`);
 	}
+	updateMode(mode: string): ServerFrame | undefined {
+		const current = this.value.ref;
+		if (mode === "build") {
+			if (current.mode === undefined) return undefined;
+			const next = { ...current };
+			delete next.mode;
+			return this.updateRef(next, `mode:${mode}`);
+		}
+		if (current.mode === mode) return undefined;
+		return this.updateRef({ ...current, mode }, `mode:${mode}`);
+	}
 	reconcileRecord(record: SessionRecord): ServerFrame | undefined {
 		const current = this.value.ref;
 		const sameProject = current.project.projectId === record.projectId;
@@ -206,6 +218,7 @@ export class SessionProjection {
 		};
 		if (record.model !== undefined) next.model = record.model;
 		if (record.thinking !== undefined) next.thinking = record.thinking;
+		if (record.mode !== undefined) next.mode = record.mode;
 		if (JSON.stringify(next) === JSON.stringify(current)) return undefined;
 		return this.updateRef(next, `observer-record:${record.updatedAt}`);
 	}

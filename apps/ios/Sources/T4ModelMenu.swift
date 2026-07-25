@@ -37,6 +37,7 @@ struct T4ModelMenuButton<Content: View>: View {
         Menu {
             modelContent
             controlContent
+            modeContent
         } label: {
             label()
         }
@@ -80,6 +81,28 @@ struct T4ModelMenuButton<Content: View>: View {
                 set: { enabled in Task { await store.setFast(sessionId: session.sessionId, enabled: enabled) } }
             )) {
                 Label("Fast mode", systemImage: "bolt")
+            }
+        }
+    }
+
+    @ViewBuilder private var modeContent: some View {
+        Section("Mode") {
+            modeButton("build", label: "Build", hint: "Make changes directly")
+            modeButton("plan", label: "Plan", hint: "Propose a plan before touching anything")
+            modeButton("readOnly", label: "Read-only", hint: "Inspect only; no writes, no commands")
+        }
+    }
+
+    @ViewBuilder
+    private func modeButton(_ mode: String, label: String, hint: String) -> some View {
+        let current = session.mode ?? "build"
+        Button {
+            Task { await store.setMode(sessionId: session.sessionId, mode: mode) }
+        } label: {
+            if current == mode {
+                Label("\(label) — \(hint)", systemImage: "checkmark")
+            } else {
+                Text("\(label) — \(hint)")
             }
         }
     }

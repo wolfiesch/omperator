@@ -201,6 +201,10 @@ const PENDING_PROMPT_TEXT_BYTES = 8 * 1024;
 // plus the event envelope under the 64 KiB transient-event budget.
 const PENDING_PROMPT_EVENT_TEXT_BYTES = 24 * 1024;
 const MAX_PENDING_PROMPTS = 16;
+const PLAN_MODE_PREFIX =
+	"[PLAN MODE — you may inspect but MUST NOT modify anything: no file writes, edits, patches, or state-changing commands. Analyze the request, then propose a concrete step-by-step plan and stop.]\n\n";
+const READONLY_MODE_PREFIX =
+	"[READ-ONLY MODE — answer by inspection only: no writes, edits, patches, builds, or commands of any kind.]\n\n";
 // A session snapshot may carry all 16 reconnect prompts, but the session index
 // can contain 1,000 refs. Bound that aggregate independently so a pathological
 // all-pending index remains decodable by the 1 MiB / 20k-node app-wire limits.
@@ -1041,6 +1045,7 @@ export class LocalAppserver implements AppserverHandle {
 		this.#handlers.register("session.archive", command => this.handleArchive(command));
 		this.#handlers.register("session.restore", command => this.handleRestore(command));
 		this.#handlers.register("session.delete", command => this.handleDelete(command));
+		this.#handlers.register("session.mode.set", command => this.handleModeSet(command));
 	}
 	hasDesktopCatalogCommandHandler(command: string): boolean {
 		if (command === "usage.read") return this.#usageAuthority !== undefined;
@@ -1975,7 +1980,7 @@ export class LocalAppserver implements AppserverHandle {
 					this.#emitPromptTransient(command.sessionId!, command, lifecycle, command.args.message as string, 0);
 					const type = kind === "steer" ? "steer" : "follow_up";
 					const result = await supervisor.call(
-						{ type, message: command.args.message },
+						{ type, message: this.shapePromptMessage(command.sessionId!, command.args.message as string) },
 						command.requestId,
 						undefined,
 						internalId => {
@@ -2116,7 +2121,7 @@ export class LocalAppserver implements AppserverHandle {
 						try {
 							result = await supervisor.prompt(
 								command.requestId,
-								promptArguments!.message,
+								this.shapePromptMessage(command.sessionId!, promptArguments!.message),
 								// Registration and transient publication make this accepted work.
 								// Client disconnect must not revoke it before the child acknowledges it.
 								undefined,
@@ -2651,6 +2656,12 @@ export class LocalAppserver implements AppserverHandle {
 		const cleared = this.#projections.get(sessionId)?.clearPendingAttention();
 		if (cleared) this.broadcast(sessionId, cleared);
 	}
+	private shapePromptMessage(sessionId: SessionId, message: string): string {
+		const mode = this.#records.get(sessionId)?.mode;
+		if (mode === "plan") return PLAN_MODE_PREFIX + message;
+		if (mode === "readOnly") return READONLY_MODE_PREFIX + message;
+		return message;
+	}
 
 	private async handleExternalPrompt(
 		command: CommandFrame,
@@ -2706,7 +2717,7 @@ export class LocalAppserver implements AppserverHandle {
 		if (userEntryId) this.#settlePromptTransient(sessionId, lifecycle, userEntryId);
 		let failed = false;
 		try {
-			await owner.session.prompt(args.message);
+			await owner.session.prompt(this.shapePromptMessage(sessionId, args.message));
 			lifecycle.accepted = true;
 			return { frame: response(this.hostId, command, true, { accepted: true }) };
 		} catch (cause) {
@@ -3313,6 +3324,25 @@ export class LocalAppserver implements AppserverHandle {
 		} finally {
 			this.#lifecycleMutations.delete(sessionId);
 		}
+	}
+	private async handleModeSet(command: CommandFrame): Promise<CommandOutcome> {
+		const sessionId = command.sessionId!;
+		const args = decodeCommandArguments(command.command, command.args);
+		const mode = args.mode as string;
+		const record = this.#records.get(sessionId);
+		const projection = this.#projections.get(sessionId);
+		if (!record || !projection)
+			return {
+				frame: response(this.hostId, command, false, undefined, {
+					code: "unknown_session",
+					message: "session is not indexed",
+				}),
+			};
+		if (mode === "build") record.mode = undefined;
+		else record.mode = mode;
+		const delta = projection.updateMode(mode);
+		if (delta) await this.broadcastIndex(delta);
+		return { frame: response(this.hostId, command, true, { mode }) };
 	}
 	private async handleDelete(command: CommandFrame): Promise<CommandOutcome> {
 		const sessionId = command.sessionId!;

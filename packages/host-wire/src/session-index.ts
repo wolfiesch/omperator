@@ -143,6 +143,7 @@ export interface SessionRef {
 	liveState?: SessionLiveState;
 	model?: string;
 	thinking?: string;
+	mode?: string;
 	pendingApproval?: boolean;
 	pendingUserInput?: boolean;
 	proposedPlan?: string;
@@ -388,6 +389,11 @@ export function decodeSessionRef(value: unknown, path: string): SessionRef {
 	}
 	if (session.model !== undefined) controlFree(session.model, `${path}.model`, 256);
 	if (session.thinking !== undefined) controlFree(session.thinking, `${path}.thinking`, 256);
+	if (session.mode !== undefined) {
+		const mode = controlFree(session.mode, `${path}.mode`, 32);
+		if (mode !== "build" && mode !== "plan" && mode !== "readOnly")
+			fail("INVALID_FRAME", "invalid session mode", `${path}.mode`);
+	}
 	if (session.pendingApproval !== undefined && typeof session.pendingApproval !== "boolean")
 		fail("INVALID_FRAME", "pendingApproval must be boolean", `${path}.pendingApproval`);
 	if (session.pendingUserInput !== undefined && typeof session.pendingUserInput !== "boolean")

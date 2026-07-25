@@ -20,6 +20,15 @@ final class T4SessionStore: ObservableObject {
         var id: String { project }
     }
 
+    /// A host-asked question awaiting the user's answer (question mode).
+    /// `request` is the typed `ask.request` payload; `sessionId` scopes the
+    /// banner to the session that raised it.
+    struct PendingAsk: Identifiable {
+        let sessionId: String
+        let request: AskRequest
+        var id: String { request.askId }
+    }
+
     @Published private(set) var sessions: [SessionRef]
     @Published var query: String = ""
     @Published private(set) var connecting = false
@@ -37,6 +46,8 @@ final class T4SessionStore: ObservableObject {
     @Published private(set) var catalog: [CatalogItem] = []
     /// A confirmation challenge awaiting the user's approve/deny decision.
     @Published var pendingConfirmation: ConfirmationChallenge?
+    /// A host ask (question mode) awaiting the user's answer, if any.
+    @Published var pendingAsk: PendingAsk?
     /// Optimistic fast-mode state per session (the wire has no fast field).
     @Published private(set) var fastBySession: [String: Bool] = [:]
 
@@ -127,6 +138,25 @@ final class T4SessionStore: ObservableObject {
         let ok = await control(sessionId: sessionId, command: "session.fast.set",
                       args: ["enabled": .bool(enabled)])
         if ok { fastBySession[sessionId] = enabled }
+    }
+
+    /// Set the session's mode (session.mode.set): "build", "plan", or
+    /// "readOnly". Prompt shaping is host-side; iOS only sets/displays it.
+    func setMode(sessionId: String, mode: String) async {
+        _ = await control(sessionId: sessionId, command: "session.mode.set",
+                          args: ["mode": .string(mode)])
+    }
+
+    /// Answer the pending host ask (session.ui.respond {requestId, value}),
+    /// then clear it. The host clears the ask with an `ask.resolved` event,
+    /// but we clear optimistically so the banner dismisses immediately.
+    func respondAsk(value: String) async {
+        guard let ask = pendingAsk else { return }
+        let askId = ask.request.askId
+        let sessionId = ask.sessionId
+        pendingAsk = nil
+        _ = await control(sessionId: sessionId, command: "session.ui.respond",
+                          args: ["requestId": .string(askId), "value": .string(value)])
     }
 
     // MARK: - Prompt leases
@@ -499,6 +529,12 @@ final class T4SessionStore: ObservableObject {
                 }
             case .confirmation(let challenge):
                 pendingConfirmation = challenge
+            case .event(let frame):
+                if frame.event.isAskResolved {
+                    pendingAsk = nil
+                } else if let ask = frame.event.askRequest {
+                    pendingAsk = PendingAsk(sessionId: frame.sessionId, request: ask)
+                }
             default:
                 break
             }
