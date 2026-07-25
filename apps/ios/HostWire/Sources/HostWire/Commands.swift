@@ -178,6 +178,17 @@ public struct CommandFrame: Codable, Equatable, Sendable {
 }
 
 extension ResultFrame {
+    /// Decode a `session.image.begin` result body: `{imageId, chunkBytes}`.
+    public func imageBeginResult() throws -> (imageId: String, chunkBytes: Int) {
+        guard ok, let result, case .object(let o) = result,
+              case .string(let imageId) = o["imageId"] ?? .null,
+              case .number(let chunkBytes) = o["chunkBytes"] ?? .null, chunkBytes > 0
+        else {
+            throw T4WireError.invalidFrame(path: "result", reason: "response has no image begin result")
+        }
+        return (imageId, Int(chunkBytes))
+    }
+
     /// Decode a `session.list` / `host.list` result body, when this response
     /// carries one. Throws if the response is not a session-list result.
     public func sessionListResult() throws -> SessionListResult {

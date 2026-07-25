@@ -31,6 +31,10 @@ public struct TranscriptEntry: Equatable, Sendable {
     public let headline: String
     public let body: String
 
+    /// Message-role hint for `.message` entries ("user" / "assistant" / …);
+    /// nil for non-message kinds or missing data.
+    public var role: String? { data.string("role") }
+
     /// Wrap a decoded `DurableEntry`, deriving `kind`/`headline`/`body` from
     /// its `data` payload. Unknown kinds yield `kind == nil`,
     /// `headline == entry.kind`, `body == ""`.

@@ -1,8 +1,8 @@
 //  T4TranscriptView.swift
-//  Renders a session transcript from HostWire TranscriptEntry rows. Each row is
-//  a headline + body with a kind-colored accent rail. Backed by host-wire
-//  durable entries (sample until session.attach + transcript.page are wired to a
-//  live host).
+//  Claude Code-style transcript, matching the desktop web renderer:
+//  user messages are right-aligned bubbles, assistant messages are full-width
+//  markdown, and tool/turn rows stay as cards with a kind-colored accent rail.
+//  Rows render host-wire durable entries (TranscriptEntry).
 
 import SwiftUI
 import HostWire
@@ -14,12 +14,59 @@ struct T4TranscriptView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             ForEach(entries, id: \.id) { entry in
-                T4TranscriptRow(entry: entry, theme: theme)
+                switch entry.kind {
+                case .message where entry.role == "user":
+                    T4UserBubble(entry: entry, theme: theme)
+                case .message:
+                    T4AssistantMessage(entry: entry, theme: theme)
+                default:
+                    T4TranscriptRow(entry: entry, theme: theme)
+                }
             }
         }
     }
 }
 
+/// User message: right-aligned bubble, like the desktop renderer
+/// (`justify-end`, max ~85% width, secondary fill).
+struct T4UserBubble: View {
+    let entry: TranscriptEntry
+    let theme: Theme
+
+    var body: some View {
+        HStack {
+            Spacer(minLength: 40)
+            Text(entry.body)
+                .font(.system(size: 15))
+                .foregroundStyle(theme.txt)
+                .textSelection(.enabled)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(theme.glassFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(theme.line, lineWidth: 1)
+                )
+        }
+        .padding(.top, 6)
+        .accessibilityLabel("You said: \(entry.body)")
+    }
+}
+
+/// Assistant message: full-width markdown, no chrome — like Claude Code.
+struct T4AssistantMessage: View {
+    let entry: TranscriptEntry
+    let theme: Theme
+
+    var body: some View {
+        T4Markdown(text: entry.body, theme: theme)
+            .padding(.top, 6)
+            .accessibilityLabel("Assistant said: \(entry.body)")
+    }
+}
+
+/// Tool / review / compaction rows: the card treatment (accent rail +
+/// headline + body), unchanged from the original rail renderer.
 struct T4TranscriptRow: View {
     let entry: TranscriptEntry
     let theme: Theme

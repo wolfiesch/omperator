@@ -7,6 +7,7 @@
 
 import SwiftUI
 import HostWire
+import CryptoKit
 
 @MainActor
 final class T4SessionStore: ObservableObject {
@@ -31,20 +32,60 @@ final class T4SessionStore: ObservableObject {
         selectedSession = session
     }
 
-    /// Send a user prompt to a session (session.prompt). No-op with a clear
+    /// Send a user prompt to a session (session.prompt), uploading any images
+    /// first (session.image.begin/chunk → imageId refs). No-op with a clear
     /// error when not connected — the composer is disabled in that state.
-    func sendPrompt(sessionId: String, text: String) async {
+    func sendPrompt(sessionId: String, text: String, images: [Data] = []) async {
         guard let client, connected, !hostId.isEmpty else {
             lastError = "Not connected to a host."
             return
         }
         do {
+            var refs: [JSONValue] = []
+            for image in images {
+                refs.append(.object(["imageId": .string(try await uploadImage(image, sessionId: sessionId))]))
+            }
+            var args: [String: JSONValue] = ["message": .string(text)]
+            if !refs.isEmpty { args["images"] = .array(refs) }
             _ = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "session.prompt",
-                args: ["text": .string(text)], sessionId: sessionId))
+                hostId: hostId, command: "session.prompt", args: args, sessionId: sessionId))
         } catch {
             lastError = "\(error)"
         }
+    }
+
+    /// Interrupt a running turn (session.cancel).
+    func cancel(sessionId: String) async {
+        guard let client, connected, !hostId.isEmpty else { return }
+        do {
+            _ = try await client.sendCommand(CommandIntent(
+                hostId: hostId, command: "session.cancel", sessionId: sessionId))
+        } catch {
+            lastError = "\(error)"
+        }
+    }
+
+    /// Upload one JPEG: begin {mimeType,size,sha256} → chunk loop (base64,
+    /// host-chunk-sized slices) → the imageId a prompt can reference.
+    private func uploadImage(_ data: Data, sessionId: String) async throws -> String {
+        guard let client else { throw T4WireError.invalidFrame(path: "client", reason: "not connected") }
+        let sha = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        let begin = try await client.sendCommand(CommandIntent(
+            hostId: hostId, command: "session.image.begin",
+            args: ["mimeType": .string("image/jpeg"), "size": .number(Double(data.count)), "sha256": .string(sha)],
+            sessionId: sessionId))
+        let (imageId, chunkBytes) = try begin.imageBeginResult()
+        var offset = 0
+        while offset < data.count {
+            let slice = data.subdata(in: offset..<min(offset + chunkBytes, data.count))
+            _ = try await client.sendCommand(CommandIntent(
+                hostId: hostId, command: "session.image.chunk",
+                args: ["imageId": .string(imageId), "offset": .number(Double(offset)),
+                       "content": .string(slice.base64EncodedString())],
+                sessionId: sessionId))
+            offset += slice.count
+        }
+        return imageId
     }
 
     init() {
