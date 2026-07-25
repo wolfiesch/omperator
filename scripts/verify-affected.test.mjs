@@ -31,7 +31,19 @@ test("selects native proofs for shared host authority changes", () => {
 });
 
 test("unknown paths fail closed to the full suite", () => {
-  assert.deepEqual(ids(["unmapped-root-file.txt"]), ["check", "full-test"]);
+  // The classifier now decides what a merge run proves, so an unmapped path
+  // selects every gate locally too rather than only the always-on checks.
+  assert.deepEqual(ids(["unmapped-root-file.txt"]), [
+    "check",
+    "tooling",
+    "maintainer",
+    "cluster",
+    "official-lifecycle",
+    "official-packaged",
+    "bridge-continuity",
+    "android-debug",
+    "full-test",
+  ]);
 });
 
 test("empty changes select no work and formatted plans explain requirements", () => {

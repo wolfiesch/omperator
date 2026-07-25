@@ -354,7 +354,7 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.maintainer == 'true' }}",
+          "if: ${{ needs.changes.outputs.maintainer == 'true' }}",
           "if: ${{ github.event_name != 'pull_request' && needs.changes.outputs.maintainer == 'true' }}",
         ),
     ],

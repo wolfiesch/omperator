@@ -18,6 +18,9 @@ jobs:
     name: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
     outputs:
       continuity: ${{ steps.classify.outputs.continuity }}
       cluster: ${{ steps.classify.outputs.cluster }}
@@ -37,24 +40,42 @@ jobs:
           node-version: 24.13.1
 
       - name: Test path classification
-        run: node --test scripts/ci-paths.test.mjs
+        run: node --test scripts/ci-paths.test.mjs scripts/ci-baseline.test.mjs
 
+      # A merge run classifies against the newest green ancestor rather than
+      # its immediate parent. A run that failed is never a baseline, so its
+      # commits stay inside the next run's diff until some run actually proves
+      # them, which keeps the exact-commit conclusion that
+      # `scripts/wait-for-exact-ci.mjs` reads a complete proof. With no green
+      # ancestor the run falls back to the full matrix.
       - name: Classify affected CI legs
         id: classify
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if [[ "$EVENT_NAME" != pull_request ]]; then
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          if [[ "$EVENT_NAME" == pull_request || "$EVENT_NAME" == merge_group ]]; then
+            [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+            git diff --name-only -z "$BASE_SHA...$HEAD_SHA" | node scripts/ci-paths.mjs >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$EVENT_NAME" != push ]]; then
             node scripts/ci-paths.mjs --all >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
-          git diff --name-only -z "$BASE_SHA...$HEAD_SHA" | node scripts/ci-paths.mjs >> "$GITHUB_OUTPUT"
+          baseline="$(node scripts/ci-baseline.mjs --head "$HEAD_SHA")"
+          if [[ ! "$baseline" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "no green ancestor; running every leg"
+            node scripts/ci-paths.mjs --all >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "classifying against green ancestor $baseline"
+          git diff --name-only -z "$baseline...$HEAD_SHA" | node scripts/ci-paths.mjs >> "$GITHUB_OUTPUT"
 
   t4-api-generation:
     runs-on: ubuntu-24.04
@@ -319,7 +340,7 @@ jobs:
 
   current-bridge-continuity:
     needs: changes
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.continuity == 'true' }}
+    if: ${{ needs.changes.outputs.continuity == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -471,7 +492,7 @@ jobs:
 
   cluster:
     needs: changes
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.cluster == 'true' }}
+    if: ${{ needs.changes.outputs.cluster == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -546,7 +567,7 @@ jobs:
 
   tooling:
     needs: changes
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.tooling == 'true' }}
+    if: ${{ needs.changes.outputs.tooling == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -572,7 +593,7 @@ jobs:
 
   maintainer:
     needs: changes
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.maintainer == 'true' }}
+    if: ${{ needs.changes.outputs.maintainer == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -598,7 +619,7 @@ jobs:
 
   android-debug:
     needs: changes
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.android_debug == 'true' }}
+    if: ${{ needs.changes.outputs.android_debug == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
