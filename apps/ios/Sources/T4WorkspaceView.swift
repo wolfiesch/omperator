@@ -146,7 +146,7 @@ struct T4WorkspaceView: View {
                 }
                 .navigationTitle("T4 Code")
                 .navigationBarTitleDisplayMode(.inline)
-                .searchable(text: $store.query, prompt: "Search sessions")
+                .searchable(text: $store.query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search sessions")
                 .toolbar {
                     if store.connected {
                         ToolbarItem(placement: .topBarTrailing) {
