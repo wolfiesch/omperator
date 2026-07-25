@@ -66,6 +66,7 @@ struct T4WorkspaceView: View {
             // UI-test seam: launch with -T4RailOpen to boot with the rail open.
             if ProcessInfo.processInfo.arguments.contains("-T4RailOpen") { railProgress = 1 }
         }
+        .task { await store.restore() }
     }
 
     // MARK: - Workspace (center column)

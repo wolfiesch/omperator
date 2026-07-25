@@ -27,6 +27,31 @@ final class T4SessionStore: ObservableObject {
     private var client: HostClient?
     private var hostId: String = ""
 
+    // Persisted connection (dev-grade: UserDefaults, not Keychain).
+    private static let savedEndpointKey = "t4.endpoint"
+    private static let savedDeviceIdKey = "t4.deviceId"
+    private static let savedDeviceTokenKey = "t4.deviceToken"
+
+    /// Auto-reconnect on launch with the last successful connection, if any.
+    func restore() async {
+        let defaults = UserDefaults.standard
+        guard !connected, !connecting,
+              let endpointString = defaults.string(forKey: Self.savedEndpointKey),
+              let endpoint = URL(string: endpointString) else { return }
+        let deviceId = defaults.string(forKey: Self.savedDeviceIdKey) ?? ""
+        let token = defaults.string(forKey: Self.savedDeviceTokenKey) ?? ""
+        let auth: DeviceAuthentication? = (!deviceId.isEmpty && !token.isEmpty)
+            ? DeviceAuthentication(deviceId: deviceId, deviceToken: token) : nil
+        await connect(endpoint: endpoint, identity: ClientIdentity(name: "t4-ios", version: "0.1", build: "dev", platform: "ios"), authentication: auth)
+    }
+
+    private func persist(endpoint: URL, authentication: DeviceAuthentication?) {
+        let defaults = UserDefaults.standard
+        defaults.set(endpoint.absoluteString, forKey: Self.savedEndpointKey)
+        defaults.set(authentication?.deviceId, forKey: Self.savedDeviceIdKey)
+        defaults.set(authentication?.deviceToken, forKey: Self.savedDeviceTokenKey)
+    }
+
     /// Select a session (rail tap or auto-select of the most recent).
     func select(_ session: SessionRef?) {
         selectedSession = session
@@ -140,6 +165,7 @@ final class T4SessionStore: ObservableObject {
             hostId = welcome.hostId
             connected = welcome.authentication == .paired || welcome.authentication == .local
             if connected {
+                persist(endpoint: endpoint, authentication: authentication)
                 await refresh()
                 Task { await observe() }
             }
@@ -173,6 +199,10 @@ final class T4SessionStore: ObservableObject {
         await client?.close()
         client = nil
         connected = false
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: Self.savedEndpointKey)
+        defaults.removeObject(forKey: Self.savedDeviceIdKey)
+        defaults.removeObject(forKey: Self.savedDeviceTokenKey)
     }
 
     // MARK: - Sample inventory (simulator preview without a live host)
