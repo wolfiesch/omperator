@@ -1,4 +1,4 @@
-import type { DesktopRuntimeController, DesktopRuntimeSnapshot } from "@t4-code/client";
+import { DesktopRuntimeError, type DesktopRuntimeController, type DesktopRuntimeSnapshot } from "@t4-code/client";
 import {
   hostId,
   projectId,
@@ -484,6 +484,41 @@ export async function forkLiveSession(
   };
   await refreshSessionList(controller, address, (snapshot) => sessionRefForAddress(snapshot, forked) !== undefined);
   return forked;
+}
+
+/** Runs a directory chooser. Resolves undefined when the operator dismisses it. */
+export type DirectoryChooser = () => Promise<string | undefined>;
+
+/**
+ * Fork, and when the host reports the copy has nowhere to run, offer a
+ * directory and try once more with it. A dismissed chooser is not a failure to
+ * report, and no other error triggers a retry.
+ */
+export async function forkLiveSessionWithDirectoryFallback(
+  controller: DesktopRuntimeController,
+  address: LiveSessionAddress,
+  chooseDirectory: DirectoryChooser | undefined,
+): Promise<LiveSessionAddress | "cancelled"> {
+  try {
+    return await forkLiveSession(controller, address);
+  } catch (cause) {
+    if (!(cause instanceof DesktopRuntimeError) || cause.hostCode !== "session_cwd_missing") throw cause;
+    // No chooser means no safe way to name a directory for this target, so the
+    // host's refusal stands rather than guessing one.
+    if (chooseDirectory === undefined) throw cause;
+    const chosen = await chooseDirectory();
+    if (chosen === undefined) return "cancelled";
+    return await forkLiveSession(controller, address, chosen);
+  }
+}
+
+/**
+ * A native chooser names a directory on this machine, which says nothing about
+ * a remote host's filesystem — an identically named path there would run the
+ * copy somewhere unintended. Only local targets get the chooser.
+ */
+export function targetIsLocal(targetId: string): boolean {
+  return targetId === "local" || targetId.startsWith("local:");
 }
 
 type ConfirmationPayload = Omit<ConfirmationChallenge, "v" | "type">;

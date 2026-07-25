@@ -2943,7 +2943,7 @@ export class LocalAppserver implements AppserverHandle {
 	 */
 	private async resolveForkWorkingDirectory(source: SessionRecord, requested: unknown): Promise<string | undefined> {
 		if (requested !== undefined) {
-			if (typeof requested !== "string" || !requested.startsWith("/") || requested.includes("\0"))
+			if (typeof requested !== "string" || !isAbsolute(requested) || requested.includes("\0"))
 				throw new ForkWorkingDirectoryError(
 					"session_cwd_invalid",
 					"the chosen working directory must be an absolute path",

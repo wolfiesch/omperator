@@ -185,6 +185,34 @@ describe("desktop IPC lifecycle proof", () => {
       request("app:directory:choose"),
     )).rejects.toThrow();
   });
+  it("returns the directory the operator picked, and nothing when dismissed", async () => {
+    const { runtime: baseRuntime } = makeRuntime();
+    const event = { sender: baseRuntime.window.webContents, senderFrame: baseRuntime.window.webContents.mainFrame };
+    const parents: unknown[] = [];
+
+    const pickIpc = new FakeIpc();
+    new DesktopIpcRegistry(baseRuntime, pickIpc, {
+      showOpenDialog: async (parent: unknown) => {
+        parents.push(parent);
+        return { canceled: false, filePaths: ["/tmp/chosen-project"] };
+      },
+    } as never).install();
+    expect(await pickIpc.handlers.get("app:directory:choose")!(
+      event,
+      request("app:directory:choose"),
+    )).toEqual({ path: "/tmp/chosen-project" });
+    // Parented to the requesting window so it cannot open behind it.
+    expect(parents).toEqual([baseRuntime.window]);
+
+    const cancelIpc = new FakeIpc();
+    new DesktopIpcRegistry(baseRuntime, cancelIpc, {
+      showOpenDialog: async () => ({ canceled: true, filePaths: [] }),
+    } as never).install();
+    expect(await cancelIpc.handlers.get("app:directory:choose")!(
+      event,
+      request("app:directory:choose"),
+    )).toEqual({});
+  });
   it("serializes concurrent service actions", async () => {
     const ipc = new FakeIpc();
     const order: string[] = [];

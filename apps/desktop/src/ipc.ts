@@ -194,10 +194,17 @@ export class DesktopIpcRegistry {
   private serviceInspectionPromise: Promise<ServiceInspection> | undefined;
   private updateUnsubscribe: (() => void) | undefined;
   private readonly ipc: IpcMainLike;
-  constructor(runtime: IpcRuntime, ipc: IpcMainLike = ipcMain) {
+  /** Narrow seam so tests can drive the chooser without a real window. */
+  private readonly dialog: Pick<typeof dialog, "showOpenDialog">;
+  constructor(
+    runtime: IpcRuntime,
+    ipc: IpcMainLike = ipcMain,
+    dialogApi: Pick<typeof dialog, "showOpenDialog"> = dialog,
+  ) {
     this.runtime = runtime;
     this.browserTarget = runtime.browser;
     this.ipc = ipc;
+    this.dialog = dialogApi;
   }
 
   updateBrowserTarget(target: BrowserCallTarget): void {
@@ -414,7 +421,7 @@ export class DesktopIpcRegistry {
       decodeRequest("app:directory:choose", payload);
       // Parent it to the requesting window so it stays modal to that window
       // rather than appearing behind it.
-      const chosen = await dialog.showOpenDialog(this.runtime.window, {
+      const chosen = await this.dialog.showOpenDialog(this.runtime.window, {
         properties: ["openDirectory", "createDirectory"],
         message: "Choose a working directory for this copy",
       });
