@@ -145,14 +145,17 @@ final class T4SessionStore: ObservableObject {
             sessionId: sessionId, expectedRevision: revision))
     }
 
-    /// Run a mutation under a freshly acquired prompt lease.
-    private func withLease(sessionId: String, mutation: (String) async -> Void) async {
+    /// Run a mutation under a freshly acquired prompt lease. Prompts pass
+    /// `release: false`: the turn starts asynchronously and the host drops it
+    /// if the lease is already gone — the 30s TTL covers turn start instead.
+    /// Synchronous controls release immediately.
+    private func withLease(sessionId: String, release: Bool = true, mutation: (String) async -> Void) async {
         guard let leaseId = await acquireLease(sessionId: sessionId) else { return }
         // Lease acquire bumps the session revision; refresh so the mutation
         // carries the current one (the host rejects stale revisions).
         await refresh()
         await mutation(leaseId)
-        await releaseLease(sessionId: sessionId, leaseId: leaseId)
+        if release { await releaseLease(sessionId: sessionId, leaseId: leaseId) }
     }
 
     /// Revision-tracked session control command. Returns true on success.
@@ -205,7 +208,7 @@ final class T4SessionStore: ObservableObject {
             for image in images {
                 refs.append(.object(["imageId": .string(try await uploadImage(image, sessionId: sessionId))]))
             }
-            await withLease(sessionId: sessionId) { leaseId in
+            await withLease(sessionId: sessionId, release: false) { leaseId in
                 var args: [String: JSONValue] = ["message": .string(text), "leaseId": .string(leaseId)]
                 if !refs.isEmpty { args["images"] = .array(refs) }
                 do {
