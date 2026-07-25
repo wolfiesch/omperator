@@ -41,7 +41,7 @@ describeUnix("Unix socket ownership and resolution", () => {
     }
   });
 
-  it("accepts an OMP public link and resolves its same-directory backing socket", async () => {
+  it("accepts an OMP public link and returns the public path after validating its backing socket", async () => {
     const directory = fixtureDirectory();
     const backingName = `.appserver-${UUID}.sock`;
     const backingPath = join(directory, backingName);
@@ -50,14 +50,14 @@ describeUnix("Unix socket ownership and resolution", () => {
     try {
       await listenUnix(server, backingPath);
       symlinkSync(backingName, publicPath);
-      expect(resolveUnixSocketPath(publicPath)).toBe(backingPath);
+      expect(resolveUnixSocketPath(publicPath)).toBe(publicPath);
     } finally {
       await closeServer(server);
       rmSync(directory, { recursive: true, force: true });
     }
   });
 
-  it("opens a WebSocket through an OMP public link using the resolved backing path", async () => {
+  it("opens a WebSocket through an OMP public link", async () => {
     const directory = fixtureDirectory();
     const backingName = `.appserver-${UUID}.sock`;
     const backingPath = join(directory, backingName);
@@ -100,6 +100,33 @@ describeUnix("Unix socket ownership and resolution", () => {
       transport.close();
       for (const socket of sockets) socket.destroy();
       await closeServer(server);
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("reports the errno code for an unreachable socket without leaking its path", async () => {
+    const directory = fixtureDirectory();
+    const socketPath = join(directory, "absent.sock");
+    const transport = new UnixWebSocketTransport({
+      socketPath,
+      validatePath: false,
+      handshakeTimeoutMs: 2_000,
+    });
+    const messages: string[] = [];
+    transport.onError((error) => {
+      if (error instanceof Error) messages.push(error.message);
+    });
+    try {
+      // Nothing is listening, so `ws` fails the upgrade with an errno error.
+      // Assert on the rejection, not just the listener: on the first connection
+      // the client awaits open() inside the transport factory and attaches its
+      // error listener only afterwards, so the rejection is the only channel
+      // that reports an unreachable socket in production.
+      await expect(transport.open()).rejects.toThrow("local transport error (ENOENT)");
+      expect(messages).toContain("local transport error (ENOENT)");
+      for (const message of messages) expect(message).not.toContain(directory);
+    } finally {
+      transport.close();
       rmSync(directory, { recursive: true, force: true });
     }
   });

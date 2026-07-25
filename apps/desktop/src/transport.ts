@@ -8,6 +8,15 @@ import { localSocketPath } from "./socket-path.ts";
 
 const OMP_SOCKET_NAME = /^\.appserver-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.sock$/;
 
+/** Errno-style codes only: bounded, uppercase, and free of paths or user text. */
+const TRANSPORT_ERROR_CODE = /^[A-Z][A-Z0-9_]{1,31}$/u;
+
+function transportErrorCode(error: unknown): string | undefined {
+  if (error === null || typeof error !== "object" || !("code" in error)) return undefined;
+  const code = error.code;
+  return typeof code === "string" && TRANSPORT_ERROR_CODE.test(code) ? code : undefined;
+}
+
 function secureStat(path: string, kind: "directory" | "socket"): void {
   const stat = lstatSync(path);
   if (kind === "directory" && !stat.isDirectory()) throw new Error("runtime parent is not a directory");
@@ -52,7 +61,14 @@ export function resolveUnixSocketPath(path: string): string {
   }
   const backingPath = join(parent, target);
   secureStat(backingPath, "socket");
-  return backingPath;
+  // Validate through the link but connect by the public path. The symlink is
+  // what keeps the socket inside the platform's sun_path limit (104 bytes on
+  // macOS); the backing file is UUID-named and roughly forty bytes longer, so
+  // returning it can push a deep runtime directory past the limit, which the
+  // kernel reports as connect EINVAL and the client retries forever. Both live
+  // in the same parent, already proven unsymlinked, user-owned, and not
+  // group- or other-writable, so the public path is no less trusted.
+  return path;
 }
 
 export function validateUnixSocketPath(path: string): void {
@@ -145,8 +161,18 @@ export class UnixWebSocketTransport implements OmpTransport {
       for (const listener of this.closes) listener(code, text);
     });
     socket.on("error", (error) => {
-      fail();
-      for (const listener of this.errors) listener(error instanceof Error ? new Error("local transport error") : new Error("local transport error"));
+      // The raw errno message embeds the socket path, so only the bounded code
+      // crosses this boundary. Dropping it entirely (the previous behavior)
+      // left a silent reconnect loop with nothing to diagnose.
+      const code = transportErrorCode(error);
+      const message = code === undefined ? "local transport error" : `local transport error (${code})`;
+      // Reject with the same sanitized message rather than the generic default.
+      // On the first connection the client awaits open() inside the transport
+      // factory and only attaches its error listener afterwards, so a rejection
+      // that dropped the code reported nothing at all for the failure that
+      // matters most: the socket that was never reachable.
+      fail(message);
+      for (const listener of this.errors) listener(new Error(message));
     });
     return promise;
   }
