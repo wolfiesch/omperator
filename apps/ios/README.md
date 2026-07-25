@@ -129,5 +129,6 @@ package tests against.
 - [x] Session inventory (`SessionsFrame`/`SessionListResult`/`SessionRef`) + `CommandFrame` envelope (rail + core session descriptors).
 - [x] Client runtime (`HostClient`: connect/handshake, command dispatch + correlation, projection stream, heartbeat, reconnect) — 10/10 tests green.
 - [x] `HostWire` linked into the Xcode app project; `xcodegen` + iOS Simulator `xcodebuild` BUILD SUCCEEDED.
-- [ ] Remaining command/event/transcript typed decoders (command.ts/additive.ts long tail).
+- [x] Full server frame vocabulary ported (welcome/sessions/snapshot/entry/event/agent×6/terminal×3/files×6/review/audit×3/catalog/settings/preview×5/watch×4/lease×2/pair/confirmation/response/error/pong/bye/gap) — verified across ~25 wire fixtures.
+- [ ] Remaining protocol depth: per-command argument/result payload decoders (`command.ts` result bodies) and transcript entry `data` shapes (message/tool rows); today these decode as opaque `JSONValue`.
 - [x] Session rail (`T4SessionsView` + `T4SessionStore`) replaces the collab-guest `SessionsView`; verified rendering in the iOS Simulator. Remaining UI rework (transcript/composer/panes/hosts) + `EngineBridge` removal still pending.
