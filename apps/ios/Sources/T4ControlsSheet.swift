@@ -139,7 +139,7 @@ private struct T4FastSection: View {
         Section {
             Toggle(isOn: Binding(
                 get: { store.fastBySession[session.sessionId] ?? false },
-                set: { Task { await store.setFast(sessionId: session.sessionId, enabled: $0) } }
+                set: { enabled in Task { await store.setFast(sessionId: session.sessionId, enabled: enabled) } }
             )) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Fast mode").foregroundStyle(theme.txt)
