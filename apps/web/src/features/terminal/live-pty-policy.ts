@@ -126,10 +126,9 @@ export function resolveLiveTerminalAvailability(
   ) {
     return unavailable("transport", MESSAGES.syncing);
   }
-  // Ownership last among the honest reasons: while another app owns the
-  // session (or the shape is unproven), fail closed with the exact copy.
-  const controlReason = sessionControlGateReason(snapshot, address);
-  if (controlReason !== null) return unavailable("permission", controlReason);
+  // PTYs are owned by this host, independently of whichever OMP session
+  // authority is selected. Session takeover state therefore does not gate
+  // terminal availability.
   return { available: true };
 }
 

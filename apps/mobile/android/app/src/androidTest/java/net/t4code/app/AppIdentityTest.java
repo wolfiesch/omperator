@@ -1,4 +1,4 @@
-package com.lycaonsolutions.t4code;
+package net.t4code.app;
 
 import static org.junit.Assert.assertEquals;
 
@@ -15,6 +15,6 @@ public final class AppIdentityTest {
     @Test
     public void applicationIdMatchesReleaseIdentity() {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        assertEquals("com.lycaonsolutions.t4code", context.getPackageName());
+        assertEquals("net.t4code.app", context.getPackageName());
     }
 }

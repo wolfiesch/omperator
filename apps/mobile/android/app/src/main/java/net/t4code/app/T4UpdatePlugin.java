@@ -1,4 +1,4 @@
-package com.lycaonsolutions.t4code;
+package net.t4code.app;
 
 import android.content.ClipData;
 import android.content.Intent;
@@ -47,7 +47,7 @@ import javax.net.ssl.HttpsURLConnection;
 @CapacitorPlugin(name = "T4Update")
 public final class T4UpdatePlugin extends Plugin {
     private static final String MANIFEST_URL = "https://t4code.net/releases/latest.json";
-    private static final String EXPECTED_PACKAGE_ID = "com.lycaonsolutions.t4code";
+    private static final String EXPECTED_PACKAGE_ID = "net.t4code.app";
     private static final String UPDATE_CACHE_DIRECTORY = "t4-updates";
     private static final String APK_MIME_TYPE = "application/vnd.android.package-archive";
     private static final String STATE_CHANGED_EVENT = "stateChanged";

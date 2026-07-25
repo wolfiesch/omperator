@@ -115,15 +115,24 @@ export function validateIdentityContract(contract) {
     fail("Android release identity contract signingCertificateSha256 must be 64 lowercase hexadecimal characters");
   }
 
-  const baseline = requirePlainObject(contract.certificateBaseline, "Android certificate baseline");
-  if (!/^v\d+\.\d+\.\d+$/u.test(baseline.tag ?? "")) {
-    fail("Android certificate baseline tag must be a stable v<major>.<minor>.<patch> tag");
+  // A baseline pins the published APK that established the current signing key.
+  // The first release under a newly minted key has no such artifact yet, so the
+  // contract declares that with an explicit null. Omitting the field stays an
+  // error, so a typo cannot silently skip this gate.
+  if (!("certificateBaseline" in contract)) {
+    fail("Android release identity contract must declare certificateBaseline, or null when no published APK establishes the key yet");
   }
-  if (typeof baseline.asset !== "string" || !baseline.asset.endsWith("-android.apk")) {
-    fail("Android certificate baseline asset must name a published Android APK");
-  }
-  if (!/^[0-9a-f]{64}$/u.test(baseline.assetSha256 ?? "")) {
-    fail("Android certificate baseline assetSha256 must be 64 lowercase hexadecimal characters");
+  if (contract.certificateBaseline !== null) {
+    const baseline = requirePlainObject(contract.certificateBaseline, "Android certificate baseline");
+    if (!/^v\d+\.\d+\.\d+$/u.test(baseline.tag ?? "")) {
+      fail("Android certificate baseline tag must be a stable v<major>.<minor>.<patch> tag");
+    }
+    if (typeof baseline.asset !== "string" || !baseline.asset.endsWith("-android.apk")) {
+      fail("Android certificate baseline asset must name a published Android APK");
+    }
+    if (!/^[0-9a-f]{64}$/u.test(baseline.assetSha256 ?? "")) {
+      fail("Android certificate baseline assetSha256 must be 64 lowercase hexadecimal characters");
+    }
   }
   return contract;
 }

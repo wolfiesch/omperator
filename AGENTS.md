@@ -23,6 +23,24 @@ Keep this section true. Update it before onboarding external users, storing irre
 - Breaking an internal API, development fixture, or local data format is acceptable when the replacement is complete and the changed behavior is verified.
 - Tests and direct smoke checks still protect development velocity. Verify the behavior being changed rather than preserving accidental compatibility.
 
+## Local verification loop
+
+Do not reach for the full repository gates while iterating. `pnpm check` and
+`pnpm test` are the pre-pull-request gates, not the inner loop.
+
+- Run `pnpm verify:affected:plan` to preview the checks your changed paths
+  select, then `pnpm verify:affected` to run exactly those. Unknown or
+  cross-cutting paths fail closed to the full gates.
+- Scope work to one package with `vp run --filter @t4-code/<package> <script>`
+  (for example `test`, `typecheck`, or `dev`) instead of the recursive
+  `pnpm test` and `pnpm typecheck`.
+- CI mirrors this split. `check`, `unit-tests`, and `build-e2e` run in
+  parallel, and the remaining legs are path-gated by `scripts/ci-paths.mjs`, so
+  a local affected run predicts what a pull request will actually execute.
+- Reserve `pnpm test:e2e`, `pnpm test:maintainer`, and the bridge continuity
+  gates for changes that touch their subject. They cost minutes and CI already
+  selects them from the changed paths.
+
 ## Boundaries that still apply
 
 The absence of users does not make unrelated assets disposable. Continue to protect credentials, repository history, signed release assets, remote infrastructure, third-party services, and personal or irreplaceable data. Existing approval requirements still apply to publishing, deployment, paid operations, security-sensitive changes, and destructive actions outside disposable project state.

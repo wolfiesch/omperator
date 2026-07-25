@@ -166,10 +166,15 @@ export class RawUdsWebSocket {
 	}
 	async nextServer(): Promise<ServerFrame> {
 		const frame = await this.next();
-		if (frame.opcode === 0x8)
-			throw new Error(
-				`server closed (${frame.payload.byteLength >= 2 ? new DataView(frame.payload.buffer, frame.payload.byteOffset).getUint16(0) : "no-code"})`,
-			);
+		if (frame.opcode === 0x8) {
+			const hasCode = frame.payload.byteLength >= 2;
+			const code = hasCode
+				? String(new DataView(frame.payload.buffer, frame.payload.byteOffset).getUint16(0))
+				: "no-code";
+			// The reason text is the diagnostic that says WHICH frame the host rejected.
+			const reason = hasCode ? new TextDecoder().decode(frame.payload.subarray(2)) : "";
+			throw new Error(`server closed (${code})${reason ? `: ${reason}` : ""}`);
+		}
 		if (frame.opcode !== 0x1) throw new Error(`expected text server frame, got opcode ${frame.opcode}`);
 		return decodeServerFrame(new TextDecoder("utf-8", { fatal: true }).decode(frame.payload));
 	}
