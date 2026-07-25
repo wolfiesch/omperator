@@ -22,6 +22,22 @@ interface.
 iOS **cannot bundle a host**; it connects to an **existing** `t4-host` over the
 network (Tailnet address or pairing link), exactly like the Android client.
 
+## New-user flow (pairing)
+
+1. On the host machine: `t4-host pair` — mints a one-time 6-digit ticket from
+   the running host and prints the code, a `t4-code://pair/<host>/<code>` deep
+   link, and a terminal QR for it.
+2. On the phone: scan the QR (or open the link) — the app opens the Connect
+   sheet prefilled and pairs immediately; or enter host + code manually. Raw
+   endpoint + device credentials live under Advanced for already-paired
+   devices.
+3. Pairing grants a device token (`sessions.read`/`sessions.prompt`/
+   `sessions.manage`); the app persists it and auto-connects on every launch.
+
+Tailscale is the transport; the 6-digit code is the trust boundary. The host's
+remote listener only accepts Tailnet addresses, and mutations additionally
+require the `prompt.lease` feature + a per-session prompt lease.
+
 ## What's vendored from Enclave
 
 Copied verbatim into `apps/ios/`:
