@@ -65,7 +65,6 @@ public enum Commands {
         "session.delete":      .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .none),
         "session.model.set":    .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .none),
         "session.thinking.set": .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .none),
-        "session.fast.set":     .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .none),
         "session.ui.respond":   .init(capability: .sessionsPrompt, scope: .session, revision: .optional, confirmation: .none),
         "session.cancel":       .init(capability: .sessionsControl, scope: .session, revision: .optional, confirmation: .challenge),
         "session.close":        .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .challenge),
