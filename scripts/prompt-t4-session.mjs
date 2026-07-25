@@ -39,7 +39,8 @@ ws.on("message", (data) => {
   } else if (frame.type === "response" && pending.has(frame.requestId)) {
     const slot = pending.get(frame.requestId);
     pending.delete(frame.requestId);
-    frame.ok ? slot.resolve(frame.result ?? {}) : slot.reject(new Error(`${frame.error?.code}: ${frame.error?.message}`));
+    if (frame.ok) slot.resolve(frame.result ?? {});
+    else slot.reject(new Error(`${frame.error?.code}: ${frame.error?.message}`));
   } else if (frame.type === "entry" && frame.sessionId === sessionId) {
     console.log(`entry ${frame.entry.kind} ${JSON.stringify(frame.entry.data).slice(0, 140)}`);
     idle(30_000);

@@ -27,7 +27,8 @@ ws.on("message", async (d) => {
   const f = JSON.parse(d.toString());
   if (f.type === "response" && pend.has(f.requestId)) {
     const s = pend.get(f.requestId); pend.delete(f.requestId);
-    f.ok ? s.res(f.result ?? {}) : s.rej(new Error(`${f.error?.code}: ${f.error?.message}`));
+    if (f.ok) s.res(f.result ?? {});
+    else s.rej(new Error(`${f.error?.code}: ${f.error?.message}`));
   }
   if (f.type !== "welcome") return;
   hostId = f.hostId;

@@ -14,20 +14,14 @@ function connect(authentication) {
     const pending = new Map();
     let reqN = 0;
     const api = { ws, hostId: undefined, authentication: undefined };
-    const next = (type) => new Promise((res, rej) => {
-      const slot = (frame) => { if (frame.type === type) { off(); res(frame); } };
-      const off = () => { api._slots = api._slots.filter((s) => s !== slot); };
-      api._slots.push(slot);
-    });
-    api._slots = [];
     ws.on("message", (data) => {
       const frame = JSON.parse(data.toString());
-      for (const slot of [...api._slots]) slot(frame);
       if (frame.type === "welcome") { api.hostId = frame.hostId; api.authentication = frame.authentication; }
       if (frame.type === "response" && pending.has(frame.requestId)) {
         const slot = pending.get(frame.requestId);
         pending.delete(frame.requestId);
-        frame.ok ? slot.resolve(frame.result ?? {}) : slot.reject(new Error(`${frame.error?.code}: ${frame.error?.message}`));
+        if (frame.ok) slot.resolve(frame.result ?? {});
+        else slot.reject(new Error(`${frame.error?.code}: ${frame.error?.message}`));
       }
     });
     ws.on("error", reject);
