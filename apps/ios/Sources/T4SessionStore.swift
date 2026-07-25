@@ -8,6 +8,9 @@
 import SwiftUI
 import HostWire
 import CryptoKit
+import os
+
+private let t4log = Logger(subsystem: "sh.t4code.ios", category: "store")
 
 @MainActor
 final class T4SessionStore: ObservableObject {
@@ -128,7 +131,7 @@ final class T4SessionStore: ObservableObject {
                 sessionId: sessionId, expectedRevision: revision))
             return try result.leaseResult()
         } catch {
-            print("[T4] acquireLease failed: \(error)")
+            t4log.error("acquireLease failed: \(error)")
             lastError = "\(error)"
             return nil
         }
@@ -209,9 +212,9 @@ final class T4SessionStore: ObservableObject {
                     _ = try await client.sendCommand(CommandIntent(
                         hostId: hostId, command: "session.prompt", args: args,
                         sessionId: sessionId, expectedRevision: revision(of: sessionId)))
-                    print("[T4] prompt sent to \(sessionId)")
+                    t4log.notice("prompt sent to \(sessionId, privacy: .public)")
                 } catch {
-                    print("[T4] prompt failed: \(error)")
+                    t4log.error("prompt failed: \(error)")
                     lastError = "\(error)"
                 }
             }
