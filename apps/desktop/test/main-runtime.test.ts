@@ -34,7 +34,7 @@ vitest.vi.mock("../src/lifecycle.ts", () => ({
 }));
 
 // Main bootstraps at module evaluation, so load it only after mocking native Electron.
-const { bootstrapDesktopMain } = await import("../src/main.ts");
+const { applyDevelopmentSandbox, bootstrapDesktopMain } = await import("../src/main.ts");
 
 type ProcessEvent = "uncaughtException" | "unhandledRejection";
 type ProcessListener = (reason: unknown) => void;
@@ -141,5 +141,50 @@ describe("main runtime failure policy", () => {
       "[desktop] fatal main exception: Error: main invariant violated",
       "[desktop] fatal main exception: Error: another invariant violated",
     ]);
+  });
+});
+
+describe("development sandbox startup", () => {
+  function sandboxApp(): {
+    readonly paths: [string, string][];
+    readonly switches: string[];
+    setPath(name: string, path: string): void;
+    readonly commandLine: { appendSwitch(name: string): void };
+  } {
+    const paths: [string, string][] = [];
+    const switches: string[] = [];
+    return {
+      paths,
+      switches,
+      setPath: (name, path) => { paths.push([name, path]); },
+      commandLine: { appendSwitch: (name) => { switches.push(name); } },
+    };
+  }
+
+  it("redirects userData and mocks the keychain the sandboxed HOME cannot provide", () => {
+    const target = sandboxApp();
+
+    applyDevelopmentSandbox(target, { electronUserData: "/tmp/sandbox/electron/user-data" }, "darwin");
+
+    expect(target.paths).toEqual([["userData", "/tmp/sandbox/electron/user-data"]]);
+    expect(target.switches).toEqual(["use-mock-keychain"]);
+  });
+
+  it("leaves the keychain alone off macOS", () => {
+    const target = sandboxApp();
+
+    applyDevelopmentSandbox(target, { electronUserData: "/tmp/sandbox/electron/user-data" }, "linux");
+
+    expect(target.paths).toEqual([["userData", "/tmp/sandbox/electron/user-data"]]);
+    expect(target.switches).toEqual([]);
+  });
+
+  it("touches nothing outside a development sandbox", () => {
+    const target = sandboxApp();
+
+    applyDevelopmentSandbox(target, undefined, "darwin");
+
+    expect(target.paths).toEqual([]);
+    expect(target.switches).toEqual([]);
   });
 });

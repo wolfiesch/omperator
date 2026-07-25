@@ -99,6 +99,11 @@ their affected processes without restarting the renderer. Process output and lif
 also recorded as credential-redacted NDJSON under the sandbox's `logs/processes/` directory. These
 local logs can still contain project and home paths; review and sanitize them before sharing.
 
+On macOS the sandbox also redirects `HOME`, which leaves no default keychain for Electron
+`safeStorage`. The sandboxed app therefore starts with Chromium's mock keychain so credential and
+projection-cache encryption stay exercised instead of degrading to unavailable. Sandbox ciphertext
+is not portable to a real login keychain, so verify real keychain behavior with a packaged build.
+
 Use the compatible OMP already on `PATH` only when testing that explicit mode:
 
 ```sh
