@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { expectedReleaseAssetNames } from "./check-release-consistency.mjs";
+import { expectedReleaseAssetNames } from "./release-assets.mjs";
 
 export const DEFAULT_INTERVAL_MS = 15_000;
 export const DEFAULT_TIMEOUT_MS = 40 * 60 * 1_000;

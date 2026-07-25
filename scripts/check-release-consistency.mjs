@@ -56,15 +56,9 @@ const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const PATCH_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 
-export function expectedReleaseAssetNames(version) {
-  return [
-    `T4-Code-${version}-android.apk`,
-    `T4-Code-${version}-linux-amd64.deb`,
-    `T4-Code-${version}-linux-x86_64.AppImage`,
-    `T4-Code-${version}-mac-arm64.dmg`,
-    `T4-Code-${version}-mac-arm64.zip`,
-  ];
-}
+import { expectedReleaseAssetNames } from "./release-assets.mjs";
+
+export { expectedReleaseAssetNames };
 
 export function discoverReleasePackagePaths(repoRoot) {
   const paths = ["package.json"];

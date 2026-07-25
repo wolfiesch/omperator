@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { spawnSync } from "node:child_process";
+import { copyFile, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { releaseAssetUrls, waitForReleaseAssets } from "./wait-for-release-assets.mjs";
 
@@ -67,4 +72,28 @@ test("fails closed at the timeout and reports filenames without response content
       return true;
     },
   );
+});
+
+// `deploy-site.yml` confirms release assets from the trusted workflow checkout,
+// before dependencies are installed. Importing anything that reaches a package
+// in `node_modules` crashed that step whenever a release existed.
+test("loads with no installed dependencies", async () => {
+  const sandbox = await mkdtemp(join(tmpdir(), "release-assets-nodeps-"));
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    for (const name of ["release-assets.mjs", "wait-for-release-assets.mjs"]) {
+      await copyFile(join(here, name), join(sandbox, name));
+    }
+    const probe = join(sandbox, "probe.mjs");
+    await writeFile(
+      probe,
+      'import { releaseAssetUrls } from "./wait-for-release-assets.mjs";\n' +
+        'process.stdout.write(String(releaseAssetUrls("1.2.3").length));\n',
+    );
+    const child = spawnSync(process.execPath, [probe], { cwd: sandbox, encoding: "utf8" });
+    assert.equal(child.status, 0, child.stderr);
+    assert.equal(child.stdout, "7");
+  } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
 });
