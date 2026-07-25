@@ -54,7 +54,6 @@ public struct SessionRef: Decodable, Equatable, Sendable {
     public let contextUsage: ContextUsage?
     public let attention: JSONValue?
     public let runtime: JSONValue?
-    public let proposedPlan: String?
     public let mode: String?
     private enum CodingKeys: String, CodingKey {
         case hostId, sessionId, project, revision, title, status, updatedAt, archivedAt
