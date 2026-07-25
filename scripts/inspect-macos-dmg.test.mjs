@@ -106,7 +106,7 @@ test("mounted DMGs must contain exactly one application bundle", () => {
 test("release workflow inspects the DMG before staging it for publication", () => {
   const workflow = readFileSync(resolve(import.meta.dirname, "../.github/workflows/release.yml"), "utf8");
   const inspect = workflow.indexOf("pnpm inspect:dmg -- release/*.dmg");
-  const stage = workflow.indexOf("cp release/T4-Code-*.dmg");
+  const stage = workflow.indexOf("- name: Stage macOS artifacts");
   assert.ok(inspect >= 0, "release workflow must invoke the DMG inspector");
   assert.ok(stage > inspect, "DMG inspection must run before staging the artifact");
 });

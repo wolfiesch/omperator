@@ -5,7 +5,7 @@ const runtimeExternalDependencies = [
 ];
 const signedMacBuild = process.env.T4_MACOS_SIGNED_BUILD === "1";
 
-export const linuxUpdatePublish = {
+export const desktopUpdatePublish = {
   provider: "github",
   owner: "wolfiesch",
   repo: "omperator",
@@ -39,7 +39,7 @@ const config = {
   linux: {
     category: "Development",
     icon: "apps/desktop/build/icons",
-    publish: [linuxUpdatePublish],
+    publish: [desktopUpdatePublish],
     target: [
       { target: "AppImage", arch: ["x64"] },
       { target: "deb", arch: ["x64"] },
@@ -57,10 +57,7 @@ const config = {
       : undefined,
     sign: signedMacBuild ? "scripts/sign-macos.mjs" : undefined,
     notarize: signedMacBuild,
-    // The first signed release remains an explicit GitHub download. Keep the
-    // updater feed disabled until signed-to-signed update migration has its
-    // own release proof.
-    publish: [],
+    publish: [desktopUpdatePublish],
     extraResources: [
       { from: ".artifacts/omp-runtime", to: "runtime" },
       { from: "scripts/tailnet-gateway.mjs", to: "gateway/tailnet-gateway.mjs" },

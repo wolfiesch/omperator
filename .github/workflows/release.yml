@@ -354,6 +354,12 @@ jobs:
         run: |
           pnpm inspect:package -- release/*.zip
           pnpm inspect:dmg -- release/*.dmg
+          node scripts/inspect-macos-update.mjs \
+            --version "${{ needs.verify.outputs.version }}" \
+            --metadata release/latest-mac.yml \
+            --zip "release/T4-Code-${{ needs.verify.outputs.version }}-mac-arm64.zip" \
+            --dmg "release/T4-Code-${{ needs.verify.outputs.version }}-mac-arm64.dmg" \
+            --blockmap "release/T4-Code-${{ needs.verify.outputs.version }}-mac-arm64.zip.blockmap"
 
       - name: Verify Developer ID identity and notarization
         env:
@@ -368,8 +374,16 @@ jobs:
         shell: bash
         run: |
           mkdir -p artifacts
-          cp release/T4-Code-*.dmg release/T4-Code-*.zip artifacts/
-          (cd artifacts && shasum -a 256 T4-Code-* > SHA256SUMS-macos.txt)
+          cp \
+            release/T4-Code-*.dmg \
+            release/T4-Code-*.zip \
+            release/T4-Code-*.zip.blockmap \
+            release/latest-mac.yml \
+            artifacts/
+          (
+            cd artifacts
+            shasum -a 256 T4-Code-*.dmg T4-Code-*.zip > SHA256SUMS-macos.txt
+          )
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -440,6 +454,8 @@ jobs:
             "T4-Code-${VERSION}-linux-x86_64.AppImage" \
             "T4-Code-${VERSION}-mac-arm64.dmg" \
             "T4-Code-${VERSION}-mac-arm64.zip" \
+            "T4-Code-${VERSION}-mac-arm64.zip.blockmap" \
+            "latest-mac.yml" \
             "latest-linux.yml" | sort)
           actual=$(find artifacts -maxdepth 1 -type f ! -name 'SHA256SUMS-*.txt' -printf '%f\n' | sort)
           [[ "$actual" == "$expected" ]]
@@ -467,6 +483,8 @@ jobs:
             artifacts/T4-Code-*.AppImage
             artifacts/T4-Code-*.dmg
             artifacts/T4-Code-*.zip
+            artifacts/T4-Code-*.zip.blockmap
+            artifacts/latest-mac.yml
             artifacts/latest-linux.yml
             artifacts/SHA256SUMS.txt
 

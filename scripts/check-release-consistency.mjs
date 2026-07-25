@@ -1188,11 +1188,14 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "pnpm --filter @t4-code/mobile build:android:release",
     "node scripts/inspect-android-release.mjs",
     "node scripts/inspect-linux-update.mjs",
+    "node scripts/inspect-macos-update.mjs",
     '--metadata "$metadata"',
     '--aapt "$build_tools/aapt"',
     '--apksigner "$build_tools/apksigner"',
     "T4-Code-${VERSION}-android.apk",
     "artifacts/latest-linux.yml",
+    "artifacts/latest-mac.yml",
+    "artifacts/T4-Code-*.zip.blockmap",
     "needs: [verify, ci-authority, build-android, build-linux, build-macos]",
     'node scripts/reconcile-release-assets.mjs --mode prepare --version "$VERSION"',
     'node scripts/reconcile-release-assets.mjs --mode verify --version "$VERSION"',
@@ -1294,8 +1297,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     'owner: "wolfiesch"',
     'repo: "omperator"',
     'channel: "latest"',
-    "publish: [linuxUpdatePublish]",
-    "publish: []",
+    "publish: [desktopUpdatePublish]",
   ]) {
     requireText(builderConfig, expected, "electron-builder.config.mjs", errors);
   }
@@ -1303,6 +1305,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   for (const expected of [
     "RELEASE_MANIFEST_SCHEMA_VERSION = 1",
     'LINUX_UPDATE_METADATA_NAME = "latest-linux.yml"',
+    'MAC_UPDATE_METADATA_NAME = "latest-mac.yml"',
     'channel: "stable"',
     "validateLinuxUpdateMetadata",
     "readBoundedResponseBytes",
@@ -1332,6 +1335,12 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   requireText(
     files.get("scripts/wait-for-release-assets.mjs") ?? "",
     '"latest-linux.yml"',
+    "scripts/wait-for-release-assets.mjs",
+    errors,
+  );
+  requireText(
+    files.get("scripts/wait-for-release-assets.mjs") ?? "",
+    '"latest-mac.yml"',
     "scripts/wait-for-release-assets.mjs",
     errors,
   );
@@ -1456,7 +1465,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   for (const expected of [
     "`testDebugUnitTest`, `assembleDebug`, and `lintDebug`",
     "pinned Developer ID certificate",
-    "exact seven-asset GitHub bundle",
+    "exact nine-asset GitHub bundle",
     "defers only when the exact GitHub release lookup returns HTTP 404",
     "writes `/releases/latest.json`",
     "immutable release tag",
@@ -1466,8 +1475,8 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   }
   const maintainerReadme = files.get("ops/t4-maintainer/README.md") ?? "";
   for (const expected of [
-    "exact seven-asset bundle",
-    "whose six entries cover the packages and updater metadata",
+    "exact nine-asset bundle",
+    "whose six entries cover the packages and Linux updater metadata",
     "https://t4code.net/releases/latest.json",
     "downloads the live `latest-linux.yml`, deb, and AppImage",
     "actual byte sizes and SHA-512",

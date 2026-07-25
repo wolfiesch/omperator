@@ -15,7 +15,13 @@ const MAX_METADATA_BYTES = 64 * 1024;
 
 export const RELEASE_MANIFEST_SCHEMA_VERSION = 1;
 export const LINUX_UPDATE_METADATA_NAME = "latest-linux.yml";
+export const MAC_UPDATE_METADATA_NAME = "latest-mac.yml";
 export const CHECKSUMS_NAME = "SHA256SUMS.txt";
+
+export function macUpdateBlockmapName(version) {
+  if (!VERSION_PATTERN.test(version)) throw new Error("version must be x.y.z");
+  return `T4-Code-${version}-mac-arm64.zip.blockmap`;
+}
 
 export function releasePackageDescriptors(version) {
   if (!VERSION_PATTERN.test(version)) throw new Error("version must be x.y.z");
@@ -30,7 +36,13 @@ export function releasePackageDescriptors(version) {
 }
 
 export function expectedPublishedAssetNames(version) {
-  return [...expectedReleaseAssetNames(version), LINUX_UPDATE_METADATA_NAME, CHECKSUMS_NAME];
+  return [
+    ...expectedReleaseAssetNames(version),
+    LINUX_UPDATE_METADATA_NAME,
+    MAC_UPDATE_METADATA_NAME,
+    macUpdateBlockmapName(version),
+    CHECKSUMS_NAME,
+  ];
 }
 
 export function parseChecksums(text, expectedNames) {

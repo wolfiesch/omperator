@@ -318,7 +318,7 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       (text) =>
         text.replace("RELEASE_MANIFEST_SCHEMA_VERSION = 1", "RELEASE_MANIFEST_SCHEMA_VERSION = 2"),
     ],
-    ["scripts/wait-for-release-assets.mjs", (text) => text.replace(', "latest-linux.yml"', "")],
+    ["scripts/wait-for-release-assets.mjs", (text) => text.replace('"latest-linux.yml",', "")],
     [
       ".github/workflows/release.yml",
       (text) => text.replace("artifacts/latest-linux.yml", "artifacts/missing-linux.yml"),
