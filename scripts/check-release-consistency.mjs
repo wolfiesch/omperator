@@ -1228,6 +1228,32 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
       }
     }
   }
+  const releaseLinuxStart = releaseWorkflow.indexOf("  build-linux:");
+  const releaseAndroidStart = releaseWorkflow.indexOf("  build-android:");
+  const releaseMacosStart = releaseWorkflow.indexOf("  build-macos:");
+  const releasePublishStart = releaseWorkflow.indexOf("  publish:");
+  for (const [jobName, start, end] of [
+    ["build-linux", releaseLinuxStart, releaseAndroidStart],
+    ["build-macos", releaseMacosStart, releasePublishStart],
+  ]) {
+    if (!(start >= 0 && end > start)) {
+      errors.push(`.github/workflows/release.yml must define ${jobName} before its next job`);
+      continue;
+    }
+    const releaseBuild = releaseWorkflow.slice(start, end);
+    requireText(
+      releaseBuild,
+      "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6",
+      `.github/workflows/release.yml ${jobName}`,
+      errors,
+    );
+    requireText(
+      releaseBuild,
+      "bun-version: 1.3.14",
+      `.github/workflows/release.yml ${jobName}`,
+      errors,
+    );
+  }
   const exactCiWaiter = files.get("scripts/wait-for-exact-ci.mjs") ?? "";
   for (const expected of [
     'WORKFLOW = "ci.yml"',

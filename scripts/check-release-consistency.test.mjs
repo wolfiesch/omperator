@@ -760,6 +760,22 @@ test("deploys release site source only after artifact publication", () => {
   ]) {
     assert.ok(!releaseVerify.includes(duplicate));
   }
+  const releaseLinux = releaseWorkflow.slice(
+    releaseWorkflow.indexOf("  build-linux:"),
+    releaseWorkflow.indexOf("  build-android:"),
+  );
+  const releaseMacos = releaseWorkflow.slice(
+    releaseWorkflow.indexOf("  build-macos:"),
+    releaseWorkflow.indexOf("  publish:"),
+  );
+  for (const releaseBuild of [releaseLinux, releaseMacos]) {
+    assert.ok(
+      releaseBuild.includes(
+        "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6",
+      ),
+    );
+    assert.ok(releaseBuild.includes("bun-version: 1.3.14"));
+  }
   assert.ok(releaseWorkflow.includes("pnpm --filter @t4-code/mobile build:android:release"));
   assert.ok(releaseWorkflow.includes("T4_ANDROID_KEYSTORE_BASE64"));
   assert.ok(releaseWorkflow.includes("node scripts/inspect-android-release.mjs"));
