@@ -3,6 +3,7 @@ import { connect as netConnect } from "node:net";
 import { dirname, join, parse } from "node:path";
 import WebSocket from "ws";
 import type { OmpTransport } from "@t4-code/client";
+import { developmentSandboxServiceConfig } from "./development-sandbox.ts";
 import { localSocketPath } from "./socket-path.ts";
 
 const OMP_SOCKET_NAME = /^\.appserver-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.sock$/;
@@ -188,8 +189,37 @@ export class UnixWebSocketTransport implements OmpTransport {
   }
 }
 
-export function createLocalTransport(profileId = "default"): UnixWebSocketTransport {
-  const socketPath = localSocketPath({ profileId });
+/**
+ * Resolve the host socket this desktop is allowed to talk to.
+ *
+ * A development sandbox relocates the host service's HOME and XDG_RUNTIME_DIR,
+ * so the client must resolve the socket under those same roots. macOS derives
+ * the path from HOME and Linux from the runtime directory, so passing only one
+ * of them leaves the other platform pointed at the developer's own host and its
+ * real sessions, which is the opposite of a sandbox. A half-configured sandbox
+ * throws out of `developmentSandboxServiceConfig` rather than falling back to
+ * the personal socket.
+ */
+export function localTransportSocketPath(
+  profileId = "default",
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const development = developmentSandboxServiceConfig(environment);
+  const runtimeDirectory = development?.environment.XDG_RUNTIME_DIR ?? environment.XDG_RUNTIME_DIR;
+  return localSocketPath({
+    profileId,
+    platform,
+    ...(development === undefined ? {} : { homeDirectory: development.homeDirectory }),
+    ...(runtimeDirectory === undefined ? {} : { runtimeDirectory }),
+  });
+}
+
+export function createLocalTransport(
+  profileId = "default",
+  environment: NodeJS.ProcessEnv = process.env,
+): UnixWebSocketTransport {
+  const socketPath = localTransportSocketPath(profileId, environment);
   if (process.platform === "darwin") ensureMacRuntimeDirectory(dirname(socketPath));
   return new UnixWebSocketTransport({ socketPath });
 }
