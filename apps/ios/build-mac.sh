@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# build-mac.sh — build Enclave on the remote Mac from the Linux workstation.
+# build-mac.sh — build the iOS app on a remote Mac from a Linux workstation.
 #
 # If the local working tree has uncommitted changes in tracked files, they are
 # synced to the Mac via SCP before building. If the working tree is clean, the
@@ -15,8 +15,10 @@ set -euo pipefail
 
 # ── config ───────────────────────────────────────────────────────────
 MAC_HOST="${MAC_HOST:-macbookpro.local}"
-MAC_PATH="${MAC_PATH:-/Users/alexis/Enclave}"
-SCHEME="${SCHEME:-Enclave}"
+# The checkout path on the Mac. There is no safe default: $HOME here would
+# expand to the workstation's home and then be sent over ssh, so require it.
+MAC_PATH="${MAC_PATH:?set MAC_PATH to the repository path on $MAC_HOST}"
+SCHEME="${SCHEME:-T4Code}"
 DESTINATION="${DESTINATION:-platform=iOS Simulator,name=iPhone 17 Pro}"
 # ─────────────────────────────────────────────────────────────────────
 

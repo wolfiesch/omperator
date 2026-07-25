@@ -1038,16 +1038,24 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
       if (workflow?.jobs?.[job]?.if !== undefined)
         errors.push(`.github/workflows/ci.yml ${job} must run unconditionally`);
     }
-    // The required branch-protection gate must not wait on the deferred
-    // release legs, and those legs must stay aggregated by release-gates so a
-    // merge-run failure still fails the run the release waiter reads.
+    // The required branch-protection gate must not wait on any leg that runs
+    // off ubuntu-24.04, and those legs must stay aggregated by release-gates so
+    // a failure still fails the run the release waiter reads. `ios` is in this
+    // set because it runs on macOS, not because it is deferred: unlike the
+    // release gates it also runs on pull requests.
     const verifyNeeds = workflow?.jobs?.verify?.needs ?? [];
-    for (const job of ["legacy-bridge-continuity", "official-omp-gate0"]) {
+    for (const job of ["legacy-bridge-continuity", "official-omp-gate0", "ios"]) {
       if (verifyNeeds.includes(job))
-        errors.push(`.github/workflows/ci.yml verify must not wait on the deferred ${job} leg`);
+        errors.push(`.github/workflows/ci.yml verify must not wait on the ${job} leg`);
       if (!(workflow?.jobs?.["release-gates"]?.needs ?? []).includes(job))
-        errors.push(`.github/workflows/ci.yml release-gates must aggregate the deferred ${job} leg`);
+        errors.push(`.github/workflows/ci.yml release-gates must aggregate the ${job} leg`);
     }
+    // The iOS leg is path-gated, so a broken gate would silently ship Swift
+    // that no job ever compiled.
+    if (workflow?.jobs?.ios?.if !== "${{ needs.changes.outputs.ios == 'true' }}")
+      errors.push(".github/workflows/ci.yml ios must be gated on needs.changes.outputs.ios");
+    if (workflow?.jobs?.changes?.outputs?.ios !== "${{ steps.classify.outputs.ios }}")
+      errors.push(".github/workflows/ci.yml changes must export the ios classification");
     // A merge run may only narrow its legs against a commit whose own run was
     // green. Diffing the immediate parent would let a docs-only run inherit
     // proof across a failed one, and the release waiter reads exactly that
@@ -1134,7 +1142,10 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "if: ${{ always() }}",
     "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]",
     "name: release-gates",
-    "needs: [changes, legacy-bridge-continuity, official-omp-gate0]",
+    "needs: [changes, legacy-bridge-continuity, official-omp-gate0, ios]",
+    "ios:",
+    "run: node scripts/verify-ios.mjs",
+    "IOS_RESULT: ${{ needs.ios.result }}",
     'test "$CHANGES_RESULT" = success',
     'test "$T4_API_GENERATION_RESULT" = success',
     'test "$CHECK_RESULT" = success',

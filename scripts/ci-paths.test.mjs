@@ -8,6 +8,7 @@ const none = {
   official_omp_gate0: false,
   tooling: false,
   maintainer: false,
+  ios: false,
   android_debug: false,
 };
 
@@ -51,6 +52,7 @@ test("host wire changes run every dependent client and continuity gate", () => {
     official_omp_gate0: false,
     tooling: true,
     maintainer: false,
+    ios: true,
     android_debug: true,
   });
 });
@@ -90,6 +92,7 @@ test("dependency graph changes conservatively run every leg", () => {
       official_omp_gate0: true,
       tooling: true,
       maintainer: true,
+      ios: true,
       android_debug: true,
     });
   }
@@ -102,6 +105,7 @@ test("selection and release-authority sources can only be proven by a full run",
     official_omp_gate0: true,
     tooling: true,
     maintainer: true,
+    ios: true,
     android_debug: true,
   };
   // The classifier cannot grade itself. If a bug in one of these let a run
@@ -152,7 +156,7 @@ test("paths are normalized and GitHub outputs are stable", () => {
   const result = classifyCiPaths(["./apps\\web\\package.json", "./apps/web/package.json"]);
   assert.equal(
     formatGitHubOutputs(result),
-    "continuity=false\ncluster=false\nofficial_omp_gate0=false\ntooling=false\nmaintainer=false\nandroid_debug=true\n",
+    "continuity=false\ncluster=false\nofficial_omp_gate0=false\ntooling=false\nmaintainer=false\nios=false\nandroid_debug=true\n",
   );
 });
 
@@ -163,6 +167,7 @@ test("an unclassified path widens coverage instead of narrowing it", () => {
     official_omp_gate0: true,
     tooling: true,
     maintainer: true,
+    ios: true,
     android_debug: true,
   };
   // Selection now decides what a merge run proves, so a path no group claims
@@ -203,6 +208,21 @@ test("the wire contract runs every gate that ships it", () => {
     ...none,
     continuity: true,
     official_omp_gate0: true,
+    ios: true,
     android_debug: true,
   });
+});
+
+test("iOS sources select their own leg instead of the whole matrix", () => {
+  // Before apps/ios was claimed, no group matched it and no no-impact rule
+  // excused it, so a Swift-only change fell through to the full matrix: every
+  // gate ran and none of them compiled the app that changed.
+  for (const path of [
+    "apps/ios/Sources/T4FilesPane.swift",
+    "apps/ios/HostWire/Sources/HostWire/Commands.swift",
+    "apps/ios/project.yml",
+    "apps/ios/UITests/T4CodeUITests.swift",
+  ]) {
+    assert.deepEqual(classifyCiPaths([path]), { ...none, ios: true }, path);
+  }
 });
