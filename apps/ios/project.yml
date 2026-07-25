@@ -3,6 +3,9 @@ options:
   bundleIdPrefix: xyz.epsilver
   deploymentTarget:
     iOS: "26.0"
+packages:
+  HostWire:
+    path: HostWire
 targets:
   Enclave:
     type: application
@@ -14,6 +17,7 @@ targets:
     dependencies:
       - target: EnclaveWidgets
         embed: true
+      - package: HostWire
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: xyz.epsilver.enclave
