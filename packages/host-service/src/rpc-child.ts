@@ -295,7 +295,7 @@ class DurableJsonlReconciler {
 	#observeLine(line: string, publish: boolean): void {
 		let value: unknown;
 		try {
-			value = parseBounded(line);
+			value = JSON.parse(line);
 		} catch {
 			throw new Error("malformed session transcript");
 		}
