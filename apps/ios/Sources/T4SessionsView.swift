@@ -53,7 +53,6 @@ struct T4SessionsView: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(t.bg.ignoresSafeArea())
-        .searchable(text: $store.query, prompt: "Search sessions")
     }
 }
 

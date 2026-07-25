@@ -18,6 +18,8 @@ struct RootView: View {
                 store.selectedSession = session
             }
             .background(t.bg.ignoresSafeArea())
+            .navigationTitle("T4 Code")
+            .searchable(text: $store.query, prompt: "Search sessions")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { theme.toggle() } label: {
@@ -28,6 +30,8 @@ struct RootView: View {
                     }
                     .press()
                 }
+                DefaultToolbarItem(kind: .search, placement: .bottomBar)
+                ToolbarSpacer(.flexible, placement: .bottomBar)
                 ToolbarItem(placement: .bottomBar) {
                     Button { showConnect = true } label: {
                         Label("Connect", systemImage: "plus")

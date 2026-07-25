@@ -302,7 +302,7 @@ public struct InfrastructureWorkspace: Decodable, Equatable, Sendable {
         }
         capacity = try c.decodeIfPresent(String.self, forKey: .capacity).map { cap in
             let value = try Bounded.controlFree(cap, path: "capacity", maxBytes: 32)
-            guard !value.isEmpty, value.wholeMatch(of: #/^[1-9][0-9]*(?:Ei|Pi|Ti|Gi|Mi|Ki|E|P|T|G|M|K)$/u) != nil else {
+            guard !value.isEmpty, value.wholeMatch(of: #/^[1-9][0-9]*(?:Ei|Pi|Ti|Gi|Mi|Ki|E|P|T|G|M|K)$/#) != nil else {
                 throw T4WireError.invalidFrame(path: "capacity", reason: "invalid positive Kubernetes storage quantity")
             }
             return value
@@ -960,7 +960,7 @@ private enum CR {
     /// `isoTimestamp` (usage.ts): control-free (<= 64) parseable ISO text.
     static func isoTimestamp(_ s: String, path: String) throws -> String {
         let value = try Bounded.controlFree(s, path: path, maxBytes: 64)
-        guard Date(value) != nil else {
+        guard ISO8601DateFormatter.canonical.date(from: value) != nil else {
             throw T4WireError.invalidFrame(path: path, reason: "timestamp must be parseable ISO text")
         }
         return value
@@ -975,7 +975,7 @@ private enum CR {
         }
         let scheme = comps.scheme?.lowercased()
         guard scheme == "http" || scheme == "https",
-              (comps.username?.isEmpty ?? true),
+              (comps.user?.isEmpty ?? true),
               (comps.password?.isEmpty ?? true),
               (comps.query?.isEmpty ?? true),
               comps.fragment == nil || comps.fragment?.isEmpty == true
@@ -988,9 +988,9 @@ private enum CR {
     /// `SESSION_THINKING_EFFORTS` (session-state.ts).
     static let thinkingEfforts: Set<String> = ["minimal", "low", "medium", "high", "xhigh", "max"]
     /// Configured thinking levels: `inherit | off | auto | <effort>`.
-    static let configuredThinkingLevels: Set<String> = ["inherit", "off", "auto"].union(thinkingEfforts)
+    static let configuredThinkingLevels: Set<String> = thinkingEfforts.union(["inherit", "off", "auto"])
     /// Effective thinking levels: `off | <effort>`.
-    static let effectiveThinkingLevels: Set<String> = ["off"].union(thinkingEfforts)
+    static let effectiveThinkingLevels: Set<String> = thinkingEfforts.union(["off"])
 
     /// `thinkingValue` (session-state.ts): a control-free (<= 64) level within
     /// `allowed`.
