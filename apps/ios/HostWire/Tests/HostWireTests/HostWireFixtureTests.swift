@@ -27,6 +27,14 @@ struct HostWireFixtureTests {
         "files-diff": false,
         "audit-event": false,
         "catalog": false,
+        "review": false,
+        "preview-capture": false,
+        "prompt-lease": false,
+        "session-delta": false,
+        "host-watch": false,
+        "terminal": false,
+        "audit": false,
+        "files": false,
     ]
 
     private static let invalid: Set<String> = [

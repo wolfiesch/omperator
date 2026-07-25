@@ -278,7 +278,7 @@ public actor HostClient {
             frameContinuation.yield(frame)
         case .agent:
             frameContinuation.yield(frame)
-        case .sessions, .confirmation, .terminalOutput, .terminalExit, .filesList, .filesRead, .filesWrite, .filesPatch, .filesDiff, .auditTail, .auditEvent, .catalog, .settings:
+        case .sessions, .confirmation, .terminalOutput, .terminalExit, .filesList, .filesRead, .filesWrite, .filesPatch, .filesDiff, .auditTail, .auditEvent, .catalog, .settings, .hostWatch, .sessionWatch, .sessionState, .sessionDelta, .lease, .promptLease, .previewLaunch, .previewState, .previewNavigation, .previewCapture, .previewError, .legacyTerminal, .audit, .files, .review:
             frameContinuation.yield(frame)
         }
     }
