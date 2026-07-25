@@ -8,7 +8,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-export const SERVICE_LABEL = "com.lycaonsolutions.t4code.tailnet-gateway";
+export const SERVICE_LABEL = "net.t4code.app.tailnet-gateway";
 export const DEFAULT_GATEWAY_PORT = 4_194;
 const CONFIG_VERSION = 1;
 const MAX_OUTPUT_BYTES = 64 * 1024;

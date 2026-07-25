@@ -1,4 +1,4 @@
-package com.lycaonsolutions.t4code;
+package net.t4code.app;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;

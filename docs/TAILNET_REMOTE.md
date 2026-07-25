@@ -93,7 +93,7 @@ either one changes. The automatic maintainer uses the stricter product identity
 derived from the T4 commit, OMP integration commit, and installed OMP SHA-256.
 
 The service installer is idempotent. On Linux it writes and enables
-`com.lycaonsolutions.t4code.tailnet-gateway.service` as a systemd **user**
+`net.t4code.app.tailnet-gateway.service` as a systemd **user**
 unit. On macOS it installs the matching per-user LaunchAgent. It stores no
 Tailscale key, OMP token, or app password.
 
@@ -247,7 +247,7 @@ Linux logs:
 
 ```bash
 journalctl --user \
-  -u com.lycaonsolutions.t4code.tailnet-gateway.service \
+  -u net.t4code.app.tailnet-gateway.service \
   -n 100 --no-pager
 ```
 

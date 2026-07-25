@@ -105,6 +105,6 @@ also needs the operator proof in `docs/RELEASE_GATE.md`, whose installed-app
 step cannot run on a machine that already has T4 installed until a test build
 can adopt a service label of its own.
 
-Application identifiers and artifact names remain `com.lycaonsolutions.t4code`
+Application identifiers and artifact names remain `net.t4code.app`
 and `T4-Code-*`. Renaming them is a separate product decision and is not a
 prerequisite for publishing from this repository.

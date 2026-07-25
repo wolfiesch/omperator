@@ -47,7 +47,7 @@ await cp(webDist, mobileDist, { recursive: true });
 await writeFile(resolve(mobileDist, "index.html"), mobileIndexHtml, "utf8");
 
 const buildMetadata = {
-  appId: "com.lycaonsolutions.t4code",
+  appId: "net.t4code.app",
   bundledWebApp: true,
   nativeOrigin: "https://localhost",
 };

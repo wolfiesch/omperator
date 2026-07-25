@@ -397,8 +397,8 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   if (androidIdentity?.schemaVersion !== 1) {
     errors.push(`${androidIdentityPath} schemaVersion must be 1`);
   }
-  if (androidIdentity?.applicationId !== "com.lycaonsolutions.t4code") {
-    errors.push(`${androidIdentityPath} applicationId must be com.lycaonsolutions.t4code`);
+  if (androidIdentity?.applicationId !== "net.t4code.app") {
+    errors.push(`${androidIdentityPath} applicationId must be net.t4code.app`);
   }
   if (androidIdentity?.minSdkVersion !== 24) {
     errors.push(`${androidIdentityPath} minSdkVersion must be 24`);
@@ -433,8 +433,8 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   if (macosIdentity?.schemaVersion !== 1) {
     errors.push(`${macosIdentityPath} schemaVersion must be 1`);
   }
-  if (macosIdentity?.bundleId !== "com.lycaonsolutions.t4code") {
-    errors.push(`${macosIdentityPath} bundleId must be com.lycaonsolutions.t4code`);
+  if (macosIdentity?.bundleId !== "net.t4code.app") {
+    errors.push(`${macosIdentityPath} bundleId must be net.t4code.app`);
   }
   if (!/^[A-Z0-9]{10}$/u.test(macosIdentity?.teamId ?? "")) {
     errors.push(`${macosIdentityPath} teamId must be 10 uppercase letters or digits`);
