@@ -163,7 +163,7 @@ struct T4FilesPane: View {
                         .font(.system(size: 14, weight: .semibold))
                 }
             }
-            .navigationDestination(item: $viewedFile) { target in
+            .fullScreenCover(item: $viewedFile) { target in
                 FileViewer(session: session, store: store, path: target.path)
                     .environmentObject(theme)
             }
