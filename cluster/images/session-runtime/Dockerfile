@@ -13,9 +13,9 @@ COPY --from=docker.io/oven/bun:1.3.14-debian@sha256:9dba1a1b43ce28c9d7931bfc4eb0
 WORKDIR /opt/omp
 RUN git init \
     && git remote add origin https://github.com/wolfiesch/oh-my-pi.git \
-    && git fetch --depth=1 origin "refs/tags/t4code-17.0.5-appserver-13" \
-    && test "$(git rev-parse FETCH_HEAD)" = "fc0c391334c08ab260057756aa84bd2b07741ee7" \
-    && git checkout --detach "fc0c391334c08ab260057756aa84bd2b07741ee7"
+    && git fetch --depth=1 origin "refs/tags/t4code-17.0.5-appserver-15" \
+    && test "$(git rev-parse FETCH_HEAD)" = "ca2902bc095a0b17067f4b8b34ecf454390f85ff" \
+    && git checkout --detach "ca2902bc095a0b17067f4b8b34ecf454390f85ff"
 RUN bun install --frozen-lockfile --ignore-scripts \
     && bun --cwd=packages/natives run build \
     && bun --cwd=packages/coding-agent run gen:tool-views \
@@ -63,8 +63,8 @@ ARG SOURCE_REPOSITORY=https://github.com/LycaonLLC/t4-code
 LABEL org.opencontainers.image.source="${SOURCE_REPOSITORY}" \
       org.opencontainers.image.title="T4 OMP session runtime" \
       io.t4.omp.version="17.0.5" \
-      io.t4.omp.tag="t4code-17.0.5-appserver-13" \
-      io.t4.omp.commit="fc0c391334c08ab260057756aa84bd2b07741ee7" \
+      io.t4.omp.tag="t4code-17.0.5-appserver-15" \
+      io.t4.omp.commit="ca2902bc095a0b17067f4b8b34ecf454390f85ff" \
       io.t4.omp.authority="t4-omp-authority/1" \
       io.t4.gui.display="Xvfb"
 USER 10001:10001

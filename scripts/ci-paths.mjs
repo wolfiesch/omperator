@@ -12,7 +12,6 @@ const FORCE_ALL = [
 const GROUP_PATTERNS = Object.freeze({
   continuity: [
     /^\.github\/workflows\/ci\.yml$/u,
-    /^\.woodpecker\.yml$/u,
     /^compat\/omp-app-matrix\.json$/u,
     /^packages\/client\/src\//u,
     /^packages\/host-service\/bin\/current-omp-bridge-proof\.ts$/u,
@@ -45,6 +44,7 @@ const GROUP_PATTERNS = Object.freeze({
   ],
   tooling: [
     /^\.github\//u,
+    /^\.woodpecker\.yml$/u,
     /^compat\//u,
     /^docs\//u,
     /^provenance\//u,

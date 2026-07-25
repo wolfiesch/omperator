@@ -131,6 +131,26 @@ function requireSuccess(response: ResultFrame, label: string): void {
   }
 }
 
+async function promptWhenIdle(
+  connection: ConnectedClient,
+  sessionId: string,
+  message: string,
+  journal: ServerFrame[],
+): Promise<ResultFrame> {
+  const deadline = Date.now() + TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const requestId = `prompt-${randomUUID()}`;
+    sendCommand(connection, requestId, "session.prompt", sessionId, { message });
+    const response = await responseFor(connection.client, requestId, journal);
+    if (response.ok) return response;
+    if (!response.error || !["session_busy", "session_locked"].includes(response.error.code)) {
+      requireSuccess(response, "session.prompt");
+    }
+    await Bun.sleep(50);
+  }
+  throw new Error("session did not become writable before dogfood prompt");
+}
+
 async function attach(connection: ConnectedClient, sessionId: string, journal: ServerFrame[]): Promise<SnapshotFrame> {
   const requestId = `attach-${randomUUID()}`;
   sendCommand(connection, requestId, "session.attach", sessionId, {});
@@ -174,6 +194,20 @@ async function waitForDelta(
   }
 }
 
+function recordedDelta(
+  journal: readonly ServerFrame[],
+  start: number,
+  sessionId: string,
+  predicate: (frame: SessionDeltaFrame) => boolean,
+): SessionDeltaFrame | undefined {
+  return journal
+    .slice(start)
+    .find(
+      (frame): frame is SessionDeltaFrame =>
+        frame.type === "session.delta" && frame.sessionId === sessionId && predicate(frame),
+    );
+}
+
 async function lifecycleCommand(
   connection: ConnectedClient,
   sessionId: string,
@@ -183,25 +217,50 @@ async function lifecycleCommand(
   predicate: (frame: SessionDeltaFrame) => boolean,
   journal: ServerFrame[],
 ): Promise<SessionDeltaFrame> {
-  const requestId = `${name}-${randomUUID()}`;
-  sendCommand(connection, requestId, name, sessionId, args, revision);
-  requireSuccess(await responseFor(connection.client, requestId, journal), name);
-  return waitForDelta(connection, sessionId, predicate, journal);
+  let currentRevision = revision;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const requestId = `${name}-${randomUUID()}`;
+    sendCommand(connection, requestId, name, sessionId, args, currentRevision);
+    const journalStart = journal.length;
+    const response = await responseFor(connection.client, requestId, journal);
+    if (response.ok) {
+      return recordedDelta(journal, journalStart, sessionId, predicate) ??
+        waitForDelta(connection, sessionId, predicate, journal);
+    }
+    const actualRevision =
+      response.error?.code === "stale_revision" &&
+      response.error.details &&
+      typeof response.error.details.actualRevision === "string"
+        ? response.error.details.actualRevision
+        : undefined;
+    if (actualRevision === undefined) {
+      requireSuccess(response, name);
+      continue;
+    }
+    currentRevision = actualRevision;
+  }
+  throw new Error(`${name} could not acquire the current session revision`);
 }
 
-async function deleteSession(
+async function confirmedCommand(
   connection: ConnectedClient,
   sessionId: string,
-  revision: string,
+  name: string,
+  args: Record<string, unknown>,
   journal: ServerFrame[],
-): Promise<void> {
-  const requestId = `delete-${randomUUID()}`;
-  const commandId = sendCommand(connection, requestId, "session.delete", sessionId, {}, revision);
+  expectedRevision?: string,
+): Promise<ResultFrame> {
+  const requestId = `${name}-${randomUUID()}`;
+  const commandId = sendCommand(connection, requestId, name, sessionId, args, expectedRevision);
   let challenge: Extract<ServerFrame, { type: "confirmation" }> | undefined;
   while (challenge === undefined) {
-    const frame = await next(connection.client, "delete confirmation");
+    const frame = await next(connection.client, `${name} confirmation`);
     journal.push(frame);
     if (frame.type === "confirmation" && frame.commandId === commandId) challenge = frame;
+    if (frame.type === "response" && frame.requestId === requestId) {
+      requireSuccess(frame, name);
+      return frame;
+    }
   }
   connection.client.sendJson({
     v: "omp-app/1",
@@ -213,8 +272,23 @@ async function deleteSession(
     sessionId,
     decision: "approve",
   });
-  requireSuccess(await responseFor(connection.client, requestId, journal), "session.delete");
-  await waitForDelta(connection, sessionId, (frame) => frame.remove === sessionId, journal);
+  return responseFor(connection.client, requestId, journal);
+}
+
+async function deleteSession(
+  connection: ConnectedClient,
+  sessionId: string,
+  revision: string,
+  journal: ServerFrame[],
+): Promise<void> {
+  const journalStart = journal.length;
+  requireSuccess(
+    await confirmedCommand(connection, sessionId, "session.delete", {}, journal, revision),
+    "session.delete",
+  );
+  if (!recordedDelta(journal, journalStart, sessionId, (frame) => frame.remove === sessionId)) {
+    await waitForDelta(connection, sessionId, (frame) => frame.remove === sessionId, journal);
+  }
 }
 
 function wireSummary(frame: ServerFrame): Record<string, unknown> {
@@ -224,6 +298,7 @@ function wireSummary(frame: ServerFrame): Record<string, unknown> {
     ...(Object.hasOwn(frame, "requestId") ? { requestId: String(Reflect.get(frame, "requestId")) } : {}),
     ...(Object.hasOwn(frame, "revision") ? { revision: String(Reflect.get(frame, "revision")) } : {}),
     ...(frame.type === "entry" ? { entryId: String(frame.entry.id), entryKind: frame.entry.kind } : {}),
+    ...(frame.type === "error" ? { code: frame.code, message: frame.message } : {}),
   };
 }
 
@@ -246,7 +321,9 @@ async function main(): Promise<void> {
   await mkdir(options.artifactRoot, { recursive: true });
   const root = await mkdtemp(join(tmpdir(), "omperator-dogfood-"));
   const home = join(root, "home");
-  const project = join(root, "project");
+  const streamProject = join(root, "projects", "stream");
+  const cancelProject = join(root, "projects", "cancel");
+  const lifecycleProject = join(root, "projects", "lifecycle");
   const sessionsRoot = join(root, "sessions");
   const stateRoot = join(root, "state");
   const runtimeRoot = join(root, "run");
@@ -260,20 +337,30 @@ async function main(): Promise<void> {
   let observer: ConnectedClient | undefined;
   let reconnect: ConnectedClient | undefined;
   let failure: unknown;
+  let hostStdout: Promise<string> | undefined;
+  let hostStderr: Promise<string> | undefined;
 
   try {
     await Promise.all([
-      mkdir(project, { recursive: true }),
+      mkdir(streamProject, { recursive: true }),
+      mkdir(cancelProject, { recursive: true }),
+      mkdir(lifecycleProject, { recursive: true }),
       mkdir(agentDir, { recursive: true, mode: 0o700 }),
     ]);
-    await writeFile(join(project, "dogfood.txt"), "isolated dogfood fixture\n");
+    await Promise.all([
+      writeFile(join(streamProject, "dogfood.txt"), "isolated stream fixture\n"),
+      writeFile(join(cancelProject, "dogfood.txt"), "isolated cancellation fixture\n"),
+      writeFile(join(lifecycleProject, "dogfood.txt"), "isolated lifecycle fixture\n"),
+    ]);
     await writeFile(
       join(agentDir, "models.yml"),
       `providers:\n  dogfood:\n    baseUrl: http://127.0.0.1:${model.server.port}/v1\n    api: openai-completions\n    auth: none\n    models:\n      - id: deterministic\n        name: Dogfood Deterministic\n        reasoning: false\n        input: [text]\n        contextWindow: 32768\n        maxTokens: 4096\n`,
     );
     const seed = new OfficialOmpProfileAuthority({ sessionsRoot, metadataPath: join(root, "seed-metadata.json") });
     await seed.initialize();
-    const session = await seed.create(project, "Omperator dogfood");
+    const streamSession = await seed.create(streamProject, "Omperator stream dogfood");
+    const cancelSession = await seed.create(cancelProject, "Omperator cancellation dogfood");
+    const lifecycleSession = await seed.create(lifecycleProject, "Omperator lifecycle dogfood");
     await seed.close();
 
     const socketPath = profileSocketPath(profile, process.platform, home, runtimeRoot);
@@ -302,43 +389,62 @@ async function main(): Promise<void> {
       "--state-root",
       stateRoot,
     ], { env: environment, stdout: "pipe", stderr: "pipe" });
-    const stdout = new Response(child.stdout as ReadableStream<Uint8Array>).text();
-    const stderr = new Response(child.stderr as ReadableStream<Uint8Array>).text();
+    hostStdout = new Response(child.stdout as ReadableStream<Uint8Array>).text();
+    hostStderr = new Response(child.stderr as ReadableStream<Uint8Array>).text();
     await waitForSocket(socketPath, child);
 
     primary = await connectClient(socketPath, "dogfood-primary");
     observer = await connectClient(socketPath, "dogfood-observer");
-    const initial = primary.sessions.sessions.find((item) => item.sessionId === session.sessionId);
-    if (!initial) throw new Error("seeded dogfood session was not discovered");
-    await attach(primary, session.sessionId, journal);
-    await attach(observer, session.sessionId, journal);
+    for (const seeded of [streamSession, cancelSession, lifecycleSession]) {
+      if (!primary.sessions.sessions.some((item) => item.sessionId === seeded.sessionId)) {
+        throw new Error("a seeded dogfood session was not discovered");
+      }
+    }
 
     if (options.scenario === "full" || options.scenario === "stream" || options.scenario === "reconnect") {
+      await attach(primary, streamSession.sessionId, journal);
+      await attach(observer, streamSession.sessionId, journal);
       const requestId = `prompt-${randomUUID()}`;
-      sendCommand(primary, requestId, "session.prompt", session.sessionId, { message: "Dogfood stream prompt" });
+      sendCommand(primary, requestId, "session.prompt", streamSession.sessionId, { message: "Dogfood stream prompt" });
       requireSuccess(await responseFor(primary.client, requestId, journal), "session.prompt");
       const [primaryEntry, observerEntry] = await Promise.all([
-        waitForAssistant(primary, session.sessionId, "Gate 0 response 1", journal),
-        waitForAssistant(observer, session.sessionId, "Gate 0 response 1", journal),
+        waitForAssistant(primary, streamSession.sessionId, "Gate 0 response 1", journal),
+        waitForAssistant(observer, streamSession.sessionId, "Gate 0 response 1", journal),
       ]);
       if (primaryEntry.entry.id !== observerEntry.entry.id) throw new Error("clients observed different assistant entries");
-      const transcript = await readFile(session.path, "utf8");
+      const transcript = await readFile(streamSession.path, "utf8");
       if (!transcript.includes("Dogfood stream prompt") || !transcript.includes("Gate 0 response 1")) {
         throw new Error("streamed dogfood prompt was not durable");
       }
       scenarioResults.stream = { durable: true, convergedEntryId: String(primaryEntry.entry.id) };
+      if (options.scenario === "full") {
+        requireSuccess(
+          await confirmedCommand(
+            primary,
+            streamSession.sessionId,
+            "session.close",
+            {},
+            journal,
+            String(primaryEntry.revision),
+          ),
+          "session.close",
+        );
+      }
     }
 
     if (options.scenario === "full" || options.scenario === "cancel") {
+      await attach(primary, cancelSession.sessionId, journal);
       const gate = model.gateNextRequest();
       try {
-        const promptId = `cancel-prompt-${randomUUID()}`;
-        sendCommand(primary, promptId, "session.prompt", session.sessionId, { message: "Dogfood cancellation prompt" });
-        requireSuccess(await responseFor(primary.client, promptId, journal), "cancellation prompt");
+        await promptWhenIdle(primary, cancelSession.sessionId, "Dogfood cancellation prompt", journal);
         await gate.started;
-        const cancelId = `cancel-${randomUUID()}`;
-        sendCommand(primary, cancelId, "session.cancel", session.sessionId, {});
-        const cancelled = await responseFor(primary.client, cancelId, journal);
+        const cancelled = await confirmedCommand(
+          primary,
+          cancelSession.sessionId,
+          "session.cancel",
+          {},
+          journal,
+        );
         requireSuccess(cancelled, "session.cancel");
         scenarioResults.cancel = { accepted: true, terminalResponse: cancelled.result };
       } finally {
@@ -350,7 +456,7 @@ async function main(): Promise<void> {
       await primary.client.close();
       primary = undefined;
       reconnect = await connectClient(socketPath, "dogfood-reconnect");
-      const snapshot = await attach(reconnect, session.sessionId, journal);
+      const snapshot = await attach(reconnect, streamSession.sessionId, journal);
       const entryIds = snapshot.entries.map((entry) => String(entry.id));
       if (new Set(entryIds).size !== entryIds.length) throw new Error("reconnect snapshot duplicated transcript entries");
       if (!snapshot.entries.some((entry) => entry.kind === "message" && entry.data.role === "assistant" && entry.data.text === "Gate 0 response 1")) {
@@ -362,13 +468,27 @@ async function main(): Promise<void> {
     if (options.scenario === "full" || options.scenario === "lifecycle") {
       const controller = reconnect ?? primary;
       if (!controller) throw new Error("lifecycle controller is unavailable");
-      const current = controller.sessions.sessions.find((item) => item.sessionId === session.sessionId);
-      let revision = reconnect
-        ? String((await attach(reconnect, session.sessionId, journal)).revision)
-        : String(current?.revision ?? initial.revision);
+      const listedLifecycle = controller.sessions.sessions.find(
+        (item) => item.sessionId === lifecycleSession.sessionId,
+      );
+      await attach(controller, lifecycleSession.sessionId, journal);
+      await attach(observer, lifecycleSession.sessionId, journal);
+      let revision =
+        listedLifecycle?.liveState?.sessionControl === undefined
+          ? String(listedLifecycle?.revision)
+          : String(
+              (
+                await waitForDelta(
+                  controller,
+                  lifecycleSession.sessionId,
+                  (frame) => frame.upsert !== undefined && frame.upsert.liveState?.sessionControl === undefined,
+                  journal,
+                )
+              ).revision,
+            );
       const renamed = await lifecycleCommand(
         controller,
-        session.sessionId,
+        lifecycleSession.sessionId,
         "session.rename",
         revision,
         { name: "Omperator dogfood renamed" },
@@ -378,14 +498,14 @@ async function main(): Promise<void> {
       revision = String(renamed.revision);
       const observerRename = await waitForDelta(
         observer,
-        session.sessionId,
+        lifecycleSession.sessionId,
         (frame) => frame.upsert?.title === "Omperator dogfood renamed",
         journal,
       );
       if (observerRename.revision !== renamed.revision) throw new Error("rename did not converge across clients");
       const archived = await lifecycleCommand(
         controller,
-        session.sessionId,
+        lifecycleSession.sessionId,
         "session.archive",
         revision,
         {},
@@ -394,12 +514,12 @@ async function main(): Promise<void> {
       );
       revision = String(archived.revision);
       const archivedPromptId = `archived-prompt-${randomUUID()}`;
-      sendCommand(controller, archivedPromptId, "session.prompt", session.sessionId, { message: "must not run" });
+      sendCommand(controller, archivedPromptId, "session.prompt", lifecycleSession.sessionId, { message: "must not run" });
       const archivedPrompt = await responseFor(controller.client, archivedPromptId, journal);
       if (archivedPrompt.ok) throw new Error("archived session accepted a prompt");
       const restored = await lifecycleCommand(
         controller,
-        session.sessionId,
+        lifecycleSession.sessionId,
         "session.restore",
         revision,
         {},
@@ -407,7 +527,7 @@ async function main(): Promise<void> {
         journal,
       );
       revision = String(restored.revision);
-      await deleteSession(controller, session.sessionId, revision, journal);
+      await deleteSession(controller, lifecycleSession.sessionId, revision, journal);
       scenarioResults.lifecycle = {
         renamed: true,
         archived: true,
@@ -447,11 +567,12 @@ async function main(): Promise<void> {
     await reconnect?.client.close();
     reconnect = undefined;
     child.kill("SIGTERM");
-    if ((await child.exited) !== 0) throw new Error(`dogfood host failed: ${(await stderr).trim().slice(-4_096)}`);
+    if ((await child.exited) !== 0) throw new Error(`dogfood host failed: ${(await hostStderr).trim().slice(-4_096)}`);
     child = undefined;
-    await stdout;
+    await hostStdout;
   } catch (error) {
     failure = error;
+    await writeFile(join(options.artifactRoot, "wire-events.ndjson"), `${journal.map((frame) => JSON.stringify(wireSummary(frame))).join("\n")}\n`);
     await writeFile(join(options.artifactRoot, "report.json"), `${JSON.stringify({ schemaVersion: 1, scenario: options.scenario, scenarios: scenarioResults, passed: false, error: error instanceof Error ? error.message : String(error) }, null, 2)}\n`);
   } finally {
     primary?.client.destroy();
@@ -460,6 +581,10 @@ async function main(): Promise<void> {
     if (child) {
       child.kill("SIGKILL");
       await child.exited.catch(() => undefined);
+    }
+    if (failure) {
+      if (hostStdout) await writeFile(join(options.artifactRoot, "host-stdout.log"), await hostStdout);
+      if (hostStderr) await writeFile(join(options.artifactRoot, "host-stderr.log"), await hostStderr);
     }
     await model.server.stop(true);
     await rm(root, { recursive: true, force: true });
