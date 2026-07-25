@@ -118,6 +118,17 @@ public enum ServerFrame: Equatable, Sendable {
     case agentProgress(AgentProgressFrame)
     case agentEvent(AgentEventFrame)
     case agentTranscript(AgentTranscriptFrame)
+    case terminalOutput(TerminalOutputFrame)
+    case terminalExit(TerminalExitFrame)
+    case filesList(FilesListFrame)
+    case filesRead(FilesReadFrame)
+    case filesWrite(FilesWriteFrame)
+    case filesPatch(FilesPatchFrame)
+    case filesDiff(FilesDiffFrame)
+    case auditTail(AuditTailFrame)
+    case auditEvent(AuditEventFrame)
+    case catalog(CatalogFrame)
+    case settings(SettingsFrame)
 
     public static func decode(_ data: Data) throws -> ServerFrame {
         let type = try wireDecode(TypePeek.self, from: data).type
@@ -141,6 +152,17 @@ public enum ServerFrame: Equatable, Sendable {
         case "agent.progress": return .agentProgress(try wireDecode(AgentProgressFrame.self, from: data))
         case "agent.event": return .agentEvent(try wireDecode(AgentEventFrame.self, from: data))
         case "agent.transcript": return .agentTranscript(try wireDecode(AgentTranscriptFrame.self, from: data))
+        case "terminal.output": return .terminalOutput(try wireDecode(TerminalOutputFrame.self, from: data))
+        case "terminal.exit": return .terminalExit(try wireDecode(TerminalExitFrame.self, from: data))
+        case "files.list": return .filesList(try wireDecode(FilesListFrame.self, from: data))
+        case "files.read": return .filesRead(try wireDecode(FilesReadFrame.self, from: data))
+        case "files.write": return .filesWrite(try wireDecode(FilesWriteFrame.self, from: data))
+        case "files.patch": return .filesPatch(try wireDecode(FilesPatchFrame.self, from: data))
+        case "files.diff": return .filesDiff(try wireDecode(FilesDiffFrame.self, from: data))
+        case "audit.tail": return .auditTail(try wireDecode(AuditTailFrame.self, from: data))
+        case "audit.event": return .auditEvent(try wireDecode(AuditEventFrame.self, from: data))
+        case "catalog": return .catalog(try wireDecode(CatalogFrame.self, from: data))
+        case "settings": return .settings(try wireDecode(SettingsFrame.self, from: data))
         default: throw T4WireError.unknownFrame(family: "not yet ported (server): \(type)")
         }
     }

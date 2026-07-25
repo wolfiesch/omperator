@@ -278,7 +278,7 @@ public actor HostClient {
             frameContinuation.yield(frame)
         case .agent:
             frameContinuation.yield(frame)
-        case .sessions, .confirmation:
+        case .sessions, .confirmation, .terminalOutput, .terminalExit, .filesList, .filesRead, .filesWrite, .filesPatch, .filesDiff, .auditTail, .auditEvent, .catalog, .settings:
             frameContinuation.yield(frame)
         }
     }

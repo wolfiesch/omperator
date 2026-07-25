@@ -23,6 +23,10 @@ struct HostWireFixtureTests {
         "gap": false,
         "agent": false,
         "agent-progress": false,
+        "terminal-output": false,
+        "files-diff": false,
+        "audit-event": false,
+        "catalog": false,
     ]
 
     private static let invalid: Set<String> = [

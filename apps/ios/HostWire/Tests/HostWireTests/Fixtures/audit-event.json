@@ -1,0 +1,1 @@
+{"v":"omp-app/1","type":"audit.event","hostId":"host-1","cursor":{"epoch":"epoch-1","seq":3},"event":{"eventId":"op-1","hostId":"host-1","sessionId":"session-1","action":"files.read","actor":"desktop","timestamp":"2026-07-11T00:00:00Z","detail":{"path":"src/app.ts"}}}
