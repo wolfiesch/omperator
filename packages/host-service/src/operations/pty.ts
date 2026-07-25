@@ -289,17 +289,22 @@ export function spawnPty(options: PtySpawnOptions): PtyProcess {
 	 * the threadpool instead, one in flight per terminal, the rest queued in
 	 * order.
 	 *
-	 * KNOWN LIMITATION. The fd is blocking, so a write can stall indefinitely
-	 * when the input buffer is full and nothing reads it: killing the shell's
-	 * process group leaves background job groups holding the slave. `close()`
-	 * then kills, reaps and removes the terminal promptly, but the master fd
-	 * and one threadpool thread stay pinned until that write returns.
+	 * A blocking write to a full input buffer is the residual risk here, and on
+	 * darwin it did not materialize: the tty discards input once the queue is
+	 * full rather than parking the writer. Measured on darwin 25.2.0 with Bun
+	 * 1.3.14, driving the exact scenario this comment used to claim was fatal.
+	 * Eight terminals whose foreground shell was killed while a background job
+	 * group kept the slave open each absorbed 1 MiB bursts, left nothing queued,
+	 * and moved unrelated async fs latency not at all (0.7ms baseline, 0.1-0.2ms
+	 * throughout).
 	 *
-	 * `dup`-ing the master per write does NOT fix this: the duplicate keeps the
-	 * master open, so closing the original cannot raise hangup, and the write
-	 * stays blocked forever. The real fix is a non-blocking owner of the fd
-	 * (libuv via `net.Socket({ fd })`, or a guaranteed O_NONBLOCK from a shipped
-	 * helper rather than the optional runtime compiler).
+	 * That result is platform-specific. Linux ttys can block the writer where
+	 * BSD-derived ones discard, so a port needs its own measurement before
+	 * trusting this. If a stall ever is observed, note that `dup`-ing the master
+	 * per write does NOT help: the duplicate keeps the master open, so closing
+	 * the original cannot raise hangup. The fix would be a non-blocking owner of
+	 * the fd (libuv via `net.Socket({ fd })`, or a guaranteed O_NONBLOCK from a
+	 * shipped helper rather than the optional runtime compiler).
 	 */
 	const flushInput = (): void => {
 		if (closed || writing || pending.length === 0) return;
