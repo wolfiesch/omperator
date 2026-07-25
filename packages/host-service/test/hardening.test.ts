@@ -939,7 +939,7 @@ describe("child supervision", () => {
 
 		await supervisor.start();
 		const oversizedOffset = (await stat(path)).size;
-		await appendFile(path, `${"x".repeat(1024 * 1024 + 1)}\n`);
+		await appendFile(path, `${"x".repeat(10 * 1024 * 1024 + 1024)}\n`);
 		await appendFile(
 			path,
 			`${JSON.stringify({
@@ -1032,7 +1032,7 @@ describe("child supervision", () => {
 			`${JSON.stringify({
 				type: "message",
 				id: "oversized-user",
-				message: { role: "user", content: "x".repeat(1024 * 1024) },
+				message: { role: "user", content: "x".repeat(10 * 1024 * 1024 + 1024) },
 			})}\n`,
 		);
 		firstReconcile.resolve();
@@ -1054,6 +1054,80 @@ describe("child supervision", () => {
 			id: "visible-user",
 			message: { role: "user", content: "visible prompt", clientCorrelationId: secondInternalId },
 		});
+		supervisor.stop();
+		await child.exited;
+	});
+	test("scans and projects large 2 MiB transcript records without omitting them", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-large-transcript-"));
+		const path = join(root, "session.jsonl");
+		await writeFile(
+			path,
+			`${JSON.stringify({ type: "session", version: 3, id: "session", timestamp: stamp, cwd: root })}\n`,
+		);
+		const firstCommand = Promise.withResolvers<Record<string, unknown>>();
+		const firstReconcile = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		const exited = Promise.withResolvers<number>();
+		const child: ChildHandle = {
+			stdin: {
+				write: line => {
+					const command = JSON.parse(String(line)) as Record<string, unknown>;
+					firstCommand.resolve(command);
+				},
+			},
+			stdout: (async function* () {
+				yield `${JSON.stringify({ type: "ready" })}\n`;
+				const cmd = await firstCommand.promise;
+				yield `${JSON.stringify({
+					type: "response",
+					id: cmd.id,
+					command: cmd.type,
+					success: true,
+				})}\n`;
+				await firstReconcile.promise;
+				yield `${JSON.stringify({ type: "notice", message: "reconciled" })}\n`;
+				await release.promise;
+			})(),
+			stderr: (async function* () {})(),
+			exited: exited.promise,
+			kill: () => {
+				release.resolve();
+				exited.resolve(0);
+			},
+		};
+		const entry = Promise.withResolvers<RpcSessionEntryFrame>();
+		const supervisor = new RpcChildSupervisor(
+			{ spawn: () => child, argv: sessionPath => ["omp", "--mode", "rpc", "--session", sessionPath] },
+			{ ...record("large-transcript-jsonl"), path, cwd: root },
+			{
+				entry: entry.resolve,
+				event: () => {},
+				transcriptRecordOmitted: () => expect.unreachable("large valid transcript record should not be omitted"),
+				crashed: error => expect.unreachable(error.message),
+			},
+		);
+
+		await supervisor.start();
+		const promptCall = supervisor.call({ type: "prompt", message: "large prompt" }, "large-prompt");
+		await appendFile(
+			path,
+			`${JSON.stringify({
+				type: "message",
+				id: "large-user",
+				message: { role: "user", content: "x".repeat(2 * 1024 * 1024) },
+			})}\n`,
+		);
+		firstReconcile.resolve();
+		await promptCall;
+
+		const projected = await entry.promise;
+		expect(projected.entry).toMatchObject({
+			id: "large-user",
+			message: { role: "user" },
+		});
+		expect(((projected.entry as Record<string, unknown>).message as Record<string, unknown>).content).toHaveLength(
+			2 * 1024 * 1024,
+		);
 		supervisor.stop();
 		await child.exited;
 	});

@@ -1,6 +1,12 @@
 import { open, stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { boundedMap, parseBounded, type OperationCapability } from "@t4-code/host-wire";
+import {
+	boundedMap,
+	MAX_TRANSCRIPT_LINE_BYTES,
+	parseBounded,
+	parseBoundedTranscriptLine,
+	type OperationCapability,
+} from "@t4-code/host-wire";
 import type { RpcResponse, RpcSessionEntryFrame } from "./omp-rpc-contract.ts";
 import type { ManagedRpcImageRef } from "./image-upload-store.ts";
 import { OfficialOmpCapabilityAdapter } from "./official-omp-capabilities.ts";
@@ -235,8 +241,26 @@ class DurableJsonlReconciler {
 	async #scan(size: number, publish: boolean): Promise<void> {
 		const handle = await open(this.path, "r");
 		let position = this.#offset;
-		let pending = Buffer.alloc(0);
+		const pendingChunks: Buffer[] = [];
+		let pendingBytes = 0;
 		let pendingStart = position;
+
+		const clearPending = (): void => {
+			pendingChunks.length = 0;
+			pendingBytes = 0;
+		};
+
+		const buildPendingLine = (extra?: Uint8Array): Buffer => {
+			if (!extra || extra.byteLength === 0) {
+				if (pendingChunks.length === 0) return Buffer.alloc(0);
+				if (pendingChunks.length === 1) return pendingChunks[0]!;
+				return Buffer.concat(pendingChunks, pendingBytes);
+			}
+			if (pendingChunks.length === 0) return Buffer.from(extra);
+			const total = pendingBytes + extra.byteLength;
+			return Buffer.concat([...pendingChunks, Buffer.from(extra)], total);
+		};
+
 		try {
 			while (position < size) {
 				const length = Math.min(TRANSCRIPT_READ_BYTES, size - position);
@@ -256,9 +280,9 @@ class DurableJsonlReconciler {
 						this.#skippingOversizedLine = false;
 						this.#omitOversizedRecord(publish);
 						pendingStart = chunkStart + newline + 1;
-					} else if (pending.byteLength + segment.byteLength > MAX_LINE_BYTES) {
+					} else if (pendingBytes + segment.byteLength > MAX_TRANSCRIPT_LINE_BYTES) {
 						this.#oversizedLineStart = pendingStart;
-						pending = Buffer.alloc(0);
+						clearPending();
 						if (newline < 0) {
 							this.#skippingOversizedLine = true;
 							break;
@@ -266,13 +290,16 @@ class DurableJsonlReconciler {
 						this.#omitOversizedRecord(publish);
 						pendingStart = chunkStart + newline + 1;
 					} else if (newline < 0) {
-						pending = pending.byteLength === 0 ? Buffer.from(segment) : Buffer.concat([pending, segment]);
+						if (segment.byteLength > 0) {
+							pendingChunks.push(Buffer.from(segment));
+							pendingBytes += segment.byteLength;
+						}
 						break;
 					} else {
-						const line = pending.byteLength === 0 ? segment : Buffer.concat([pending, segment]);
+						const line = buildPendingLine(segment);
 						if (line.byteLength > 0)
 							this.#observeLine(new TextDecoder("utf-8", { fatal: true }).decode(line), publish);
-						pending = Buffer.alloc(0);
+						clearPending();
 						pendingStart = chunkStart + newline + 1;
 					}
 					cursor = end + 1;
@@ -281,7 +308,7 @@ class DurableJsonlReconciler {
 		} finally {
 			await handle.close();
 		}
-		this.#offset = this.#skippingOversizedLine ? position : position - pending.byteLength;
+		this.#offset = this.#skippingOversizedLine ? position : position - pendingBytes;
 	}
 
 	#omitOversizedRecord(publish: boolean): void {
@@ -295,9 +322,9 @@ class DurableJsonlReconciler {
 	#observeLine(line: string, publish: boolean): void {
 		let value: unknown;
 		try {
-			value = parseBounded(line);
-		} catch {
-			throw new Error("malformed session transcript");
+			value = parseBoundedTranscriptLine(line);
+		} catch (error) {
+			throw new Error("malformed session transcript", { cause: error });
 		}
 		const id = durableEntryId(value);
 		if (!id) return;

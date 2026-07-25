@@ -2,9 +2,19 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { decodeServerFrame, entryId, hostId, parseBounded, projectId, sessionId } from "@t4-code/host-wire";
+import {
+	decodeServerFrame,
+	type DurableEntry,
+	entryId,
+	hostId,
+	MAX_TRANSCRIPT_LINE_BYTES,
+	parseBounded,
+	projectId,
+	sessionId,
+} from "@t4-code/host-wire";
 import {
 	FileSessionDiscovery,
+	OVERSIZED_RECORD_OMISSION_SUMMARY,
 	projectMessageText,
 	SessionEntryProjector,
 	SessionTranscriptObserver,
@@ -1558,7 +1568,7 @@ test("follower skips an oversized line across bounded reads and resumes at the n
 		id: "oversized-entry",
 		parentId: "prefix-entry",
 		timestamp: stamp,
-		summary: "x".repeat(1_980_000),
+		summary: "x".repeat(MAX_TRANSCRIPT_LINE_BYTES + 1_000),
 	});
 	const suffix = message("suffix-entry", "s".repeat(600_000));
 	const final = message("final-entry", "current tail");
@@ -1569,20 +1579,32 @@ test("follower skips an oversized line across bounded reads and resumes at the n
 
 	const first = await observer.poll();
 	expect(first.entries.map(entry => entry.id)).toEqual([entryId("prefix-entry")]);
-	const second = await observer.poll();
-	expect(second.reset).toBe(false);
-	expect(second.transcript).toBe("live");
-	expect(second.entries.map(entry => entry.id)).toEqual([
+
+	// The record is deliberately larger than the observer's per-read window, so
+	// skipping it genuinely spans several bounded reads. Drain until the follower
+	// settles rather than assuming it clears in one poll.
+	const drained: DurableEntry[] = [];
+	let latest = await observer.poll();
+	for (let guard = 0; ; guard += 1) {
+		expect(latest.reset).toBe(false);
+		expect(latest.transcript).toBe("live");
+		drained.push(...latest.entries);
+		if (latest.stable) break;
+		if (guard > 64) throw new Error("observer never settled past the oversized record");
+		latest = await observer.poll();
+	}
+
+	expect(drained.map(entry => entry.id)).toEqual([
 		entryId("oversized-transcript-record-1"),
 		entryId("suffix-entry"),
 		entryId("final-entry"),
 	]);
-	expect(second.entries[0]?.data).toEqual({
-		summary: "One transcript record was omitted because it exceeded the 1 MiB safety limit.",
+	expect(drained[0]?.data).toEqual({
+		summary: OVERSIZED_RECORD_OMISSION_SUMMARY,
 		oversizedRecordOmission: true,
 	});
-	expect(second.entries.at(-1)?.data.text).toBe("current tail");
-	expect(second.watermark).toEqual({ entryCount: 3, lastEntryId: "final-entry" });
+	expect(drained.at(-1)?.data.text).toBe("current tail");
+	expect(latest.watermark).toEqual({ entryCount: 3, lastEntryId: "final-entry" });
 	expect((await observer.poll()).stable).toBe(true);
 });
 
