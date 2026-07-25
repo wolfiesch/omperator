@@ -323,8 +323,8 @@ class DurableJsonlReconciler {
 		let value: unknown;
 		try {
 			value = parseBoundedTranscriptLine(line);
-		} catch {
-			throw new Error("malformed session transcript");
+		} catch (error) {
+			throw new Error("malformed session transcript", { cause: error });
 		}
 		const id = durableEntryId(value);
 		if (!id) return;
