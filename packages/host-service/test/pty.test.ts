@@ -83,15 +83,29 @@ async function authorityFixture(): Promise<{
 	return { root, authority, frames, ctx: context(root, frames) };
 }
 
-/** Poll until the child produces the expected text or the budget elapses. */
-async function waitForLine(frames: Record<string, unknown>[], match: string, budgetMs = 4_000): Promise<string[]> {
+/**
+ * Poll until the frames satisfy the caller's own condition, or the budget
+ * elapses.
+ *
+ * The predicate must be the SAME condition the test then asserts. A looser wait
+ * is a race rather than a shortcut: a pty echoes the command line before the
+ * shell ever runs it, so waiting on the substring "STREAMED" is satisfied by
+ * the echo of `echo STREAMED`, and the assertion then inspects output that has
+ * not arrived yet. That reads as a pass on darwin only because the result
+ * usually lands in the same drained batch, and fails on Linux where the echo
+ * arrives alone.
+ */
+async function waitForLines(
+	frames: Record<string, unknown>[],
+	satisfied: (lines: readonly string[]) => boolean,
+	budgetMs = 4_000,
+): Promise<string[]> {
 	const deadline = Date.now() + budgetMs;
-	while (Date.now() < deadline) {
+	for (;;) {
 		const lines = rendered(frames);
-		if (lines.some(line => line.includes(match))) return lines;
+		if (satisfied(lines) || Date.now() >= deadline) return lines;
 		await settle(40);
 	}
-	return rendered(frames);
 }
 
 describe("spawnPty", () => {
@@ -149,7 +163,7 @@ describe("PtyTerminalAuthority", () => {
 		const id = opened.terminalId as string;
 
 		await authority.terminalInput({ terminalId: id, data: "echo STREAMED\n" }, ctx);
-		const lines = await waitForLine(frames, "STREAMED");
+		const lines = await waitForLines(frames, current => current.includes("STREAMED"));
 		expect(lines).toContain("STREAMED");
 
 		const outputs = frames.filter(frame => frame.type === "terminal.output");
@@ -181,7 +195,7 @@ describe("PtyTerminalAuthority", () => {
 			{ terminalId: id, data: Buffer.from(command, "utf8").toString("base64"), encoding: "base64" },
 			ctx,
 		);
-		const lines = await waitForLine(frames, "B64_DECODED");
+		const lines = await waitForLines(frames, current => current.includes("B64_DECODED"));
 		expect(lines).toContain("B64_DECODED");
 		// The literal base64 text must never have reached the shell.
 		expect(lines.some(line => line.includes("ZWNobyBC"))).toBe(false);
@@ -243,7 +257,7 @@ describe("PtyTerminalAuthority", () => {
 		await mkdir(join(root, "nested"), { recursive: true });
 		const opened = await authority.termOpen({ shell: "/bin/bash", cwd: "nested" }, ctx);
 		await authority.terminalInput({ terminalId: opened.terminalId as string, data: "basename $PWD\n" }, ctx);
-		const lines = await waitForLine(frames, "nested");
+		const lines = await waitForLines(frames, current => current.includes("nested"));
 		expect(lines).toContain("nested");
 		authority.closeAll();
 	});
@@ -257,7 +271,9 @@ describe("PtyTerminalAuthority", () => {
 				{ terminalId: opened.terminalId as string, data: "echo probe=[${T4_PTY_SECRET_PROBE:-unset}]\n" },
 				ctx,
 			);
-			const lines = await waitForLine(frames, "probe=");
+			const lines = await waitForLines(frames, current =>
+				current.some(line => line.includes("probe=[unset]")),
+			);
 			expect(lines.some(line => line.includes("probe=[unset]"))).toBe(true);
 			expect(lines.some(line => line.includes("super-secret-value"))).toBe(false);
 		} finally {
