@@ -1354,12 +1354,20 @@ describe("appserver lifecycle", () => {
 	// `stop()` only signals. A child that ignores SIGTERM must still be gone
 	// before the copy is deleted, or it can rewrite the lock afterwards.
 	test("escalates to SIGKILL before removing the copy of a child that ignores SIGTERM", async () => {
-		const scenario = await forkWithFailingRuntime("trap '' TERM; echo not-json; sleep 30");
+		const pidFile = join(tmpdir(), `t4-stubborn-child-${Date.now()}.pid`);
+		const scenario = await forkWithFailingRuntime(
+			`trap '' TERM; echo $$ > ${pidFile}; echo not-json; sleep 30`,
+		);
 		try {
 			const error = scenario.response?.error as { code?: string; message?: string } | undefined;
 			expect(scenario.response?.ok).toBe(false);
 			expect(error?.code).toBe("session_start_failed");
-			// The copy is gone, which is only sound because the child is gone too.
+			// The contract is the ordering: the child must already be gone by the
+			// time the response lands, not merely signalled. Without that wait this
+			// assertion fails while the copy check still passes.
+			const childPid = Number.parseInt(await Bun.file(pidFile).text(), 10);
+			expect(Number.isInteger(childPid)).toBe(true);
+			expect(() => process.kill(childPid, 0)).toThrow();
 			expect(await Bun.file(scenario.forkPath).exists()).toBe(false);
 			expect(scenario.appserver.snapshot(scenario.forkId)).toBeUndefined();
 		} finally {
@@ -1367,6 +1375,7 @@ describe("appserver lifecycle", () => {
 			await scenario.client.closed();
 			await scenario.appserver.stop();
 			await rm(scenario.root, { recursive: true, force: true });
+			await rm(pidFile, { force: true });
 		}
 	});
 	// A historic transcript often names a project directory that has since been
