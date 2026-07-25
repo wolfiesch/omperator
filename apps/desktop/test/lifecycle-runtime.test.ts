@@ -6,6 +6,7 @@ import {
   appserverLogsDirectory,
   DesktopLifecycle,
   developmentSandboxServiceConfig,
+  ompLaunchProfile,
   type DesktopLifecycleOptions,
 } from "../src/lifecycle.ts";
 import { DesktopIpcRegistry, type IpcMainLike } from "../src/ipc.ts";
@@ -56,6 +57,81 @@ describe("development sandbox service configuration", () => {
         T4_DEV_SANDBOX_ROOT: "/tmp/omperator-dev/escape",
       }),
     ).toThrow("invalid development sandbox");
+  });
+});
+
+describe("OMP launch profile", () => {
+  const STATE_ROOT = "/tmp/t4-host-state";
+
+  it("defaults to the bridge authority with no runtime override", () => {
+    expect(ompLaunchProfile(STATE_ROOT, "default", {})).toEqual({ authority: "bridge" });
+    expect(ompLaunchProfile(STATE_ROOT, "default", { T4_OMP_AUTHORITY: "bridge" })).toEqual({ authority: "bridge" });
+  });
+
+  it("derives the exclusive sessions root rather than accepting one", () => {
+    // An operator-supplied root is the footgun: pointing official authority at
+    // the co-owned OMP profile would let it claim sessions the TUI also writes.
+    const profile = ompLaunchProfile(STATE_ROOT, "default", {
+      T4_OMP_AUTHORITY: "official",
+      T4_OMP_RUNTIME: "/opt/omp/official",
+      T4_OMP_SESSIONS_ROOT: "/Users/someone/.omp/sessions",
+    });
+    expect(profile).toEqual({
+      authority: "official",
+      executable: "/opt/omp/official",
+      sessionsRoot: "/tmp/t4-host-state/official-sessions/default",
+    });
+    expect(profile.sessionsRoot).not.toContain(".omp");
+  });
+
+  it("gives each desktop profile a disjoint exclusive root", () => {
+    // Each host takes one owner lease per root, and discovery walks the whole
+    // tree, so one profile's root must not contain another's.
+    const official = { T4_OMP_AUTHORITY: "official", T4_OMP_RUNTIME: "/opt/omp/official" };
+    const roots = ["default", "review", "scratch"].map(
+      profile => ompLaunchProfile(STATE_ROOT, profile, official).sessionsRoot ?? "",
+    );
+    expect(roots).toEqual([
+      "/tmp/t4-host-state/official-sessions/default",
+      "/tmp/t4-host-state/official-sessions/review",
+      "/tmp/t4-host-state/official-sessions/scratch",
+    ]);
+    for (const outer of roots)
+      for (const inner of roots) {
+        if (outer === inner) continue;
+        expect(inner.startsWith(`${outer}/`)).toBe(false);
+      }
+  });
+
+  it("refuses a profile id that would escape the derived root", () => {
+    expect(() =>
+      ompLaunchProfile(STATE_ROOT, "../escape", {
+        T4_OMP_AUTHORITY: "official",
+        T4_OMP_RUNTIME: "/opt/omp/official",
+      }),
+    ).toThrow("valid profile id");
+  });
+
+  it("refuses official authority without an absolute runtime", () => {
+    expect(() => ompLaunchProfile(STATE_ROOT, "default", { T4_OMP_AUTHORITY: "official" })).toThrow("T4_OMP_RUNTIME");
+    expect(() =>
+      ompLaunchProfile(STATE_ROOT, "default", { T4_OMP_AUTHORITY: "official", T4_OMP_RUNTIME: "relative/omp" }),
+    ).toThrow("T4_OMP_RUNTIME");
+  });
+
+  it("refuses a runtime override while the bridge is selected", () => {
+    // Silently ignoring it would launch the co-owned bridge while the operator
+    // believes an isolated official profile is in use.
+    expect(() => ompLaunchProfile(STATE_ROOT, "default", { T4_OMP_RUNTIME: "/opt/omp/official" })).toThrow(
+      "T4_OMP_AUTHORITY=official",
+    );
+  });
+
+  it("rejects an unknown authority instead of falling back", () => {
+    expect(() => ompLaunchProfile(STATE_ROOT, "default", { T4_OMP_AUTHORITY: "Official" })).toThrow(
+      "must be bridge or official",
+    );
+    expect(() => ompLaunchProfile(STATE_ROOT, "default", { T4_OMP_AUTHORITY: "" })).toThrow("must be bridge or official");
   });
 });
 
