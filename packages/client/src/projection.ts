@@ -2,7 +2,6 @@ import { decodeWorkspaceInfrastructureProjection, isCursor } from "@t4-code/prot
 import type {
   Cursor,
   DurableEntry,
-  OmpServerFrame,
   SessionEvent,
   SessionRef,
   WorkspaceInfrastructureProjection,
@@ -21,296 +20,52 @@ import {
   sanitizeSessionRef,
 } from "./projection-sanitize.ts";
 import {
-  MAX_RETAINED_AGENT_TRANSCRIPTS,
-  MAX_RETAINED_AGENT_TRANSCRIPT_BYTES,
-  MAX_RETAINED_AGENT_TRANSCRIPT_ENTRIES,
-  MAX_RETAINED_SESSION_EVENT_BYTES,
-  MAX_RETAINED_SESSION_EVENTS,
-  MAX_RETAINED_SESSION_EVENTS_BYTES,
-  MAX_RETAINED_TRANSCRIPT_BYTES,
-  MAX_RETAINED_TRANSCRIPT_ENTRIES,
-  MAX_RETAINED_TRANSCRIPT_ENTRY_BYTES,
   appendRetainedDurableEntry,
   appendRetainedValue,
   retainDurableEntries,
   sanitizeRetainedRecord,
 } from "./transcript-retention.ts";
 import type { PublicOmpServerEvent } from "./omp-protocol-provider.ts";
-import { previewKey, type PreviewCaptureMetadata } from "./preview.ts";
+import { previewKey } from "./preview.ts";
+import {
+  type AgentTranscriptProjection,
+  type PreviewAction,
+  type PreviewAuthorityProjection,
+  type PreviewEventProjection,
+  type PreviewProjection,
+  type ProjectionAgentFrame,
+  type ProjectionAgentTranscriptFrame,
+  type ProjectionAuditFrame,
+  type ProjectionConfirmationFrame,
+  type ProjectionEventFrame,
+  type ProjectionFileFrame,
+  type ProjectionFrame,
+  type ProjectionFreshness,
+  type ProjectionGapFrame,
+  type ProjectionInput,
+  type ProjectionInputFrame,
+  type ProjectionLiveEventFrame,
+  type ProjectionOptions,
+  type ProjectionPreviewFrame,
+  type ProjectionResultFrame,
+  type ProjectionReviewFrame,
+  type ProjectionSnapshot,
+  type ProjectionSubscription,
+  type ResultProjection,
+  type SessionIndexMetadata,
+  type SessionProjection,
+  type TerminalProjection,
+} from "./projection-contract.ts";
+import { resolveProjectionOptions } from "./projection-options.ts";
 
-export type ProjectionFrame = Exclude<OmpServerFrame, Extract<OmpServerFrame, { type: "pair.ok" }>>;
-type ProjectionEventFrameFromEvent<Event extends PublicOmpServerEvent> =
-  Event extends PublicOmpServerEvent ? Readonly<{ type: Event["kind"] } & Event["payload"]> : never;
-export type ProjectionEventFrame = ProjectionEventFrameFromEvent<PublicOmpServerEvent>;
-type ProjectionInputFrame = ProjectionFrame | ProjectionEventFrame;
-type ProjectionInput<Kind extends ProjectionInputFrame["type"]> = Extract<
-  ProjectionInputFrame,
-  { type: Kind }
->;
-type ProjectionAgentFrame = ProjectionInput<"agent">;
-type ProjectionAgentTranscriptFrame = ProjectionInput<"agent.transcript">;
-type ProjectionAuditFrame = ProjectionInput<"audit">;
-type ProjectionConfirmationFrame = ProjectionInput<"confirmation">;
-type ProjectionFileFrame = ProjectionInput<"files">;
-type ProjectionGapFrame = ProjectionInput<"gap">;
-type ProjectionLiveEventFrame = ProjectionInput<"event">;
-type ProjectionResultFrame = ProjectionInput<"response">;
-type ProjectionPreviewFrame = Extract<
-  ProjectionInputFrame,
-  {
-    type:
-      | "preview.launch"
-      | "preview.state"
-      | "preview.navigation"
-      | "preview.capture"
-      | "preview.error";
-  }
->;
-type ProjectionReviewFrame = ProjectionInput<"review">;
-export type ProjectionFreshness = "fresh" | "catching-up" | "cached";
-export type PreviewFreshness = ProjectionFreshness | "stale";
-export type PreviewAction =
-  | "activate"
-  | "navigate"
-  | "back"
-  | "forward"
-  | "reload"
-  | "close"
-  | "capture"
-  | "click"
-  | "fill"
-  | "type"
-  | "press"
-  | "scroll"
-  | "select"
-  | "upload"
-  | "handoff";
-export interface PreviewAuthorityProjection {
-  readonly id: string;
-  readonly label: string;
-  readonly kind: "isolated-session" | "authenticated-profile";
-  readonly requiresExplicitOptIn: boolean;
-}
-export interface PreviewEventProjection {
-  readonly type: "launch" | "navigation" | "capture" | "error";
-  readonly previewId: string;
-  readonly cursor: Cursor;
-  readonly url?: Readonly<{ origin: string; pathname: string; hasQuery: boolean }>;
-  readonly timestamp?: number;
-  readonly captureId?: string;
-  readonly errorCode?: string;
-}
-export interface PreviewProjection {
-  readonly hostId: string;
-  readonly sessionId: string;
-  readonly previewId: string;
-  readonly state?: "launching" | "ready" | "running" | "stopped" | "failed";
-  readonly url?: string;
-  readonly revision: string;
-  readonly cursor: Cursor;
-  readonly title?: string;
-  readonly canGoBack?: boolean;
-  readonly canGoForward?: boolean;
-  readonly viewport?: Readonly<{ width: number; height: number; deviceScaleFactor?: number }>;
-  readonly capture?: PreviewCaptureMetadata;
-  /** Labels and trust class only; no browser credential or profile state. */
-  readonly authority?: PreviewAuthorityProjection;
-  readonly availableActions?: readonly PreviewAction[];
-  readonly error?: Readonly<{ code: string; message: string }>;
-  readonly freshness: PreviewFreshness;
-}
+export * from "./projection-contract.ts";
 
-export interface TerminalProjection {
-  readonly terminalId: string;
-  readonly stdout: string;
-  readonly stderr: string;
-  readonly exitCode?: number;
-  readonly closed: boolean;
-}
-
-export interface ResultProjection {
-  readonly requestId: string;
-  readonly commandId?: string;
-  readonly ok: boolean;
-  readonly result?: unknown;
-  readonly error?: { readonly code: string; readonly message: string };
-}
-
-export interface AgentTranscriptProjection {
-  readonly entries: readonly DurableEntry[];
-  readonly entryIds: ReadonlySet<string>;
-  readonly cursor: Cursor;
-  readonly revision: string;
-  readonly freshness: ProjectionFreshness;
-  readonly historyTruncated?: boolean;
-}
-
-export interface SessionProjection {
-  readonly hostId: string;
-  readonly sessionId: string;
-  readonly ref?: SessionRef;
-  readonly entries: readonly DurableEntry[];
-  readonly events: readonly ProjectionLiveEventFrame[];
-  readonly agents: ReadonlyMap<string, ProjectionAgentFrame>;
-  readonly agentTranscripts: ReadonlyMap<string, AgentTranscriptProjection>;
-  readonly terminals: ReadonlyMap<string, TerminalProjection>;
-  readonly files: ReadonlyMap<string, ProjectionFileFrame>;
-  readonly reviews: ReadonlyMap<string, ProjectionReviewFrame>;
-  readonly audit: readonly ProjectionAuditFrame[];
-  readonly confirmations: ReadonlyMap<string, ProjectionConfirmationFrame>;
-  readonly results: ReadonlyMap<string, ResultProjection>;
-  /** Preview metadata only. Decoded pixels and object URLs belong to PreviewCaptureResource. */
-  readonly previews: ReadonlyMap<string, PreviewProjection>;
-  /** Bounded, cursor-deduplicated activity metadata for the preview workspace. */
-  readonly previewEvents: readonly PreviewEventProjection[];
-  readonly revision?: string;
-  readonly cursor?: Cursor;
-  readonly epoch?: string;
-  readonly freshness: ProjectionFreshness;
-  /**
-   * Local receive order of the newest accepted session event. This is an
-   * in-memory ordering fence only; cache restore intentionally resets it.
-   */
-  readonly transcriptEventArrivalOrdinal: number;
-  /**
-   * Local receive order of the newest accepted event that unconditionally
-   * changes turn/context-maintenance lifecycle. Inspector-only events do not
-   * advance this fence, and cache/recovery deliberately resets it.
-   */
-  readonly contextMaintenanceEventArrivalOrdinal: number;
-  readonly gap?: ProjectionGapFrame | undefined;
-  readonly historyTruncated?: boolean;
-  readonly entryIds: ReadonlySet<string>;
-}
-
-export interface SessionIndexMetadata {
-  readonly totalCount: number;
-  readonly truncated: boolean;
-}
-
-export interface ProjectionSnapshot {
-  readonly version: 1;
-  /** Warm session projections. This map is bounded to eight entries. */
-  readonly sessions: ReadonlyMap<string, SessionProjection>;
-  readonly activeSessionKey?: string | undefined;
-  readonly sessionIndex: ReadonlyMap<string, SessionRef>;
-  /** Inventory counts are keyed by host and remain bounded with the session index. */
-  readonly sessionIndexMetadata: ReadonlyMap<string, SessionIndexMetadata>;
-  /** Local receive order of the newest authoritative ref for each session. */
-  readonly sessionRefArrivalOrdinals: ReadonlyMap<string, number>;
-  /** Session-list delta cursors are independent from transcript cursors. */
-  readonly sessionDeltaCursors: ReadonlyMap<string, Cursor>;
-  /** Ordered complete session-list cursors, independently retained per host. */
-  readonly sessionInventoryCursors: ReadonlyMap<string, Cursor>;
-  /** Cluster workspace lifecycle, bounded and keyed by host + workspace id. */
-  readonly workspaces: ReadonlyMap<string, WorkspaceInfrastructureProjection>;
-  /** Workspace lifecycle cursors are independent from session and transcript cursors. */
-  readonly workspaceCursors: ReadonlyMap<string, Cursor>;
-  readonly lru: readonly string[];
-  readonly cursor?: Cursor;
-  readonly epoch?: string;
-  readonly freshness: ProjectionFreshness;
-  /** Monotonic local receive order for cross-domain session/ref comparison. */
-  readonly arrivalOrdinal: number;
-}
-
-export interface ProjectionOptions {
-  readonly maxWarmSessions?: number;
-  readonly maxIndexedSessions?: number;
-  readonly maxWorkspaces?: number;
-  readonly maxEntries?: number;
-  readonly maxTranscriptBytes?: number;
-  readonly maxEntryBytes?: number;
-  readonly maxEvents?: number;
-  readonly maxEventsBytes?: number;
-  readonly maxEventBytes?: number;
-  readonly maxAudit?: number;
-  readonly maxAgentTranscripts?: number;
-  readonly maxAgentTranscriptEntries?: number;
-  readonly maxAgentTranscriptBytes?: number;
-  /** Maximum retained terminal projections per warm session. */
-  readonly maxTerminals?: number;
-  /** Aggregate UTF-8 bytes retained by terminal ids and output in one warm session. */
-  readonly maxTerminalBytes?: number;
-  /** UTF-8 bytes retained by one terminal id and its stdout/stderr. */
-  readonly maxTerminalBytesPerTerminal?: number;
-  /** Maximum retained file projections per warm session. */
-  readonly maxFiles?: number;
-  /** Aggregate UTF-8 bytes retained by file paths and content in one warm session. */
-  readonly maxFilesBytes?: number;
-  /** UTF-8 bytes retained by one file path and its content. */
-  readonly maxFileBytes?: number;
-  /** Maximum retained preview metadata records per warm session. */
-  readonly maxPreviews?: number;
-  /** Maximum retained sanitized preview activity records per warm session. */
-  readonly maxPreviewEvents?: number;
-}
-
-export interface ProjectionSubscription {
-  (snapshot: ProjectionSnapshot, input?: ProjectionFrame | PublicOmpServerEvent): void;
-}
-
-export const MAX_INDEXED_SESSION_REFS = 1000;
-export const MAX_INDEXED_WORKSPACES = 1000;
-export const MAX_RETAINED_TERMINALS = 64;
-export const MAX_RETAINED_TERMINAL_BYTES = 1024 * 1024;
-export const MAX_RETAINED_TERMINAL_BYTES_PER_TERMINAL = 256 * 1024;
-export const MAX_RETAINED_FILES = 256;
-export const MAX_RETAINED_FILES_BYTES = 4 * 1024 * 1024;
-export const MAX_RETAINED_FILE_BYTES = 768 * 1024;
-export const MAX_RETAINED_PREVIEWS = 32;
-export const MAX_RETAINED_PREVIEW_EVENTS = 128;
-const DEFAULT_OPTIONS: Required<ProjectionOptions> = {
-  maxWarmSessions: 8,
-  maxIndexedSessions: MAX_INDEXED_SESSION_REFS,
-  maxWorkspaces: MAX_INDEXED_WORKSPACES,
-  maxEntries: MAX_RETAINED_TRANSCRIPT_ENTRIES,
-  maxTranscriptBytes: MAX_RETAINED_TRANSCRIPT_BYTES,
-  maxEntryBytes: MAX_RETAINED_TRANSCRIPT_ENTRY_BYTES,
-  maxEvents: MAX_RETAINED_SESSION_EVENTS,
-  maxEventsBytes: MAX_RETAINED_SESSION_EVENTS_BYTES,
-  maxEventBytes: MAX_RETAINED_SESSION_EVENT_BYTES,
-  maxAudit: 256,
-  maxAgentTranscripts: MAX_RETAINED_AGENT_TRANSCRIPTS,
-  maxAgentTranscriptEntries: MAX_RETAINED_AGENT_TRANSCRIPT_ENTRIES,
-  maxAgentTranscriptBytes: MAX_RETAINED_AGENT_TRANSCRIPT_BYTES,
-  maxTerminals: MAX_RETAINED_TERMINALS,
-  maxTerminalBytes: MAX_RETAINED_TERMINAL_BYTES,
-  maxTerminalBytesPerTerminal: MAX_RETAINED_TERMINAL_BYTES_PER_TERMINAL,
-  maxFiles: MAX_RETAINED_FILES,
-  maxFilesBytes: MAX_RETAINED_FILES_BYTES,
-  maxFileBytes: MAX_RETAINED_FILE_BYTES,
-  maxPreviews: MAX_RETAINED_PREVIEWS,
-  maxPreviewEvents: MAX_RETAINED_PREVIEW_EVENTS,
-};
 const EMPTY_MAP: ReadonlyMap<string, never> = new ImmutableMap<string, never>();
 const UTF8_ENCODER = new TextEncoder();
 const UTF8_DECODER = new TextDecoder();
 /** Immutable projection values make exact byte totals safe to memoize by identity. */
 const TERMINAL_PROJECTION_BYTES = new WeakMap<TerminalProjection, number>();
 const FILE_PROJECTION_BYTES = new WeakMap<ProjectionFileFrame, number>();
-
-function positiveOption(value: number | undefined, fallback: number): number {
-  return value !== undefined && Number.isSafeInteger(value) && value > 0 ? value : fallback;
-}
-
-function resolveProjectionOptions(options: ProjectionOptions): Required<ProjectionOptions> {
-  const merged = { ...DEFAULT_OPTIONS, ...options };
-  return {
-    ...merged,
-    maxTerminals: positiveOption(options.maxTerminals, DEFAULT_OPTIONS.maxTerminals),
-    maxTerminalBytes: positiveOption(options.maxTerminalBytes, DEFAULT_OPTIONS.maxTerminalBytes),
-    maxTerminalBytesPerTerminal: positiveOption(
-      options.maxTerminalBytesPerTerminal,
-      DEFAULT_OPTIONS.maxTerminalBytesPerTerminal,
-    ),
-    maxFiles: positiveOption(options.maxFiles, DEFAULT_OPTIONS.maxFiles),
-    maxFilesBytes: positiveOption(options.maxFilesBytes, DEFAULT_OPTIONS.maxFilesBytes),
-    maxFileBytes: positiveOption(options.maxFileBytes, DEFAULT_OPTIONS.maxFileBytes),
-    maxPreviews: positiveOption(options.maxPreviews, DEFAULT_OPTIONS.maxPreviews),
-    maxPreviewEvents: positiveOption(options.maxPreviewEvents, DEFAULT_OPTIONS.maxPreviewEvents),
-  };
-}
 
 function key(hostId: string, sessionId: string): string {
   return `${hostId}\u0000${sessionId}`;
@@ -650,7 +405,6 @@ export function createProjectionSnapshot(): ProjectionSnapshot {
   });
 }
 
-
 function applyWorkspaceInventory(
   snapshot: ProjectionSnapshot,
   host: string,
@@ -847,7 +601,6 @@ function previewProjection(
   frame: ProjectionPreviewFrame,
   previous: PreviewProjection | undefined,
 ): PreviewProjection {
-
   const hostId = String(frame.hostId);
   const sessionId = String(frame.sessionId);
   const previewId = String(frame.previewId);
@@ -1166,17 +919,16 @@ function applyProjectionInput(
       const retainedCapacity = Math.max(0, config.maxIndexedSessions - refs.length);
       const retainedCandidates = [...sessionIndex.entries()]
         .filter(([existingKey]) => !incomingKeys.has(existingKey))
-        .sort(([leftKey, left], [rightKey, right]) =>
-          String(left.updatedAt).localeCompare(String(right.updatedAt)) ||
-          leftKey.localeCompare(rightKey),
+        .sort(
+          ([leftKey, left], [rightKey, right]) =>
+            String(left.updatedAt).localeCompare(String(right.updatedAt)) ||
+            leftKey.localeCompare(rightKey),
         );
-      const retainedEntries = retainedCapacity === 0
-        ? []
-        : retainedCandidates.slice(-retainedCapacity);
-      const incomingEntries = refs.map((ref) => [
-        key(String(ref.hostId), String(ref.sessionId)),
-        ref,
-      ] as const);
+      const retainedEntries =
+        retainedCapacity === 0 ? [] : retainedCandidates.slice(-retainedCapacity);
+      const incomingEntries = refs.map(
+        (ref) => [key(String(ref.hostId), String(ref.sessionId)), ref] as const,
+      );
       sessionIndex = immutableMap([...retainedEntries, ...incomingEntries]);
       const retainedKeys = new Set(retainedEntries.map(([existingKey]) => existingKey));
       const retainedOrdinalEntries = [...snapshot.sessionRefArrivalOrdinals.entries()].filter(
@@ -1781,55 +1533,60 @@ function applyProjectionInput(
       // but do not let their old completeness metadata prove that a route is
       // gone until the host sends the next authoritative sessions frame.
       const sessionIndexMetadata = mapWithout(snapshot.sessionIndexMetadata, String(frame.hostId));
-      const sessionInventoryCursors = mapWithout(snapshot.sessionInventoryCursors, String(frame.hostId));
+      const sessionInventoryCursors = mapWithout(
+        snapshot.sessionInventoryCursors,
+        String(frame.hostId),
+      );
       const sessionRefArrivalOrdinals = withoutHostRefOrdinals(
         snapshot.sessionRefArrivalOrdinals,
         String(frame.hostId),
       );
       const epochChanged = snapshot.epoch !== undefined && snapshot.epoch !== frame.epoch;
       const sessions = immutableMap(
-        [...snapshot.sessions.entries()].map(
-          ([sessionKey, session]) => {
-            if (String(session.hostId) !== String(frame.hostId)) return [sessionKey, session] as const;
-            return [
-              sessionKey,
-              Object.freeze({
-                ...session,
-                ...(epochChanged
-                  ? {
-                      freshness: "catching-up" as const,
-                      transcriptEventArrivalOrdinal: 0,
-                      contextMaintenanceEventArrivalOrdinal: 0,
-                    }
-                  : {}),
-                // Preview cursors describe one live browser connection rather
-                // than durable transcript history. They always need a fresh
-                // baseline after the host reconnects, even in the same epoch.
-                previews: immutableMap(
-                  [...session.previews.entries()].map(
-                    ([previewMapKey, preview]) =>
-                      [
-                        previewMapKey,
-                        Object.freeze({ ...preview, freshness: "catching-up" as const }),
-                      ] as const,
-                  ),
+        [...snapshot.sessions.entries()].map(([sessionKey, session]) => {
+          if (String(session.hostId) !== String(frame.hostId))
+            return [sessionKey, session] as const;
+          return [
+            sessionKey,
+            Object.freeze({
+              ...session,
+              ...(epochChanged
+                ? {
+                    freshness: "catching-up" as const,
+                    transcriptEventArrivalOrdinal: 0,
+                    contextMaintenanceEventArrivalOrdinal: 0,
+                  }
+                : {}),
+              // Preview cursors describe one live browser connection rather
+              // than durable transcript history. They always need a fresh
+              // baseline after the host reconnects, even in the same epoch.
+              previews: immutableMap(
+                [...session.previews.entries()].map(
+                  ([previewMapKey, preview]) =>
+                    [
+                      previewMapKey,
+                      Object.freeze({ ...preview, freshness: "catching-up" as const }),
+                    ] as const,
                 ),
-              }),
-            ] as const;
-          },
-        ),
+              ),
+            }),
+          ] as const;
+        }),
       );
       if (snapshot.epoch === undefined || snapshot.epoch === frame.epoch) {
-        return updateRoot(Object.freeze({
-          ...snapshot,
-          sessionIndexMetadata,
-          sessionInventoryCursors,
-          sessionRefArrivalOrdinals,
-          sessions,
-        }), {
-          epoch: frame.epoch,
-          freshness: "fresh",
-        });
+        return updateRoot(
+          Object.freeze({
+            ...snapshot,
+            sessionIndexMetadata,
+            sessionInventoryCursors,
+            sessionRefArrivalOrdinals,
+            sessions,
+          }),
+          {
+            epoch: frame.epoch,
+            freshness: "fresh",
+          },
+        );
       }
       return Object.freeze({
         ...snapshot,

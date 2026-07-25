@@ -1,18 +1,18 @@
 import { decodeWorkspaceInfrastructureProjection, type Cursor, type DurableEntry, type SessionRef, type WorkspaceInfrastructureProjection } from "@t4-code/protocol";
 import { MAX_PROJECTION_CACHE_BYTES } from "@t4-code/protocol/desktop-ipc";
-import { MAX_INDEXED_SESSION_REFS } from "./projection.ts";
-import type {
-  AgentTranscriptProjection,
-  ProjectionFreshness,
-  ProjectionSnapshot,
-  ResultProjection,
-  SessionIndexMetadata,
-  SessionProjection,
-  TerminalProjection,
-  PreviewProjection,
-  PreviewAuthorityProjection,
-  PreviewEventProjection,
-} from "./projection.ts";
+import {
+  MAX_INDEXED_SESSION_REFS,
+  type AgentTranscriptProjection,
+  type PreviewAuthorityProjection,
+  type PreviewEventProjection,
+  type PreviewProjection,
+  type ProjectionFreshness,
+  type ProjectionSnapshot,
+  type ResultProjection,
+  type SessionIndexMetadata,
+  type SessionProjection,
+  type TerminalProjection,
+} from "./projection-contract.ts";
 import { ImmutableSet } from "./immutable-set.ts";
 import { ImmutableMap } from "./immutable-map.ts";
 import { retainedJsonBytes } from "./transcript-retention.ts";
