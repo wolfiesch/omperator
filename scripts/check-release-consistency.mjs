@@ -1254,6 +1254,26 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
       errors,
     );
   }
+  const releaseSiteStart = releaseWorkflow.indexOf("  dispatch-site:");
+  if (!(releasePublishStart >= 0 && releaseSiteStart > releasePublishStart)) {
+    errors.push(".github/workflows/release.yml must define publish before site handoff");
+  } else {
+    const releasePublish = releaseWorkflow.slice(releasePublishStart, releaseSiteStart);
+    requireText(
+      releasePublish,
+      "pnpm install --frozen-lockfile",
+      ".github/workflows/release.yml publish",
+      errors,
+    );
+    if (
+      releasePublish.indexOf("pnpm install --frozen-lockfile") >
+      releasePublish.indexOf("node scripts/reconcile-release-assets.mjs")
+    ) {
+      errors.push(
+        ".github/workflows/release.yml publish must install dependencies before release reconciliation",
+      );
+    }
+  }
   const exactCiWaiter = files.get("scripts/wait-for-exact-ci.mjs") ?? "";
   for (const expected of [
     'WORKFLOW = "ci.yml"',
