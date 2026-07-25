@@ -28,6 +28,7 @@ t4-host (T4 executable)
 
 - reading and writing OMP sessions
 - lock inspection, takeover, and mutation refusal
+- copying a session into a new one through `session.fork`, which only reads the source
 - starting, steering, and cancelling OMP agent workers
 - OMP settings, model registry, usage, and credentials
 - turning OMP-native events into the validated bridge stream
@@ -52,10 +53,10 @@ The simplified rollout does not weaken the hard boundaries. We retain strict pro
 
 ## Released product state
 
-T4 v0.1.31 is paired with immutable OMP tag `t4code-17.0.5-appserver-13` at commit `fc0c391334c08ab260057756aa84bd2b07741ee7`. Its published Apple Silicon binary is 120,893,008 bytes with SHA-256 `60ce5193eadc2884a4313289ff1166b6a1daae97f3a3ec66dc260ea5c5713756`.
+T4 v0.1.31 is paired with immutable OMP tag `t4code-17.0.5-appserver-15` at commit `ca2902bc095a0b17067f4b8b34ecf454390f85ff`. Its published Apple Silicon binary is 120,975,568 bytes with SHA-256 `a6be6316f2e8fc90c6512f21bdf90747592e0776a0ad383508ffd209dc702ffe`.
 
 The standalone OMP release carries an ad-hoc integrity signature because the fork release workflow does not have a Developer ID identity. The protected T4 product build remains the distribution-signing boundary: it must sign both the bundled OMP executable and `t4-host` with T4's Developer ID identity before shipping the macOS app.
 
-That bridge release moves the running network host into the standalone T4 executable and removes OMP's public legacy launchers. The thin bridge and standalone host pass a compiled-binary end-to-end smoke test. The compatibility matrix records `appserver-13` as both the verified and published pairing for the T4 product build.
+That bridge release moves the running network host into the standalone T4 executable and removes OMP's public legacy launchers. The thin bridge and standalone host pass a compiled-binary end-to-end smoke test. The compatibility matrix records `appserver-15` as both the verified and published pairing for the T4 product build.
 
 This reduces the fork to the OMP-specific authority adapter and protocol glue, but does not remove the fork entirely. Active runtime tags, releases, and automation are pinned to `wolfiesch/oh-my-pi`. The earlier `lyc-aon/oh-my-pi` repository remains only as frozen provenance for the app-wire package and host-source migration recorded in `provenance/omp-host-migration.json`.
