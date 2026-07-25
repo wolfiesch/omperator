@@ -299,7 +299,7 @@ test("rejects version drift in a newly added workspace package", () => {
 
 test("rejects updater channel, stable manifest, and publication-contract drift", () => {
   const cases = [
-    ["electron-builder.config.mjs", (text) => text.replace('repo: "t4-code"', 'repo: "renamed"')],
+    ["electron-builder.config.mjs", (text) => text.replace('repo: "omperator"', 'repo: "renamed"')],
     [
       "scripts/generate-release-manifest.mjs",
       (text) =>

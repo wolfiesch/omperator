@@ -615,7 +615,7 @@ const buildFromSource: DocTopic = {
     { kind: "h2", id: "build-steps", text: "Build" },
     {
       kind: "code",
-      code: `git clone ${REPO_URL}.git\ncd t4-code\npnpm install\npnpm build`,
+      code: `git clone ${REPO_URL}.git\ncd omperator\npnpm install\npnpm build`,
     },
     { kind: "h2", id: "build-package", text: "Package installers" },
     { kind: "code", code: "pnpm package:linux" },
