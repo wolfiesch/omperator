@@ -160,15 +160,18 @@ export class UnixWebSocketTransport implements OmpTransport {
       for (const listener of this.closes) listener(code, text);
     });
     socket.on("error", (error) => {
-      fail();
       // The raw errno message embeds the socket path, so only the bounded code
       // crosses this boundary. Dropping it entirely (the previous behavior)
       // left a silent reconnect loop with nothing to diagnose.
       const code = transportErrorCode(error);
-      const reported = new Error(
-        code === undefined ? "local transport error" : `local transport error (${code})`,
-      );
-      for (const listener of this.errors) listener(reported);
+      const message = code === undefined ? "local transport error" : `local transport error (${code})`;
+      // Reject with the same sanitized message rather than the generic default.
+      // On the first connection the client awaits open() inside the transport
+      // factory and only attaches its error listener afterwards, so a rejection
+      // that dropped the code reported nothing at all for the failure that
+      // matters most: the socket that was never reachable.
+      fail(message);
+      for (const listener of this.errors) listener(new Error(message));
     });
     return promise;
   }

@@ -118,9 +118,11 @@ describeUnix("Unix socket ownership and resolution", () => {
     });
     try {
       // Nothing is listening, so `ws` fails the upgrade with an errno error.
-      await expect(transport.open()).rejects.toThrow();
-      // The code is the whole point: a bare "local transport error" left the
-      // desktop retrying with nothing to diagnose.
+      // Assert on the rejection, not just the listener: on the first connection
+      // the client awaits open() inside the transport factory and attaches its
+      // error listener only afterwards, so the rejection is the only channel
+      // that reports an unreachable socket in production.
+      await expect(transport.open()).rejects.toThrow("local transport error (ENOENT)");
       expect(messages).toContain("local transport error (ENOENT)");
       for (const message of messages) expect(message).not.toContain(directory);
     } finally {
