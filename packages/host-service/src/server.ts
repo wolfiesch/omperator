@@ -659,6 +659,17 @@ function sameOwnerRecord(a: OwnerRecord, b: OwnerRecord): boolean {
 		a.inode === b.inode
 	);
 }
+/**
+ * Decide whether a completed owner's endpoint is provably dead.
+ *
+ * The persisted record supplies STATE, never identity. `device` and `inode`
+ * were captured by an earlier process, and neither survives a reboot as a
+ * comparison key: `st_dev` is assigned at mount time, so macOS renumbers the
+ * APFS volume on every boot, and inode numbers are recycled. Matching against
+ * them turned an ordinary restart into a foreign owner and froze the lease.
+ * Identity is therefore established between two FRESH stats taken around the
+ * connect probe, which is the only window that can actually race us.
+ */
 async function completedOwnerEndpointInactive(
 	paths: OwnerPaths,
 	record: OwnerRecord,
@@ -669,7 +680,7 @@ async function completedOwnerEndpointInactive(
 		const publicTarget = await readPublicTarget(paths.publicPath);
 		if (publicTarget.target !== paths.backingName) return false;
 		const backing = await statIdentity(paths.backingPath);
-		if (!backing || !sameIdentity(backing, record) || (await unixSocketActive(paths.backingPath))) return false;
+		if (!backing || (await unixSocketActive(paths.backingPath))) return false;
 
 		await Bun.sleep(100);
 
@@ -689,7 +700,7 @@ async function completedOwnerEndpointInactive(
 			return false;
 		const latestBacking = await statIdentity(paths.backingPath);
 		return Boolean(
-			latestBacking && sameIdentity(latestBacking, record) && !(await unixSocketActive(paths.backingPath)),
+			latestBacking && sameIdentity(latestBacking, backing) && !(await unixSocketActive(paths.backingPath)),
 		);
 	} catch {
 		return false;
@@ -1344,6 +1355,16 @@ export class LocalAppserver implements AppserverHandle {
 			await this.#imageUploads.stop();
 		}
 	}
+	/**
+	 * Remove a dead owner's residue. The caller reaches here two ways: the
+	 * recorded pid is gone, or the pid is alive (reboot pid reuse) and
+	 * {@link completedOwnerEndpointInactive} proved its endpoint silent and its
+	 * marker unchanged. Either way the persisted record contributes only the
+	 * UUID-derived backing NAME; its `device` and `inode` are stale metadata
+	 * that a reboot or remount invalidates. Every identity comparison below is
+	 * between two fresh stats taken around the connect probe, so a live owner
+	 * that republishes mid-recovery still aborts us.
+	 */
 	private async recoverStale(
 		paths: OwnerPaths,
 		record: OwnerRecord,
@@ -1357,7 +1378,7 @@ export class LocalAppserver implements AppserverHandle {
 			const target = await readlink(paths.publicPath);
 			if (target !== paths.backingName) throw new Error(`appserver socket has another owner: ${this.socketPath}`);
 			const backing = await statIdentity(paths.backingPath);
-			if (backing && (!sameIdentity(backing, record) || (await unixSocketActive(paths.backingPath))))
+			if (backing && (await unixSocketActive(paths.backingPath)))
 				throw new Error(`appserver socket has another owner: ${this.socketPath}`);
 			const latest = await lstat(paths.publicPath);
 			const latestTarget = await readlink(paths.publicPath);
@@ -1367,7 +1388,8 @@ export class LocalAppserver implements AppserverHandle {
 				latest.ino !== publicStat.ino ||
 				!latest.isSymbolicLink() ||
 				latestTarget !== paths.backingName ||
-				(latestBacking && !sameIdentity(latestBacking, record))
+				Boolean(latestBacking) !== Boolean(backing) ||
+				(latestBacking && backing && !sameIdentity(latestBacking, backing))
 			)
 				throw new Error(`appserver socket has another owner: ${this.socketPath}`);
 			await unlink(paths.publicPath);
@@ -1376,7 +1398,10 @@ export class LocalAppserver implements AppserverHandle {
 		}
 		const backing = await statIdentity(paths.backingPath);
 		if (backing) {
-			if (!sameIdentity(backing, record) || (await unixSocketActive(paths.backingPath)))
+			if (await unixSocketActive(paths.backingPath))
+				throw new Error(`appserver socket has another owner: ${this.socketPath}`);
+			const confirmed = await statIdentity(paths.backingPath);
+			if (!confirmed || !sameIdentity(confirmed, backing))
 				throw new Error(`appserver socket has another owner: ${this.socketPath}`);
 			await unlink(paths.backingPath);
 		}
