@@ -61,6 +61,19 @@ public enum Commands {
         "session.archive":     .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .none),
         "session.restore":     .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .none),
         "session.delete":      .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .none),
+        "session.model.set":    .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .none),
+        "session.thinking.set": .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .none),
+        "session.fast.set":     .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .none),
+        "session.ui.respond":   .init(capability: .sessionsPrompt, scope: .session, revision: .optional, confirmation: .none),
+        "session.cancel":       .init(capability: .sessionsControl, scope: .session, revision: .optional, confirmation: .challenge),
+        "session.close":        .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .challenge),
+        "prompt.lease.acquire":      .init(capability: .sessionsPrompt, scope: .session, revision: .required, confirmation: .none),
+        "prompt.lease.renew":        .init(capability: .sessionsPrompt, scope: .session, revision: .required, confirmation: .none),
+        "prompt.lease.release":      .init(capability: .sessionsPrompt, scope: .session, revision: .required, confirmation: .none),
+        "controller.lease.acquire":  .init(capability: .sessionsControl, scope: .session, revision: .required, confirmation: .none),
+        "controller.lease.renew":    .init(capability: .sessionsControl, scope: .session, revision: .required, confirmation: .none),
+        "controller.lease.release":  .init(capability: .sessionsControl, scope: .session, revision: .required, confirmation: .none),
+        "catalog.get":          .init(capability: .catalogRead,   scope: .host,    revision: .none,     confirmation: .none),
     ]
 
     public static func descriptor(for command: String) -> CommandDescriptor? {
