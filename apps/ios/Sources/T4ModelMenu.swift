@@ -8,13 +8,13 @@
 import SwiftUI
 import HostWire
 
+private let t4ThinkingLevels = ["auto", "off", "minimal", "low", "medium", "high", "xhigh", "max"]
+
 struct T4ModelMenuButton<Label: View>: View {
     let session: SessionRef
     @ObservedObject var store: T4SessionStore
     let theme: Theme
     @ViewBuilder let label: () -> Label
-
-    private static let thinkingLevels = ["auto", "off", "minimal", "low", "medium", "high", "xhigh", "max"]
 
     private var providers: [(name: String, models: [CatalogItem])] {
         var byProvider: [String: [CatalogItem]] = [:]
@@ -48,7 +48,7 @@ struct T4ModelMenuButton<Label: View>: View {
 
             Section {
                 Menu {
-                    ForEach(Self.thinkingLevels, id: \.self) { level in
+                    ForEach(t4ThinkingLevels, id: \.self) { level in
                         Button {
                             Task { await store.setThinking(sessionId: session.sessionId, level: level) }
                         } label: {
