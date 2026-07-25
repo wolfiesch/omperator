@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { appendFile, mkdtemp, stat, writeFile } from "node:fs/promises";
-import { createConnection } from "node:net";
+import { appendFile, lstat, mkdtemp, rename, stat, symlink, writeFile } from "node:fs/promises";
+import { type Server, createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -308,6 +308,89 @@ describe("identity and socket ownership", () => {
 		await appserver.start();
 		await appserver.stop();
 		await expect(stat(`${path}.owner`)).rejects.toThrow();
+	});
+	/**
+	 * Stage the on-disk residue of an owner whose recorded identity no longer
+	 * describes the files it names, which is what every reboot produces: `st_dev`
+	 * is assigned at mount time and inode numbers are recycled. A silent endpoint
+	 * is built by renaming the socket out from under its own listener, leaving
+	 * exactly the file a crashed owner leaves behind.
+	 */
+	async function stageStaleOwnerResidue(
+		root: string,
+		options: { readonly ownerId: string; readonly pid: number; readonly answering: boolean },
+	): Promise<{ path: string; listener: Server }> {
+		const path = join(root, "app.sock");
+		const backingName = `.appserver-${options.ownerId}.sock`;
+		const backingPath = join(root, backingName);
+		const staged = options.answering ? backingPath : join(root, "staged.sock");
+		const listener = createServer();
+		await new Promise<void>((resolve, reject) => {
+			listener.once("error", reject);
+			listener.listen(staged, resolve);
+		});
+		if (!options.answering) {
+			await rename(staged, backingPath);
+			await new Promise<void>(resolve => listener.close(() => resolve()));
+		}
+		await symlink(backingName, path);
+		const residue = await lstat(backingPath);
+		await writeFile(
+			`${path}.owner`,
+			JSON.stringify({
+				version: 2,
+				ownerId: options.ownerId,
+				pid: options.pid,
+				backingName,
+				device: Number(residue.dev) + 1,
+				inode: Number(residue.ino) + 1,
+			}),
+			{ mode: 0o600 },
+		);
+		return { path, listener };
+	}
+	test("recovers a rebooted owner whose recorded device and inode no longer match", async () => {
+		const root = await mkdtemp(join(tmpdir(), "omp-reboot-"));
+		const { path } = await stageStaleOwnerResidue(root, {
+			ownerId: "22222222-2222-4222-8222-222222222222",
+			pid: 999999,
+			answering: false,
+		});
+		const appserver = createAppserver({ hostId: host, socketPath: path, discovery: new StaticDiscovery([]) });
+		await appserver.start();
+		expect(await unixSocketActive(path)).toBe(true);
+		await appserver.stop();
+		await expect(stat(`${path}.owner`)).rejects.toThrow();
+	});
+	test("reclaims a reused live pid once the recorded endpoint proves silent", async () => {
+		// After a reboot the recorded pid can belong to an unrelated live
+		// process, so liveness alone cannot decide. The endpoint has to answer.
+		const root = await mkdtemp(join(tmpdir(), "omp-pid-reuse-"));
+		const { path } = await stageStaleOwnerResidue(root, {
+			ownerId: "33333333-3333-4333-8333-333333333333",
+			pid: process.pid,
+			answering: false,
+		});
+		const appserver = createAppserver({ hostId: host, socketPath: path, discovery: new StaticDiscovery([]) });
+		await appserver.start();
+		expect(await unixSocketActive(path)).toBe(true);
+		await appserver.stop();
+		await expect(stat(`${path}.owner`)).rejects.toThrow();
+	});
+	test("refuses a live owner whose endpoint still answers even when its record looks stale", async () => {
+		const root = await mkdtemp(join(tmpdir(), "omp-live-endpoint-"));
+		const { path, listener } = await stageStaleOwnerResidue(root, {
+			ownerId: "44444444-4444-4444-8444-444444444444",
+			pid: process.pid,
+			answering: true,
+		});
+		const appserver = createAppserver({ hostId: host, socketPath: path, discovery: new StaticDiscovery([]) });
+		try {
+			await expect(appserver.start()).rejects.toThrow("another owner");
+			expect(await stat(`${path}.owner`)).toBeDefined();
+		} finally {
+			await new Promise<void>(resolve => listener.close(() => resolve()));
+		}
 	});
 	test("active and concurrent owners are rejected", async () => {
 		const root = await mkdtemp(join(tmpdir(), "omp-owner-"));
@@ -939,7 +1022,7 @@ describe("child supervision", () => {
 
 		await supervisor.start();
 		const oversizedOffset = (await stat(path)).size;
-		await appendFile(path, `${"x".repeat(1024 * 1024 + 1)}\n`);
+		await appendFile(path, `${"x".repeat(10 * 1024 * 1024 + 1024)}\n`);
 		await appendFile(
 			path,
 			`${JSON.stringify({
@@ -1032,7 +1115,7 @@ describe("child supervision", () => {
 			`${JSON.stringify({
 				type: "message",
 				id: "oversized-user",
-				message: { role: "user", content: "x".repeat(1024 * 1024) },
+				message: { role: "user", content: "x".repeat(10 * 1024 * 1024 + 1024) },
 			})}\n`,
 		);
 		firstReconcile.resolve();
@@ -1054,6 +1137,80 @@ describe("child supervision", () => {
 			id: "visible-user",
 			message: { role: "user", content: "visible prompt", clientCorrelationId: secondInternalId },
 		});
+		supervisor.stop();
+		await child.exited;
+	});
+	test("scans and projects large 2 MiB transcript records without omitting them", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-large-transcript-"));
+		const path = join(root, "session.jsonl");
+		await writeFile(
+			path,
+			`${JSON.stringify({ type: "session", version: 3, id: "session", timestamp: stamp, cwd: root })}\n`,
+		);
+		const firstCommand = Promise.withResolvers<Record<string, unknown>>();
+		const firstReconcile = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		const exited = Promise.withResolvers<number>();
+		const child: ChildHandle = {
+			stdin: {
+				write: line => {
+					const command = JSON.parse(String(line)) as Record<string, unknown>;
+					firstCommand.resolve(command);
+				},
+			},
+			stdout: (async function* () {
+				yield `${JSON.stringify({ type: "ready" })}\n`;
+				const cmd = await firstCommand.promise;
+				yield `${JSON.stringify({
+					type: "response",
+					id: cmd.id,
+					command: cmd.type,
+					success: true,
+				})}\n`;
+				await firstReconcile.promise;
+				yield `${JSON.stringify({ type: "notice", message: "reconciled" })}\n`;
+				await release.promise;
+			})(),
+			stderr: (async function* () {})(),
+			exited: exited.promise,
+			kill: () => {
+				release.resolve();
+				exited.resolve(0);
+			},
+		};
+		const entry = Promise.withResolvers<RpcSessionEntryFrame>();
+		const supervisor = new RpcChildSupervisor(
+			{ spawn: () => child, argv: sessionPath => ["omp", "--mode", "rpc", "--session", sessionPath] },
+			{ ...record("large-transcript-jsonl"), path, cwd: root },
+			{
+				entry: entry.resolve,
+				event: () => {},
+				transcriptRecordOmitted: () => expect.unreachable("large valid transcript record should not be omitted"),
+				crashed: error => expect.unreachable(error.message),
+			},
+		);
+
+		await supervisor.start();
+		const promptCall = supervisor.call({ type: "prompt", message: "large prompt" }, "large-prompt");
+		await appendFile(
+			path,
+			`${JSON.stringify({
+				type: "message",
+				id: "large-user",
+				message: { role: "user", content: "x".repeat(2 * 1024 * 1024) },
+			})}\n`,
+		);
+		firstReconcile.resolve();
+		await promptCall;
+
+		const projected = await entry.promise;
+		expect(projected.entry).toMatchObject({
+			id: "large-user",
+			message: { role: "user" },
+		});
+		expect(((projected.entry as Record<string, unknown>).message as Record<string, unknown>).content).toHaveLength(
+			2 * 1024 * 1024,
+		);
 		supervisor.stop();
 		await child.exited;
 	});

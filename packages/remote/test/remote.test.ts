@@ -1,6 +1,9 @@
 
+import { readFile, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, it } from "vite-plus/test";
-import { NodeProcessRunner, type ProcessResult, type ProcessRunner, type PathProbe } from "../src/process.ts";
+import { NodeProcessRunner, runProcess, ProcessTimeoutError, type ProcessResult, type ProcessRunner, type PathProbe } from "../src/process.ts";
 import {
   buildTailscaleEndpointCandidates,
   discoverTailscaleExecutable,
@@ -174,6 +177,46 @@ it("accounts bounded process capture in linear time and marks truncation", async
   const value = await handle.result;
   expect(Buffer.byteLength(value.stdout)).toBe(64 * 1024);
   expect(value.stdoutTruncated).toBe(true);
+});
+it("drains stdout completely on fast exit without truncating untruncated output", async () => {
+  const handle = await new NodeProcessRunner().spawn({
+    command: process.execPath,
+    args: ["-e", "process.stdout.write('hello world')"],
+  });
+  const value = await handle.result;
+  expect(value.stdout).toBe("hello world");
+  expect(value.stdoutTruncated).toBe(false);
+});
+
+it("throws ProcessTimeoutError promptly when a process or grandchild holds stdio pipes open", async () => {
+  const runner = new NodeProcessRunner();
+  const start = Date.now();
+  const pidFile = join(tmpdir(), `t4-test-grandchild-pid-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+
+  try {
+    const error = await runProcess({
+      runner,
+      command: process.execPath,
+      args: [
+        "-e",
+        `const child = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'inherit', detached: true }); require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(child.pid)); process.exit(0);`,
+      ],
+      timeoutMs: 150,
+    }).catch((cause) => cause);
+
+    const duration = Date.now() - start;
+    expect(error).toBeInstanceOf(ProcessTimeoutError);
+    expect(duration).toBeLessThan(1000);
+  } finally {
+    try {
+      const pidText = await readFile(pidFile, "utf8");
+      const grandchildPid = Number(pidText.trim());
+      if (Number.isInteger(grandchildPid) && grandchildPid > 0) {
+        process.kill(grandchildPid, "SIGKILL");
+      }
+    } catch {}
+    await unlink(pidFile).catch(() => {});
+  }
 });
 it("rejects truncated status output before JSON parsing", async () => {
   const error = await readTailscaleStatus({ executable: "tailscale", runner: fakeRunner(result({ stdout: "{}", stdoutTruncated: true })) }).catch((cause) => cause);

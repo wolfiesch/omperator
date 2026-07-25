@@ -46,7 +46,7 @@ const androidIdentity = JSON.parse(
 const macosIdentity = JSON.parse(
   readFileSync(resolve(repoRoot, ".github/macos-release-identity.json"), "utf8"),
 );
-const productionCertificate = "fa58f53c953a078d8db2b633ee8c226cfd2ad3f7220cd55dd03a2e195a81b0ac";
+const productionCertificate = "e44654621d495dc729ab69c95048a4f8ee60c3dd43e6c37fd1552babf2956645";
 
 function androidReleaseFixture(overrides = {}) {
   const packageVersion = overrides.packageVersion ?? "0.1.17";
@@ -77,7 +77,7 @@ function androidReleaseFixture(overrides = {}) {
       overrides.badgingOutput ??
       `package: name='${contract.applicationId}' versionCode='${versionCode}' versionName='${packageVersion}' platformBuildVersionName='16' platformBuildVersionCode='36' compileSdkVersion='36' compileSdkVersionCodename='16'\nsdkVersion:'${contract.minSdkVersion}'\ntargetSdkVersion:'${contract.targetSdkVersion}'\n`,
     manifestTreeOutput:
-      overrides.manifestTreeOutput ?? 'E: manifest\n  A: package="com.lycaonsolutions.t4code"\n',
+      overrides.manifestTreeOutput ?? 'E: manifest\n  A: package="net.t4code.app"\n',
     signerOutput:
       overrides.signerOutput ??
       `Verifies\nVerified using v1 scheme (JAR signing): false\nVerified using v2 scheme (APK Signature Scheme v2): true\nNumber of signers: 1\nSigner #1 certificate SHA-256 digest: ${productionCertificate}\n`,
@@ -85,13 +85,13 @@ function androidReleaseFixture(overrides = {}) {
 }
 
 test("builder config keeps release contract", () => {
-  assert.equal(config.appId, "com.lycaonsolutions.t4code");
+  assert.equal(config.appId, "net.t4code.app");
   assert.equal(config.productName, "T4 Code");
   assert.equal(config.asar, true);
   assert.deepEqual(config.protocols[0].schemes, ["t4-code"]);
   assert.equal(config.linux.category, "Development");
   assert.deepEqual(config.linux.publish, [
-    { provider: "github", owner: "LycaonLLC", repo: "t4-code", channel: "latest" },
+    { provider: "github", owner: "wolfiesch", repo: "omperator", channel: "latest" },
   ]);
   assert.equal(config.mac.category, "public.app-category.developer-tools");
   assert.deepEqual(config.mac.publish, []);
@@ -175,12 +175,11 @@ test("macOS signing uses the Promise API that electron-builder can await", async
 
 test("Android release identity is public, pinned, and wired into the release workflow", () => {
   assert.doesNotThrow(() => validateIdentityContract(androidIdentity));
-  assert.equal(androidIdentity.applicationId, "com.lycaonsolutions.t4code");
+  assert.equal(androidIdentity.applicationId, "net.t4code.app");
   assert.equal(androidIdentity.minSdkVersion, 24);
   assert.equal(androidIdentity.targetSdkVersion, 36);
   assert.equal(androidIdentity.signingCertificateSha256, productionCertificate);
-  assert.equal(androidIdentity.certificateBaseline.tag, "v0.1.13");
-  assert.equal(androidIdentity.certificateBaseline.asset, "T4-Code-0.1.13-android.apk");
+  assert.equal(androidIdentity.certificateBaseline, null);
 
   const releaseWorkflow = readFileSync(resolve(repoRoot, ".github/workflows/release.yml"), "utf8");
   assert.match(releaseWorkflow, /node scripts\/inspect-android-release\.mjs/u);
@@ -200,6 +199,44 @@ test("Android release identity is public, pinned, and wired into the release wor
   );
 });
 
+test("Android certificate baseline must be declared, and may be null before a key has published history", () => {
+  const { certificateBaseline: _certificateBaseline, ...withoutBaseline } = androidIdentity;
+  const publishedBaseline = {
+    tag: "v0.1.13",
+    asset: "T4-Code-0.1.13-android.apk",
+    assetSha256: "ce863c0c957ed7992393226d5f9aa7968d8c1bc748245f6e1d10de491247c5ef",
+  };
+
+  // A newly minted signing key has no published APK to point at, and the
+  // baseline is validated before the APK is built, so the first release under
+  // that key declares the absence explicitly.
+  assert.doesNotThrow(() =>
+    validateIdentityContract({ ...withoutBaseline, certificateBaseline: null }),
+  );
+
+  // Omitting the field is not the same as declaring null: a typo must not
+  // silently skip the gate.
+  assert.throws(() => validateIdentityContract(withoutBaseline), /must declare certificateBaseline/u);
+
+  // A present baseline is still validated in full.
+  assert.throws(
+    () =>
+      validateIdentityContract({
+        ...withoutBaseline,
+        certificateBaseline: { ...publishedBaseline, assetSha256: "not-a-digest" },
+      }),
+    /assetSha256 must be 64 lowercase hexadecimal characters/u,
+  );
+  assert.throws(
+    () =>
+      validateIdentityContract({
+        ...withoutBaseline,
+        certificateBaseline: { ...publishedBaseline, tag: "0.1.13" },
+      }),
+    /baseline tag must be a stable/u,
+  );
+});
+
 test("Android versionCode is derived from the package version without a release-specific constant", () => {
   assert.equal(deriveAndroidVersionCode("0.1.13"), 10_013);
   assert.equal(deriveAndroidVersionCode("0.1.17"), 10_017);
@@ -212,10 +249,10 @@ test("Android versionCode is derived from the package version without a release-
 test("Android artifact parsers preserve exact package, SDK, split, and certificate identity", () => {
   assert.deepEqual(
     parseAaptBadging(
-      "package: name='com.lycaonsolutions.t4code' versionCode='10017' versionName='0.1.17'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
+      "package: name='net.t4code.app' versionCode='10017' versionName='0.1.17'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
     ),
     {
-      applicationId: "com.lycaonsolutions.t4code",
+      applicationId: "net.t4code.app",
       versionCode: 10_017,
       versionName: "0.1.17",
       minSdkVersion: 24,
@@ -226,7 +263,7 @@ test("Android artifact parsers preserve exact package, SDK, split, and certifica
   );
   assert.deepEqual(
     parseApkSignerReport(
-      `Verified using v2 scheme (APK Signature Scheme v2): true\nNumber of signers: 1\nSigner #1 certificate SHA-256 digest: FA:58:F5:3C:95:3A:07:8D:8D:B2:B6:33:EE:8C:22:6C:FD:2A:D3:F7:22:0C:D5:5D:D0:3A:2E:19:5A:81:B0:AC\n`,
+      `Verified using v2 scheme (APK Signature Scheme v2): true\nNumber of signers: 1\nSigner #1 certificate SHA-256 digest: E4:46:54:62:1D:49:5D:C7:29:AB:69:C9:50:48:A4:F8:EE:60:C3:DD:43:E6:C3:7F:D1:55:2B:AB:F2:95:66:45\n`,
     ),
     {
       signerCount: 1,
@@ -238,7 +275,7 @@ test("Android artifact parsers preserve exact package, SDK, split, and certifica
 
 test("Android release inspector accepts the exact production universal APK contract", () => {
   assert.deepEqual(validateAndroidRelease(androidReleaseFixture()), {
-    applicationId: "com.lycaonsolutions.t4code",
+    applicationId: "net.t4code.app",
     versionName: "0.1.17",
     versionCode: 10_017,
     minSdkVersion: 24,
@@ -261,7 +298,7 @@ test("Android release inspector fails closed on identity, SDK, split, and signer
       "version name",
       {
         badgingOutput:
-          "package: name='com.lycaonsolutions.t4code' versionCode='10017' versionName='0.1.18'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
+          "package: name='net.t4code.app' versionCode='10017' versionName='0.1.18'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
       },
       /versionName 0\.1\.18/u,
     ],
@@ -269,7 +306,7 @@ test("Android release inspector fails closed on identity, SDK, split, and signer
       "version code",
       {
         badgingOutput:
-          "package: name='com.lycaonsolutions.t4code' versionCode='10016' versionName='0.1.17'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
+          "package: name='net.t4code.app' versionCode='10016' versionName='0.1.17'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
       },
       /versionCode 10016/u,
     ],
@@ -277,7 +314,7 @@ test("Android release inspector fails closed on identity, SDK, split, and signer
       "minimum sdk",
       {
         badgingOutput:
-          "package: name='com.lycaonsolutions.t4code' versionCode='10017' versionName='0.1.17'\nsdkVersion:'23'\ntargetSdkVersion:'36'\n",
+          "package: name='net.t4code.app' versionCode='10017' versionName='0.1.17'\nsdkVersion:'23'\ntargetSdkVersion:'36'\n",
       },
       /minSdkVersion 23/u,
     ],
@@ -285,7 +322,7 @@ test("Android release inspector fails closed on identity, SDK, split, and signer
       "target sdk",
       {
         badgingOutput:
-          "package: name='com.lycaonsolutions.t4code' versionCode='10017' versionName='0.1.17'\nsdkVersion:'24'\ntargetSdkVersion:'35'\n",
+          "package: name='net.t4code.app' versionCode='10017' versionName='0.1.17'\nsdkVersion:'24'\ntargetSdkVersion:'35'\n",
       },
       /targetSdkVersion 35/u,
     ],
@@ -293,7 +330,7 @@ test("Android release inspector fails closed on identity, SDK, split, and signer
       "split package",
       {
         badgingOutput:
-          "package: name='com.lycaonsolutions.t4code' versionCode='10017' versionName='0.1.17' split='config.arm64_v8a'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
+          "package: name='net.t4code.app' versionCode='10017' versionName='0.1.17' split='config.arm64_v8a'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
       },
       /standalone/u,
     ],
@@ -307,7 +344,7 @@ test("Android release inspector fails closed on identity, SDK, split, and signer
       {
         outputMetadata: {
           artifactType: { type: "APK" },
-          applicationId: "com.lycaonsolutions.t4code",
+          applicationId: "net.t4code.app",
           variantName: "release",
           elements: [
             {

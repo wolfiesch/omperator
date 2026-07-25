@@ -82,7 +82,7 @@ readonly OMP_PRODUCT_BRANCH="t4code/main"
 readonly OMP_FORK_WORKFLOW="ci.yml"
 readonly OMP_UPSTREAM_URL="https://github.com/can1357/oh-my-pi.git"
 readonly OMP_INTEGRATION_URL="https://github.com/wolfiesch/oh-my-pi.git"
-readonly T4_REPOSITORY="LycaonLLC/t4-code"
+readonly T4_REPOSITORY="wolfiesch/omperator"
 readonly T4_SITE="https://t4code.net"
 T4_MAIN_GATE_SHA=
 T4_MAIN_SOL_SHA=
@@ -92,7 +92,7 @@ VALIDATED_DEFERRAL_OBSERVED_SHA=
 readonly T4_PACKAGE="t4-code"
 readonly OMP_TARGET="${T4_LOCAL_OMP_TARGET:-$HOME/bin/omp}"
 readonly OMP_SERVICE="${T4_LOCAL_OMP_SERVICE:-dev.oh-my-pi.appserver.service}"
-readonly GATEWAY_SERVICE="${T4_LOCAL_GATEWAY_SERVICE:-com.lycaonsolutions.t4code.tailnet-gateway.service}"
+readonly GATEWAY_SERVICE="${T4_LOCAL_GATEWAY_SERVICE:-net.t4code.app.tailnet-gateway.service}"
 readonly GATEWAY_CONFIG="${T4_LOCAL_GATEWAY_CONFIG:-$HOME/.config/t4-code/tailnet-gateway.json}"
 readonly GATEWAY_UNIT="${T4_LOCAL_GATEWAY_UNIT:-$HOME/.config/systemd/user/$GATEWAY_SERVICE}"
 TAILNET_REACHABILITY_REPORTED=false
@@ -1104,7 +1104,7 @@ canonical_linux_update_assets() {
           $asset.size <= $wanted.maximumSize) and
         ($asset.digest | type == "string" and test("^sha256:[0-9a-f]{64}$")) and
         $asset.browser_download_url ==
-          "https://github.com/LycaonLLC/t4-code/releases/download/v\($version)/\($wanted.name)"
+          "https://github.com/wolfiesch/omperator/releases/download/v\($version)/\($wanted.name)"
       ) |
       {
         name: $asset.name,
@@ -1319,7 +1319,7 @@ site_release_manifest_matches() {
           $published.size == $actual.size and
           $published.browser_download_url == $actual.url and
           $published.browser_download_url ==
-            "https://github.com/LycaonLLC/t4-code/releases/download/v\($version)/\($wanted.name)" and
+            "https://github.com/wolfiesch/omperator/releases/download/v\($version)/\($wanted.name)" and
           $published.digest == "sha256:\($actual.sha256)" and
           $checksums[$wanted.name] == $actual.sha256)
       ] | all) and

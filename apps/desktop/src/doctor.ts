@@ -144,6 +144,10 @@ export async function readSourceContract(
   });
 }
 
+// Cold `pnpm --version` on a warm-but-unprimed macOS shell measured 2.9-4.5s
+// across repeated runs, so the previous 1.5s deadline reported a healthy,
+// correctly-versioned toolchain as missing. The deadline only bounds a
+// misbehaving binary; it is not a latency budget.
 async function installedToolVersion(command: "bun" | "pnpm"): Promise<string | null> {
   try {
     const result = await runProcess({
@@ -151,7 +155,7 @@ async function installedToolVersion(command: "bun" | "pnpm"): Promise<string | n
       command,
       args: ["--version"],
       env: createSafeServiceEnvironment(),
-      timeoutMs: 1_500,
+      timeoutMs: 10_000,
     });
     const version = result.stdout.trim();
     return result.exitCode === 0 && parseVersion(version) !== null ? version : null;

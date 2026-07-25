@@ -87,6 +87,8 @@ export interface DesktopShellPort {
   readonly downloadUpdate?: () => Promise<DesktopUpdateState>;
   readonly restartToUpdate?: () => Promise<DesktopUpdateState>;
   readonly updateRendererReady?: () => Promise<DesktopUpdateRendererReadyResult>;
+  /** Ask the desktop to run a directory chooser. Absent on shells that cannot. */
+  readonly chooseDirectory?: () => Promise<{ readonly path?: string }>;
   readonly loadProjectionCache?: () => Promise<ProjectionCacheLoadResult>;
   readonly saveProjectionCache?: (request: ProjectionCacheSaveRequest) => Promise<ProjectionCacheSaveResult>;
   readonly inspectPhoneSetup?: () => Promise<PhoneSetupState>;
@@ -294,11 +296,22 @@ export function hostMetadata(targetId: string, frame: DesktopWelcomePayload): De
 
 export class DesktopRuntimeError extends Error {
   readonly code: "bootstrap" | "protocol" | "stopped" | "command" | "outcome_unknown" | "stale";
+  /**
+   * The host's own error code, kept verbatim so callers can branch on a
+   * specific outcome — offering a directory chooser for `session_cwd_missing`,
+   * say — instead of matching on message text.
+   */
+  readonly hostCode: string | undefined;
 
-  constructor(code: "bootstrap" | "protocol" | "stopped" | "command" | "outcome_unknown" | "stale", message: string) {
+  constructor(
+    code: "bootstrap" | "protocol" | "stopped" | "command" | "outcome_unknown" | "stale",
+    message: string,
+    hostCode?: string,
+  ) {
     super(redactedMessage(message));
     this.name = "DesktopRuntimeError";
     this.code = code;
+    this.hostCode = hostCode;
     Object.defineProperty(this, "stack", { configurable: true, enumerable: false, value: undefined, writable: false });
   }
 }

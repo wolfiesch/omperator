@@ -436,6 +436,44 @@ describe("desktop lifecycle boundaries", () => {
     expect(calls[0]?.args?.join(" ")).not.toContain(";");
   });
 
+  it("kills and settles a service command that exceeds its deadline", async () => {
+    let killed = 0;
+    const runner: ProcessRunner = {
+      spawn: async (_spec, signal) => ({
+        kill: () => {
+          killed += 1;
+        },
+        result: new Promise((resolve) => {
+          signal?.addEventListener("abort", () => {
+            killed += 1;
+            resolve({
+              exitCode: null,
+              signal: "SIGTERM",
+              stdout: "",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            });
+          });
+        }),
+      }),
+    };
+
+    await expect(
+      new NodeServiceRunner({ runner, timeoutMs: 10 }).run(["launchctl", "kickstart", "-k", "gui/501/net.t4code.app"]),
+    ).rejects.toThrow("launchctl timed out after 10ms");
+    expect(killed).toBe(1);
+  });
+
+  it("rejects invalid service command deadlines", () => {
+    expect(() => new NodeServiceRunner({ timeoutMs: 0 })).toThrow(
+      "service command timeout must be between 1 and 60000ms",
+    );
+    expect(() => new NodeServiceRunner({ timeoutMs: 60_001 })).toThrow(
+      "service command timeout must be between 1 and 60000ms",
+    );
+  });
+
   it("omits absent service environment values", () => {
     expect(
       createSafeServiceEnvironment({

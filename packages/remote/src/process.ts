@@ -70,24 +70,23 @@ export class NodeProcessRunner implements ProcessRunner {
 
     const { promise: result, resolve, reject } = Promise.withResolvers<ProcessResult>();
     let escalationTimer: NodeJS.Timeout | undefined;
+    let exitGraceTimer: NodeJS.Timeout | undefined;
+    let resolved = false;
+
     const clearEscalation = () => {
       clearTimeout(escalationTimer);
+      clearTimeout(exitGraceTimer);
       escalationTimer = undefined;
+      exitGraceTimer = undefined;
     };
-    const onAbort = () => {
-      terminate(child);
-      escalationTimer = setTimeout(() => terminate(child, "SIGKILL"), 100);
-    };
-    if (signal?.aborted) onAbort();
-    else signal?.addEventListener("abort", onAbort, { once: true });
-    child.once("error", (cause) => {
+
+    const finish = (exitCode: number | null, signalCode: NodeJS.Signals | null) => {
+      if (resolved) return;
+      resolved = true;
       clearEscalation();
       signal?.removeEventListener("abort", onAbort);
-      reject(cause);
-    });
-    child.once("close", (exitCode, signalCode) => {
-      clearEscalation();
-      signal?.removeEventListener("abort", onAbort);
+      child.stdout?.destroy();
+      child.stderr?.destroy();
       resolve({
         exitCode,
         signal: signalCode,
@@ -96,6 +95,24 @@ export class NodeProcessRunner implements ProcessRunner {
         stdoutTruncated: stdoutState.truncated,
         stderrTruncated: stderrState.truncated,
       });
+    };
+
+    const onAbort = () => {
+      terminate(child);
+      escalationTimer = setTimeout(() => terminate(child, "SIGKILL"), 100);
+      exitGraceTimer = setTimeout(() => finish(child.exitCode, child.signalCode), 150);
+    };
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener("abort", onAbort, { once: true });
+    child.once("error", (cause) => {
+      if (resolved) return;
+      resolved = true;
+      clearEscalation();
+      signal?.removeEventListener("abort", onAbort);
+      reject(cause);
+    });
+    child.once("close", (exitCode, signalCode) => {
+      finish(exitCode, signalCode);
     });
     return Promise.resolve({
       result,
@@ -160,7 +177,17 @@ export async function runProcess(input: RunProcessOptions): Promise<ProcessResul
     const handle = await input.runner.spawn(input, controller.signal).catch((cause) => {
       throw new ProcessSpawnError(input.command, cause);
     });
-    const processResult = await handle.result;
+    const processResult = await Promise.race([
+      handle.result,
+      new Promise<never>((_, reject) => {
+        const checkAbort = () => {
+          if (timedOut) reject(new ProcessTimeoutError(input.command, input.timeoutMs));
+          else if (controller.signal.aborted) reject(new ProcessCancelledError(input.command));
+        };
+        if (controller.signal.aborted) checkAbort();
+        else controller.signal.addEventListener("abort", checkAbort, { once: true });
+      }),
+    ]);
     if (timedOut) throw new ProcessTimeoutError(input.command, input.timeoutMs);
     if (input.signal?.aborted) throw new ProcessCancelledError(input.command);
     return processResult;

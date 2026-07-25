@@ -18,7 +18,6 @@ import {
 	decodeProviderTransportState,
 	decodeSessionPromptArguments,
 	decodeSessionStateResult,
-	decodeUsageReadResult,
 	type EntryId,
 	entryId,
 	type HelloFrame,
@@ -38,15 +37,9 @@ import {
 	revision as wireRevision,
 	type ServerFrame,
 	type SessionId,
-	type SessionImageReadArguments,
 	type SessionRef,
 	type SessionStateResult,
 	sessionId,
-	type TranscriptContextArguments,
-	type TranscriptPageArguments,
-	type TranscriptPageResult,
-	type TranscriptSearchArguments,
-	type UsageReadResult,
 	utf8ByteLength,
 } from "@t4-code/host-wire";
 import type {
@@ -55,13 +48,15 @@ import type {
 	RpcSubagentMessagesResult,
 } from "./omp-rpc-contract.ts";
 import { AgentTranscriptProjection } from "./agent-transcript-projection.ts";
-import { ArtifactReadError, ArtifactReader } from "./artifact-reader.ts";
+import { ArtifactReader } from "./artifact-reader.ts";
 import { completeAttachOutput, prepareAttachOutput } from "./attach-output.ts";
 import { AttentionOutcomeStore } from "./attention-outcome-store.ts";
 import { AppserverCommandHandlers } from "./command-handler.ts";
+import { executeReadCommand, isReadCommand } from "./read-command-handler.ts";
 import {
 	artifactDescriptorForRoot,
 	fallbackSessionTitle,
+	OVERSIZED_RECORD_OMISSION_SUMMARY,
 	projectMessageText,
 	projectNameFromCwd,
 	SessionEntryProjector,
@@ -83,6 +78,8 @@ import { SessionOwnershipStore } from "./session-ownership-store.ts";
 import {
 	commandFeature,
 	DesktopOperationDispatcher,
+	emitHostTrace,
+	type HostTraceSink,
 	type OperationContext,
 	operationCapabilities,
 	operationFeatures,
@@ -342,18 +339,6 @@ async function boundedOperationCapabilityRefresh(
 	}
 }
 
-async function raceAbortSignal<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
-	if (signal.aborted) throw new Error("operation aborted");
-	const gate = Promise.withResolvers<T>();
-	const onAbort = (): void => gate.reject(new Error("operation aborted"));
-	signal.addEventListener("abort", onAbort, { once: true });
-	operation.then(gate.resolve, gate.reject);
-	try {
-		return await gate.promise;
-	} finally {
-		signal.removeEventListener("abort", onAbort);
-	}
-}
 
 function queuedLifecycleWork(liveState: Record<string, unknown> | undefined): boolean {
 	if (!liveState) return false;
@@ -405,7 +390,17 @@ function argumentError(command: CommandFrame): string | undefined {
 		}
 		return "attach accepts only an optional cursor";
 	}
-	if (command.command === "session.fork" && keys.length > 0) return "fork accepts no arguments";
+	// A copy may need a working directory of its own when the source's recorded
+	// project directory no longer exists.
+	if (command.command === "session.fork") {
+		if (keys.some(key => key !== "cwd")) return "fork arguments are invalid";
+		if (args.cwd !== undefined) {
+			if (typeof args.cwd !== "string" || args.cwd.length === 0 || utf8ByteLength(args.cwd) > 4096)
+				return "fork cwd must be a bounded non-empty UTF-8 string";
+			// eslint-disable-next-line no-control-regex -- reject control characters in a filesystem path.
+			if (/[\u0000-\u001F\u007F]/.test(args.cwd)) return "fork cwd must not contain control characters";
+		}
+	}
 	if (command.command === "session.create") {
 		if (keys.some(key => !["projectId", "title", "runtimeId", "workspaceInstanceId"].includes(key)))
 			return "create arguments are invalid";
@@ -615,6 +610,67 @@ class ExternalRuntimeCommandError extends Error {
 		this.name = "ExternalRuntimeCommandError";
 	}
 }
+/**
+ * A session runtime that refused to start. The child's own stderr says why —
+ * no model configured, a bad executable, a missing directory — and that is far
+ * more use to an operator than the dispatcher's generic "operation failed",
+ * which is what this previously surfaced.
+ */
+class SessionStartError extends Error {
+	readonly code = "session_start_failed";
+	constructor(reason: string) {
+		super(`session runtime did not start: ${reason}`);
+		this.name = "SessionStartError";
+	}
+}
+
+/**
+ * A runtime that would not die. Its child still owns the session's lock and can
+ * still write the file, so nothing may delete that session on its behalf.
+ */
+class SessionRuntimeStuckError extends Error {
+	readonly cause: unknown;
+	constructor(cause: unknown) {
+		super("session runtime did not stop");
+		this.name = "SessionRuntimeStuckError";
+		this.cause = cause;
+	}
+}
+
+class ForkWorkingDirectoryError extends Error {
+	readonly code: string;
+	constructor(code: string, message: string) {
+		super(message);
+		this.name = "ForkWorkingDirectoryError";
+		this.code = code;
+	}
+}
+
+async function directoryExists(path: string): Promise<boolean> {
+	try {
+		return (await fsStat(path)).isDirectory();
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * A failed child's message embeds up to 64 KiB of its own stderr, which can
+ * carry tokens, credentialed URLs, and paths from any platform. None of it is
+ * reproduced anywhere — not to the renderer and not to a log. Known startup
+ * failures map to fixed operator text; anything else stays generic.
+ */
+function sessionStartReason(error: unknown): string {
+	const raw = error instanceof Error ? error.message : String(error);
+	if (/no models available|set an api key|\/login/i.test(raw)) return "no model is configured for this profile";
+	if (/\bENOENT\b/.test(raw)) return "the working directory or runtime executable is missing";
+	if (/\bEACCES\b|\bEPERM\b/.test(raw)) return "the runtime executable is not permitted to run";
+	if (/ready timeout/i.test(raw)) return "the runtime did not report ready in time";
+	const exited = /exited \((\d+)\)/.exec(raw);
+	if (exited) return `the runtime exited immediately with status ${exited[1]}`;
+	return "the runtime failed to start";
+}
+
 
 function objectRecord(value: unknown): Record<string, unknown> | undefined {
 	return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
@@ -679,6 +735,17 @@ function sameOwnerRecord(a: OwnerRecord, b: OwnerRecord): boolean {
 		a.inode === b.inode
 	);
 }
+/**
+ * Decide whether a completed owner's endpoint is provably dead.
+ *
+ * The persisted record supplies STATE, never identity. `device` and `inode`
+ * were captured by an earlier process, and neither survives a reboot as a
+ * comparison key: `st_dev` is assigned at mount time, so macOS renumbers the
+ * APFS volume on every boot, and inode numbers are recycled. Matching against
+ * them turned an ordinary restart into a foreign owner and froze the lease.
+ * Identity is therefore established between two FRESH stats taken around the
+ * connect probe, which is the only window that can actually race us.
+ */
 async function completedOwnerEndpointInactive(
 	paths: OwnerPaths,
 	record: OwnerRecord,
@@ -689,7 +756,7 @@ async function completedOwnerEndpointInactive(
 		const publicTarget = await readPublicTarget(paths.publicPath);
 		if (publicTarget.target !== paths.backingName) return false;
 		const backing = await statIdentity(paths.backingPath);
-		if (!backing || !sameIdentity(backing, record) || (await unixSocketActive(paths.backingPath))) return false;
+		if (!backing || (await unixSocketActive(paths.backingPath))) return false;
 
 		await Bun.sleep(100);
 
@@ -709,7 +776,7 @@ async function completedOwnerEndpointInactive(
 			return false;
 		const latestBacking = await statIdentity(paths.backingPath);
 		return Boolean(
-			latestBacking && sameIdentity(latestBacking, record) && !(await unixSocketActive(paths.backingPath)),
+			latestBacking && sameIdentity(latestBacking, backing) && !(await unixSocketActive(paths.backingPath)),
 		);
 	} catch {
 		return false;
@@ -835,6 +902,7 @@ export class LocalAppserver implements AppserverHandle {
 	#transcriptImages?: TranscriptImageReader;
 	#artifacts = new ArtifactReader();
 	#lockCheck: LockCheckHook;
+	#observerIndependentTerminalOperations: boolean;
 	#ringSize: number;
 	#lifecycleQuiesceTimeoutMs: number;
 	#usageReadTimeoutMs: number;
@@ -927,6 +995,7 @@ export class LocalAppserver implements AppserverHandle {
 	#workspaceAuthority?: WorkspaceAuthority;
 	#workspaceTargetPathForProject?: AppserverOptions["workspaceTargetPathForProject"];
 	#onOwnerAcquired?: AppserverOptions["onOwnerAcquired"];
+	#trace?: HostTraceSink;
 	constructor(options: AppserverOptions = {}) {
 		if (options.testControl && (options.remoteEndpoint || options.remoteListener)) {
 			throw new Error("appserver test control is local-only");
@@ -961,18 +1030,31 @@ export class LocalAppserver implements AppserverHandle {
 		this.#clock = options.clock ?? clock;
 		this.#idempotency = new IdempotencyStore({ now: () => this.#clock.now().getTime() });
 		this.#authority = options.sessionAuthority;
+		this.#trace =
+			options.trace ??
+			(process.env.T4_TRACE_COMMANDS === "1"
+				? line => {
+						console.error(line);
+					}
+				: undefined);
 		this.#operations = options.operationsAuthority
-			? new DesktopOperationDispatcher(options.operationsAuthority, undefined, (frame, owner) => {
-					for (const ws of this.#clients)
-						if (ws.connectionId === owner.connectionId && ws.deviceId === owner.deviceId)
-							void this.#sendFrame(ws, frame as ServerFrame);
-				})
+			? new DesktopOperationDispatcher(
+					options.operationsAuthority,
+					undefined,
+					(frame, owner) => {
+						for (const ws of this.#clients)
+							if (ws.connectionId === owner.connectionId && ws.deviceId === owner.deviceId)
+								void this.#sendFrame(ws, frame as ServerFrame);
+					},
+					this.#trace,
+				)
 			: undefined;
 		this.#usageAuthority = options.usageAuthority;
 		this.#transcriptSearch = options.transcriptSearchAuthority;
 		this.#projectRootForProject = options.projectRootForProject;
 		this.#projectRevealer = options.projectRevealer;
 		this.#claimLocklessSessions = options.claimLocklessSessions === true;
+		this.#observerIndependentTerminalOperations = options.observerIndependentTerminalOperations === true;
 		this.#runtimeAdapters = options.runtimeAdapters;
 		this.#workspaceAuthority = options.workspaceAuthority;
 		this.#workspaceTargetPathForProject = options.workspaceTargetPathForProject;
@@ -1350,6 +1432,16 @@ export class LocalAppserver implements AppserverHandle {
 			await this.#imageUploads.stop();
 		}
 	}
+	/**
+	 * Remove a dead owner's residue. The caller reaches here two ways: the
+	 * recorded pid is gone, or the pid is alive (reboot pid reuse) and
+	 * {@link completedOwnerEndpointInactive} proved its endpoint silent and its
+	 * marker unchanged. Either way the persisted record contributes only the
+	 * UUID-derived backing NAME; its `device` and `inode` are stale metadata
+	 * that a reboot or remount invalidates. Every identity comparison below is
+	 * between two fresh stats taken around the connect probe, so a live owner
+	 * that republishes mid-recovery still aborts us.
+	 */
 	private async recoverStale(
 		paths: OwnerPaths,
 		record: OwnerRecord,
@@ -1363,7 +1455,7 @@ export class LocalAppserver implements AppserverHandle {
 			const target = await readlink(paths.publicPath);
 			if (target !== paths.backingName) throw new Error(`appserver socket has another owner: ${this.socketPath}`);
 			const backing = await statIdentity(paths.backingPath);
-			if (backing && (!sameIdentity(backing, record) || (await unixSocketActive(paths.backingPath))))
+			if (backing && (await unixSocketActive(paths.backingPath)))
 				throw new Error(`appserver socket has another owner: ${this.socketPath}`);
 			const latest = await lstat(paths.publicPath);
 			const latestTarget = await readlink(paths.publicPath);
@@ -1373,7 +1465,8 @@ export class LocalAppserver implements AppserverHandle {
 				latest.ino !== publicStat.ino ||
 				!latest.isSymbolicLink() ||
 				latestTarget !== paths.backingName ||
-				(latestBacking && !sameIdentity(latestBacking, record))
+				Boolean(latestBacking) !== Boolean(backing) ||
+				(latestBacking && backing && !sameIdentity(latestBacking, backing))
 			)
 				throw new Error(`appserver socket has another owner: ${this.socketPath}`);
 			await unlink(paths.publicPath);
@@ -1382,7 +1475,10 @@ export class LocalAppserver implements AppserverHandle {
 		}
 		const backing = await statIdentity(paths.backingPath);
 		if (backing) {
-			if (!sameIdentity(backing, record) || (await unixSocketActive(paths.backingPath)))
+			if (await unixSocketActive(paths.backingPath))
+				throw new Error(`appserver socket has another owner: ${this.socketPath}`);
+			const confirmed = await statIdentity(paths.backingPath);
+			if (!confirmed || !sameIdentity(confirmed, backing))
 				throw new Error(`appserver socket has another owner: ${this.socketPath}`);
 			await unlink(paths.backingPath);
 		}
@@ -1509,6 +1605,31 @@ export class LocalAppserver implements AppserverHandle {
 		return this.#supervisors.get(sessionId)?.child();
 	}
 	async #command(command: CommandFrame, ws?: AppWs, approved = false): Promise<CommandOutcome> {
+		if (!this.#trace) return this.#commandInner(command, ws, approved);
+		const startedAt = performance.now();
+		emitHostTrace(this.#trace, command.requestId, command.command, "received");
+		try {
+			const outcome = await this.#commandInner(command, ws, approved);
+			emitHostTrace(
+				this.#trace,
+				command.requestId,
+				command.command,
+				"server-returned",
+				Math.round(performance.now() - startedAt),
+			);
+			return outcome;
+		} catch (error) {
+			emitHostTrace(
+				this.#trace,
+				command.requestId,
+				command.command,
+				"server-threw",
+				Math.round(performance.now() - startedAt),
+			);
+			throw error;
+		}
+	}
+	async #commandInner(command: CommandFrame, ws?: AppWs, approved = false): Promise<CommandOutcome> {
 		if (command.hostId !== this.hostId)
 			return {
 				frame: response(this.hostId, command, false, undefined, {
@@ -1753,102 +1874,36 @@ export class LocalAppserver implements AppserverHandle {
 			// leave a late upload behind for a dead connection.
 			const registered = this.#handlers.has(command.command) ? await this.#handlers.dispatch(command) : undefined;
 			if (registered) outcome = registered;
-			else if (command.command === "transcript.page") {
-				if (!this.#discovery.page)
-					outcome = {
-						frame: response(this.hostId, command, false, undefined, {
-							code: "unsupported",
-							message: "transcript paging is unavailable",
-						}),
-					};
-				else {
-					const args = decodeCommandArguments(
-						command.command,
-						command.args,
-					) as unknown as TranscriptPageArguments;
-					const record = this.#records.get(command.sessionId!);
-					if (!record) throw new TranscriptPageError("transcript_page_unavailable");
-					const authorityResult = await this.#discovery.page(record, args);
-					const result: TranscriptPageResult = {
-						...authorityResult,
-						entries: authorityResult.entries.map(entry => ({
-							...entry,
-							hostId: this.hostId,
-							sessionId: command.sessionId!,
-						})),
-					};
-					outcome = { frame: response(this.hostId, command, true, result) };
-				}
-			} else if (command.command === "transcript.search") {
-				if (!this.#transcriptSearch)
-					outcome = {
-						frame: response(this.hostId, command, false, undefined, {
-							code: "unsupported",
-							message: "transcript search is unavailable",
-						}),
-					};
-				else {
-					const args = decodeCommandArguments(
-						command.command,
-						command.args,
-					) as unknown as TranscriptSearchArguments;
-					const result = await this.#transcriptSearch.search(args, controller.signal);
-					outcome = { frame: response(this.hostId, command, true, result) };
-				}
-			} else if (command.command === "transcript.context") {
-				if (!this.#transcriptSearch)
-					outcome = {
-						frame: response(this.hostId, command, false, undefined, {
-							code: "unsupported",
-							message: "transcript context is unavailable",
-						}),
-					};
-				else {
-					const args = decodeCommandArguments(
-						command.command,
-						command.args,
-					) as unknown as TranscriptContextArguments;
-					const result = await this.#transcriptSearch.context(command.sessionId!, args, controller.signal);
-					outcome = { frame: response(this.hostId, command, true, result) };
-				}
-			} else if (command.command === "host.list" || command.command === "session.list")
+			else if (isReadCommand(command))
+				outcome = await executeReadCommand(
+					{
+						hostId: this.hostId,
+						response: (innerCommand, ok, result, error) =>
+							response(this.hostId, innerCommand, ok, result, error),
+						discovery: this.#discovery,
+						transcriptSearch: this.#transcriptSearch,
+						usageAuthority: this.#usageAuthority,
+						usageReadTimeoutMs: this.#usageReadTimeoutMs,
+						transcriptImages: this.#transcriptImages,
+						artifacts: this.#artifacts,
+						record: () => this.#records.get(command.sessionId!),
+						projection,
+						agentTranscript: () => this.#agentTranscripts.get(command.sessionId!),
+						attached: () => Boolean(ws && this.#attached.get(ws)?.has(command.sessionId!)),
+						agentTranscriptEnabled: () =>
+							Boolean(ws && this.#clientFeatures.get(ws)?.has("agent.transcript")),
+					},
+					command,
+					controller.signal,
+				);
+			else if (command.command === "host.list" || command.command === "session.list")
 				outcome = {
 					frame: response(this.hostId, command, true, {
 						cursor: { epoch: this.epoch, seq: 0 },
 						...this.sessionListResult(),
 					}),
 				};
-			else if (command.command === "usage.read") {
-				if (!this.#usageAuthority) {
-					outcome = {
-						frame: response(this.hostId, command, false, undefined, {
-							code: "unsupported",
-							message: "usage reading is unavailable",
-						}),
-					};
-				} else {
-					const timeoutSignal = AbortSignal.timeout(this.#usageReadTimeoutMs);
-					const usageSignal = AbortSignal.any([controller.signal, timeoutSignal]);
-					try {
-						const result: UsageReadResult = decodeUsageReadResult(
-							await raceAbortSignal(this.#usageAuthority.read(usageSignal), usageSignal),
-						);
-						outcome = { frame: response(this.hostId, command, true, result) };
-					} catch {
-						const code = controller.signal.aborted
-							? "aborted"
-							: timeoutSignal.aborted
-								? "timeout"
-								: "usage_unavailable";
-						outcome = {
-							frame: response(this.hostId, command, false, undefined, {
-								code,
-								message: code === "timeout" ? "usage read timed out" : "usage read failed",
-							}),
-						};
-					}
-				}
-			} else if (command.command === "session.attach") {
+			else if (command.command === "session.attach") {
 				await this.enqueueExternalRefresh(command.sessionId!);
 				const cursor = command.args.cursor;
 				const attachOutput = prepareAttachOutput(
@@ -1859,49 +1914,6 @@ export class LocalAppserver implements AppserverHandle {
 					frame: response(this.hostId, command, true, { attached: true, cursor: attachOutput.baseline }),
 					attachOutput,
 				};
-			} else if (command.command === "session.image.read") {
-				if (!ws || !this.#attached.get(ws)?.has(command.sessionId!))
-					throw new TranscriptImageError("session_not_attached", "session must be attached before reading images");
-				if (!this.#transcriptImages)
-					throw new TranscriptImageError("image_not_found", "transcript image reading is unavailable");
-				const args = decodeCommandArguments(command.command, command.args) as unknown as SessionImageReadArguments;
-				let metadata = projection!.transcriptImage(args.entryId, args.sha256);
-				if (!metadata && this.#clientFeatures.get(ws)?.has("agent.transcript"))
-					metadata = this.#agentTranscripts.get(command.sessionId!)?.transcriptImage(args.entryId, args.sha256);
-				if (!metadata)
-					throw new TranscriptImageError(
-						"image_not_found",
-						"transcript entry does not contain the requested image",
-					);
-				const result = await this.#transcriptImages.read(
-					metadata.sha256,
-					metadata.mimeType,
-					args.offset,
-					controller.signal,
-				);
-				outcome = { frame: response(this.hostId, command, true, result) };
-			} else if (command.command === "artifact.read") {
-				if (!ws || !this.#attached.get(ws)?.has(command.sessionId!))
-					throw new ArtifactReadError("session_not_attached", "session must be attached before reading artifacts");
-				const args = decodeCommandArguments(command.command, command.args) as {
-					artifactId: string;
-					offset: number;
-				};
-				let descriptor = projection!.artifact(args.artifactId);
-				if (!descriptor && this.#clientFeatures.get(ws)?.has("agent.transcript"))
-					descriptor = this.#agentTranscripts.get(command.sessionId!)?.artifact(args.artifactId);
-				if (!descriptor)
-					throw new ArtifactReadError("artifact_not_found", "artifact is not projected for this session");
-				const record = this.#records.get(command.sessionId!);
-				if (!record?.path.endsWith(".jsonl"))
-					throw new ArtifactReadError("artifact_not_found", "artifact session is unavailable");
-				const result = await this.#artifacts.read(
-					record.path.slice(0, -".jsonl".length),
-					descriptor,
-					args.offset,
-					controller.signal,
-				);
-				outcome = { frame: response(this.hostId, command, true, result) };
 			} else if (command.command === "session.image.begin") {
 				if (!ws) throw new ImageUploadError("image_invalid", "image upload requires a live connection");
 				if (controller.signal.aborted)
@@ -2061,6 +2073,10 @@ export class LocalAppserver implements AppserverHandle {
 										: command.command === "session.rename"
 											? { renamed: true }
 											: { accepted: true };
+					if (command.command === "session.rename" && typeof command.args.name === "string") {
+						const frame = this.#projections.get(command.sessionId!)?.updateTitle(command.args.name);
+						if (frame) await this.broadcastIndex(frame);
+					}
 					if (
 						command.command === "session.model.set" ||
 						command.command === "session.thinking.set" ||
@@ -2296,6 +2312,8 @@ export class LocalAppserver implements AppserverHandle {
 			const imageError =
 				error instanceof ImageUploadError || error instanceof TranscriptImageError ? error : undefined;
 			const externalRuntimeError = error instanceof ExternalRuntimeCommandError ? error : undefined;
+			const sessionStartError = error instanceof SessionStartError ? error : undefined;
+			const forkCwdError = error instanceof ForkWorkingDirectoryError ? error : undefined;
 			const transcriptSearchError = error instanceof TranscriptSearchError ? error : undefined;
 			const transcriptPageError = error instanceof TranscriptPageError ? error : undefined;
 			const officialOmpOperationError = error instanceof OfficialOmpOperationError ? error : undefined;
@@ -2311,7 +2329,11 @@ export class LocalAppserver implements AppserverHandle {
 					"session.list",
 					"host.list",
 				].includes(command.command);
-			const code = officialOmpOperationError
+			const code = forkCwdError
+				? forkCwdError.code
+				: sessionStartError
+				? sessionStartError.code
+				: officialOmpOperationError
 				? officialOmpOperationError.code
 				: transcriptPageError
 					? transcriptPageError.code
@@ -2347,7 +2369,9 @@ export class LocalAppserver implements AppserverHandle {
 									: transcriptSearchError.code === "transcript_cursor_stale"
 										? "transcript search cursor is stale"
 										: "transcript search cursor is invalid"
-								: (externalRuntimeError?.message ??
+								: (forkCwdError?.message ??
+									sessionStartError?.message ??
+									externalRuntimeError?.message ??
 									imageError?.message ??
 									(operation ? "operation failed" : "command failed")),
 					...(officialOmpOperationError
@@ -2360,6 +2384,8 @@ export class LocalAppserver implements AppserverHandle {
 						: {}),
 				}),
 				unknown:
+					!forkCwdError &&
+					!sessionStartError &&
 					!officialOmpOperationError &&
 					!operation &&
 					!imageError &&
@@ -2924,15 +2950,16 @@ export class LocalAppserver implements AppserverHandle {
 	 * The source file is only read: its writer, if any, keeps ownership and never
 	 * sees a second writer.
 	 */
-	private async forkSession(source: SessionRecord): Promise<SessionRecord> {
+	private async forkSession(source: SessionRecord, cwdOverride?: string): Promise<SessionRecord> {
 		if (!this.#authority?.fork) throw new Error("session forking is unavailable");
-		const forked = await this.#authority.fork(source);
+		const forked = await this.#authority.fork(source, cwdOverride);
+		const cwd = forked.cwd;
 		const record: SessionRecord = {
 			sessionId: forked.sessionId,
 			path: forked.path,
-			cwd: forked.cwd,
-			projectId: stableProjectId(forked.cwd),
-			projectName: projectNameFromCwd(forked.cwd),
+			cwd,
+			projectId: stableProjectId(cwd),
+			projectName: projectNameFromCwd(cwd),
 			title: forked.title ?? source.title ?? "Session",
 			updatedAt: this.#clock.now().toISOString(),
 			status: "idle",
@@ -2956,14 +2983,75 @@ export class LocalAppserver implements AppserverHandle {
 		this.#createdPending.set(record.sessionId, { record, refreshesRemaining: 1 });
 		return record;
 	}
+	/**
+	 * Where the copy will live. Historic transcripts routinely name a project
+	 * directory that has since been deleted, and a copy needs somewhere real to
+	 * run. The caller may name an existing directory; the authority writes it
+	 * into the copy's own header, so the choice survives rediscovery. Nothing is
+	 * substituted silently: without a choice, a vanished source directory is
+	 * reported as such so the caller can ask and retry.
+	 */
+	private async resolveForkWorkingDirectory(source: SessionRecord, requested: unknown): Promise<string | undefined> {
+		if (requested !== undefined) {
+			if (typeof requested !== "string" || !isAbsolute(requested) || requested.includes("\0"))
+				throw new ForkWorkingDirectoryError(
+					"session_cwd_invalid",
+					"the chosen working directory must be an absolute path",
+				);
+			if (!(await directoryExists(requested)))
+				throw new ForkWorkingDirectoryError("session_cwd_invalid", "the chosen working directory does not exist");
+			return requested;
+		}
+		if (await directoryExists(source.cwd)) return undefined;
+		throw new ForkWorkingDirectoryError(
+			"session_cwd_missing",
+			"this session's project directory no longer exists; choose a working directory for the copy",
+		);
+	}
 	private async handleFork(command: CommandFrame): Promise<CommandOutcome> {
 		const source = this.#records.get(command.sessionId!);
 		if (!source) throw new Error("source session is unavailable");
-		const record = await this.forkSession(source);
+		const record = await this.forkSession(source, await this.resolveForkWorkingDirectory(source, command.args?.cwd));
 		const projection = this.#projections.get(record.sessionId)!;
-		await this.ensureSupervisor(record.sessionId);
+		try {
+			await this.ensureSupervisor(record.sessionId);
+		} catch (error) {
+			// The copy is already on disk and in the ledger by this point, so a
+			// runtime that cannot start would otherwise strand an orphan session
+			// and the lock its short-lived child took on the way down.
+			const reason = sessionStartReason(error instanceof SessionRuntimeStuckError ? error.cause : error);
+			if (error instanceof SessionRuntimeStuckError) {
+				// The copy stays: an undead child still holds its lock, and the
+				// record is what lets an operator see and retry it.
+				throw new SessionStartError(`${reason}; its runtime did not stop, so the copy was kept`);
+			}
+			try {
+				await this.discardFailedFork(record);
+			} catch (cleanupError) {
+				throw new SessionStartError(
+					`${reason}; the copy could not be removed: ${sessionStartReason(cleanupError)}`,
+				);
+			}
+			throw new SessionStartError(reason);
+		}
 		await this.broadcastIndex(projection.indexUpsert());
 		return { frame: response(this.hostId, command, true, { session: projection.value.ref }) };
+	}
+	/** Undo `forkSession` after the copy proves unusable. Never announced, so nothing to broadcast. */
+	private async discardFailedFork(record: SessionRecord): Promise<void> {
+		const sessionId = record.sessionId;
+		// Durable state first. If the copy survives on disk, the ledger entry and
+		// the in-memory record are what let an operator still see and retry it,
+		// so dropping those first would hide an orphan we failed to remove.
+		await this.#authority?.delete(record);
+		this.cleanupObserverState(sessionId);
+		this.#transcripts.delete(sessionId);
+		this.disposeSubagentState(sessionId);
+		this.#stateRefreshGenerations.delete(sessionId);
+		this.#createdPending.delete(sessionId);
+		this.#records.delete(sessionId);
+		this.#projections.delete(sessionId);
+		await this.#sessionOwnership?.delete(sessionId);
 	}
 	private async handleClose(command: CommandFrame): Promise<CommandOutcome> {
 		const sessionId = command.sessionId!;
@@ -3038,6 +3126,7 @@ export class LocalAppserver implements AppserverHandle {
 	}
 	private async observerBarrierBlocks(command: CommandFrame): Promise<boolean> {
 		if (!command.sessionId) return false;
+		if (this.#observerIndependentTerminalOperations && command.command === "term.open") return false;
 		if (this.#externalRuntimes.has(command.sessionId)) return false;
 		if (command.command === "session.restore" && this.sessionArchived(command.sessionId)) {
 			const record = this.#records.get(command.sessionId);
@@ -3803,7 +3892,7 @@ export class LocalAppserver implements AppserverHandle {
 						kind: "compaction",
 						timestamp: this.#clock.now().toISOString(),
 						data: {
-							summary: "One transcript record was omitted because it exceeded the 1 MiB safety limit.",
+							summary: OVERSIZED_RECORD_OMISSION_SUMMARY,
 							oversizedRecordOmission: true,
 						},
 					};
@@ -3829,7 +3918,18 @@ export class LocalAppserver implements AppserverHandle {
 			this.#releaseAllMessageLifecycles(sessionId, "failed");
 			this.#transcripts.delete(sessionId);
 			this.disposeSubagentState(sessionId);
-			supervisor.stop();
+			// Await the process, not just the supervisor. `stop()` signals and
+			// returns, so a caller that cleans up the session's files immediately
+			// would race a child still holding — and able to rewrite — its lock.
+			const child = supervisor.child();
+			supervisor.stop("SIGTERM");
+			if (child && !(await this.childExitedWithinLifecycleTimeout(child))) {
+				supervisor.stop("SIGKILL");
+				if (!(await this.childExitedWithinLifecycleTimeout(child)))
+					// A child that survives SIGKILL still owns its lock and can
+					// rewrite the file, so its session must not be deleted.
+					throw new SessionRuntimeStuckError(error);
+			}
 			throw error;
 		}
 	}
@@ -3928,7 +4028,10 @@ export class LocalAppserver implements AppserverHandle {
 				return;
 			}
 			if (frame.type === "terminal.input" || frame.type === "terminal.resize" || frame.type === "terminal.close") {
-				if (this.#projections.get(frame.sessionId)?.value.ref.liveState?.sessionControl) {
+				if (
+					!this.#observerIndependentTerminalOperations &&
+					this.#projections.get(frame.sessionId)?.value.ref.liveState?.sessionControl
+				) {
 					await this.#sendFrame(ws, {
 						v: "omp-app/1",
 						type: "error",
@@ -5076,6 +5179,36 @@ export class LocalAppserver implements AppserverHandle {
 			this.#promotionFailures.delete(id);
 		}
 	}
+	/**
+	 * Seeded sessions are created through the authority rather than the
+	 * session.create command, so the ownership ledger must be updated here too.
+	 * Without the claim the host reads its own seeded transcript as a foreign
+	 * lockless session and never promotes it to a writable projection.
+	 * This runs before any client can attach to a freshly seeded session, and
+	 * the lockless decision is made when attach builds the observer, so the
+	 * ledger is already current by the time it is read.
+	 *
+	 * A session that is still missing from the inventory cannot be claimed and
+	 * would surface later as an unowned foreign transcript, so it fails the
+	 * request instead of reporting a silent partial success.
+	 */
+	async #claimTestSessions(control: AppserverTestControl, runId: string): Promise<void> {
+		if (!this.#sessionOwnership) return;
+		for (const id of await control.sessionIds(runId)) {
+			const record = this.#records.get(id);
+			if (!record) throw new Error("seeded session is not indexed");
+			await this.#sessionOwnership.add(id, record.path);
+		}
+	}
+	/**
+	 * refreshSessions joins an in-flight refresh, and that refresh may have read
+	 * the inventory before this mutation touched the filesystem. Drain it first
+	 * so the refresh awaited here is guaranteed to have started afterwards.
+	 */
+	private async refreshInventoryAfterMutation(): Promise<void> {
+		while (this.#sessionRefresh) await this.#sessionRefresh.catch(() => undefined);
+		await this.refreshSessions();
+	}
 	async #evictTestSession(sessionId: SessionId): Promise<void> {
 		const projection = this.#projections.get(sessionId);
 		if (projection) await this.broadcastIndex(projection.remove());
@@ -5085,6 +5218,7 @@ export class LocalAppserver implements AppserverHandle {
 		await this.#transcriptSearch?.deleteSession(sessionId);
 		this.#projections.delete(sessionId);
 		await this.#attentionOutcomes?.delete(sessionId);
+		await this.#sessionOwnership?.delete(sessionId);
 		this.#closedSessions.delete(sessionId);
 		this.#releaseAllMessageLifecycles(sessionId, "completed-without-entry");
 		this.#stateRefreshGenerations.delete(sessionId);
@@ -5166,7 +5300,8 @@ export class LocalAppserver implements AppserverHandle {
 		return this.#runTestControlMutation(async () => {
 			try {
 				await control.seed(seedRequest);
-				await this.refreshSessions();
+				await this.refreshInventoryAfterMutation();
+				await this.#claimTestSessions(control, seedRequest.runId);
 				const status = await this.#testControlStatus(
 					control,
 					seedRequest.runId,
@@ -5205,8 +5340,14 @@ export class LocalAppserver implements AppserverHandle {
 				const sessionIds = await control.sessionIds(runId);
 				await this.#quiesceTestSessions(control, runId);
 				const result = await control.cleanup(runId);
-				for (const sessionId of sessionIds) await this.#evictTestSession(sessionId);
-				await this.refreshSessions();
+				// A session the control could not delete stays in its manifest, so
+				// it must keep its projection and ownership proof. Evicting it here
+				// would strand a still-present transcript as an unmanageable
+				// foreign session that no retry could reach.
+				const retained = new Set(await control.sessionIds(runId));
+				for (const sessionId of sessionIds)
+					if (!retained.has(sessionId)) await this.#evictTestSession(sessionId);
+				await this.refreshInventoryAfterMutation();
 				return Response.json(await this.#testControlStatus(control, runId, result));
 			} catch {
 				return this.adminError(500);

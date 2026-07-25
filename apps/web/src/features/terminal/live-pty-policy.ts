@@ -55,6 +55,10 @@ export const MESSAGES = {
   denied: "The host didn't allow this shell.",
   failed: "The shell couldn't be started.",
   badResult: "The host answered with something this app couldn't use.",
+  openFailedLocally: "This app couldn't send the shell request. Try again.",
+  openRequestFailed: "The shell request failed. Try again.",
+  openOutcomeUnknown:
+    "The shell request may have reached the host. Check for a new shell before trying again.",
   connectionLost: "The connection dropped. The shell may still be running on the host.",
 } as const;
 export type LiveTerminalAvailability =
@@ -122,10 +126,9 @@ export function resolveLiveTerminalAvailability(
   ) {
     return unavailable("transport", MESSAGES.syncing);
   }
-  // Ownership last among the honest reasons: while another app owns the
-  // session (or the shape is unproven), fail closed with the exact copy.
-  const controlReason = sessionControlGateReason(snapshot, address);
-  if (controlReason !== null) return unavailable("permission", controlReason);
+  // PTYs are owned by this host, independently of whichever OMP session
+  // authority is selected. Session takeover state therefore does not gate
+  // terminal availability.
   return { available: true };
 }
 

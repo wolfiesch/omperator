@@ -1,7 +1,8 @@
 // Live user-PTY bridge over the DesktopRuntimeController. This is the
 // desktop counterpart of the fixture bridge in pty.ts: `open` goes out as a
-// session-scoped `term.open` command through the controller-lease path,
-// the server's typed result is correlated by requestId in the session
+// session-scoped `term.open` command without an OMP controller lease,
+// because PTYs are host-owned generic operations that compose around either
+// session authority. The server's typed result is correlated by requestId in the session
 // projection (never scraped from terminal text), and `terminal.output` /
 // `terminal.exit` frames drive bytes and status through the same
 // cursor-deduplicating router the wire adapter uses. Input, resize, and
@@ -17,10 +18,8 @@ import {
 } from "@t4-code/client";
 import {
   hostId as brandHostId,
-  revision as brandRevision,
   sessionId as brandSessionId,
   type HostId,
-  type Revision,
   type SessionId,
   type TerminalId,
 } from "@t4-code/protocol";
@@ -42,7 +41,6 @@ import {
   isRelativeCwd,
   parseTerminalIdFrom,
   resolveLiveTerminalAvailability,
-  sessionControlGateReason,
   shellFieldAdvertised,
   termOpenCatalogItem,
   type LiveTerminalAvailability,
@@ -95,20 +93,6 @@ class LivePtySession implements PtySession {
   private pendingResize: { cols: number; rows: number } | null = null;
   private resizeInFlight = false;
   private pendingInputChars = 0;
-  private async ensureLease(): Promise<boolean> {
-    try {
-      const revision = this.resolveRevision();
-      if (revision === null) return false;
-      const host = this.context.address.hostId;
-      const session = this.context.address.sessionId;
-      const target = this.context.address.targetId;
-      if (this.context.controller.controllerLeaseFor(target, host, session, String(revision)) !== undefined) return true;
-      const acquired = await this.context.controller.acquireControllerLease(target, host, session, String(revision));
-      return !acquired.required || acquired.leaseId !== undefined;
-    } catch {
-      return false;
-    }
-  }
   private saturationSignalled = false;
   private inputChain: Promise<void> = Promise.resolve();
   private abandonWait: (() => void) | null = null;
@@ -143,13 +127,6 @@ class LivePtySession implements PtySession {
     return `${this.context.address.hostId}\u0000${this.context.address.sessionId}`;
   }
 
-  private resolveRevision(): Revision | null {
-    const snapshot = this.context.snapshot();
-    const warm = snapshot.projection.sessions.get(this.projectionKey());
-    if (warm?.revision !== undefined) return brandRevision(warm.revision);
-    return snapshot.projection.sessionIndex.get(this.projectionKey())?.revision ?? null;
-  }
-
   private findResult(
     snapshot: DesktopRuntimeSnapshot,
     requestId: string,
@@ -162,10 +139,9 @@ class LivePtySession implements PtySession {
   }
 
   /**
-   * Fail-closed recheck run immediately before every terminal dispatch
-   * (input, resize, close): full link freshness first (offline connection,
-   * unbound target, incomplete inventory, or a stale warm copy), then the
-   * strict session-ownership reader. Null means this dispatch may leave.
+   * Fail-closed recheck run immediately before every terminal dispatch.
+   * PTYs are host-owned generic operations, so only transport freshness gates
+   * them; OMP session ownership must not.
    */
   private dispatchGate(): PtyError | null {
     const snapshot = this.context.snapshot();
@@ -177,8 +153,7 @@ class LivePtySession implements PtySession {
     if (link === "cached") {
       return { kind: "shell-error", message: MESSAGES.syncing };
     }
-    const reason = sessionControlGateReason(snapshot, this.context.address);
-    return reason === null ? null : { kind: "shell-error", message: reason };
+    return null;
   }
 
   private async openNow(request: PtyOpenRequest): Promise<void> {
@@ -191,11 +166,6 @@ class LivePtySession implements PtySession {
         kind: availability.kind === "permission" ? "permission-denied" : "shell-error",
         message: availability.reason,
       });
-      return;
-    }
-    const revisionValue = this.resolveRevision();
-    if (revisionValue === null) {
-      this.fail({ kind: "shell-error", message: MESSAGES.notReady });
       return;
     }
     const args: Record<string, unknown> = {
@@ -211,20 +181,15 @@ class LivePtySession implements PtySession {
     this.context.beginOpen();
     let accepted: { readonly requestId: string };
     try {
-      const commandResult = await this.context.controller.commandWithControllerLease(
+      const gate = this.dispatchGate();
+      if (gate !== null) throw new WriteGateError(gate.message);
+      const commandResult = await this.context.controller.command(
         this.context.address.targetId,
         {
           hostId: this.context.wireHostId,
           sessionId: this.context.wireSessionId,
           command: TERM_OPEN_COMMAND,
-          expectedRevision: revisionValue,
           args,
-        },
-        undefined,
-        () => {
-          // Re-read after the controller-lease acquisition wait.
-          const raced = this.dispatchGate();
-          if (raced !== null) throw new WriteGateError(raced.message);
         },
       );
       if (!commandResult.accepted) {
@@ -239,14 +204,32 @@ class LivePtySession implements PtySession {
         this.fail({ kind: "shell-error", message: error.reason });
         return;
       }
-      // A lease refusal happens before the command is sent — that is a
-      // clean, retryable rejection, not an unknown outcome.
-      const contested =
-        error instanceof DesktopRuntimeError && error.code !== "command";
-      this.fail({
-        kind: "shell-error",
-        message: contested ? MESSAGES.contested : MESSAGES.openDisconnected,
-      });
+      // Everything below happens BEFORE the request was accepted, so none of it
+      // may claim the connection dropped: that copy belongs to the
+      // post-acceptance correlation, which handles retry safety separately.
+      if (error instanceof DesktopRuntimeError) {
+        this.fail({
+          kind: "shell-error",
+          message:
+            // The open may have reached the host, so never invite a blind
+            // retry that could leave a second shell running.
+            error.code === "outcome_unknown"
+              ? MESSAGES.openOutcomeUnknown
+              : // "command" is the catch-all for command failures including
+                // host errors, so it stays neutral rather than transport-specific.
+                error.code === "command"
+                ? MESSAGES.openRequestFailed
+                : // Remaining codes (bootstrap, protocol, stopped, stale) keep
+                  // the pre-existing contention copy. That is imprecise -
+                  // "stopped" means the runtime is stopped, not that another
+                  // client holds the session - and each deserves its own
+                  // classification. Left unchanged here rather than guessed at.
+                  MESSAGES.contested,
+        });
+        return;
+      }
+      // Anything else threw inside this app before the request was sent.
+      this.fail({ kind: "shell-error", message: MESSAGES.openFailedLocally });
       return;
     }
     const correlation = await this.awaitResult(accepted.requestId);
@@ -352,12 +335,6 @@ class LivePtySession implements PtySession {
             this.fail(gate);
             return;
           }
-          if (!(await this.ensureLease()) || this.phase !== "open" || this.serverTerminalId !== terminalId) {
-            this.fail({ kind: "shell-error", message: MESSAGES.contested });
-            return;
-          }
-          // Re-read after the lease acquisition wait, immediately before
-          // the input frame leaves.
           const raced = this.dispatchGate();
           if (raced !== null) {
             this.fail(raced);
@@ -406,8 +383,7 @@ class LivePtySession implements PtySession {
           // Ownership can move between user resizes; a gated resize simply
           // drops — the next writable resize carries fresh truth.
           if (this.dispatchGate() !== null) return;
-          if (!(await this.ensureLease()) || this.phase !== "open" || this.serverTerminalId === null) return;
-          if (this.dispatchGate() !== null) return;
+          if (this.phase !== "open" || this.serverTerminalId === null) return;
           await this.context.controller.terminalResize({
             ...this.sessionScope(),
             terminalId: this.serverTerminalId,
@@ -445,8 +421,7 @@ class LivePtySession implements PtySession {
   private async sendClose(reason: string): Promise<void> {
     const terminalId = this.serverTerminalId;
     if (terminalId === null || this.dispatchGate() !== null) return;
-    if (!(await this.ensureLease()) || this.phase !== "closed" || this.serverTerminalId !== terminalId) return;
-    if (this.dispatchGate() !== null) return;
+    if (this.phase !== "closed" || this.serverTerminalId !== terminalId) return;
     try {
       await this.context.controller.terminalClose({
         ...this.sessionScope(),

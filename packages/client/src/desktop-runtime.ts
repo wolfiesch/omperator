@@ -296,10 +296,28 @@ export class DesktopRuntimeController {
    * source against its own inventory and only ever reads it. The result is
    * the authoritative ref of the new session (same shape as session.create).
    */
-  async forkSession(targetId: string, hostIdValue: string, sessionIdValue: string): Promise<SessionRef> {
-    const result = await this.command(targetId, { hostId: hostId(hostIdValue), sessionId: sessionId(sessionIdValue), command: "session.fork", args: {} });
+  /**
+   * Ask the desktop to run a directory chooser. Undefined when the shell has no
+   * chooser or the operator dismissed it.
+   */
+  async chooseWorkingDirectory(): Promise<string | undefined> {
+    const chosen = await this.shell.chooseDirectory?.();
+    return chosen?.path;
+  }
+  /** `cwd` re-runs a refused fork against a directory the operator chose. */
+  async forkSession(targetId: string, hostIdValue: string, sessionIdValue: string, cwd?: string): Promise<SessionRef> {
+    const result = await this.command(targetId, {
+      hostId: hostId(hostIdValue),
+      sessionId: sessionId(sessionIdValue),
+      command: "session.fork",
+      args: cwd === undefined ? {} : { cwd },
+    });
     if (!result.accepted) {
-      throw new DesktopRuntimeError("command", result.error?.message ?? "the host could not start a copy of this session");
+      throw new DesktopRuntimeError(
+        "command",
+        result.error?.message ?? "the host could not start a copy of this session",
+        result.error?.code,
+      );
     }
     const session = asRecord(asRecord(result.result)?.session);
     if (session === undefined || typeof session.hostId !== "string" || typeof session.sessionId !== "string" || session.sessionId === "") {

@@ -33,6 +33,7 @@ import {
   probeOmpAppserver,
   repairAppserverService,
   NodeServiceFileSystem,
+  resolveOfficialOmpRuntime,
 } from "./service.ts";
 import { createDesktopSpeechService, type DesktopSpeechService } from "./speech.ts";
 import { createElectronUpdateController } from "./electron-update-controller.ts";
@@ -43,8 +44,12 @@ import { LocalProfileRuntime } from "./profile-runtime.ts";
 import { installBundledOmpRuntime } from "./bundled-runtime.ts";
 import { PhoneSetupService } from "./phone-setup.ts";
 import { T4OmpLauncher } from "./t4-omp-launcher.ts";
+import { developmentSandboxServiceConfig } from "./development-sandbox.ts";
 
 type ProjectionCacheRuntime = NonNullable<IpcRuntime["projectionCache"]>;
+
+export type { DevelopmentSandboxServiceConfig } from "./development-sandbox.ts";
+export { developmentSandboxServiceConfig } from "./development-sandbox.ts";
 
 export function appserverLogsDirectory(
   homeDirectory: string,
@@ -67,49 +72,65 @@ export function appserverLogsDirectory(
   return profile === "default" ? base : join(base, "profiles", profile);
 }
 
-export interface DevelopmentSandboxServiceConfig {
-  readonly homeDirectory: string;
-  readonly electronUserData: string;
-  readonly logsDirectory: string;
-  readonly stateRoot: string;
-  readonly serviceLabel: string;
-  readonly environment: Readonly<Record<string, string>>;
+export interface OmpLaunchProfile {
+  readonly authority: "bridge" | "official";
+  /** Replaces the bundled runtime. Official authority is only proven against its own pinned build. */
+  readonly executable?: string;
+  /** Sessions root owned exclusively by this host. Derived, never operator-supplied. */
+  readonly sessionsRoot?: string;
 }
 
-export function developmentSandboxServiceConfig(
+const BRIDGE_LAUNCH_PROFILE: OmpLaunchProfile = Object.freeze({ authority: "bridge" });
+const OMP_PROFILE_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
+
+/**
+ * Select the OMP authority and everything that must move with it.
+ *
+ * Authority, runtime and sessions root are one decision rather than three
+ * flags, because official authority claims lockless sessions and assumes the
+ * whole root belongs to this host.
+ *
+ * The root is DERIVED under the host's own state directory and cannot be
+ * supplied. An operator-chosen path is the footgun: aiming official authority
+ * at `~/.omp` would let it claim and write sessions the OMP TUI co-owns. There
+ * is no legitimate reason to point a verification profile somewhere else, so
+ * the option simply does not exist.
+ *
+ * The runtime is supplied, because its correct value differs per checkout and
+ * per platform. Treat it as a DEVELOPER OVERRIDE, not a proven pinned runtime:
+ * `t4-host` only compares `--version` stdout to the expected string and then
+ * assumes the matching build, so any binary printing that version is accepted.
+ *
+ * Environment-driven on purpose: ADR-019 keeps official authority an opt-in
+ * proof, so this must not read like a settled user-facing product toggle.
+ */
+export function ompLaunchProfile(
+  stateRoot: string,
+  profileId: string,
   environment: NodeJS.ProcessEnv = process.env,
-): DevelopmentSandboxServiceConfig | undefined {
-  const configuredRoot = environment.T4_DEV_SANDBOX_ROOT;
-  const sandbox = environment.T4_DEV_SANDBOX;
-  if (configuredRoot === undefined && sandbox === undefined) return undefined;
-  if (
-    configuredRoot === undefined ||
-    !isAbsolute(configuredRoot) ||
-    resolve(configuredRoot) !== configuredRoot ||
-    sandbox === undefined ||
-    !/^[a-z0-9][a-z0-9-]{0,39}$/u.test(sandbox)
-  ) {
-    throw new Error("invalid development sandbox configuration");
+): OmpLaunchProfile {
+  const authority = environment.T4_OMP_AUTHORITY;
+  const executable = environment.T4_OMP_RUNTIME;
+  if (authority === undefined || authority === "bridge") {
+    // Half-configured official mode must fail loudly rather than silently
+    // launching the bridge with official-only settings ignored.
+    if (executable !== undefined) throw new Error("T4_OMP_RUNTIME requires T4_OMP_AUTHORITY=official");
+    return BRIDGE_LAUNCH_PROFILE;
   }
-  const homeDirectory = join(configuredRoot, "home");
+  if (authority !== "official") throw new Error("T4_OMP_AUTHORITY must be bridge or official");
+  if (executable === undefined || !isAbsolute(executable) || resolve(executable) !== executable)
+    throw new Error("official OMP authority requires an absolute T4_OMP_RUNTIME");
+  // This value builds a path, so it is validated here rather than trusted.
+  if (!OMP_PROFILE_ID.test(profileId)) throw new Error("official OMP authority requires a valid profile id");
   return Object.freeze({
-    homeDirectory,
-    electronUserData: join(configuredRoot, "electron", "user-data"),
-    logsDirectory: join(configuredRoot, "logs", "host"),
-    stateRoot: join(configuredRoot, "host-state"),
-    serviceLabel: `dev.oh-my-pi.appserver.development.${sandbox}`,
-    environment: Object.freeze({
-      HOME: homeDirectory,
-      TMPDIR: join(configuredRoot, "tmp"),
-      XDG_CACHE_HOME: join(configuredRoot, "xdg", "cache"),
-      XDG_CONFIG_HOME: join(configuredRoot, "xdg", "config"),
-      XDG_DATA_HOME: join(configuredRoot, "xdg", "data"),
-      XDG_RUNTIME_DIR: join(configuredRoot, "run"),
-      XDG_STATE_HOME: join(configuredRoot, "xdg", "state"),
-    }),
+    authority: "official",
+    executable,
+    // Every profile is a SIBLING, including default. Nesting other profiles
+    // under the default profile's root would put them inside a tree the default
+    // host discovers and owns, which is the opposite of exclusive.
+    sessionsRoot: join(stateRoot, "official-sessions", profileId),
   });
 }
-
 export interface DesktopLifecycleOptions {
   readonly app?: typeof app;
   readonly getAllWindows?: () => readonly BrowserWindow[];
@@ -526,9 +547,26 @@ export class DesktopLifecycle {
     if (this.stopping) return undefined;
     let executable: string | undefined;
     let hostExecutable: string | undefined;
+    const development = developmentSandboxServiceConfig();
+    const homeDirectory = development?.homeDirectory ?? homedir();
+    // Mirrors t4-host's own default so the derived official root lands beside
+    // the state this host already owns.
+    const hostStateRoot = development?.stateRoot ?? join(homeDirectory, ".t4-code", "host");
+    let launch: OmpLaunchProfile;
+    try {
+      launch = ompLaunchProfile(hostStateRoot, profileId);
+    } catch (error) {
+      this.recordServiceFailure(error, profileId);
+      return undefined;
+    }
     try {
       [executable, hostExecutable] = await Promise.all([
-        this.discoverServiceExecutable(),
+        // Official authority brings its own runtime, so discovery is skipped:
+        // its probe demands the fork-only bridge capability and would reject
+        // every official build before the host could start.
+        launch.authority === "official"
+          ? resolveOfficialOmpRuntime(launch.executable!)
+          : this.discoverServiceExecutable(),
         this.discoverHostServiceExecutable(),
       ]);
       this.assertServiceRecoveryActive();
@@ -559,6 +597,10 @@ export class DesktopLifecycle {
     try {
       const development = developmentSandboxServiceConfig();
       const homeDirectory = development?.homeDirectory ?? homedir();
+      // Mirrors t4-host's own default so the derived official root lands beside
+      // the state this host already owns.
+      const hostStateRoot = development?.stateRoot ?? join(homeDirectory, ".t4-code", "host");
+      const launch = ompLaunchProfile(hostStateRoot, profileId);
       const candidate = this.serviceFactory({
         profileId,
         homeDirectory,
@@ -569,10 +611,19 @@ export class DesktopLifecycle {
         argv: [
           "serve",
           "--omp",
-          executable,
+          // Official authority is only proven against its own pinned runtime,
+          // so it brings its own executable rather than reusing the bundled one.
+          launch.executable ?? executable,
           "--profile",
           profileId,
-          ...(development === undefined ? [] : ["--state-root", development.stateRoot]),
+          ...(launch.authority === "official"
+            ? ["--omp-authority", "official", "--omp-sessions-root", launch.sessionsRoot!]
+            : []),
+          // Always explicit, even though it repeats t4-host's own default. The
+          // sessions root is only verifiable against a state root that is
+          // stated, and the service definition is where that gets checked.
+          "--state-root",
+          hostStateRoot,
         ],
         fs: new NodeServiceFileSystem(),
         ...(development === undefined

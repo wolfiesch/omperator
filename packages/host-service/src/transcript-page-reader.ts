@@ -2,6 +2,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:
 import {
 	type DurableEntry,
 	type HostId,
+	MAX_TRANSCRIPT_LINE_BYTES,
 	TRANSCRIPT_PAGE_MAX_BYTES,
 	TRANSCRIPT_PAGE_MAX_CURSOR_BYTES,
 	TRANSCRIPT_PAGE_MAX_ENTRIES,
@@ -22,7 +23,7 @@ const MAX_SCAN_BYTES = 8 * 1024 * 1024;
 const PROJECTOR_BACKSCAN_BYTES = 512 * 1024;
 const HEADER_BYTES = 128 * 1024;
 const ANCHOR_BYTES = 4 * 1024;
-const MAX_LINE_BYTES = 1024 * 1024;
+const MAX_LINE_BYTES = MAX_TRANSCRIPT_LINE_BYTES;
 const CURSOR_VERSION = 1;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });

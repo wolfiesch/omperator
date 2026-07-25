@@ -99,6 +99,13 @@ their affected processes without restarting the renderer. Process output and lif
 also recorded as credential-redacted NDJSON under the sandbox's `logs/processes/` directory. These
 local logs can still contain project and home paths; review and sanitize them before sharing.
 
+On macOS the sandbox also redirects `HOME`, which leaves no default keychain for Electron
+`safeStorage`. The sandboxed app therefore starts with Chromium's mock keychain so credential and
+projection-cache encryption stay exercised instead of degrading to unavailable. Sandbox ciphertext
+is mock-key material and is not portable to a real login keychain. `pnpm dogfood:mac` launches the
+packaged app inside a sandbox too, so it inherits the mock keychain; real keychain behavior is only
+exercised by a launch outside any sandbox, with the normal `HOME` and no `T4_DEV_SANDBOX` variables.
+
 Use the compatible OMP already on `PATH` only when testing that explicit mode:
 
 ```sh
@@ -115,6 +122,38 @@ pnpm dev:sandbox reset --sandbox feature-name
 `pnpm dev` remains the lower-level non-isolated development loop. Do not use it with a personal
 profile when testing destructive session lifecycle behavior.
 
+### Repeatable scenarios and parallel worktrees
+
+Run the deterministic host scenarios without touching personal OMP state:
+
+```sh
+pnpm scenario:stream
+pnpm scenario:cancel
+pnpm scenario:reconnect
+pnpm scenario:lifecycle
+pnpm scenario:full
+```
+
+The runner stages the pinned official OMP runtime, creates disposable profiles and sessions, and
+records a redacted report plus wire-event summary under `artifacts/dogfood/`. On Apple Silicon
+macOS, `pnpm dogfood:mac` also rebuilds the unsigned application, exercises its bundled host and
+runtime, launches the packaged Electron app in an isolated sandbox, and removes that sandbox.
+
+Create parallel work from an exact, freshly fetched `origin/main` commit:
+
+```sh
+pnpm worktree create --slug feature-name
+pnpm worktree status --slug feature-name
+pnpm worktree list
+pnpm worktree remove --slug feature-name
+```
+
+The helper allocates a `worktree/feature-name` branch, stable non-overlapping development ports,
+and project-owned sandbox metadata. It writes the allocated ports to the worktree's ignored
+`.artifacts/worktree.env`; `pnpm dev` and `pnpm serve:tailnet` load that file automatically.
+Removal refuses dirty worktrees, unloads the sandbox service, and deletes only the named worktree
+and branch.
+
 ### Remote browser, iPhone/iPad, or Android work
 
 Start with `docs/TAILNET_REMOTE.md`. Browser and iPhone/iPad access use the responsive React/PWA
@@ -123,8 +162,10 @@ enable Funnel or open a public firewall port for development.
 
 ## 4. Verify a change
 
-Run the focused test for the package you changed while iterating. Before opening a pull request,
-run the repository gates:
+Use `pnpm verify:affected` while iterating to run checks selected from the changed paths, or
+`pnpm verify:affected:plan` to preview them without execution. Unknown or cross-cutting paths fail
+closed to the full `pnpm check` and `pnpm test` gates. Before opening a pull request, run the
+repository gates:
 
 ```sh
 pnpm check

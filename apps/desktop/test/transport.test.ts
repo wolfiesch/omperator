@@ -2,11 +2,11 @@ import { createServer as createHttpServer } from "node:http";
 import { chmodSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer as createNetServer, type Server, type Socket } from "node:net";
 import { once } from "node:events";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { WebSocketServer } from "ws";
-import { resolveUnixSocketPath, UnixWebSocketTransport } from "../src/transport.ts";
+import { localTransportSocketPath, resolveUnixSocketPath, UnixWebSocketTransport } from "../src/transport.ts";
 
 const describeUnix = process.platform === "linux" || process.platform === "darwin" ? describe : (_name: string, _fn: () => void): void => {};
 const UUID = "123e4567-e89b-12d3-a456-426614174000";
@@ -41,7 +41,7 @@ describeUnix("Unix socket ownership and resolution", () => {
     }
   });
 
-  it("accepts an OMP public link and resolves its same-directory backing socket", async () => {
+  it("accepts an OMP public link and returns the public path after validating its backing socket", async () => {
     const directory = fixtureDirectory();
     const backingName = `.appserver-${UUID}.sock`;
     const backingPath = join(directory, backingName);
@@ -50,14 +50,14 @@ describeUnix("Unix socket ownership and resolution", () => {
     try {
       await listenUnix(server, backingPath);
       symlinkSync(backingName, publicPath);
-      expect(resolveUnixSocketPath(publicPath)).toBe(backingPath);
+      expect(resolveUnixSocketPath(publicPath)).toBe(publicPath);
     } finally {
       await closeServer(server);
       rmSync(directory, { recursive: true, force: true });
     }
   });
 
-  it("opens a WebSocket through an OMP public link using the resolved backing path", async () => {
+  it("opens a WebSocket through an OMP public link", async () => {
     const directory = fixtureDirectory();
     const backingName = `.appserver-${UUID}.sock`;
     const backingPath = join(directory, backingName);
@@ -100,6 +100,33 @@ describeUnix("Unix socket ownership and resolution", () => {
       transport.close();
       for (const socket of sockets) socket.destroy();
       await closeServer(server);
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("reports the errno code for an unreachable socket without leaking its path", async () => {
+    const directory = fixtureDirectory();
+    const socketPath = join(directory, "absent.sock");
+    const transport = new UnixWebSocketTransport({
+      socketPath,
+      validatePath: false,
+      handshakeTimeoutMs: 2_000,
+    });
+    const messages: string[] = [];
+    transport.onError((error) => {
+      if (error instanceof Error) messages.push(error.message);
+    });
+    try {
+      // Nothing is listening, so `ws` fails the upgrade with an errno error.
+      // Assert on the rejection, not just the listener: on the first connection
+      // the client awaits open() inside the transport factory and attaches its
+      // error listener only afterwards, so the rejection is the only channel
+      // that reports an unreachable socket in production.
+      await expect(transport.open()).rejects.toThrow("local transport error (ENOENT)");
+      expect(messages).toContain("local transport error (ENOENT)");
+      for (const message of messages) expect(message).not.toContain(directory);
+    } finally {
+      transport.close();
       rmSync(directory, { recursive: true, force: true });
     }
   });
@@ -171,5 +198,62 @@ describeUnix("Unix socket ownership and resolution", () => {
       await closeServer(server);
       rmSync(directory, { recursive: true, force: true });
     }
+  });
+});
+
+describe("localTransportSocketPath", () => {
+  const SANDBOX = { T4_DEV_SANDBOX: "fixture", T4_DEV_SANDBOX_ROOT: "/private/tmp/t4-sandbox-fixture" };
+
+  // macOS derives the socket from HOME and Linux from XDG_RUNTIME_DIR, so both
+  // have to be checked: a fix that threads only one still points the other
+  // platform at the developer's own host.
+  for (const platform of ["darwin", "linux"] as const) {
+    it(`resolves inside the sandbox instead of the developer's own host on ${platform}`, () => {
+      const sandboxed = localTransportSocketPath("default", SANDBOX, platform);
+      const personal = localTransportSocketPath("default", {}, platform);
+      expect(sandboxed.startsWith(`${SANDBOX.T4_DEV_SANDBOX_ROOT}/`)).toBe(true);
+      expect(sandboxed).not.toBe(personal);
+      expect(sandboxed.startsWith(`${homedir()}/`)).toBe(false);
+    });
+
+    it(`keeps every sandbox profile inside that sandbox on ${platform}`, () => {
+      const review = localTransportSocketPath("review", SANDBOX, platform);
+      expect(review.startsWith(`${SANDBOX.T4_DEV_SANDBOX_ROOT}/`)).toBe(true);
+      expect(review).not.toBe(localTransportSocketPath("default", SANDBOX, platform));
+    });
+  }
+
+  it("ignores the developer's own runtime directory inside a sandbox on linux", () => {
+    // XDG_RUNTIME_DIR is inherited by the desktop process, so an unthreaded
+    // sandbox would resolve the personal runtime socket on Linux.
+    const path = localTransportSocketPath(
+      "default",
+      { ...SANDBOX, XDG_RUNTIME_DIR: "/run/user/1000" },
+      "linux",
+    );
+    expect(path.startsWith(`${SANDBOX.T4_DEV_SANDBOX_ROOT}/`)).toBe(true);
+    expect(path.startsWith("/run/user/1000")).toBe(false);
+  });
+
+  it("fails closed on a half-configured sandbox", () => {
+    // Falling back to the personal socket here is the dangerous outcome, so an
+    // incomplete sandbox must refuse to resolve at all.
+    for (const partial of [
+      { T4_DEV_SANDBOX_ROOT: SANDBOX.T4_DEV_SANDBOX_ROOT },
+      { T4_DEV_SANDBOX: "fixture" },
+      { T4_DEV_SANDBOX: "fixture", T4_DEV_SANDBOX_ROOT: "relative/path" },
+      { T4_DEV_SANDBOX: "Bad Name", T4_DEV_SANDBOX_ROOT: SANDBOX.T4_DEV_SANDBOX_ROOT },
+    ]) {
+      expect(() => localTransportSocketPath("default", partial)).toThrow(
+        "invalid development sandbox configuration",
+      );
+    }
+  });
+
+  it("uses the personal socket when no sandbox is configured", () => {
+    expect(localTransportSocketPath("default", {}, "darwin").startsWith(`${homedir()}/`)).toBe(true);
+    expect(localTransportSocketPath("default", { XDG_RUNTIME_DIR: "/run/user/1000" }, "linux")).toBe(
+      "/run/user/1000/omp/appserver.sock",
+    );
   });
 });

@@ -1,6 +1,6 @@
 {
   "name": "@t4-code/fixture-server",
-  "version": "0.1.31",
+  "version": "0.1.33",
   "private": true,
   "type": "module",
   "exports": {
@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@t4-code/protocol": "workspace:*",
-    "ws": "8.18.3"
+    "ws": "8.21.0"
   },
   "devDependencies": {
     "@types/node": "catalog:",

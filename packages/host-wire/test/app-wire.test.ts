@@ -23,6 +23,8 @@ import {
 	deviceToken,
 	IMAGE_UPLOAD_CHUNK_BYTES,
 	inputObject,
+	parseBounded,
+	parseBoundedTranscriptLine,
 	isSecretLikeKey,
 	isServerFrame,
 	MAX_ARRAY_ITEMS,
@@ -424,6 +426,23 @@ describe("app-wire authority", () => {
 		};
 		expect((decodeServerFrame(raw) as Record<string, unknown>).addedByFuture).toEqual({ safe: true });
 	});
+	test("parseBoundedTranscriptLine permits large inputs while retaining structural bounds", () => {
+		const largePayload = {
+			id: "entry_1",
+			type: "assistant",
+			text: "a".repeat(2 * 1024 * 1024),
+		};
+		const json = JSON.stringify(largePayload);
+		expect(() => parseBounded(json)).toThrow(AppWireError);
+		const parsed = parseBoundedTranscriptLine(json) as Record<string, unknown>;
+		expect(parsed.id).toBe("entry_1");
+		expect((parsed.text as string).length).toBe(2 * 1024 * 1024);
+
+		// Retains structural limits: depth exceeding limit fails
+		let deep = "{}";
+		for (let i = 0; i < 35; i++) deep = `{"a":${deep}}`;
+		expect(() => parseBoundedTranscriptLine(deep)).toThrow(AppWireError);
+	});
 	test("parsed-object approximate byte accounting covers keys and primitive values", () => {
 		const huge = Object.fromEntries(Array.from({ length: 20 }, (_, i) => ["k".repeat(60_000) + i, 1]));
 		expect(() => inputObject(huge)).toThrow(AppWireError);
@@ -739,7 +758,7 @@ describe("app-wire authority", () => {
 	test("exports the bridge schema version independently from the T4 package release", async () => {
 		const metadata = (await Bun.file(new URL("../package.json", import.meta.url)).json()) as { version: string };
 		expect(APP_WIRE_VERSION).toBe("0.7.0");
-		expect(metadata.version).toBe("0.1.31");
+		expect(metadata.version).toBe("0.1.33");
 	});
 	test("session project wire data is opaque and live state is secret-free", () => {
 		const providerTransport = {

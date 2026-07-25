@@ -66,6 +66,19 @@ test("current source tree has one consistent release version", () => {
   assert.deepEqual(collectReleaseConsistencyErrors(files), []);
 });
 
+test("bundled runtime pins the current macOS release certificate", () => {
+  const macosIdentity = JSON.parse(files.get(".github/macos-release-identity.json"));
+  const drifted = changed("apps/desktop/src/bundled-runtime.ts", (text) =>
+    replaceRequired(text, macosIdentity.certificateSha256, "0".repeat(64)),
+  );
+
+  assert.ok(
+    collectReleaseConsistencyErrors(drifted).some((error) =>
+      error.includes("apps/desktop/src/bundled-runtime.ts"),
+    ),
+  );
+});
+
 test("release package discovery ignores non-Node package directories", () => {
   assert.equal(discoverReleasePackagePaths(repoRoot).includes("packages/cluster-operator/package.json"), false);
 });
@@ -167,7 +180,7 @@ test("pins official OMP artifacts and the Gate 0 proof contract", () => {
 test("rejects a tag that differs from the package version", () => {
   assert.ok(
     collectReleaseConsistencyErrors(files, "v9.9.9").some((error) =>
-      error.includes("release tag v9.9.9 does not match v0.1.31"),
+      error.includes("release tag v9.9.9 does not match v0.1.33"),
     ),
   );
 });
@@ -196,7 +209,7 @@ test("tagged releases reject published provenance drift", () => {
   for (const [field, mutate] of appWireCases) {
     const drifted = changedRuntime("publishedAppWire", mutate);
     assert.ok(
-      collectReleaseConsistencyErrors(drifted, "v0.1.31").some((error) =>
+      collectReleaseConsistencyErrors(drifted, "v0.1.33").some((error) =>
         error.includes(
           `published app-wire ${field} must match current app-wire for tagged releases`,
         ),
@@ -239,7 +252,7 @@ test("tagged releases reject published provenance drift", () => {
   for (const [field, mutate] of runtimeCases) {
     const drifted = changedRuntime("publishedRuntime", mutate);
     assert.ok(
-      collectReleaseConsistencyErrors(drifted, "v0.1.31").some((error) =>
+      collectReleaseConsistencyErrors(drifted, "v0.1.33").some((error) =>
         error.includes(
           `published runtime ${field} must match current verified runtime for tagged releases`,
         ),
@@ -251,7 +264,7 @@ test("tagged releases reject published provenance drift", () => {
     runtime.artifactSha256 = "0".repeat(64);
   });
   assert.ok(
-    collectReleaseConsistencyErrors(extended, "v0.1.31").some((error) =>
+    collectReleaseConsistencyErrors(extended, "v0.1.33").some((error) =>
       error.includes(
         "published runtime must exactly match current verified runtime for tagged releases",
       ),
@@ -261,15 +274,15 @@ test("tagged releases reject published provenance drift", () => {
 
 test("rejects workspace, site, README, and runtime version drift", () => {
   const cases = [
-    ["apps/web/package.json", (text) => text.replace('"version": "0.1.31"', '"version": "0.1.3"')],
+    ["apps/web/package.json", (text) => text.replace('"version": "0.1.33"', '"version": "0.1.3"')],
     [
       "apps/site/src/release.ts",
-      (text) => text.replace('RELEASE_TAG = "v0.1.31"', 'RELEASE_TAG = "v0.1.3"'),
+      (text) => text.replace('RELEASE_TAG = "v0.1.33"', 'RELEASE_TAG = "v0.1.3"'),
     ],
-    ["README.md", (text) => text.replace("Download v0.1.31", "Download v0.1.3")],
+    ["README.md", (text) => text.replace("Download v0.1.33", "Download v0.1.3")],
     [
       "apps/desktop/src/target-manager.ts",
-      (text) => text.replace('version: "0.1.31"', 'version: "0.1.3"'),
+      (text) => text.replace('version: "0.1.33"', 'version: "0.1.3"'),
     ],
     [
       "apps/site/src/docs/content.ts",
@@ -299,7 +312,7 @@ test("rejects version drift in a newly added workspace package", () => {
 
 test("rejects updater channel, stable manifest, and publication-contract drift", () => {
   const cases = [
-    ["electron-builder.config.mjs", (text) => text.replace('repo: "t4-code"', 'repo: "renamed"')],
+    ["electron-builder.config.mjs", (text) => text.replace('repo: "omperator"', 'repo: "renamed"')],
     [
       "scripts/generate-release-manifest.mjs",
       (text) =>
@@ -322,8 +335,40 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "needs: [changes, t4-api-generation, core, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]",
-          "needs: [changes, core, tooling, android-debug]",
+          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]",
+          "needs: [changes, check, tooling, android-debug]",
+        ),
+    ],
+    [
+      ".github/workflows/ci.yml",
+      (text) =>
+        text.replace(
+          "needs: [changes, legacy-bridge-continuity, official-omp-gate0]",
+          "needs: [changes, legacy-bridge-continuity]",
+        ),
+    ],
+    [
+      ".github/workflows/ci.yml",
+      (text) =>
+        text.replace(
+          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]",
+          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, maintainer, android-debug]",
+        ),
+    ],
+    [
+      ".github/workflows/ci.yml",
+      (text) =>
+        text.replace(
+          "if: ${{ github.event_name == 'push' && needs.changes.outputs.continuity == 'true' }}",
+          "if: ${{ github.event_name != 'pull_request' && needs.changes.outputs.continuity == 'true' }}",
+        ),
+    ],
+    [
+      ".github/workflows/ci.yml",
+      (text) =>
+        text.replace(
+          "if: ${{ needs.changes.outputs.maintainer == 'true' }}",
+          "if: ${{ github.event_name != 'pull_request' && needs.changes.outputs.maintainer == 'true' }}",
         ),
     ],
     [
@@ -562,11 +607,11 @@ test("accepts a current app-wire update without rewriting published release surf
 
 test("rejects stale README release URLs while allowing historical prose", () => {
   const oldTag = ["v0", "1", "3"].join(".");
-  const oldReleaseUrl = `https://github.com/LycaonLLC/t4-code/releases/tag/${oldTag}`;
+  const oldReleaseUrl = `https://github.com/wolfiesch/omperator/releases/tag/${oldTag}`;
   const staleLink = changed("README.md", (text) => `${text}\n[Old release](${oldReleaseUrl})\n`);
   assert.ok(
     collectReleaseConsistencyErrors(staleLink).some((error) =>
-      error.includes("release URL for v0.1.3; expected v0.1.31"),
+      error.includes("release URL for v0.1.3; expected v0.1.33"),
     ),
   );
   assert.deepEqual(collectReleaseConsistencyErrors(files), []);
@@ -578,7 +623,18 @@ test("deploys release site source only after artifact publication", () => {
   const deployWorkflow = files.get(".github/workflows/deploy-site.yml");
 
   assert.ok(ciWorkflow.includes("android-debug:"));
-  assert.ok(ciWorkflow.includes("core:"));
+  assert.ok(ciWorkflow.includes("check:"));
+  assert.ok(ciWorkflow.includes("unit-tests:"));
+  assert.ok(ciWorkflow.includes("build-e2e:"));
+  assert.ok(ciWorkflow.includes("path: ~/.cache/ms-playwright"));
+  assert.ok(
+    ciWorkflow.includes(
+      "key: playwright-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}",
+    ),
+  );
+  assert.ok(ciWorkflow.includes("run: pnpm exec playwright install --with-deps chromium"));
+  assert.ok(ciWorkflow.includes("run: pnpm exec playwright install-deps chromium"));
+  assert.ok(ciWorkflow.includes("key: ${{ steps.playwright-cache.outputs.cache-primary-key }}"));
   assert.ok(ciWorkflow.includes("legacy-bridge-continuity:"));
   assert.ok(ciWorkflow.includes("current-bridge-continuity:"));
   assert.ok(ciWorkflow.includes("ref: ${{ github.event.pull_request.head.sha || github.sha }}"));
@@ -621,12 +677,19 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("if: ${{ always() }}"));
   assert.ok(
     ciWorkflow.includes(
-      "needs: [changes, t4-api-generation, core, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]",
+      "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]",
     ),
   );
+  assert.ok(ciWorkflow.includes("name: release-gates"));
+  assert.ok(ciWorkflow.includes("needs: [changes, legacy-bridge-continuity, official-omp-gate0]"));
   assert.ok(ciWorkflow.includes('test "$CHANGES_RESULT" = success'));
   assert.ok(ciWorkflow.includes('test "$T4_API_GENERATION_RESULT" = success'));
-  assert.ok(ciWorkflow.includes('test "$CORE_RESULT" = success'));
+  assert.ok(ciWorkflow.includes('test "$CHECK_RESULT" = success'));
+  assert.ok(ciWorkflow.includes('test "$UNIT_TESTS_RESULT" = success'));
+  assert.ok(ciWorkflow.includes('test "$BUILD_E2E_RESULT" = success'));
+  assert.ok(
+    ciWorkflow.includes("OFFICIAL_OMP_GATE0_RESULT: ${{ needs.official-omp-gate0.result }}"),
+  );
   assert.ok(
     ciWorkflow.includes("CURRENT_CONTINUITY_RESULT: ${{ needs.current-bridge-continuity.result }}"),
   );
@@ -683,8 +746,13 @@ test("deploys release site source only after artifact publication", () => {
     releaseWorkflow.indexOf("  verify:"),
     releaseWorkflow.indexOf("  ci-authority:"),
   );
+  assert.ok(releaseVerify.includes("Install immutable release dependencies"));
+  assert.ok(releaseVerify.includes("pnpm install --frozen-lockfile"));
+  assert.ok(
+    releaseVerify.indexOf("pnpm install --frozen-lockfile") <
+      releaseVerify.indexOf("node scripts/check-release-consistency.mjs"),
+  );
   for (const duplicate of [
-    "pnpm install",
     "pnpm check",
     "pnpm test",
     "pnpm build",
@@ -692,6 +760,32 @@ test("deploys release site source only after artifact publication", () => {
   ]) {
     assert.ok(!releaseVerify.includes(duplicate));
   }
+  const releaseLinux = releaseWorkflow.slice(
+    releaseWorkflow.indexOf("  build-linux:"),
+    releaseWorkflow.indexOf("  build-android:"),
+  );
+  const releaseMacos = releaseWorkflow.slice(
+    releaseWorkflow.indexOf("  build-macos:"),
+    releaseWorkflow.indexOf("  publish:"),
+  );
+  for (const releaseBuild of [releaseLinux, releaseMacos]) {
+    assert.ok(
+      releaseBuild.includes(
+        "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6",
+      ),
+    );
+    assert.ok(releaseBuild.includes("bun-version: 1.3.14"));
+  }
+  const releasePublish = releaseWorkflow.slice(
+    releaseWorkflow.indexOf("  publish:"),
+    releaseWorkflow.indexOf("  dispatch-site:"),
+  );
+  assert.ok(releasePublish.includes("Install release reconciliation dependencies"));
+  assert.ok(releasePublish.includes("pnpm install --frozen-lockfile"));
+  assert.ok(
+    releasePublish.indexOf("pnpm install --frozen-lockfile") <
+      releasePublish.indexOf("node scripts/reconcile-release-assets.mjs"),
+  );
   assert.ok(releaseWorkflow.includes("pnpm --filter @t4-code/mobile build:android:release"));
   assert.ok(releaseWorkflow.includes("T4_ANDROID_KEYSTORE_BASE64"));
   assert.ok(releaseWorkflow.includes("node scripts/inspect-android-release.mjs"));
@@ -724,6 +818,13 @@ test("deploys release site source only after artifact publication", () => {
   );
   assert.ok(releaseWorkflow.includes("needs: [verify, publish]"));
   assert.ok(releaseWorkflow.includes("actions: write"));
+  assert.ok(
+    releaseWorkflow.includes("if: ${{ vars.T4_RELEASE_SITE_DEPLOY_ENABLED == 'true' }}"),
+  );
+  assert.ok(
+    releaseWorkflow.includes("if: ${{ vars.T4_RELEASE_SITE_DEPLOY_ENABLED != 'true' }}"),
+  );
+  assert.ok(releaseWorkflow.includes("record-deferred-site:"));
   assert.ok(releaseWorkflow.includes("node scripts/dispatch-site-deployment.mjs"));
   assert.ok(releaseWorkflow.includes('--tag "$RELEASE_TAG"'));
   assert.ok(releaseWorkflow.includes('--commit "$SOURCE_SHA"'));

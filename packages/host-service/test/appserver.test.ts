@@ -1210,6 +1210,303 @@ describe("appserver lifecycle", () => {
 			await rm(root, { recursive: true, force: true });
 		}
 	});
+	// The other fork tests stub the child factory, so none of them exercise what
+	// happens when a copy's runtime genuinely refuses to start. That gap let a
+	// failed fork ship an orphan session plus the lock its dead child took.
+	async function forkWithFailingRuntime(childScript: string, deleteFails = false) {
+		const root = await mkdtemp(join(tmpdir(), "t4-fork-runtime-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const sessionOwnershipPath = join(root, "profile", "owned-sessions.json");
+		const sourcePath = join(root, "source.jsonl");
+		const forkPath = join(root, "copy.jsonl");
+		const sourceId = sessionId("runtime-source");
+		const forkId = sessionId("runtime-copy");
+		const timestamp = "2026-07-25T00:00:00.000Z";
+		await writeFile(
+			sourcePath,
+			`${JSON.stringify({ type: "session", version: 3, id: sourceId, cwd: root, timestamp, title: "Source" })}\n`,
+		);
+		const discovery = new FileSessionDiscovery(root, realFs, host, true);
+		const sessionAuthority = {
+			create: async () => {
+				throw new Error("create is not used by this test");
+			},
+			list: () => discovery.list(),
+			archive: async () => {},
+			restore: async () => {},
+			delete: async (session: SessionRecord) => {
+				if (deleteFails) throw new Error("durable delete refused");
+				await rm(session.path, { force: true });
+			},
+			fork: async () => {
+				await writeFile(
+					forkPath,
+					`${JSON.stringify({ type: "session", version: 3, id: forkId, cwd: root, timestamp, title: "Source" })}\n`,
+				);
+				return { sessionId: forkId, path: forkPath, cwd: root, title: "Source", entries: [] };
+			},
+		};
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "fork-runtime-test",
+			socketPath,
+			sessionOwnershipPath,
+			discovery,
+			sessionAuthority,
+			// The real factory, spawning a real process that fails the way a
+			// misconfigured runtime does.
+			rpcChildInvocation: { executable: "/bin/sh", prefixArgv: ["-c", childScript] },
+			// Keep the SIGTERM-to-SIGKILL escalation quick when a child ignores the
+			// first signal.
+			lifecycleQuiesceTimeoutMs: 300,
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		client.sendJson({
+			v: "omp-app/1",
+			type: "hello",
+			protocol: { min: "omp-app/1", max: "omp-app/1" },
+			client: { name: "fork-runtime", version: "1", build: "test", platform: "linux" },
+			requestedFeatures: ["session.observer", "session.unverified", "session.fork"],
+			capabilities: { client: ["sessions.manage", "sessions.read"] },
+			savedCursors: [],
+		});
+		while ((await client.nextServer()).type !== "sessions") {
+			/* drain welcome */
+		}
+		client.sendJson({
+			v: "omp-app/1",
+			type: "command",
+			requestId: "fork-runtime",
+			commandId: "fork-runtime-command",
+			hostId: host,
+			sessionId: sourceId,
+			command: "session.fork",
+			args: {},
+		});
+		let response: Record<string, unknown> | undefined;
+		for (;;) {
+			const frame = await client.nextServer();
+			if (frame.type === "response" && frame.requestId === "fork-runtime") {
+				response = frame as unknown as Record<string, unknown>;
+				break;
+			}
+		}
+		return { appserver, client, root, forkPath, sourcePath, forkId, response };
+	}
+
+	test("a fork whose runtime cannot start fails cleanly and leaves no copy behind", async () => {
+		const scenario = await forkWithFailingRuntime("echo 'No models available. Use /login' >&2; exit 1");
+		try {
+			const error = scenario.response?.error as { code?: string; message?: string } | undefined;
+			expect(scenario.response?.ok).toBe(false);
+			// Not outcome_unknown: the command definitively failed and was undone.
+			expect(error?.code).toBe("session_start_failed");
+			expect(error?.message).toContain("no model is configured");
+			// The child's raw stderr can carry secrets, so none of it crosses.
+			expect(error?.message).not.toContain("/login");
+			expect(error?.message).not.toContain(scenario.root);
+			// The orphan is the real regression: the copy must be gone.
+			expect(await Bun.file(scenario.forkPath).exists()).toBe(false);
+			expect(scenario.appserver.snapshot(scenario.forkId)).toBeUndefined();
+		} finally {
+			scenario.client.destroy();
+			await scenario.client.closed();
+			await scenario.appserver.stop();
+			await rm(scenario.root, { recursive: true, force: true });
+		}
+	});
+
+	test("a fork keeps the copy visible when its runtime fails and cleanup also fails", async () => {
+		const scenario = await forkWithFailingRuntime("exit 1", true);
+		try {
+			const error = scenario.response?.error as { code?: string; message?: string } | undefined;
+			expect(scenario.response?.ok).toBe(false);
+			expect(error?.message).toContain("could not be removed");
+			// Cleanup failed, so the copy survives. Keeping the record is what lets
+			// an operator still see and retry it instead of silently orphaning it.
+			expect(await Bun.file(scenario.forkPath).exists()).toBe(true);
+			expect(scenario.appserver.snapshot(scenario.forkId)).toBeDefined();
+		} finally {
+			scenario.client.destroy();
+			await scenario.client.closed();
+			await scenario.appserver.stop();
+			await rm(scenario.root, { recursive: true, force: true });
+		}
+	});
+	// stdout EOF and the stderr reader race. A child that writes its diagnostic
+	// and exits in the same breath is the ordering that previously lost it and
+	// reported a bare EOF instead.
+	test("classifies a runtime that prints its reason and exits immediately", async () => {
+		const scenario = await forkWithFailingRuntime("printf 'No models available\\n' >&2; exit 1");
+		try {
+			const error = scenario.response?.error as { code?: string; message?: string } | undefined;
+			expect(error?.code).toBe("session_start_failed");
+			expect(error?.message).toContain("no model is configured");
+			expect(await Bun.file(scenario.forkPath).exists()).toBe(false);
+		} finally {
+			scenario.client.destroy();
+			await scenario.client.closed();
+			await scenario.appserver.stop();
+			await rm(scenario.root, { recursive: true, force: true });
+		}
+	});
+	// `stop()` only signals. A child that ignores SIGTERM must still be gone
+	// before the copy is deleted, or it can rewrite the lock afterwards.
+	test("escalates to SIGKILL before removing the copy of a child that ignores SIGTERM", async () => {
+		const pidFile = join(tmpdir(), `t4-stubborn-child-${Date.now()}.pid`);
+		const scenario = await forkWithFailingRuntime(
+			`trap '' TERM; echo $$ > ${pidFile}; echo not-json; sleep 30`,
+		);
+		try {
+			const error = scenario.response?.error as { code?: string; message?: string } | undefined;
+			expect(scenario.response?.ok).toBe(false);
+			expect(error?.code).toBe("session_start_failed");
+			// The contract is the ordering: the child must already be gone by the
+			// time the response lands, not merely signalled. Without that wait this
+			// assertion fails while the copy check still passes.
+			const childPid = Number.parseInt(await Bun.file(pidFile).text(), 10);
+			expect(Number.isInteger(childPid)).toBe(true);
+			expect(() => process.kill(childPid, 0)).toThrow();
+			expect(await Bun.file(scenario.forkPath).exists()).toBe(false);
+			expect(scenario.appserver.snapshot(scenario.forkId)).toBeUndefined();
+		} finally {
+			scenario.client.destroy();
+			await scenario.client.closed();
+			await scenario.appserver.stop();
+			await rm(scenario.root, { recursive: true, force: true });
+			await rm(pidFile, { force: true });
+		}
+	});
+	// A historic transcript often names a project directory that has since been
+	// deleted. The copy needs somewhere real to run, so the caller chooses; the
+	// host never substitutes a directory on its own.
+	async function forkIntoDirectory(sourceCwd: string, requestedCwd: string | undefined) {
+		const root = await mkdtemp(join(tmpdir(), "t4-fork-cwd-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const sessionOwnershipPath = join(root, "profile", "owned-sessions.json");
+		const sourcePath = join(root, "source.jsonl");
+		const forkPath = join(root, "copy.jsonl");
+		const sourceId = sessionId("cwd-source");
+		const forkId = sessionId("cwd-copy");
+		const timestamp = "2026-07-25T00:00:00.000Z";
+		await writeFile(
+			sourcePath,
+			`${JSON.stringify({ type: "session", version: 3, id: sourceId, cwd: sourceCwd, timestamp, title: "Source" })}\n`,
+		);
+		const discovery = new FileSessionDiscovery(root, realFs, host, true);
+		let forkedInto: string | undefined;
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "fork-cwd-test",
+			socketPath,
+			sessionOwnershipPath,
+			discovery,
+			sessionAuthority: {
+				create: async () => {
+					throw new Error("create is not used by this test");
+				},
+				list: () => discovery.list(),
+				archive: async () => {},
+				restore: async () => {},
+				delete: async (session: SessionRecord) => {
+					await rm(session.path, { force: true });
+				},
+				fork: async (_source: SessionRecord, cwd?: string) => {
+					forkedInto = cwd;
+					const effective = cwd ?? sourceCwd;
+					await writeFile(
+						forkPath,
+						`${JSON.stringify({ type: "session", version: 3, id: forkId, cwd: effective, timestamp, title: "Source" })}\n`,
+					);
+					return { sessionId: forkId, path: forkPath, cwd: effective, title: "Source", entries: [] };
+				},
+			},
+			// Any spawn fails; these tests only care about the directory decision.
+			rpcChildInvocation: { executable: "/bin/sh", prefixArgv: ["-c", "exit 1"] },
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		client.sendJson({
+			v: "omp-app/1",
+			type: "hello",
+			protocol: { min: "omp-app/1", max: "omp-app/1" },
+			client: { name: "fork-cwd", version: "1", build: "test", platform: "linux" },
+			requestedFeatures: ["session.observer", "session.unverified", "session.fork"],
+			capabilities: { client: ["sessions.manage", "sessions.read"] },
+			savedCursors: [],
+		});
+		while ((await client.nextServer()).type !== "sessions") {
+			/* drain welcome */
+		}
+		client.sendJson({
+			v: "omp-app/1",
+			type: "command",
+			requestId: "fork-cwd",
+			commandId: "fork-cwd-command",
+			hostId: host,
+			sessionId: sourceId,
+			command: "session.fork",
+			args: requestedCwd === undefined ? {} : { cwd: requestedCwd },
+		});
+		let response: Record<string, unknown> | undefined;
+		for (;;) {
+			const frame = await client.nextServer();
+			if (frame.type === "response" && frame.requestId === "fork-cwd") {
+				response = frame as unknown as Record<string, unknown>;
+				break;
+			}
+		}
+		return { appserver, client, root, response, forkedInto: () => forkedInto };
+	}
+
+	test("asks for a working directory when the source project directory is gone", async () => {
+		const scenario = await forkIntoDirectory(join(tmpdir(), "t4-deleted-project-fixture"), undefined);
+		try {
+			const error = scenario.response?.error as { code?: string; message?: string } | undefined;
+			expect(scenario.response?.ok).toBe(false);
+			// Actionable, so the caller can prompt and retry, not a raw ENOENT.
+			expect(error?.code).toBe("session_cwd_missing");
+			expect(error?.message).toContain("choose a working directory");
+			// Nothing was copied: the decision comes before any write.
+			expect(scenario.forkedInto()).toBeUndefined();
+		} finally {
+			scenario.client.destroy();
+			await scenario.client.closed();
+			await scenario.appserver.stop();
+			await rm(scenario.root, { recursive: true, force: true });
+		}
+	});
+
+	test("forks a session with a gone directory into the one the caller chose", async () => {
+		const chosen = await mkdtemp(join(tmpdir(), "t4-chosen-project-"));
+		const scenario = await forkIntoDirectory(join(tmpdir(), "t4-deleted-project-fixture"), chosen);
+		try {
+			// The authority receives the choice, so it lands in the copy's header
+			// rather than living only in this process's memory.
+			expect(scenario.forkedInto()).toBe(chosen);
+		} finally {
+			scenario.client.destroy();
+			await scenario.client.closed();
+			await scenario.appserver.stop();
+			await rm(scenario.root, { recursive: true, force: true });
+			await rm(chosen, { recursive: true, force: true });
+		}
+	});
+
+	test("refuses a chosen working directory that does not exist", async () => {
+		const scenario = await forkIntoDirectory(tmpdir(), join(tmpdir(), "t4-absent-choice-fixture"));
+		try {
+			const error = scenario.response?.error as { code?: string; message?: string } | undefined;
+			expect(error?.code).toBe("session_cwd_invalid");
+			expect(scenario.forkedInto()).toBeUndefined();
+		} finally {
+			scenario.client.destroy();
+			await scenario.client.closed();
+			await scenario.appserver.stop();
+			await rm(scenario.root, { recursive: true, force: true });
+		}
+	});
 	test("persists ownership after safely promoting an external session", async () => {
 		const root = await mkdtemp(join(tmpdir(), "t4-promoted-session-restart-"));
 		const socketPath = join(root, "run", "appserver.sock");

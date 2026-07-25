@@ -286,7 +286,13 @@ export class OmpAuthorityBridgeClient {
 			// OMP resolves the source from its own inventory by session id; the
 			// reference carries no authority of its own.
 			...(this.#methods.has("session.fork")
-				? { fork: async (source: SessionRecord) => call("session.fork", { session: sessionReference(source) }) as never }
+				? {
+						fork: async (source: SessionRecord, cwd?: string) =>
+							call("session.fork", {
+								session: sessionReference(source),
+								...(cwd === undefined ? {} : { cwd }),
+							}) as never,
+					}
 				: {}),
 		};
 		const discovery: SessionDiscovery = {

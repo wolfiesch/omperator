@@ -48,7 +48,7 @@ test("mobile package pins one Capacitor release across core, CLI, and Android", 
 test("Android credentials are encrypted by a registered Keystore plugin", async () => {
   const sourceRoot = resolve(
     mobileRoot,
-    "android/app/src/main/java/com/lycaonsolutions/t4code",
+    "android/app/src/main/java/net/t4code/app",
   );
   const activity = await readFile(resolve(sourceRoot, "MainActivity.java"), "utf8");
   const plugin = await readFile(resolve(sourceRoot, "T4SecureStoragePlugin.java"), "utf8");
@@ -66,7 +66,7 @@ test("Android credentials are encrypted by a registered Keystore plugin", async 
 test("Android secure credentials are host-scoped and migrate legacy storage", async () => {
   const sourceRoot = resolve(
     mobileRoot,
-    "android/app/src/main/java/com/lycaonsolutions/t4code",
+    "android/app/src/main/java/net/t4code/app",
   );
   const plugin = await readFile(resolve(sourceRoot, "T4SecureStoragePlugin.java"), "utf8");
 
@@ -105,7 +105,7 @@ test("Android foreground resume wakes the browser connection immediately", async
   const activity = await readFile(
     resolve(
       mobileRoot,
-      "android/app/src/main/java/com/lycaonsolutions/t4code/MainActivity.java",
+      "android/app/src/main/java/net/t4code/app/MainActivity.java",
     ),
     "utf8",
   );
@@ -119,7 +119,7 @@ test("Android foreground resume wakes the browser connection immediately", async
 test("Android updates use a registered native bridge with no renderer-supplied URL", async () => {
   const sourceRoot = resolve(
     mobileRoot,
-    "android/app/src/main/java/com/lycaonsolutions/t4code",
+    "android/app/src/main/java/net/t4code/app",
   );
   const activity = await readFile(resolve(sourceRoot, "MainActivity.java"), "utf8");
   const fileProvider = await readFile(resolve(sourceRoot, "T4FileProvider.java"), "utf8");
@@ -135,11 +135,11 @@ test("Android updates use a registered native bridge with no renderer-supplied U
   assert.match(activity, /registerPlugin\(T4UpdatePlugin\.class\)/);
   assert.match(plugin, /@CapacitorPlugin\(name = "T4Update"\)/);
   assert.match(plugin, /https:\/\/t4code\.net\/releases\/latest\.json/);
-  assert.match(verifier, /https:\/\/github\.com\/LycaonLLC\/t4-code\/releases\/download\//);
+  assert.match(verifier, /https:\/\/github\.com\/wolfiesch\/omperator\/releases\/download\//);
   assert.match(plugin, /checkForUpdate\(PluginCall call\)/);
   assert.match(plugin, /openUpdate\(PluginCall call\)/);
   assert.match(plugin, /T4UpdateVerifier\.copyExact\(input, output, release\.apkSize, release\.apkSha256\)/);
-  assert.match(plugin, /EXPECTED_PACKAGE_ID = "com\.lycaonsolutions\.t4code"/);
+  assert.match(plugin, /EXPECTED_PACKAGE_ID = "net\.t4code\.app"/);
   assert.match(plugin, /expectedVersion\.equals\(candidate\.versionName\)/);
   assert.match(plugin, /PackageManager\.GET_SIGNING_CERTIFICATES/);
   assert.match(plugin, /PackageManager\.GET_SIGNATURES/);

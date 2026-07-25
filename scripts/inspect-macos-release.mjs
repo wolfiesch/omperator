@@ -23,8 +23,8 @@ export function validateMacosIdentityContract(contract) {
     throw new Error("macOS release identity must be an object");
   }
   if (contract.schemaVersion !== 1) throw new Error("macOS identity schemaVersion must be 1");
-  if (requireString(contract.bundleId, "bundleId") !== "com.lycaonsolutions.t4code") {
-    throw new Error("macOS identity bundleId must be com.lycaonsolutions.t4code");
+  if (requireString(contract.bundleId, "bundleId") !== "net.t4code.app") {
+    throw new Error("macOS identity bundleId must be net.t4code.app");
   }
   if (!TEAM_ID_PATTERN.test(requireString(contract.teamId, "teamId"))) {
     throw new Error("macOS identity teamId must be 10 uppercase letters or digits");

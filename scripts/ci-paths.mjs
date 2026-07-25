@@ -3,10 +3,41 @@
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 
+// Selection itself, and the release authority that trusts a run conclusion,
+// cannot be graded by the selection they define. A change to any of these must
+// be proven by a full run, or a bug in the classifier could pick a narrow set
+// of legs, conclude green, and become the baseline that every later run
+// inherits from.
 const FORCE_ALL = [
+  /^\.github\/workflows\/(?:ci|release)\.yml$/u,
   /^package\.json$/u,
+  /^patches\//u,
   /^pnpm-lock\.yaml$/u,
   /^pnpm-workspace\.yaml$/u,
+  /^scripts\/check-release-consistency(?:\.test)?\.mjs$/u,
+  /^scripts\/ci-baseline(?:\.test)?\.mjs$/u,
+  /^scripts\/ci-paths(?:\.test)?\.mjs$/u,
+  /^scripts\/read-bounded-response\.mjs$/u,
+  /^scripts\/wait-for-exact-ci(?:\.test)?\.mjs$/u,
+];
+
+// Paths that cannot affect any path-gated leg because the unconditional legs
+// already cover them: `check` lints and typechecks the workspace, `unit-tests`
+// runs every workspace suite, and `build-e2e` builds, drives the end-to-end
+// suite, and asserts the packaging contract. A path listed here is a claim
+// that those three prove it. Anything not listed here and not claimed by a
+// group below fails closed to the full matrix, so an unclassified new
+// directory is slow rather than silently unproven.
+const NO_IMPACT = [
+  /^\.gitignore$/u,
+  /^AGENTS\.md$/u,
+  /^README\.md$/u,
+  /^Taskfile\.yml$/u,
+  /^apps\/(?:desktop|site)\//u,
+  /^e2e\/(?!cluster-operator\.spec\.ts)/u,
+  /^electron-builder\.config\.mjs$/u,
+  /^infra\/site\//u,
+  /^packages\/(?:fixture-server|service-manager)\//u,
 ];
 
 const GROUP_PATTERNS = Object.freeze({
@@ -19,6 +50,7 @@ const GROUP_PATTERNS = Object.freeze({
     /^packages\/host-service\/package\.json$/u,
     /^packages\/host-wire\/src\//u,
     /^packages\/host-wire\/package\.json$/u,
+    /^packages\/protocol\//u,
     /^provenance\/omp-host-migration\.json$/u,
     /^scripts\/legacy-bridge-continuity(?:\.test)?\.mjs$/u,
     /^scripts\/ci-paths(?:\.test)?\.mjs$/u,
@@ -40,6 +72,7 @@ const GROUP_PATTERNS = Object.freeze({
     /^packages\/host-service\/(?:bin\/official-omp-gate0\.ts|package\.json)$/u,
     /^packages\/host-service\/src\/(?:official-omp-profile-authority|rpc-child|server|types)\.ts$/u,
     /^packages\/host-daemon\/(?:bin\/official-omp-packaged-proof\.ts|package\.json|src\/cli\.ts)$/u,
+    /^packages\/protocol\//u,
     /^scripts\/stage-omp-runtime\.mjs$/u,
   ],
   tooling: [
@@ -51,9 +84,18 @@ const GROUP_PATTERNS = Object.freeze({
     /^scripts\//u,
     /^packages\/host-(?:daemon|service|wire)\//u,
   ],
+  // The maintainer deployment suite spawns ~150 bash fixtures and costs minutes.
+  // Its only subject is the ops/t4-maintainer surface, so keep it off the broad
+  // tooling trigger and run it when that surface or its harness actually moves.
+  maintainer: [
+    /^\.github\/workflows\/ci\.yml$/u,
+    /^ops\/t4-maintainer\//u,
+    /^scripts\/t4-maintainer-/u,
+    /^scripts\/test-temporary-directory\.mjs$/u,
+  ],
   android_debug: [
     /^apps\/(?:mobile|web)\//u,
-    /^packages\/(?:client|ui)\//u,
+    /^packages\/(?:client|protocol|ui)\//u,
     /^packages\/host-wire\//u,
   ],
 });
@@ -64,9 +106,18 @@ function normalizePath(path) {
 
 export function classifyCiPaths(paths) {
   const normalized = [...new Set(paths.map(normalizePath).filter(Boolean))];
-  const all = normalized.some((path) => FORCE_ALL.some((pattern) => pattern.test(path)));
+  const groups = Object.entries(GROUP_PATTERNS);
+  const all = normalized.some(
+    (path) =>
+      FORCE_ALL.some((pattern) => pattern.test(path)) ||
+      // A path no group claims and no no-impact rule excuses is unclassified.
+      // Selection now decides what a merge run proves, so an unclassified path
+      // must widen coverage rather than quietly narrow it.
+      (!NO_IMPACT.some((pattern) => pattern.test(path)) &&
+        !groups.some(([, patterns]) => patterns.some((pattern) => pattern.test(path)))),
+  );
   return Object.fromEntries(
-    Object.entries(GROUP_PATTERNS).map(([group, patterns]) => [
+    groups.map(([group, patterns]) => [
       group,
       all || normalized.some((path) => patterns.some((pattern) => pattern.test(path))),
     ]),

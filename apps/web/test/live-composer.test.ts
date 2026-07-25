@@ -2593,6 +2593,103 @@ describe("session lifecycle", () => {
     await controller.stop();
   });
 
+  it("restores an entry missing from a gappy warm projection when the page supplies it", async () => {
+    const shell = new FakeShell();
+    shell.commandResult = (request) => {
+      if (request.intent.command !== "transcript.page") return undefined;
+      return {
+        entries: [
+          entry("tail-1", "Tail"),
+          entry("gap-1", "Dropped user turn"),
+          entry("tail-2", "Tail two"),
+        ],
+        hasMore: false,
+        generation: "generation-1",
+      };
+    };
+    const controller = createDesktopRuntimeController({ shell });
+    await controller.start();
+    shell.emitFrame({
+      targetId: "local",
+      frame: makeWelcome(HOST, ["sessions.read"], ["transcript.page"]),
+    });
+    // Warm projection is missing "gap-1" but retains the entries on both sides of it.
+    shell.emitFrame({
+      targetId: "local",
+      frame: snapshotFrame(5, [entry("tail-1", "Tail"), entry("tail-2", "Tail two")]),
+    });
+    shell.emitFrame({ targetId: "local", frame: pendingPromptsSessionsFrame([], 0, "idle") });
+    const runtime = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+    await settle();
+
+    expect(runtime.getSnapshot().projection.entries.map((value) => value.id)).toEqual([
+      "tail-1",
+      "gap-1",
+      "tail-2",
+    ]);
+
+    runtime.dispose();
+    await controller.stop();
+  });
+
+  it("keeps live entries outside the page range in order while repairing a gap", async () => {
+    const shell = new FakeShell();
+    shell.commandResult = (request) => {
+      if (request.intent.command !== "transcript.page") return undefined;
+      // The bounded page only describes the tail-1..tail-2 range.
+      return {
+        entries: [
+          entry("tail-1", "Tail"),
+          entry("gap-1", "Dropped user turn"),
+          entry("tail-2", "Tail two"),
+        ],
+        hasMore: false,
+        generation: "generation-1",
+      };
+    };
+    const controller = createDesktopRuntimeController({ shell });
+    await controller.start();
+    shell.emitFrame({
+      targetId: "local",
+      frame: makeWelcome(HOST, ["sessions.read"], ["transcript.page"]),
+    });
+    // Warm projection straddles the page: it holds an older entry before the page
+    // range and a newer entry after it, and is missing "gap-1" inside the range.
+    shell.emitFrame({
+      targetId: "local",
+      frame: snapshotFrame(5, [
+        entry("older-1", "Older"),
+        entry("tail-1", "Tail"),
+        entry("tail-2", "Tail two"),
+        entry("newer-1", "Newer"),
+      ]),
+    });
+    shell.emitFrame({ targetId: "local", frame: pendingPromptsSessionsFrame([], 0, "idle") });
+    const runtime = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+    await settle();
+
+    expect(runtime.getSnapshot().projection.entries.map((value) => value.id)).toEqual([
+      "older-1",
+      "tail-1",
+      "gap-1",
+      "tail-2",
+      "newer-1",
+    ]);
+
+    runtime.dispose();
+    await controller.stop();
+  });
+
   it("rebuilds retained ask, approval, and plan state across runtime recreation", async () => {
     const { shell, controller, runtime } = await startedRuntime();
     shell.emitFrame({

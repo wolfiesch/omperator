@@ -3,6 +3,9 @@ import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
 import { load as parseYaml } from "js-yaml";
+import { expectedReleaseAssetNames } from "./release-asset-names.mjs";
+
+export { expectedReleaseAssetNames };
 
 export const RELEASE_CONTRACT_PATHS = [
   ".woodpecker.yml",
@@ -16,6 +19,7 @@ export const RELEASE_CONTRACT_PATHS = [
   "README.md",
   "SECURITY.md",
   "THIRD_PARTY_NOTICES.md",
+  "apps/desktop/src/bundled-runtime.ts",
   "apps/desktop/src/target-manager.ts",
   "apps/site/src/docs/content.ts",
   "apps/site/src/release.ts",
@@ -29,6 +33,8 @@ export const RELEASE_CONTRACT_PATHS = [
   "packages/client/src/omp-client-frames.ts",
   "provenance/omp-host-migration.json",
   "scripts/check-release-publication.mjs",
+  "scripts/ci-baseline.mjs",
+  "scripts/ci-paths.mjs",
   "scripts/deploy-site.mjs",
   "scripts/dispatch-site-deployment.mjs",
   "scripts/generate-release-manifest.mjs",
@@ -40,7 +46,7 @@ export const RELEASE_CONTRACT_PATHS = [
   "vendor/app-wire/manifest.json",
 ];
 
-const REPOSITORY_URL = "https://github.com/LycaonLLC/t4-code";
+const REPOSITORY_URL = "https://github.com/wolfiesch/omperator";
 const OMP_RUNTIME_REPOSITORY = "https://github.com/wolfiesch/oh-my-pi";
 const OMP_APP_WIRE_SOURCE_REPOSITORY = "https://github.com/lyc-aon/oh-my-pi";
 const OMP_UPSTREAM_REPOSITORY = "https://github.com/can1357/oh-my-pi";
@@ -55,16 +61,6 @@ const VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const PATCH_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
-
-export function expectedReleaseAssetNames(version) {
-  return [
-    `T4-Code-${version}-android.apk`,
-    `T4-Code-${version}-linux-amd64.deb`,
-    `T4-Code-${version}-linux-x86_64.AppImage`,
-    `T4-Code-${version}-mac-arm64.dmg`,
-    `T4-Code-${version}-mac-arm64.zip`,
-  ];
-}
 
 export function discoverReleasePackagePaths(repoRoot) {
   const paths = ["package.json"];
@@ -374,6 +370,7 @@ function validateOfficialGate0Snapshot(snapshot, officialRuntime, path, errors) 
       "prompt",
       "durable-jsonl",
       "t4-wire-projection",
+      "terminal",
     ])
   ) {
     errors.push(`${path} packagedHostProof.requiredScenarios must match the packaged host contract`);
@@ -404,8 +401,8 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   if (androidIdentity?.schemaVersion !== 1) {
     errors.push(`${androidIdentityPath} schemaVersion must be 1`);
   }
-  if (androidIdentity?.applicationId !== "com.lycaonsolutions.t4code") {
-    errors.push(`${androidIdentityPath} applicationId must be com.lycaonsolutions.t4code`);
+  if (androidIdentity?.applicationId !== "net.t4code.app") {
+    errors.push(`${androidIdentityPath} applicationId must be net.t4code.app`);
   }
   if (androidIdentity?.minSdkVersion !== 24) {
     errors.push(`${androidIdentityPath} minSdkVersion must be 24`);
@@ -419,9 +416,16 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   ) {
     errors.push(`${androidIdentityPath} signing certificate must be a lowercase SHA-256 digest`);
   }
-  if (
-    typeof androidIdentity?.certificateBaseline?.assetSha256 !== "string" ||
-    !SHA256_PATTERN.test(androidIdentity.certificateBaseline.assetSha256)
+  const androidIdentityIsObject =
+    typeof androidIdentity === "object" && androidIdentity !== null;
+  if (androidIdentityIsObject && !("certificateBaseline" in androidIdentity)) {
+    errors.push(
+      `${androidIdentityPath} must declare certificateBaseline, or null when no published APK establishes the key yet`,
+    );
+  } else if (
+    androidIdentity?.certificateBaseline !== null &&
+    (typeof androidIdentity?.certificateBaseline?.assetSha256 !== "string" ||
+      !SHA256_PATTERN.test(androidIdentity.certificateBaseline.assetSha256))
   ) {
     errors.push(
       `${androidIdentityPath} certificate baseline asset must have a lowercase SHA-256 digest`,
@@ -433,8 +437,8 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   if (macosIdentity?.schemaVersion !== 1) {
     errors.push(`${macosIdentityPath} schemaVersion must be 1`);
   }
-  if (macosIdentity?.bundleId !== "com.lycaonsolutions.t4code") {
-    errors.push(`${macosIdentityPath} bundleId must be com.lycaonsolutions.t4code`);
+  if (macosIdentity?.bundleId !== "net.t4code.app") {
+    errors.push(`${macosIdentityPath} bundleId must be net.t4code.app`);
   }
   if (!/^[A-Z0-9]{10}$/u.test(macosIdentity?.teamId ?? "")) {
     errors.push(`${macosIdentityPath} teamId must be 10 uppercase letters or digits`);
@@ -457,6 +461,12 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   if (macosIdentity?.notarizationRequired !== true) {
     errors.push(`${macosIdentityPath} must require notarization`);
   }
+  requireText(
+    files.get("apps/desktop/src/bundled-runtime.ts") ?? "",
+    macosIdentity?.certificateSha256 ?? "missing macOS certificate SHA-256",
+    "apps/desktop/src/bundled-runtime.ts",
+    errors,
+  );
 
   const packagePaths = [...files.keys()]
     .filter(
@@ -811,7 +821,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   const linkedReleaseTags = new Set(
     [
       ...readme.matchAll(
-        /https:\/\/github\.com\/LycaonLLC\/t4-code\/releases\/(?:tag|download)\/(v\d+\.\d+\.\d+)/gu,
+        /https:\/\/github\.com\/wolfiesch\/omperator\/releases\/(?:tag|download)\/(v\d+\.\d+\.\d+)/gu,
       ),
     ].map((match) => match[1]),
   );
@@ -1002,12 +1012,88 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
       )
         errors.push(".github/workflows/ci.yml current bridge evidence upload is not fail-closed");
     }
+    // Release-time gates are deferred to pushes and must stay covered by the
+    // merge run; every other leg must keep blocking pull requests.
+    for (const job of ["legacy-bridge-continuity", "official-omp-gate0"]) {
+      const expected = `\${{ github.event_name == 'push' && needs.changes.outputs.${job === "official-omp-gate0" ? "official_omp_gate0" : "continuity"} == 'true' }}`;
+      if (workflow?.jobs?.[job]?.if !== expected)
+        errors.push(`.github/workflows/ci.yml ${job} must run only on pushes for its affected paths`);
+    }
+    for (const [job, output] of [
+      ["current-bridge-continuity", "continuity"],
+      ["cluster", "cluster"],
+      ["tooling", "tooling"],
+      ["maintainer", "maintainer"],
+      ["android-debug", "android_debug"],
+    ]) {
+      if (
+        workflow?.jobs?.[job]?.if !==
+        `\${{ needs.changes.outputs.${output} == 'true' }}`
+      )
+        errors.push(
+          `.github/workflows/ci.yml ${job} must follow its path classification on pull requests, merge groups, and pushes`,
+        );
+    }
+    for (const job of ["check", "unit-tests", "build-e2e", "t4-api-generation"]) {
+      if (workflow?.jobs?.[job]?.if !== undefined)
+        errors.push(`.github/workflows/ci.yml ${job} must run unconditionally`);
+    }
+    // The required branch-protection gate must not wait on the deferred
+    // release legs, and those legs must stay aggregated by release-gates so a
+    // merge-run failure still fails the run the release waiter reads.
+    const verifyNeeds = workflow?.jobs?.verify?.needs ?? [];
+    for (const job of ["legacy-bridge-continuity", "official-omp-gate0"]) {
+      if (verifyNeeds.includes(job))
+        errors.push(`.github/workflows/ci.yml verify must not wait on the deferred ${job} leg`);
+      if (!(workflow?.jobs?.["release-gates"]?.needs ?? []).includes(job))
+        errors.push(`.github/workflows/ci.yml release-gates must aggregate the deferred ${job} leg`);
+    }
+    // A merge run may only narrow its legs against a commit whose own run was
+    // green. Diffing the immediate parent would let a docs-only run inherit
+    // proof across a failed one, and the release waiter reads exactly that
+    // per-commit conclusion.
+    const classifyStep = (workflow?.jobs?.changes?.steps ?? []).find(
+      (step) => step?.id === "classify",
+    );
+    if (typeof classifyStep?.run !== "string") {
+      errors.push(".github/workflows/ci.yml is missing the classify step");
+    } else {
+      if (!classifyStep.run.includes("node scripts/ci-baseline.mjs --head"))
+        errors.push(".github/workflows/ci.yml pushes must classify against a proven baseline");
+      if (!classifyStep.run.includes('node scripts/ci-paths.mjs --all'))
+        errors.push(".github/workflows/ci.yml must widen to every leg without a proven baseline");
+      if (!/github\.event\.pull_request\.base\.sha/u.test(JSON.stringify(classifyStep.env ?? {})))
+        errors.push(".github/workflows/ci.yml must classify pull requests against their base");
+    }
+    if (workflow?.jobs?.changes?.permissions?.actions !== "read")
+      errors.push(".github/workflows/ci.yml changes must read Actions history to find a baseline");
+    // The classifier cannot grade itself, so a change to selection or to the
+    // release authority that trusts a run conclusion must widen to every leg.
+    const classifierSource = files.get("scripts/ci-paths.mjs") ?? "";
+    for (const boundary of [
+      String.raw`^\.github\/workflows\/(?:ci|release)\.yml$`,
+      String.raw`^scripts\/check-release-consistency(?:\.test)?\.mjs$`,
+      String.raw`^scripts\/ci-baseline(?:\.test)?\.mjs$`,
+      String.raw`^scripts\/ci-paths(?:\.test)?\.mjs$`,
+      String.raw`^scripts\/wait-for-exact-ci(?:\.test)?\.mjs$`,
+    ]) {
+      if (!classifierSource.includes(boundary))
+        errors.push(`scripts/ci-paths.mjs must force every leg for ${boundary}`);
+    }
   } catch (error) {
     errors.push(`.github/workflows/ci.yml is invalid YAML: ${error instanceof Error ? error.message : error}`);
   }
 
   for (const expected of [
-    "core:",
+    "check:",
+    "unit-tests:",
+    "build-e2e:",
+    "path: ~/.cache/ms-playwright",
+    "key: playwright-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}",
+    "run: pnpm exec playwright install --with-deps chromium",
+    "run: pnpm exec playwright install-deps chromium",
+    "key: ${{ steps.playwright-cache.outputs.cache-primary-key }}",
+    "run: node --test scripts/ci-paths.test.mjs scripts/ci-baseline.test.mjs",
     "legacy-bridge-continuity:",
     'ref: ${{ github.event.pull_request.head.sha || github.sha }}',
     `source_repository="$(jq -er '.verifiedRuntime.sourceRepository' compat/omp-app-matrix.json)"`,
@@ -1035,6 +1121,9 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "artifacts/official-omp-gate0/${{ matrix.platform }}.json",
     "artifacts/official-omp-packaged-host/${{ matrix.platform }}.json",
     "tooling:",
+    "maintainer:",
+    "run: pnpm test:tooling",
+    "run: pnpm test:maintainer",
     "cluster:",
     "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16",
     "run: pnpm test:cluster:ci",
@@ -1043,10 +1132,15 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "android-debug:",
     "name: verify",
     "if: ${{ always() }}",
-    "needs: [changes, t4-api-generation, core, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]",
+    "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]",
+    "name: release-gates",
+    "needs: [changes, legacy-bridge-continuity, official-omp-gate0]",
     'test "$CHANGES_RESULT" = success',
     'test "$T4_API_GENERATION_RESULT" = success',
-    'test "$CORE_RESULT" = success',
+    'test "$CHECK_RESULT" = success',
+    'test "$UNIT_TESTS_RESULT" = success',
+    'test "$BUILD_E2E_RESULT" = success',
+    "OFFICIAL_OMP_GATE0_RESULT: ${{ needs.official-omp-gate0.result }}",
     "CURRENT_CONTINUITY_RESULT: ${{ needs.current-bridge-continuity.result }}",
     '"$CURRENT_CONTINUITY_RESULT" \\',
     "for result in \\",
@@ -1115,8 +1209,13 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     errors.push(".github/workflows/release.yml must resolve release source before CI authority");
   } else {
     const releaseVerify = releaseWorkflow.slice(releaseVerifyStart, releaseAuthorityStart);
+    requireText(
+      releaseVerify,
+      "pnpm install --frozen-lockfile",
+      ".github/workflows/release.yml source verification",
+      errors,
+    );
     for (const duplicate of [
-      "pnpm install",
       "pnpm check",
       "pnpm test",
       "pnpm build",
@@ -1127,6 +1226,52 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
           `.github/workflows/release.yml source verification must not repeat exact-SHA CI via ${duplicate}`,
         );
       }
+    }
+  }
+  const releaseLinuxStart = releaseWorkflow.indexOf("  build-linux:");
+  const releaseAndroidStart = releaseWorkflow.indexOf("  build-android:");
+  const releaseMacosStart = releaseWorkflow.indexOf("  build-macos:");
+  const releasePublishStart = releaseWorkflow.indexOf("  publish:");
+  for (const [jobName, start, end] of [
+    ["build-linux", releaseLinuxStart, releaseAndroidStart],
+    ["build-macos", releaseMacosStart, releasePublishStart],
+  ]) {
+    if (!(start >= 0 && end > start)) {
+      errors.push(`.github/workflows/release.yml must define ${jobName} before its next job`);
+      continue;
+    }
+    const releaseBuild = releaseWorkflow.slice(start, end);
+    requireText(
+      releaseBuild,
+      "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6",
+      `.github/workflows/release.yml ${jobName}`,
+      errors,
+    );
+    requireText(
+      releaseBuild,
+      "bun-version: 1.3.14",
+      `.github/workflows/release.yml ${jobName}`,
+      errors,
+    );
+  }
+  const releaseSiteStart = releaseWorkflow.indexOf("  dispatch-site:");
+  if (!(releasePublishStart >= 0 && releaseSiteStart > releasePublishStart)) {
+    errors.push(".github/workflows/release.yml must define publish before site handoff");
+  } else {
+    const releasePublish = releaseWorkflow.slice(releasePublishStart, releaseSiteStart);
+    requireText(
+      releasePublish,
+      "pnpm install --frozen-lockfile",
+      ".github/workflows/release.yml publish",
+      errors,
+    );
+    if (
+      releasePublish.indexOf("pnpm install --frozen-lockfile") >
+      releasePublish.indexOf("node scripts/reconcile-release-assets.mjs")
+    ) {
+      errors.push(
+        ".github/workflows/release.yml publish must install dependencies before release reconciliation",
+      );
     }
   }
   const exactCiWaiter = files.get("scripts/wait-for-exact-ci.mjs") ?? "";
@@ -1146,8 +1291,8 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   const builderConfig = files.get("electron-builder.config.mjs") ?? "";
   for (const expected of [
     'provider: "github"',
-    'owner: "LycaonLLC"',
-    'repo: "t4-code"',
+    'owner: "wolfiesch"',
+    'repo: "omperator"',
     'channel: "latest"',
     "publish: [linuxUpdatePublish]",
     "publish: []",

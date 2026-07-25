@@ -1,6 +1,6 @@
 {
   "name": "@t4-code/desktop",
-  "version": "0.1.31",
+  "version": "0.1.33",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.cjs",
@@ -17,7 +17,7 @@
     "@t4-code/service-manager": "workspace:*",
     "electron-store": "^8.2.0",
     "electron-updater": "^6.6.2",
-    "ws": "^8.18.0"
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "electron": "catalog:",
@@ -31,8 +31,8 @@
   "homepage": "https://omp.sh",
   "license": "MIT",
   "author": {
-    "name": "Lycaon Solutions",
-    "email": "michael@lycaon.wtf"
+    "name": "Wolfgang Schoenberger",
+    "email": "221313372+wolfiesch@users.noreply.github.com"
   },
   "desktopName": "t4-code",
   "productName": "T4 Code"

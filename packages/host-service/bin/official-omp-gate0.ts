@@ -9,7 +9,7 @@ import { projectId, sessionId } from "@t4-code/host-wire";
 import { BunRpcChildFactory, RpcChildSupervisor } from "../src/rpc-child.ts";
 import type { SessionRecord } from "../src/types.ts";
 
-const FRAME_TIMEOUT_MS = 10_000;
+const FRAME_TIMEOUT_MS = 30_000;
 const STALE_LOCK_RECOVERY_MS = 20_500;
 const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 const MAX_FRAMES_PER_TURN = 1_000;

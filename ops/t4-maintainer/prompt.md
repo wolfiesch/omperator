@@ -19,7 +19,7 @@ Verify the public GitHub release, every expected release asset, and the deployed
   "upstream": { "tag": "vX.Y.Z", "commit": "40-hex-sha" },
   "integration": { "tag": "t4code-X.Y.Z-appserver-N", "commit": "40-hex-sha" },
   "t4": { "version": "X.Y.Z", "tag": "vX.Y.Z", "commit": "40-hex-sha" },
-  "release": { "url": "https://github.com/LycaonLLC/t4-code/releases/tag/vX.Y.Z" },
+  "release": { "url": "https://github.com/wolfiesch/omperator/releases/tag/vX.Y.Z" },
   "site": { "url": "https://t4code.net", "releaseTag": "vX.Y.Z" }
 }
 ```

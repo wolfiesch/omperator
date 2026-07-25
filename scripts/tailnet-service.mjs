@@ -8,7 +8,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-export const SERVICE_LABEL = "com.lycaonsolutions.t4code.tailnet-gateway";
+export const SERVICE_LABEL = "net.t4code.app.tailnet-gateway";
 export const DEFAULT_GATEWAY_PORT = 4_194;
 const CONFIG_VERSION = 1;
 const MAX_OUTPUT_BYTES = 64 * 1024;
@@ -217,7 +217,7 @@ export function renderSystemdUnit(input) {
   return [
     "[Unit]",
     "Description=T4 Code Tailnet web gateway",
-    "Documentation=https://github.com/LycaonLLC/t4-code/blob/main/docs/TAILNET_REMOTE.md",
+    "Documentation=https://github.com/wolfiesch/omperator/blob/main/docs/TAILNET_REMOTE.md",
     "Wants=network-online.target",
     "After=network-online.target",
     "",

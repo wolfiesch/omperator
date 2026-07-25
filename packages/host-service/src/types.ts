@@ -22,7 +22,7 @@ import type {
 	TranscriptSearchResult,
 	UsageReadResult,
 } from "@t4-code/host-wire";
-import type { DesktopOperationsAuthority } from "./operations/dispatcher.ts";
+import type { DesktopOperationsAuthority, HostTraceSink } from "./operations/dispatcher.ts";
 import type { BunRemoteListener } from "./remote/listener.ts";
 import type {
 	ListenerPeerContext,
@@ -136,7 +136,12 @@ export interface SessionAuthority {
 	 * an authority that cannot fork safely omits it, and the host withholds the
 	 * `session.fork` feature.
 	 */
-	fork?(source: SessionRecord): Promise<SessionAuthoritySession>;
+	/**
+	 * `cwd` names where the copy should live. A historic transcript often
+	 * records a project directory that has since been deleted, and a copy needs
+	 * somewhere real to run; omitting it keeps the source's own directory.
+	 */
+	fork?(source: SessionRecord, cwd?: string): Promise<SessionAuthoritySession>;
 }
 export interface SessionDiscovery {
 	list(): Promise<SessionRecord[]>;
@@ -249,6 +254,8 @@ export interface AppserverOptions {
 	discovery?: SessionDiscovery;
 	sessionAuthority?: SessionAuthority;
 	operationsAuthority?: DesktopOperationsAuthority;
+	/** Opt-in privacy-bounded command trace sink. */
+	trace?: HostTraceSink;
 	usageAuthority?: AppserverUsageAuthority;
 	/** Rebuildable, profile-local index for bounded transcript search and read-around. */
 	transcriptSearchAuthority?: AppserverTranscriptSearchAuthority;
@@ -262,6 +269,8 @@ export interface AppserverOptions {
 	/** Final write-lock gate, retained for every child/lifecycle mutation. */ lockCheck?: LockCheckHook;
 	/** Permit promotion of lockless transcripts only when their whole profile root is exclusively T4-owned. */
 	claimLocklessSessions?: boolean;
+	/** Keep host-owned terminal lifecycle usable while OMP session authority is read-only. */
+	observerIndependentTerminalOperations?: boolean;
 	runtimeAdapters?: RuntimeAdapterRegistry;
 	workspaceAuthority?: WorkspaceAuthority;
 	workspaceTargetPathForProject?: (projectId: ProjectId, name: string) => Promise<string> | string;

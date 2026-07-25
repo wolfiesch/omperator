@@ -5,7 +5,7 @@ import { mkdir, stat, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 
 import { prepareDevelopmentSandbox, resetDevelopmentSandbox, sandboxEnvironment } from "./dev-sandbox.mjs";
-import { pnpmProcessInvocation } from "./pnpm-process.mjs";
+
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const TIMEOUT_MS = 60_000;
@@ -62,9 +62,10 @@ async function main() {
   const artifactRoot = resolve(repoRoot, "artifacts", "dogfood", commit, "mac");
   await mkdir(artifactRoot, { recursive: true });
 
-  const packageInvocation = pnpmProcessInvocation(["package:mac:unsigned", "--", "--dir"], process.env.npm_execpath);
-  run(packageInvocation.command, packageInvocation.args);
+  run(process.execPath, ["scripts/package-mac-unsigned.mjs", "--dir", "--publish", "never"]);
   const app = await firstExisting([
+    resolve(repoRoot, "release", "mac-arm64", "t4-code.app"),
+    resolve(repoRoot, "release", "mac", "t4-code.app"),
     resolve(repoRoot, "release", "mac-arm64", "T4 Code.app"),
     resolve(repoRoot, "release", "mac", "T4 Code.app"),
   ]);

@@ -7,6 +7,7 @@ const none = {
   cluster: false,
   official_omp_gate0: false,
   tooling: false,
+  maintainer: false,
   android_debug: false,
 };
 
@@ -49,6 +50,7 @@ test("host wire changes run every dependent client and continuity gate", () => {
     cluster: true,
     official_omp_gate0: false,
     tooling: true,
+    maintainer: false,
     android_debug: true,
   });
 });
@@ -87,17 +89,53 @@ test("dependency graph changes conservatively run every leg", () => {
       cluster: true,
       official_omp_gate0: true,
       tooling: true,
+      maintainer: true,
       android_debug: true,
     });
   }
 });
 
-test("workflow changes run tooling on the PR and the full matrix after merge", () => {
-  assert.deepEqual(classifyCiPaths([".github/workflows/ci.yml"]), {
-    ...none,
+test("selection and release-authority sources can only be proven by a full run", () => {
+  const all = {
     continuity: true,
     cluster: true,
     official_omp_gate0: true,
+    tooling: true,
+    maintainer: true,
+    android_debug: true,
+  };
+  // The classifier cannot grade itself. If a bug in one of these let a run
+  // pick a narrow set of legs and still conclude green, that run would become
+  // the baseline every later run inherits from.
+  for (const path of [
+    ".github/workflows/ci.yml",
+    ".github/workflows/release.yml",
+    "scripts/ci-paths.mjs",
+    "scripts/ci-paths.test.mjs",
+    "scripts/ci-baseline.mjs",
+    "scripts/ci-baseline.test.mjs",
+    "scripts/check-release-consistency.mjs",
+    "scripts/check-release-consistency.test.mjs",
+    "scripts/read-bounded-response.mjs",
+    "scripts/wait-for-exact-ci.mjs",
+    "scripts/wait-for-exact-ci.test.mjs",
+  ]) {
+    assert.deepEqual(classifyCiPaths([path]), all, path);
+  }
+});
+
+test("the maintainer deployment suite runs only for its own surface", () => {
+  assert.deepEqual(classifyCiPaths(["ops/t4-maintainer/deploy-local.sh"]), {
+    ...none,
+    maintainer: true,
+  });
+  assert.deepEqual(classifyCiPaths(["scripts/t4-maintainer-deploy.test.mjs"]), {
+    ...none,
+    tooling: true,
+    maintainer: true,
+  });
+  assert.deepEqual(classifyCiPaths(["docs/DEVELOPMENT.md", "scripts/deploy-site.mjs"]), {
+    ...none,
     tooling: true,
   });
 });
@@ -114,6 +152,57 @@ test("paths are normalized and GitHub outputs are stable", () => {
   const result = classifyCiPaths(["./apps\\web\\package.json", "./apps/web/package.json"]);
   assert.equal(
     formatGitHubOutputs(result),
-    "continuity=false\ncluster=false\nofficial_omp_gate0=false\ntooling=false\nandroid_debug=true\n",
+    "continuity=false\ncluster=false\nofficial_omp_gate0=false\ntooling=false\nmaintainer=false\nandroid_debug=true\n",
   );
+});
+
+test("an unclassified path widens coverage instead of narrowing it", () => {
+  const all = {
+    continuity: true,
+    cluster: true,
+    official_omp_gate0: true,
+    tooling: true,
+    maintainer: true,
+    android_debug: true,
+  };
+  // Selection now decides what a merge run proves, so a path no group claims
+  // must run everything rather than silently prove nothing.
+  assert.deepEqual(classifyCiPaths(["packages/brand-new-package/src/index.ts"]), all);
+  assert.deepEqual(classifyCiPaths(["some-new-top-level-dir/file.ts"]), all);
+  assert.deepEqual(classifyCiPaths(["patches/@legendapp__list@3.2.0.patch"]), all);
+  // One unclassified path in a batch widens the whole batch.
+  assert.deepEqual(classifyCiPaths(["README.md", "unclaimed/file.ts"]), all);
+});
+
+test("surfaces the unconditional legs already prove select no extra legs", () => {
+  for (const path of [
+    ".gitignore",
+    "AGENTS.md",
+    "README.md",
+    "Taskfile.yml",
+    "apps/desktop/src/main.ts",
+    "apps/site/src/pages/index.astro",
+    "e2e/remote-app.spec.ts",
+    "electron-builder.config.mjs",
+    "infra/site/caddy.conf",
+    "packages/fixture-server/src/index.ts",
+    "packages/service-manager/src/index.ts",
+  ]) {
+    assert.deepEqual(classifyCiPaths([path]), none, path);
+  }
+  // The cluster spec is claimed by the cluster group, not excused by the
+  // end-to-end exclusion above it.
+  assert.deepEqual(classifyCiPaths(["e2e/cluster-operator.spec.ts"]), {
+    ...none,
+    cluster: true,
+  });
+});
+
+test("the wire contract runs every gate that ships it", () => {
+  assert.deepEqual(classifyCiPaths(["packages/protocol/src/index.ts"]), {
+    ...none,
+    continuity: true,
+    official_omp_gate0: true,
+    android_debug: true,
+  });
 });

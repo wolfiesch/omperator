@@ -1,6 +1,12 @@
 import { open, stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { boundedMap, parseBounded, type OperationCapability } from "@t4-code/host-wire";
+import {
+	boundedMap,
+	MAX_TRANSCRIPT_LINE_BYTES,
+	parseBounded,
+	parseBoundedTranscriptLine,
+	type OperationCapability,
+} from "@t4-code/host-wire";
 import type { RpcResponse, RpcSessionEntryFrame } from "./omp-rpc-contract.ts";
 import type { ManagedRpcImageRef } from "./image-upload-store.ts";
 import { OfficialOmpCapabilityAdapter } from "./official-omp-capabilities.ts";
@@ -12,6 +18,7 @@ const RPC_CHUNK_PAYLOAD_BYTES = 256 * 1024;
 const STDERR_BYTES = 64 * 1024;
 const FAILURE_STOP_GRACE_MS = 2_000;
 const PROTOCOL_NEGOTIATION_TIMEOUT_MS = 10_000;
+const STDERR_DRAIN_TIMEOUT_MS = 500;
 const TRANSCRIPT_READ_BYTES = 64 * 1024;
 const MAX_PENDING_DURABLE_CORRELATIONS = 64;
 
@@ -235,8 +242,26 @@ class DurableJsonlReconciler {
 	async #scan(size: number, publish: boolean): Promise<void> {
 		const handle = await open(this.path, "r");
 		let position = this.#offset;
-		let pending = Buffer.alloc(0);
+		const pendingChunks: Buffer[] = [];
+		let pendingBytes = 0;
 		let pendingStart = position;
+
+		const clearPending = (): void => {
+			pendingChunks.length = 0;
+			pendingBytes = 0;
+		};
+
+		const buildPendingLine = (extra?: Uint8Array): Buffer => {
+			if (!extra || extra.byteLength === 0) {
+				if (pendingChunks.length === 0) return Buffer.alloc(0);
+				if (pendingChunks.length === 1) return pendingChunks[0]!;
+				return Buffer.concat(pendingChunks, pendingBytes);
+			}
+			if (pendingChunks.length === 0) return Buffer.from(extra);
+			const total = pendingBytes + extra.byteLength;
+			return Buffer.concat([...pendingChunks, Buffer.from(extra)], total);
+		};
+
 		try {
 			while (position < size) {
 				const length = Math.min(TRANSCRIPT_READ_BYTES, size - position);
@@ -256,9 +281,9 @@ class DurableJsonlReconciler {
 						this.#skippingOversizedLine = false;
 						this.#omitOversizedRecord(publish);
 						pendingStart = chunkStart + newline + 1;
-					} else if (pending.byteLength + segment.byteLength > MAX_LINE_BYTES) {
+					} else if (pendingBytes + segment.byteLength > MAX_TRANSCRIPT_LINE_BYTES) {
 						this.#oversizedLineStart = pendingStart;
-						pending = Buffer.alloc(0);
+						clearPending();
 						if (newline < 0) {
 							this.#skippingOversizedLine = true;
 							break;
@@ -266,13 +291,16 @@ class DurableJsonlReconciler {
 						this.#omitOversizedRecord(publish);
 						pendingStart = chunkStart + newline + 1;
 					} else if (newline < 0) {
-						pending = pending.byteLength === 0 ? Buffer.from(segment) : Buffer.concat([pending, segment]);
+						if (segment.byteLength > 0) {
+							pendingChunks.push(Buffer.from(segment));
+							pendingBytes += segment.byteLength;
+						}
 						break;
 					} else {
-						const line = pending.byteLength === 0 ? segment : Buffer.concat([pending, segment]);
+						const line = buildPendingLine(segment);
 						if (line.byteLength > 0)
 							this.#observeLine(new TextDecoder("utf-8", { fatal: true }).decode(line), publish);
-						pending = Buffer.alloc(0);
+						clearPending();
 						pendingStart = chunkStart + newline + 1;
 					}
 					cursor = end + 1;
@@ -281,7 +309,7 @@ class DurableJsonlReconciler {
 		} finally {
 			await handle.close();
 		}
-		this.#offset = this.#skippingOversizedLine ? position : position - pending.byteLength;
+		this.#offset = this.#skippingOversizedLine ? position : position - pendingBytes;
 	}
 
 	#omitOversizedRecord(publish: boolean): void {
@@ -295,9 +323,9 @@ class DurableJsonlReconciler {
 	#observeLine(line: string, publish: boolean): void {
 		let value: unknown;
 		try {
-			value = parseBounded(line);
-		} catch {
-			throw new Error("malformed session transcript");
+			value = parseBoundedTranscriptLine(line);
+		} catch (error) {
+			throw new Error("malformed session transcript", { cause: error });
 		}
 		const id = durableEntryId(value);
 		if (!id) return;
@@ -478,6 +506,7 @@ export class RpcChildSupervisor {
 	#loadedWatermark?: RpcLoadedTranscriptWatermark;
 	#counter = 0;
 	#stderr = "";
+	#stderrDrained: Promise<void> = Promise.resolve();
 	#ready = false;
 	#supportsProtocolV2 = false;
 	#protocolV2 = false;
@@ -518,9 +547,12 @@ export class RpcChildSupervisor {
 		const ready = Promise.withResolvers<void>();
 		this.#readyReject = ready.reject;
 		void this.readStdout(ready);
-		void this.readStderr();
-		void this.#child.exited.then(code => {
-			if (!this.#closed && code !== 0) this.fail(new Error(`rpc child exited (${code}): ${this.#stderr}`));
+		this.#stderrDrained = this.readStderr();
+		void this.#child.exited.then(async code => {
+			// Same race as the stdout-EOF path: without the drain this can reject
+			// `ready` before the child's diagnostic has been read.
+			if (!this.#closed && code !== 0)
+				this.fail(new Error(`rpc child exited (${code}): ${await this.drainedStderr()}`));
 		});
 		const timer = setTimeout(() => ready.reject(new Error("rpc child ready timeout")), 10_000);
 		try {
@@ -735,12 +767,44 @@ export class RpcChildSupervisor {
 				this.dispatch(frame);
 				await this.#transcript.reconcile();
 			}
-			if (!this.#closed) this.fail(new Error("rpc child stdout EOF"), true);
+			// A child that dies during startup closes stdout without ever sending
+			// ready. Its stderr is the only statement of why, so carry it rather
+			// than reporting a bare EOF that explains nothing. Callers classify
+			// this into fixed operator text; it is never echoed verbatim.
+			if (!this.#closed) {
+				const diagnostic = await this.drainedStderr();
+				this.fail(
+					new Error(diagnostic.length > 0 ? `rpc child stdout EOF: ${diagnostic}` : "rpc child stdout EOF"),
+					true,
+				);
+			}
 		} catch (error) {
 			const failure = error instanceof Error ? error : new Error(String(error));
 			ready.reject(failure);
 			this.fail(failure, true);
 		}
+	}
+	/**
+	 * stdout can reach EOF before the stderr reader has drained, so the
+	 * diagnostic is only reliably present once the child has exited and that
+	 * reader has finished. Bounded so a child holding stderr open cannot stall
+	 * the failure path.
+	 */
+	private async drainedStderr(): Promise<string> {
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const deadline = new Promise<void>(resolve => {
+			timer = setTimeout(resolve, STDERR_DRAIN_TIMEOUT_MS);
+			timer.unref?.();
+		});
+		try {
+			await Promise.race([
+				Promise.allSettled([this.#stderrDrained, this.#child?.exited ?? Promise.resolve()]),
+				deadline,
+			]);
+		} finally {
+			if (timer) clearTimeout(timer);
+		}
+		return this.#stderr;
 	}
 	private async readStderr(): Promise<void> {
 		if (!this.#child?.stderr) return;

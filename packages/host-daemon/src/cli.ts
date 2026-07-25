@@ -10,6 +10,8 @@ import {
   OmpAuthorityBridgeClient,
   profileSocketPath,
   ProjectFileSearchAuthority,
+  PtyTerminalAuthority,
+  SeedingTestControl,
   TranscriptSearchIndex,
   type AppserverHandle,
   type AppserverOptions,
@@ -20,7 +22,7 @@ import {
 import { COMMAND_DESCRIPTORS, type ProjectId, type SessionId } from "@t4-code/protocol";
 import { parsePairArgs, runPairAction } from "./pair.ts";
 
-export const T4_HOST_VERSION = "0.1.31";
+export const T4_HOST_VERSION = "0.1.33";
 export const OFFICIAL_OMP_VERSION = "17.0.9";
 export const OFFICIAL_OMP_BUILD = "639bac596d94b5993349f3f6696176cb2bf9b5d3";
 const PROFILE = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
@@ -37,6 +39,7 @@ const OFFICIAL_CATALOG_COMMANDS = Object.freeze([
   "session.thinking.set",
   "session.cancel",
   "session.close",
+  "term.open",
 ]);
 
 function officialCatalogItems(): Record<string, unknown>[] {
@@ -58,6 +61,8 @@ export interface HostDaemonConfig {
   readonly ompSessionsRoot?: string;
   readonly profileId: string;
   readonly stateRoot: string;
+  /** Local-only deterministic seeding for integration runs. Never enabled by default. */
+  readonly testControl?: boolean;
   readonly remote?: {
     readonly mode: "direct" | "serve";
     readonly address: string;
@@ -74,6 +79,7 @@ export interface HostDaemonPaths {
   readonly sessionOwnershipPath: string;
   readonly transcriptSearchPath: string;
   readonly officialMetadataPath: string;
+  readonly testControlManifestPath: string;
   readonly remoteStateRoot: string;
   readonly socketPath: string;
 }
@@ -100,6 +106,18 @@ function boundedOrigin(input: string): string {
   return url.origin;
 }
 
+/**
+ * The appserver bounds this token to 32-256 bytes and refuses to expose the
+ * control routes without it, so a missing or short token must fail startup
+ * rather than silently serve an unauthenticated surface.
+ */
+function requiredTestControlToken(): string {
+  const token = process.env.OMP_APP_TEST_TOKEN ?? "";
+  if (Buffer.byteLength(token, "utf8") < 32)
+    throw new Error("--test-control requires OMP_APP_TEST_TOKEN of at least 32 bytes");
+  return token;
+}
+
 export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): HostDaemonConfig {
   if (argv[0] !== "serve") throw new Error("t4-host requires the serve action");
   let ompExecutable: string | undefined;
@@ -111,6 +129,7 @@ export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): 
   let remoteAddress: string | undefined;
   let remotePort = 8787;
   let trustedServeProxy = false;
+  let testControl = false;
   const origins: string[] = [];
   for (let index = 1; index < argv.length; index += 1) {
     const flag = argv[index]!;
@@ -137,6 +156,7 @@ export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): 
       if (origins.length >= ORIGIN_LIMIT) throw new Error("too many --remote-origin values");
       origins.push(boundedOrigin(value(argv, index++, flag)));
     } else if (flag === "--trusted-serve-proxy") trustedServeProxy = true;
+    else if (flag === "--test-control") testControl = true;
     else throw new Error(`unsupported t4-host argument: ${flag}`);
   }
   if (!ompExecutable || !isAbsolute(ompExecutable))
@@ -156,12 +176,22 @@ export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): 
     throw new Error("serve mode requires --trusted-serve-proxy");
   if (remoteMode === "direct" && trustedServeProxy)
     throw new Error("trusted Serve proxy is invalid in direct mode");
+  if (testControl) {
+    // Seeding writes disposable sessions into the profile it serves, so it must
+    // never reach the default profile a person actually works in, and it must
+    // never be reachable from a remote listener.
+    if (process.env.OMP_APP_TEST_MODE !== "1")
+      throw new Error("--test-control requires OMP_APP_TEST_MODE=1");
+    if (profileId === "default") throw new Error("--test-control refuses the default profile");
+    if (remoteMode) throw new Error("--test-control is local-only");
+  }
   return {
     ompExecutable: resolve(ompExecutable),
     authorityMode,
     ...(ompSessionsRoot ? { ompSessionsRoot: resolve(ompSessionsRoot) } : {}),
     profileId,
     stateRoot: resolve(stateRoot),
+    ...(testControl ? { testControl: true } : {}),
     ...(remoteMode
       ? {
           remote: {
@@ -191,6 +221,7 @@ export function hostDaemonPaths(
     sessionOwnershipPath: join(profileStateRoot, "owned-sessions.json"),
     transcriptSearchPath: join(profileStateRoot, "transcript-search.sqlite"),
     officialMetadataPath: join(profileStateRoot, "official-omp-sessions.json"),
+    testControlManifestPath: join(profileStateRoot, "test-control-manifest.json"),
     remoteStateRoot: join(profileStateRoot, "remote"),
     socketPath: profileSocketPath(config.profileId),
   };
@@ -267,6 +298,7 @@ export async function runHostDaemon(
   const paths = hostDaemonPaths(config);
   await mkdir(paths.profileStateRoot, { recursive: true, mode: 0o700 });
   let bridge: OmpAuthorityBridgeClient | undefined;
+  let terminals: PtyTerminalAuthority | undefined;
   let officialAuthority: OfficialOmpProfileAuthority | undefined;
   let sessionAuthority: SessionAuthority;
   let discovery: SessionDiscovery;
@@ -290,11 +322,17 @@ export async function runHostDaemon(
     officialAuthority = official;
     sessionAuthority = official;
     discovery = official;
+    // T4 owns terminals in official mode: stock OMP has no host-side pty seam.
+    // Bridge mode keeps using the fork's termOpen until the runtimes converge.
+    terminals = new PtyTerminalAuthority({
+      projectRootForSession: sessionId => official.projectRootForSession(sessionId),
+    });
     operationsAuthority = {
       catalogGet: async () => ({
         revision: `official-omp-${OFFICIAL_OMP_VERSION}`,
         items: officialCatalogItems(),
       }),
+      ...terminals.operations(),
     };
     projectRootForProject = projectId => official.projectRootForProject(projectId);
     projectRootForSession = sessionId => official.projectRootForSession(sessionId);
@@ -333,6 +371,15 @@ export async function runHostDaemon(
     const projectFileSearchAuthority = new ProjectFileSearchAuthority(
       projectRootForSession,
     );
+    const testControl = config.testControl
+      ? new SeedingTestControl({
+          token: requiredTestControlToken(),
+          profile: config.profileId,
+          manifestPath: paths.testControlManifestPath,
+          authority: sessionAuthority,
+          lockStatus,
+        })
+      : undefined;
     const options: AppserverOptions = {
       ...identity,
       appserverVersion: T4_HOST_VERSION,
@@ -352,7 +399,9 @@ export async function runHostDaemon(
       projectRootForProject,
       lockCheck,
       lockStatus,
+      ...(testControl ? { testControl } : {}),
       ...(config.authorityMode === "official" ? { claimLocklessSessions: true } : {}),
+      ...(config.authorityMode === "official" ? { observerIndependentTerminalOperations: true } : {}),
       ...(transcriptImageRoot ? { transcriptImageRoot } : {}),
       rpcChildInvocation: { executable: config.ompExecutable, prefixArgv: [] },
       rpcChildEnvironment: { OMP_PROFILE: config.profileId },
@@ -409,6 +458,7 @@ export async function runHostDaemon(
       if (!stopping) await appserver.stop().catch(() => undefined);
     }
   } finally {
+    terminals?.closeAll();
     await bridge?.stop();
     await officialAuthority?.close();
   }

@@ -7,14 +7,14 @@ const signedMacBuild = process.env.T4_MACOS_SIGNED_BUILD === "1";
 
 export const linuxUpdatePublish = {
   provider: "github",
-  owner: "LycaonLLC",
-  repo: "t4-code",
+  owner: "wolfiesch",
+  repo: "omperator",
   channel: "latest",
 };
 
 /** @type {import("electron-builder").Configuration} */
 const config = {
-  appId: "com.lycaonsolutions.t4code",
+  appId: "net.t4code.app",
   productName: "T4 Code",
   executableName: "t4-code",
   electronVersion: "41.5.0",

@@ -3,9 +3,19 @@ import { connect as netConnect } from "node:net";
 import { dirname, join, parse } from "node:path";
 import WebSocket from "ws";
 import type { OmpTransport } from "@t4-code/client";
+import { developmentSandboxServiceConfig } from "./development-sandbox.ts";
 import { localSocketPath } from "./socket-path.ts";
 
 const OMP_SOCKET_NAME = /^\.appserver-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.sock$/;
+
+/** Errno-style codes only: bounded, uppercase, and free of paths or user text. */
+const TRANSPORT_ERROR_CODE = /^[A-Z][A-Z0-9_]{1,31}$/u;
+
+function transportErrorCode(error: unknown): string | undefined {
+  if (error === null || typeof error !== "object" || !("code" in error)) return undefined;
+  const code = error.code;
+  return typeof code === "string" && TRANSPORT_ERROR_CODE.test(code) ? code : undefined;
+}
 
 function secureStat(path: string, kind: "directory" | "socket"): void {
   const stat = lstatSync(path);
@@ -51,7 +61,14 @@ export function resolveUnixSocketPath(path: string): string {
   }
   const backingPath = join(parent, target);
   secureStat(backingPath, "socket");
-  return backingPath;
+  // Validate through the link but connect by the public path. The symlink is
+  // what keeps the socket inside the platform's sun_path limit (104 bytes on
+  // macOS); the backing file is UUID-named and roughly forty bytes longer, so
+  // returning it can push a deep runtime directory past the limit, which the
+  // kernel reports as connect EINVAL and the client retries forever. Both live
+  // in the same parent, already proven unsymlinked, user-owned, and not
+  // group- or other-writable, so the public path is no less trusted.
+  return path;
 }
 
 export function validateUnixSocketPath(path: string): void {
@@ -144,8 +161,18 @@ export class UnixWebSocketTransport implements OmpTransport {
       for (const listener of this.closes) listener(code, text);
     });
     socket.on("error", (error) => {
-      fail();
-      for (const listener of this.errors) listener(error instanceof Error ? new Error("local transport error") : new Error("local transport error"));
+      // The raw errno message embeds the socket path, so only the bounded code
+      // crosses this boundary. Dropping it entirely (the previous behavior)
+      // left a silent reconnect loop with nothing to diagnose.
+      const code = transportErrorCode(error);
+      const message = code === undefined ? "local transport error" : `local transport error (${code})`;
+      // Reject with the same sanitized message rather than the generic default.
+      // On the first connection the client awaits open() inside the transport
+      // factory and only attaches its error listener afterwards, so a rejection
+      // that dropped the code reported nothing at all for the failure that
+      // matters most: the socket that was never reachable.
+      fail(message);
+      for (const listener of this.errors) listener(new Error(message));
     });
     return promise;
   }
@@ -188,8 +215,37 @@ export class UnixWebSocketTransport implements OmpTransport {
   }
 }
 
-export function createLocalTransport(profileId = "default"): UnixWebSocketTransport {
-  const socketPath = localSocketPath({ profileId });
+/**
+ * Resolve the host socket this desktop is allowed to talk to.
+ *
+ * A development sandbox relocates the host service's HOME and XDG_RUNTIME_DIR,
+ * so the client must resolve the socket under those same roots. macOS derives
+ * the path from HOME and Linux from the runtime directory, so passing only one
+ * of them leaves the other platform pointed at the developer's own host and its
+ * real sessions, which is the opposite of a sandbox. A half-configured sandbox
+ * throws out of `developmentSandboxServiceConfig` rather than falling back to
+ * the personal socket.
+ */
+export function localTransportSocketPath(
+  profileId = "default",
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const development = developmentSandboxServiceConfig(environment);
+  const runtimeDirectory = development?.environment.XDG_RUNTIME_DIR ?? environment.XDG_RUNTIME_DIR;
+  return localSocketPath({
+    profileId,
+    platform,
+    ...(development === undefined ? {} : { homeDirectory: development.homeDirectory }),
+    ...(runtimeDirectory === undefined ? {} : { runtimeDirectory }),
+  });
+}
+
+export function createLocalTransport(
+  profileId = "default",
+  environment: NodeJS.ProcessEnv = process.env,
+): UnixWebSocketTransport {
+  const socketPath = localTransportSocketPath(profileId, environment);
   if (process.platform === "darwin") ensureMacRuntimeDirectory(dirname(socketPath));
   return new UnixWebSocketTransport({ socketPath });
 }

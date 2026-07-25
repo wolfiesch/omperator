@@ -16,7 +16,7 @@ function workflowRun(overrides = {}) {
     event: "push",
     status: "completed",
     conclusion: "success",
-    html_url: "https://github.com/LycaonLLC/t4-code/actions/runs/101",
+    html_url: "https://github.com/wolfiesch/omperator/actions/runs/101",
     ...overrides,
   };
 }
@@ -86,7 +86,7 @@ test("waits for the exact whole-workflow run to complete successfully", async ()
   assert.deepEqual(result, {
     id: 101,
     runAttempt: 2,
-    url: "https://github.com/LycaonLLC/t4-code/actions/runs/101",
+    url: "https://github.com/wolfiesch/omperator/actions/runs/101",
   });
   assert.equal(requestCount, 4);
 });

@@ -88,6 +88,51 @@ describe("T4 host daemon CLI", () => {
       profileId: "t4",
     });
   });
+  // Seeding writes disposable sessions into whatever profile the daemon serves
+  // and deletes them later, so an accidental enable on a real profile or a
+  // remote listener would be destructive rather than merely noisy.
+  test("test control stays off by default and refuses unsafe enablement", () => {
+    const previous = process.env.OMP_APP_TEST_MODE;
+    try {
+      delete process.env.OMP_APP_TEST_MODE;
+      expect(
+        parseHostDaemonArgs(["serve", "--omp", "/opt/omp", "--profile", "t4"], "/home/test").testControl,
+      ).toBeUndefined();
+      expect(() =>
+        parseHostDaemonArgs(["serve", "--omp", "/opt/omp", "--profile", "t4", "--test-control"], "/home/test"),
+      ).toThrow("OMP_APP_TEST_MODE");
+      process.env.OMP_APP_TEST_MODE = "1";
+      expect(() =>
+        parseHostDaemonArgs(["serve", "--omp", "/opt/omp", "--profile", "default", "--test-control"], "/home/test"),
+      ).toThrow("default profile");
+      expect(() =>
+        parseHostDaemonArgs(
+          [
+            "serve",
+            "--omp",
+            "/opt/omp",
+            "--profile",
+            "t4",
+            "--test-control",
+            "--remote-mode",
+            "direct",
+            "--remote-address",
+            "100.64.0.1",
+          ],
+          "/home/test",
+        ),
+      ).toThrow("local-only");
+      const config = parseHostDaemonArgs(
+        ["serve", "--omp", "/opt/omp", "--profile", "t4", "--test-control"],
+        "/home/test",
+      );
+      expect(config.testControl).toBe(true);
+      expect(hostDaemonPaths(config).testControlManifestPath).toContain("/test-control-manifest.json");
+    } finally {
+      if (previous === undefined) delete process.env.OMP_APP_TEST_MODE;
+      else process.env.OMP_APP_TEST_MODE = previous;
+    }
+  });
 
   test("stops the OMP bridge when authority startup fails", async () => {
     let bridgeStops = 0;
@@ -176,6 +221,7 @@ describe("T4 host daemon CLI", () => {
       ompBuild: OFFICIAL_OMP_BUILD,
       rpcDialect: "official-17.0.9",
       claimLocklessSessions: true,
+      observerIndependentTerminalOperations: true,
       sessionOwnershipPath: expect.stringContaining("/owned-sessions.json"),
     });
     const operations = captured?.operationsAuthority as {
