@@ -125,6 +125,9 @@ package tests against.
 - [x] Branch `t4code-ios` created.
 - [x] Enclave app sources vendored into `apps/ios/`.
 - [x] Plan of record (this file).
-- [ ] HostWire foundation (step 1) compiling + passing fixture tests.
-- [ ] Commands / events / sessions / client runtime (steps 2–5).
-- [ ] Session rail + UI rework.
+- [x] HostWire foundation (envelope/handshake/pairing/result, bounded validators) — compiles + passes fixture tests.
+- [x] Session inventory (`SessionsFrame`/`SessionListResult`/`SessionRef`) + `CommandFrame` envelope (rail + core session descriptors).
+- [x] Client runtime (`HostClient`: connect/handshake, command dispatch + correlation, projection stream, heartbeat, reconnect) — 9/9 tests green.
+- [x] `HostWire` linked into the Xcode app project; `xcodegen` + iOS Simulator `xcodebuild` BUILD SUCCEEDED.
+- [ ] Remaining command/event/transcript typed decoders (command.ts/additive.ts long tail).
+- [ ] Session rail + UI rework (replace collab-guest `SessionsView`).
