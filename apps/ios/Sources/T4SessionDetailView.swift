@@ -39,9 +39,12 @@ struct T4SessionDetailView: View {
     @State private var draft = ""
     @State private var sending = false
     @State private var showFacts = false
+    @State private var showFiles = false
     @State private var attachments: [ComposerAttachment] = []
     @State private var pickerItems: [PhotosPickerItem] = []
     @State private var askDraft = ""
+    @State private var renaming = false
+    @State private var renameText = ""
     @FocusState private var composerFocused: Bool
     private var t: Theme { theme.t }
     private static let maxImages = 8   // PROMPT_IMAGE_MAX_COUNT on the wire
@@ -51,6 +54,7 @@ struct T4SessionDetailView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
+                        loadEarlierSection
                         header
                         if let challenge = store.pendingConfirmation {
                             confirmationBanner(challenge)
@@ -69,6 +73,10 @@ struct T4SessionDetailView: View {
                 }
                 .onAppear { proxy.scrollTo("transcript-bottom", anchor: .bottom) }
                 .onChange(of: store.transcript(for: session.sessionId).count) { _, _ in
+                    // A page prepend increases the count too; suppress the
+                    // scroll-to-bottom follow while the store is prepending
+                    // older history so the viewport stays put.
+                    guard store.prependingSession != session.sessionId else { return }
                     withAnimation(.easeOut(duration: 0.2)) {
                         proxy.scrollTo("transcript-bottom", anchor: .bottom)
                     }
@@ -80,6 +88,17 @@ struct T4SessionDetailView: View {
         .navigationTitle(session.title)
         .navigationBarTitleDisplayMode(.inline)
         .task(id: session.sessionId) { await store.attach(sessionId: session.sessionId) }
+        .alert("Rename Session", isPresented: $renaming) {
+            TextField("Session name", text: $renameText)
+            Button("Rename", action: submitRename)
+            Button("Cancel", role: .cancel) { renaming = false }
+        } message: {
+            Text("Enter a new title for this session.")
+        }
+        .sheet(isPresented: $showFiles) {
+            T4FilesPane(session: session, store: store, isPresented: $showFiles)
+                .environmentObject(theme)
+        }
     }
 
     /// Confirmation challenge: summary + approve/deny, matching the desktop
@@ -182,6 +201,47 @@ struct T4SessionDetailView: View {
         .padding(12)
         .background(t.highlightBG, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
+    /// "Load earlier messages" control at the top of the transcript scroll
+    /// content. Shown when the host reports more history (`hasMore == true`)
+    /// or when paging state is unknown and the live transcript is at least
+    /// 50 rows (a full first page may still be fetchable). A spinner replaces
+    /// the label while a page is in flight.
+    private var loadEarlierSection: some View {
+        let paging = store.pagingState[session.sessionId]
+        let entries = store.transcript(for: session.sessionId)
+        let show = (paging?.hasMore == true)
+            || (paging?.hasMore == nil && entries.count >= 50)
+        let loading = paging?.loading == true
+        return Group {
+            if show {
+                HStack {
+                    Spacer()
+                    Button {
+                        Task { await store.loadEarlier(sessionId: session.sessionId) }
+                    } label: {
+                        HStack(spacing: 6) {
+                            if loading {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "arrow.up")
+                                    .font(.system(size: 11, weight: .semibold))
+                            }
+                            Text(loading ? "Loading…" : "Load earlier messages")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .foregroundStyle(t.txtMuted)
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 12)
+                    }
+                    .disabled(loading)
+                    .buttonStyle(.plain)
+                    Spacer()
+                }
+            }
+        }
+    }
+
     private var header: some View {
 
         HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -197,6 +257,48 @@ struct T4SessionDetailView: View {
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(badge.color)
             }
+            Menu {
+                Button {
+                    renameText = session.title
+                    renaming = true
+                } label: {
+                    Label("Rename", systemImage: "pencil")
+                }
+                Button {
+                    Task { await store.compactSession(sessionId: session.sessionId) }
+                } label: {
+                    Label("Compact", systemImage: "rectangle.compress.vertical")
+                }
+                Button {
+                    Task { await store.retrySession(sessionId: session.sessionId) }
+                } label: {
+                    Label("Retry", systemImage: "arrow.clockwise")
+                }
+                Button {
+                    Task { await store.closeSession(sessionId: session.sessionId) }
+                } label: {
+                    Label("Close", systemImage: "xmark.circle")
+                }
+                .disabled(session.status == "closed")
+                Button(role: .destructive) {
+                    Task { await store.deleteSession(sessionId: session.sessionId) }
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+                Divider()
+                Button {
+                    Task { await newSessionInProject() }
+                } label: {
+                    Label("New Session in Project", systemImage: "plus.square")
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 16))
+                    .foregroundStyle(t.txtMuted)
+                    .frame(width: 34, height: 34)
+            }
+            .press()
+            .accessibilityLabel("Session actions")
             Spacer()
             Button { withAnimation(.easeInOut(duration: 0.2)) { showFacts.toggle() } } label: {
                 Image(systemName: showFacts ? "info.circle.fill" : "info.circle")
@@ -206,6 +308,14 @@ struct T4SessionDetailView: View {
             }
             .press()
             .accessibilityLabel("Session details")
+            Button { showFiles = true } label: {
+                Image(systemName: "folder")
+                    .font(.system(size: 16))
+                    .foregroundStyle(t.txtMuted)
+                    .frame(width: 34, height: 34)
+            }
+            .press()
+            .accessibilityLabel("Browse files")
         }
     }
 
@@ -351,5 +461,20 @@ struct T4SessionDetailView: View {
             await store.sendPrompt(sessionId: session.sessionId, text: text, images: images)
             sending = false
         }
+    }
+
+    /// Create a fresh session in this session's project and select it. The
+    /// new session appears in the rail via the store's refresh; selecting it
+    /// navigates the detail view (the parent's onSelect binding).
+    private func newSessionInProject() async {
+        guard let created = await store.createSession(projectId: session.project.projectId) else { return }
+        store.select(created)
+    }
+
+    private func submitRename() {
+        let name = renameText
+        renaming = false
+        renameText = ""
+        Task { await store.renameSession(sessionId: session.sessionId, name: name) }
     }
 }

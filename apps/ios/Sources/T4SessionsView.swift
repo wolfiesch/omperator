@@ -12,6 +12,10 @@ struct T4SessionsView: View {
     @EnvironmentObject var theme: ThemeStore
     private var t: Theme { theme.t }
 
+    /// Session awaiting a rename (rail context menu → alert with text field).
+    @State private var renaming: SessionRef?
+    @State private var renameText = ""
+
     var body: some View {
         List {
             if store.connecting {
@@ -34,6 +38,7 @@ struct T4SessionsView: View {
                         .buttonStyle(.plain)
                         .listRowBackground(Color.clear)
                         .listRowSeparatorTint(t.lineFaint)
+                        .contextMenu { rowContextMenu(for: session) }
                     }
                 } header: {
                     HStack(spacing: 6) {
@@ -57,6 +62,55 @@ struct T4SessionsView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(t.bg)
+        .alert("Rename Session", isPresented: Binding(
+            get: { renaming != nil },
+            set: { if !$0 { renaming = nil } }
+        )) {
+            TextField("Session name", text: $renameText)
+            Button("Rename", action: submitRename)
+            Button("Cancel", role: .cancel) { renaming = nil }
+        } message: {
+            Text("Enter a new title for this session.")
+        }
+    }
+
+    @ViewBuilder
+    private func rowContextMenu(for session: SessionRef) -> some View {
+        Button {
+            renameText = session.title
+            renaming = session
+        } label: {
+            Label("Rename", systemImage: "pencil")
+        }
+        Button {
+            Task { await store.compactSession(sessionId: session.sessionId) }
+        } label: {
+            Label("Compact", systemImage: "rectangle.compress.vertical")
+        }
+        Button {
+            Task { await store.retrySession(sessionId: session.sessionId) }
+        } label: {
+            Label("Retry", systemImage: "arrow.clockwise")
+        }
+        Button {
+            Task { await store.closeSession(sessionId: session.sessionId) }
+        } label: {
+            Label("Close", systemImage: "xmark.circle")
+        }
+        .disabled(session.status == "closed")
+        Button(role: .destructive) {
+            Task { await store.deleteSession(sessionId: session.sessionId) }
+        } label: {
+            Label("Delete", systemImage: "trash")
+        }
+    }
+
+    private func submitRename() {
+        guard let session = renaming else { return }
+        let name = renameText
+        renaming = nil
+        renameText = ""
+        Task { await store.renameSession(sessionId: session.sessionId, name: name) }
     }
 }
 

@@ -29,6 +29,17 @@ final class T4SessionStore: ObservableObject {
         var id: String { request.askId }
     }
 
+    /// Per-session transcript paging state, driven by `transcript.page`.
+    /// `nextCursor` is the opaque cursor the host returned for the next older
+    /// page (nil before the first page); `hasMore` is nil until the first
+    /// older page resolves (unknown); `loading` is true while a page is in
+    /// flight (idempotent guard).
+    struct TranscriptPaging: Equatable {
+        var nextCursor: String?
+        var hasMore: Bool?
+        var loading: Bool
+    }
+
     @Published private(set) var sessions: [SessionRef]
     @Published var query: String = ""
     @Published private(set) var connecting = false
@@ -50,6 +61,14 @@ final class T4SessionStore: ObservableObject {
     @Published var pendingAsk: PendingAsk?
     /// Optimistic fast-mode state per session (the wire has no fast field).
     @Published private(set) var fastBySession: [String: Bool] = [:]
+    /// Per-session transcript paging state (transcript.page). `hasMore` is
+    /// nil until the first older page resolves (unknown); the "Load earlier"
+    /// button shows when hasMore is true OR (unknown and entries ≥ 50).
+    @Published private(set) var pagingState: [String: TranscriptPaging] = [:]
+    /// Session currently prepending a paged history block. The detail view
+    /// suppresses its scroll-to-bottom follow while this matches its session
+    /// so prepended older rows don't yank the viewport to the bottom.
+    @Published private(set) var prependingSession: String?
 
     /// Models from the catalog, in display order (supported first).
     var catalogModels: [CatalogItem] {
@@ -309,6 +328,70 @@ final class T4SessionStore: ObservableObject {
         }
     }
 
+    // MARK: - Session lifecycle
+    // session.create is host-scope (sessions.manage, no revision, no
+    // confirmation, no lease) — sent directly like session.list. The
+    // remaining lifecycle commands are session-scoped and run under a
+    // controller lease via control(): rename (sessions.manage, revision
+    // required), retry/compact (sessions.control, revision required), and
+    // close/delete (sessions.manage, revision required, confirmation
+    // challenge — the host returns a challenge that surfaces through
+    // pendingConfirmation as the approve/deny banner in the session view).
+
+    /// Create a session in a project (session.create {projectId, title?}).
+    /// Returns the new session and refreshes the inventory; nil when not
+    /// connected or the host rejects the create. `title` is optional on the
+    /// wire (bounded text, 512 bytes).
+    @discardableResult
+    func createSession(projectId: String, title: String? = nil) async -> SessionRef? {
+        guard let client, connected, !hostId.isEmpty else { return nil }
+        var args: [String: JSONValue] = ["projectId": .string(projectId)]
+        if let title, !title.isEmpty { args["title"] = .string(title) }
+        do {
+            let result = try await client.sendCommand(CommandIntent(
+                hostId: hostId, command: "session.create", args: args))
+            let created = try result.sessionCreateResult()
+            await refresh()
+            return created
+        } catch {
+            t4log.error("createSession failed: \(error)")
+            lastError = "\(error)"
+            return nil
+        }
+    }
+
+    /// Rename a session (session.rename {name}). Confirmation none — the
+    /// rename takes effect immediately under the controller lease.
+    func renameSession(sessionId: String, name: String) async {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        _ = await control(sessionId: sessionId, command: "session.rename",
+                          args: ["name": .string(trimmed)])
+    }
+
+    /// Compact the session's context (session.compact). No args beyond the
+    /// lease; the host rewrites the transcript in place.
+    func compactSession(sessionId: String) async {
+        _ = await control(sessionId: sessionId, command: "session.compact", args: [:])
+    }
+
+    /// Retry the last turn (session.retry).
+    func retrySession(sessionId: String) async {
+        _ = await control(sessionId: sessionId, command: "session.retry", args: [:])
+    }
+
+    /// Close a session (session.close). The host returns a confirmation
+    /// challenge; `observe()` routes it to `pendingConfirmation`, rendered
+    /// as the approve/deny banner in the session view.
+    func closeSession(sessionId: String) async {
+        _ = await control(sessionId: sessionId, command: "session.close", args: [:])
+    }
+
+    /// Delete a session (session.delete). Same confirmation flow as close.
+    func deleteSession(sessionId: String) async {
+        _ = await control(sessionId: sessionId, command: "session.delete", args: [:])
+    }
+
     /// Upload one JPEG: begin {mimeType,size,sha256} → chunk loop (base64,
     /// host-chunk-sized slices) → the imageId a prompt can reference.
     private func uploadImage(_ data: Data, sessionId: String) async throws -> String {
@@ -514,6 +597,111 @@ final class T4SessionStore: ObservableObject {
         }
     }
 
+    // MARK: - Files (read-only workspace browser)
+
+    /// List a directory in the session workspace (files.list). `path` is a
+    /// safe relative POSIX path; pass "" for the project root — the host
+    /// treats an absent/empty path as the workspace root. Returns the
+    /// entries (folders and files) or nil on failure (lastError is set).
+    func listFiles(sessionId: String, path: String) async -> [FileListEntry]? {
+        guard let client, connected, !hostId.isEmpty else {
+            lastError = "Not connected to a host."
+            return nil
+        }
+        var args: [String: JSONValue] = [:]
+        if !path.isEmpty { args["path"] = .string(path) }
+        do {
+            let result = try await client.sendCommand(CommandIntent(
+                hostId: hostId, command: "files.list", args: args, sessionId: sessionId))
+            return try result.filesListResult()
+        } catch {
+            t4log.error("files.list failed: \(error)")
+            lastError = "\(error)"
+            return nil
+        }
+    }
+
+    /// Read a file from the session workspace (files.read). `path` is a safe
+    /// relative POSIX path. Returns the content string (already decoded from
+    /// base64 when the host used that encoding) or nil on failure (lastError
+    /// is set). The host bounds content to MAX_FILE_BYTES.
+    func readFile(sessionId: String, path: String) async -> String? {
+        guard let client, connected, !hostId.isEmpty else {
+            lastError = "Not connected to a host."
+            return nil
+        }
+        do {
+            let result = try await client.sendCommand(CommandIntent(
+                hostId: hostId, command: "files.read",
+                args: ["path": .string(path)], sessionId: sessionId))
+            let (content, _) = try result.filesReadResult()
+            return content
+        } catch {
+            t4log.error("files.read failed: \(error)")
+            lastError = "\(error)"
+            return nil
+        }
+    }
+
+    // MARK: - Transcript paging (transcript.page)
+
+    /// Load one older transcript page for a session and prepend it to the
+    /// live transcript. The `before` cursor is the opaque `nextCursor` the
+    /// host returned from the previous `transcript.page` call; it is omitted
+    /// on the first page (the host then returns the newest page plus a cursor
+    /// for older history). Idempotent while a page is already in flight.
+    /// The host's `transcript-page-reader` decrypts `before` as an opaque
+    /// cursor payload — NOT an entry id — so the cursor from the prior result
+    /// is the only valid `before` value.
+    func loadEarlier(sessionId: String) async {
+        guard let client, connected, !hostId.isEmpty else { return }
+        // Idempotent: never overlap two page requests for one session.
+        if pagingState[sessionId]?.loading == true { return }
+        // Stop once the host has told us there is no more history.
+        if pagingState[sessionId]?.hasMore == false { return }
+
+        var state = pagingState[sessionId] ?? TranscriptPaging(nextCursor: nil, hasMore: nil, loading: false)
+        state.loading = true
+        pagingState[sessionId] = state
+
+        var args: [String: JSONValue] = ["limit": .number(50)]
+        if let before = state.nextCursor { args["before"] = .string(before) }
+
+        do {
+            let result = try await client.sendCommand(CommandIntent(
+                hostId: hostId, command: "transcript.page", args: args, sessionId: sessionId))
+            let page = try result.transcriptPageResult()
+
+            // Prepend the decoded older rows, dropping any that overlap the
+            // already-known live tail (the first page commonly overlaps the
+            // attach snapshot). The host returns entries oldest→newest.
+            let existing = liveEntries[sessionId] ?? []
+            let existingIds = Set(existing.map { $0.id })
+            let older = page.entries.map { TranscriptEntry(from: $0) }
+                .filter { !existingIds.contains($0.id) }
+
+            // Flag the prepend so the detail view suppresses its scroll-to-
+            // bottom follow; clear it on the next runloop tick so the
+            // count-change render still sees the flag set.
+            prependingSession = sessionId
+            if !older.isEmpty {
+                liveEntries[sessionId] = older + existing
+            }
+            pagingState[sessionId] = TranscriptPaging(
+                nextCursor: page.nextCursor,
+                hasMore: page.hasMore,
+                loading: false)
+            Task { @MainActor in prependingSession = nil }
+        } catch {
+            t4log.error("transcript.page failed: \(error)")
+            lastError = "\(error)"
+            var failed = pagingState[sessionId] ?? TranscriptPaging(nextCursor: nil, hasMore: nil, loading: false)
+            failed.loading = false
+            pagingState[sessionId] = failed
+            Task { @MainActor in prependingSession = nil }
+        }
+    }
+
     /// Live frames keep the inventory, transcripts, and confirmations current.
     private func observe() async {
         guard let client else { return }
@@ -524,6 +712,9 @@ final class T4SessionStore: ObservableObject {
                 reconcileSelection()
             case .snapshot(let snapshot):
                 liveEntries[snapshot.sessionId] = snapshot.entries.map { TranscriptEntry(from: $0) }
+                // The snapshot is the live tail at the current cursor; older
+                // history paging restarts from unknown (hasMore = nil).
+                pagingState[snapshot.sessionId] = TranscriptPaging(nextCursor: nil, hasMore: nil, loading: false)
             case .entry(let entryFrame):
                 var entries = liveEntries[entryFrame.sessionId] ?? []
                 let entry = TranscriptEntry(from: entryFrame.entry)

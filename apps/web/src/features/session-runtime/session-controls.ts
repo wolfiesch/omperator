@@ -6,6 +6,7 @@
 import type { CatalogFrame, CatalogItem, SessionRef, SettingsFrame } from "@t4-code/protocol";
 
 import {
+  isSessionMode,
   isThinkingLevel,
   type SessionMode,
   type ThinkingLevel,
@@ -15,6 +16,7 @@ import {
 export const MODEL_SET_COMMAND = "session.model.set";
 export const THINKING_SET_COMMAND = "session.thinking.set";
 export const FAST_SET_COMMAND = "session.fast.set";
+export const MODE_SET_COMMAND = "session.mode.set";
 
 /** Human names for OMP's built-in model roles (mirrors the TUI's tags). */
 const ROLE_LABEL: Readonly<Record<string, string>> = {
@@ -30,7 +32,7 @@ const ROLE_LABEL: Readonly<Record<string, string>> = {
   advisor: "Advisor",
 };
 
-export type PendingControl = "model" | "thinking" | "fast";
+export type PendingControl = "model" | "thinking" | "fast" | "mode";
 
 export interface ModelChoice {
   /** Stable menu id: `role:<roleId>` or `model:<selector>`. */
@@ -73,7 +75,7 @@ export interface ComposerControlsSnapshot {
   readonly fast: boolean;
   /** Priority will actually be encoded for the next request. */
   readonly fastActive: boolean;
-  /** No live protocol exists for mode; only the fixture supports it. */
+  /** The host offers `session.mode.set`; the control renders when mode is known. */
   readonly modeSupported: boolean;
   readonly mode: SessionMode | null;
   /** The host negotiated the bounded `prompt.images` upload protocol. */
@@ -153,6 +155,8 @@ export interface SessionControlState {
   readonly fast: boolean | null;
   readonly fastAvailable: boolean | null;
   readonly fastActive: boolean | null;
+  /** Working mode reported on the session ref; null until the host speaks. */
+  readonly mode: SessionMode | null;
 }
 
 const CONCRETE_THINKING_LEVELS: readonly ThinkingLevel[] = [
@@ -216,9 +220,11 @@ export function readSessionControlState(ref: SessionRef | undefined): SessionCon
   let fast: boolean | null = null;
   let fastAvailable: boolean | null = null;
   let fastActive: boolean | null = null;
+  let mode: SessionMode | null = null;
   if (ref !== undefined) {
     if (typeof ref.model === "string" && ref.model !== "") modelSelector = ref.model;
     if (isThinkingLevel(ref.thinking)) thinking = ref.thinking;
+    if (isSessionMode(ref.mode)) mode = ref.mode;
     const live = ref.liveState;
     if (isRecord(live)) {
       const model = live.model;
@@ -270,6 +276,7 @@ export function readSessionControlState(ref: SessionRef | undefined): SessionCon
     fast,
     fastAvailable,
     fastActive,
+    mode,
   };
 }
 
@@ -455,6 +462,7 @@ export function deriveComposerControls(input: DeriveControlsInput): ComposerCont
   const model = commandSupport(catalog, granted, MODEL_SET_COMMAND);
   const think = commandSupport(catalog, granted, THINKING_SET_COMMAND);
   const fast = commandSupport(catalog, granted, FAST_SET_COMMAND);
+  const mode = commandSupport(catalog, granted, MODE_SET_COMMAND);
 
   const thinkingSupported =
     think.supported && state.thinkingSupported === true && state.thinkingLevels !== null;
@@ -500,8 +508,8 @@ export function deriveComposerControls(input: DeriveControlsInput): ComposerCont
     fastAvailable,
     fast: state.fast === true,
     fastActive,
-    modeSupported: false,
-    mode: null,
+    modeSupported: mode.supported,
+    mode: state.mode,
     attachmentsSupported:
       granted.includes("sessions.prompt") && granted.includes("prompt.images"),
     attachmentsUnsupportedReason: null,
