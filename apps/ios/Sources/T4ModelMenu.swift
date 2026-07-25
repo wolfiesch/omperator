@@ -35,52 +35,53 @@ struct T4ModelMenuButton<Label: View>: View {
 
     var body: some View {
         Menu {
-            ForEach(providers) { group in
-                Section(group.name.uppercased()) {
-                    ForEach(group.models, id: \.id) { item in
-                        Button {
-                            Task { await store.setModel(sessionId: session.sessionId, selector: item.id) }
-                        } label: {
-                            if item.id == session.model {
-                                Label(splitModelSelector(item.id).model, systemImage: "checkmark")
-                            } else {
-                                Text(splitModelSelector(item.id).model)
-                            }
-                        }
-                    }
-                }
-            }
-            if store.catalogModels.isEmpty {
-                Text("No models in the host catalog")
-            }
-
-            Section {
-                Menu {
-                    ForEach(t4ThinkingLevels, id: \.self) { level in
-                        Button {
-                            Task { await store.setThinking(sessionId: session.sessionId, level: level) }
-                        } label: {
-                            if level == session.thinking {
-                                Label(level, systemImage: "checkmark")
-                            } else {
-                                Text(level)
-                            }
-                        }
-                    }
-                } label: {
-                    Label("Thinking: \(session.thinking ?? "auto")", systemImage: "brain")
-                }
-
-                Toggle(isOn: Binding(
-                    get: { store.fastBySession[session.sessionId] ?? false },
-                    set: { enabled in Task { await store.setFast(sessionId: session.sessionId, enabled: enabled) } }
-                )) {
-                    Label("Fast mode", systemImage: "bolt")
-                }
-            }
+            modelContent
+            controlContent
         } label: {
             label()
         }
         .disabled(!store.connected)
+    }
+
+    @ViewBuilder private var modelContent: some View {
+        ForEach(providers) { group in
+            Section(group.name.uppercased()) {
+                ForEach(group.models, id: \.id) { item in
+                    Button {
+                        Task { await store.setModel(sessionId: session.sessionId, selector: item.id) }
+                    } label: {
+                        Label(splitModelSelector(item.id).model,
+                              systemImage: item.id == session.model ? "checkmark" : "circle")
+                            .symbolVariant(item.id == session.model ? .none : .none)
+                    }
+                }
+            }
+        }
+        if store.catalogModels.isEmpty {
+            Text("No models in the host catalog")
+        }
+    }
+
+    @ViewBuilder private var controlContent: some View {
+        Section {
+            Menu {
+                ForEach(t4ThinkingLevels, id: \.self) { level in
+                    Button {
+                        Task { await store.setThinking(sessionId: session.sessionId, level: level) }
+                    } label: {
+                        Label(level, systemImage: level == session.thinking ? "checkmark" : "circle")
+                    }
+                }
+            } label: {
+                Label("Thinking: \(session.thinking ?? "auto")", systemImage: "brain")
+            }
+
+            Toggle(isOn: Binding(
+                get: { store.fastBySession[session.sessionId] ?? false },
+                set: { enabled in Task { await store.setFast(sessionId: session.sessionId, enabled: enabled) } }
+            )) {
+                Label("Fast mode", systemImage: "bolt")
+            }
+        }
     }
 }
