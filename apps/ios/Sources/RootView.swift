@@ -53,6 +53,12 @@ struct RootView: View {
             }
         }
         .tint(t.accent)
+        .task {
+            // Dev seam: launch straight into the first session's detail.
+            if ProcessInfo.processInfo.environment["T4_DETAIL"] != nil {
+                store.selectedSession = store.sessions.first
+            }
+        }
         .onChange(of: colorScheme, initial: true) { _, new in theme.systemDark = (new == .dark) }
         .sheet(isPresented: $showConnect) {
             T4ConnectView(store: store).environmentObject(theme)

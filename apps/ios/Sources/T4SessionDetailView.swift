@@ -1,7 +1,6 @@
 //  T4SessionDetailView.swift
-//  One session: identity + status + context, and (once attached over host-wire)
-//  the live transcript. For now the transcript surface is a placeholder; it is
-//  wired to host-wire durable entries in the next step.
+//  One session: identity + status + context, and the live transcript rendered
+//  from host-wire durable entries (TranscriptEntry).
 
 import SwiftUI
 import HostWire
@@ -18,7 +17,7 @@ struct T4SessionDetailView: View {
                 header
                 facts
                 Divider().overlay(t.lineFaint)
-                transcriptPlaceholder
+                transcript
             }
             .padding()
         }
@@ -57,11 +56,10 @@ struct T4SessionDetailView: View {
         }
     }
 
-    private var transcriptPlaceholder: some View {
-        VStack(alignment: .leading, spacing: 6) {
+    private var transcript: some View {
+        VStack(alignment: .leading, spacing: 8) {
             Text("Transcript").font(.system(size: 13, weight: .semibold)).foregroundStyle(t.txtBody)
-            Text("The live transcript renders here once the session is attached over host-wire.")
-                .font(.system(size: 12)).foregroundStyle(t.txtMuted)
+            T4TranscriptView(entries: store.transcript(for: session.sessionId), theme: t)
         }
     }
 }

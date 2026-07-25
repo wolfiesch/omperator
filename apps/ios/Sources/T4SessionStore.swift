@@ -49,6 +49,23 @@ final class T4SessionStore: ObservableObject {
             .map { Group(project: $0.key, sessions: $0.value.sorted { $0.updatedAt > $1.updatedAt }) }
     }
 
+    /// Transcript entries for a session. Sample until session.attach +
+    /// transcript.page are wired to a live host; the entry shape is real.
+    func transcript(for sessionId: String) -> [TranscriptEntry] {
+        let host = hostId.isEmpty ? "local" : hostId
+        let json = """
+        [
+        {"id":"e1","parentId":null,"hostId":"\(host)","sessionId":"\(sessionId)","kind":"message","timestamp":"2026-07-24T09:00:00Z","data":{"role":"user","text":"audit the reconnect backoff"}},
+        {"id":"e2","parentId":"e1","hostId":"\(host)","sessionId":"\(sessionId)","kind":"message","timestamp":"2026-07-24T09:00:05Z","data":{"text":"Looking at HostClient reconnect now."}},
+        {"id":"e3","parentId":"e2","hostId":"\(host)","sessionId":"\(sessionId)","kind":"tool-use","timestamp":"2026-07-24T09:00:10Z","data":{"tool":"read","title":"read HostClient.swift"}},
+        {"id":"e4","parentId":"e3","hostId":"\(host)","sessionId":"\(sessionId)","kind":"tool-result","timestamp":"2026-07-24T09:00:11Z","data":{"tool":"read","ok":true}},
+        {"id":"e5","parentId":"e4","hostId":"\(host)","sessionId":"\(sessionId)","kind":"message","timestamp":"2026-07-24T09:00:20Z","data":{"text":"Backoff is 0.5–30s exponential with cursor resume — correct."}}
+        ]
+        """
+        let entries = (try? JSONDecoder().decode([DurableEntry].self, from: Data(json.utf8))) ?? []
+        return entries.map { TranscriptEntry(from: $0) }
+    }
+
     /// Connect to a t4-host over host-wire, handshake, and load the inventory.
     func connect(endpoint: URL, identity: ClientIdentity, authentication: DeviceAuthentication? = nil) async {
         connecting = true
@@ -101,10 +118,10 @@ final class T4SessionStore: ObservableObject {
     private static let sample: [SessionRef] = {
         let json = """
         [
-        {"hostId":"local","sessionId":"s1","project":{"projectId":"omp","name":"oh-my-pi"},"revision":"r1","title":"Refactor AST block ops","status":"active","updatedAt":"2026-07-24T09:10:00Z","model":"devin/swe-1-7","pendingApproval":false,"contextUsage":{"used":42,"limit":200}},
-        {"hostId":"local","sessionId":"s2","project":{"projectId":"omp","name":"oh-my-pi"},"revision":"r2","title":"Port collab guest client","status":"idle","updatedAt":"2026-07-23T18:02:00Z","model":"devin/swe-1-7","contextUsage":{"used":120,"limit":200}},
-        {"hostId":"studio-mac","sessionId":"s3","project":{"projectId":"t4code","name":"T4 Code"},"revision":"r3","title":"iOS session rail","status":"active","updatedAt":"2026-07-24T11:00:00Z","model":"gpt-5.2","pendingUserInput":true,"contextUsage":{"used":7,"limit":200}},
-        {"hostId":"studio-mac","sessionId":"s4","project":{"projectId":"t4code","name":"T4 Code"},"revision":"r4","title":"Host-wire Swift port","status":"closed","updatedAt":"2026-07-20T08:00:00Z","model":"gpt-5.2"}
+        {"hostId":"studio-mac","sessionId":"s1","project":{"projectId":"t4code","name":"T4 Code"},"revision":"r1","title":"iOS session rail","status":"active","updatedAt":"2026-07-24T11:00:00Z","model":"gpt-5.2","pendingUserInput":true,"contextUsage":{"used":7,"limit":200}},
+        {"hostId":"studio-mac","sessionId":"s2","project":{"projectId":"t4code","name":"T4 Code"},"revision":"r2","title":"Host-wire Swift port","status":"closed","updatedAt":"2026-07-20T08:00:00Z","model":"gpt-5.2"},
+        {"hostId":"studio-mac","sessionId":"s3","project":{"projectId":"t4code","name":"T4 Code"},"revision":"r3","title":"Agent view","status":"idle","updatedAt":"2026-07-24T08:30:00Z","model":"devin/swe-1-7","contextUsage":{"used":88,"limit":200}},
+        {"hostId":"studio-mac","sessionId":"s4","project":{"projectId":"t4code","name":"T4 Code"},"revision":"r4","title":"Hosts & usage","status":"active","updatedAt":"2026-07-24T12:10:00Z","model":"gpt-5.2","pendingApproval":true,"contextUsage":{"used":33,"limit":200}}
         ]
         """
         let decoder = JSONDecoder()
