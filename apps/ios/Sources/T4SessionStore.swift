@@ -60,6 +60,8 @@ final class T4SessionStore: ObservableObject {
 
     /// Auto-reconnect on launch with the last successful connection, if any.
     func restore() async {
+        // UI-test seam: -T4NoRestore forces the offline sample inventory.
+        if ProcessInfo.processInfo.arguments.contains("-T4NoRestore") { return }
         let defaults = UserDefaults.standard
         guard !connected, !connecting,
               let endpointString = defaults.string(forKey: Self.savedEndpointKey),
