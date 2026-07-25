@@ -1507,7 +1507,31 @@ export class LocalAppserver implements AppserverHandle {
 		return this.#supervisors.get(sessionId)?.child();
 	}
 	async #command(command: CommandFrame, ws?: AppWs, approved = false): Promise<CommandOutcome> {
+		if (!this.#trace) return this.#commandInner(command, ws, approved);
+		const startedAt = performance.now();
 		emitHostTrace(this.#trace, command.requestId, command.command, "received");
+		try {
+			const outcome = await this.#commandInner(command, ws, approved);
+			emitHostTrace(
+				this.#trace,
+				command.requestId,
+				command.command,
+				"server-returned",
+				Math.round(performance.now() - startedAt),
+			);
+			return outcome;
+		} catch (error) {
+			emitHostTrace(
+				this.#trace,
+				command.requestId,
+				command.command,
+				"server-threw",
+				Math.round(performance.now() - startedAt),
+			);
+			throw error;
+		}
+	}
+	async #commandInner(command: CommandFrame, ws?: AppWs, approved = false): Promise<CommandOutcome> {
 		if (command.hostId !== this.hostId)
 			return {
 				frame: response(this.hostId, command, false, undefined, {
