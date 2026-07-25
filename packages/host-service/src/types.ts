@@ -112,6 +112,8 @@ export interface SessionRecord {
 	model?: string;
 	thinking?: string;
 	runtime?: { readonly id: string; readonly workspaceInstanceId?: string };
+	/** Durable proof that the transcript came from the compatible owned OMP runtime. */
+	authorityProtocol?: "t4-omp-authority/1";
 	/** False when discovery intentionally deferred loading the transcript body. */
 	entriesLoaded?: boolean;
 	entries: DurableEntry[];

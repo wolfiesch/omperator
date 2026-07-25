@@ -910,6 +910,82 @@ describe("appserver lifecycle", () => {
 			await rm(root, { recursive: true, force: true });
 		}
 	});
+	test("reclaims a completed short T4 session from its durable authority protocol", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-short-session-receipt-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const transcriptPath = join(root, "short-session.jsonl");
+		const sid = sessionId("short-session-receipt");
+		const timestamp = "2026-07-25T00:00:00.000Z";
+		await writeFile(
+			transcriptPath,
+			`${JSON.stringify({
+				type: "session",
+				version: 3,
+				id: sid,
+				cwd: root,
+				timestamp,
+				title: "Short session",
+				authorityProtocol: "t4-omp-authority/1",
+			})}\n`,
+		);
+		const factory = new FakeFactory();
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "short-session-receipt-test",
+			socketPath,
+			discovery: new FileSessionDiscovery(root, realFs, host, true),
+			childFactory: factory,
+			lockStatus: () => "missing",
+			lockCheck: async () => {},
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "short-receipt-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: ["session.observer", "session.unverified"],
+				capabilities: { client: ["sessions.read"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect((await client.nextServer()).type).toBe("sessions");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "attach-short-receipt",
+				commandId: "attach-short-receipt-command",
+				hostId: host,
+				sessionId: sid,
+				command: "session.attach",
+				args: {},
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "attach-short-receipt") {
+					expect(frame.ok).toBe(true);
+					break;
+				}
+			}
+			await Promise.race([
+				(async () => {
+					while (factory.children.length === 0) await Bun.sleep(20);
+				})(),
+				Bun.sleep(1_000).then(() => {
+					throw new Error("short T4 session was not reclaimed");
+				}),
+			]);
+			expect(factory.children).toHaveLength(1);
+			expect(appserver.snapshot(sid)?.ref.liveState?.sessionControl?.mode).not.toBe("unverified");
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
 	test("forks an observed session into an owned copy without touching the source", async () => {
 		const root = await mkdtemp(join(tmpdir(), "t4-fork-observed-"));
 		const socketPath = join(root, "run", "appserver.sock");

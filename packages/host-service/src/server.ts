@@ -75,6 +75,7 @@ import {
 } from "./identity.ts";
 import { ImageUploadError, ImageUploadStore } from "./image-upload-store.ts";
 import { SessionOwnershipStore } from "./session-ownership-store.ts";
+import { OMP_AUTHORITY_BRIDGE_PROTOCOL } from "./omp-authority-bridge-contract.ts";
 import {
 	commandFeature,
 	DesktopOperationDispatcher,
@@ -4753,7 +4754,11 @@ export class LocalAppserver implements AppserverHandle {
 		if (!observer) {
 			const owned = this.#sessionOwnership?.owns(sessionId, record.path) === true;
 			const lockless =
-				!this.#claimLocklessSessions && !owned && status === "missing" && !projection.value.ref.liveState?.sessionControl;
+				!this.#claimLocklessSessions &&
+				!owned &&
+				record.authorityProtocol !== OMP_AUTHORITY_BRIDGE_PROTOCOL &&
+				status === "missing" &&
+				!projection.value.ref.liveState?.sessionControl;
 			observer = new SessionTranscriptObserver(record.path, this.hostId);
 			this.#observers.set(sessionId, observer);
 			if (lockless) this.#locklessObservers.add(observer);

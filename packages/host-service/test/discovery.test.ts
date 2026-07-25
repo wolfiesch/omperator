@@ -15,6 +15,7 @@ import {
 import {
 	FileSessionDiscovery,
 	OVERSIZED_RECORD_OMISSION_SUMMARY,
+	parseSessionTranscriptMetadata,
 	projectMessageText,
 	SessionEntryProjector,
 	SessionTranscriptObserver,
@@ -64,6 +65,28 @@ function sessionTranscript(id: string, cwd: string, title: string): string {
 }
 
 describe("current OMP JSONL projection", () => {
+	test("preserves the exact durable T4 authority protocol from full and metadata-only transcripts", async () => {
+		const header = JSON.stringify({
+			type: "session",
+			version: 3,
+			id: "session-authority",
+			cwd: "/home/tester/project",
+			timestamp: stamp,
+			title: "Authority receipt",
+			authorityProtocol: "t4-omp-authority/1",
+		});
+		const discovery = new FileSessionDiscovery(
+			"/root",
+			fakeFs({ "/root/session.jsonl": header }, ["/root"]),
+			host,
+		);
+
+		expect((await discovery.list())[0]?.authorityProtocol).toBe("t4-omp-authority/1");
+		expect(parseSessionTranscriptMetadata(header, "/root/session.jsonl").authorityProtocol).toBe(
+			"t4-omp-authority/1",
+		);
+	});
+
 	test("bounds multibyte plain-string prompt projections without splitting UTF-8", () => {
 		const projected = projectMessageText("🙂".repeat(4_000), 8 * 1024);
 		expect(new TextEncoder().encode(projected).byteLength).toBeLessThanOrEqual(8 * 1024);
