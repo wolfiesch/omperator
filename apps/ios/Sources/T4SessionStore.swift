@@ -359,13 +359,13 @@ final class T4SessionStore: ObservableObject {
                 requestedCapabilities: ["sessions.read", "sessions.prompt", "sessions.manage"]
             )
             let ok = try await c.pair(intent)
+            // The paired connection is inert by design (the host rejects
+            // commands from a just-paired socket): reconnect with the granted
+            // credentials — connect() handles persist/refresh/catalog/observe.
+            await c.close()
             let auth = DeviceAuthentication(deviceId: ok.deviceId, deviceToken: ok.deviceToken)
-            connected = true
-            pairedEndpoint = endpoint.absoluteString
-            persist(endpoint: endpoint, authentication: auth)
-            await refresh()
-            await loadCatalog()
-            Task { await observe() }
+            await connect(endpoint: endpoint, identity: identity, authentication: auth)
+            if connected { pairedEndpoint = endpoint.absoluteString }
         } catch {
             lastError = "Pairing failed — check the code and that the host is running (\(error))"
         }
