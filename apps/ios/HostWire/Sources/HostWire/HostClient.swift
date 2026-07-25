@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let t4wireLog = Logger(subsystem: "sh.t4code.ios", category: "wire")
 
 /// Host-wire client runtime: WebSocket connect, hello/welcome handshake,
 /// heartbeat, command dispatch with request/response correlation, inbound
@@ -219,7 +222,10 @@ public actor HostClient {
     }
 
     private func receiveNext() async throws -> Data { try await transport.receive() }
-    private func sendPayload(_ data: Data) async throws { try await transport.send(data) }
+    private func sendPayload(_ data: Data) async throws {
+        t4wireLog.debug("out: \(String(decoding: data, as: UTF8.self), privacy: .public)")
+        try await transport.send(data)
+    }
 
     private func ingest(_ data: Data) throws {
         let frame = try ServerFrame.decode(data)
