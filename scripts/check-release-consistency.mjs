@@ -19,6 +19,7 @@ export const RELEASE_CONTRACT_PATHS = [
   "README.md",
   "SECURITY.md",
   "THIRD_PARTY_NOTICES.md",
+  "apps/desktop/src/bundled-runtime.ts",
   "apps/desktop/src/target-manager.ts",
   "apps/site/src/docs/content.ts",
   "apps/site/src/release.ts",
@@ -460,6 +461,12 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   if (macosIdentity?.notarizationRequired !== true) {
     errors.push(`${macosIdentityPath} must require notarization`);
   }
+  requireText(
+    files.get("apps/desktop/src/bundled-runtime.ts") ?? "",
+    macosIdentity?.certificateSha256 ?? "missing macOS certificate SHA-256",
+    "apps/desktop/src/bundled-runtime.ts",
+    errors,
+  );
 
   const packagePaths = [...files.keys()]
     .filter(

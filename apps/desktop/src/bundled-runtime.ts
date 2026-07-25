@@ -11,7 +11,7 @@ const SIGNED_RUNTIME_TEAM_ID = "WJLM3D3DK6";
 const SIGNED_RUNTIME_CERTIFICATE = "Developer ID Application: Michael Schoenberger (WJLM3D3DK6)";
 const SIGNED_RUNTIME_CERTIFICATE_AUTHORITY = "Developer ID Certification Authority";
 const SIGNED_RUNTIME_CERTIFICATE_SHA256 =
-  "7f946ec45aabcb895a46df233f326d8a878d1e874b2d546bfa781d4bd7b081ef";
+  "753d2fce58b7f542c119c21e086943d5f56cc39b101fea11a6b734bcd1e022e3";
 
 export interface BundledRuntimeManifest {
   readonly version: 1;
