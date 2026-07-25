@@ -43,7 +43,7 @@ struct T4WorkspaceView: View {
 
                 if railOpen || offset > -width {
                     // Backdrop dims the workspace as the drawer slides in.
-                    t.bg.opacity(backdropOpacity(offset: offset, width: width))
+                    Color.black.opacity(backdropOpacity(offset: offset, width: width))
                         .ignoresSafeArea()
                         .onTapGesture { closeRail() }
                         .gesture(closeDrag(width: width))
@@ -171,11 +171,9 @@ struct T4WorkspaceView: View {
                     }
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(t.glassFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .padding(.horizontal, 12)
-            .padding(.bottom, 8)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .overlay(alignment: .bottom) { Rectangle().fill(t.lineFaint).frame(height: 1) }
 
             T4SessionsView(store: store) { session in
                 store.select(session)
@@ -195,15 +193,17 @@ struct T4WorkspaceView: View {
                 .accessibilityLabel("Connect a T4 host")
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.top, 12)
+            .padding(.bottom, 28)
+            .overlay(alignment: .top) { Rectangle().fill(t.lineFaint).frame(height: 1) }
         }
         .frame(width: width)
         .frame(maxHeight: .infinity)
-        .background(t.bg2)
+        .background(t.bg)
         .overlay(alignment: .trailing) {
             Rectangle().fill(t.line).frame(width: 1)
         }
-        .shadow(color: .black.opacity(0.35), radius: 24, x: 8, y: 0)
+        .shadow(color: .black.opacity(0.18), radius: 12, x: 4, y: 0)
         .ignoresSafeArea(.container, edges: .bottom)
     }
 
@@ -239,7 +239,7 @@ struct T4WorkspaceView: View {
     }
 
     private func backdropOpacity(offset: CGFloat, width: CGFloat) -> Double {
-        0.45 * Double((offset + width) / width)
+        0.5 * Double((offset + width) / width)
     }
 
     private func toggleRail() {

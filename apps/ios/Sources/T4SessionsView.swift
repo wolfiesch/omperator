@@ -15,13 +15,15 @@ struct T4SessionsView: View {
     var body: some View {
         List {
             if store.connecting {
-                HStack { ProgressView(); Text("Connecting…").foregroundStyle(t.txtMuted) }
+                HStack { ProgressView(); Text("Connecting\u{2026}").foregroundStyle(t.txtMuted) }
                     .frame(maxWidth: .infinity, alignment: .center)
                     .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
             }
             if let error = store.lastError {
                 Text(error).font(.system(size: 12)).foregroundStyle(t.diffDel)
                     .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
             }
             ForEach(store.groups) { group in
                 Section {
@@ -30,7 +32,7 @@ struct T4SessionsView: View {
                             T4SessionRow(session: session, theme: t)
                         }
                         .buttonStyle(.plain)
-                        .listRowBackground(t.bg2)
+                        .listRowBackground(Color.clear)
                         .listRowSeparatorTint(t.lineFaint)
                     }
                 } header: {
@@ -41,6 +43,7 @@ struct T4SessionsView: View {
                         Text("\(group.sessions.count)").font(.system(size: 11)).foregroundStyle(t.txtLabel)
                     }
                     .textCase(nil)
+                    .padding(.bottom, 4)
                 }
             }
             if store.groups.isEmpty {
@@ -48,11 +51,12 @@ struct T4SessionsView: View {
                     .foregroundStyle(t.txtMuted)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
             }
         }
-        .listStyle(.insetGrouped)
+        .listStyle(.plain)
         .scrollContentBackground(.hidden)
-        .background(t.bg.ignoresSafeArea())
+        .background(t.bg)
     }
 }
 
