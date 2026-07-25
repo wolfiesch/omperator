@@ -469,22 +469,32 @@ export async function repairAppserverService(
 export interface NodeServiceRunnerOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly runner?: ProcessRunner;
+  readonly timeoutMs?: number;
 }
 
 export class NodeServiceRunner implements ServiceRunner {
   private readonly runner: ProcessRunner;
   private readonly environment: NodeJS.ProcessEnv;
+  private readonly timeoutMs: number;
 
   constructor(options: NodeServiceRunnerOptions = {}) {
     this.runner = options.runner ?? new NodeProcessRunner();
     this.environment = createSafeServiceEnvironment(options.environment);
+    this.timeoutMs = options.timeoutMs ?? 15_000;
+    if (!Number.isSafeInteger(this.timeoutMs) || this.timeoutMs < 1 || this.timeoutMs > 60_000)
+      throw new Error("service command timeout must be between 1 and 60000ms");
   }
 
   async run(argv: readonly string[]): Promise<ServiceRunnerResult> {
     const [command, ...args] = argv;
     if (command === undefined) throw new Error("service command is empty");
-    const handle = await this.runner.spawn({ command, args, env: this.environment });
-    const result = await handle.result;
+    const result = await runProcess({
+      runner: this.runner,
+      command,
+      args,
+      env: this.environment,
+      timeoutMs: this.timeoutMs,
+    });
     return { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr };
   }
 }
