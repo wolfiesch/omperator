@@ -32,6 +32,8 @@ export const RELEASE_CONTRACT_PATHS = [
   "packages/client/src/omp-client-frames.ts",
   "provenance/omp-host-migration.json",
   "scripts/check-release-publication.mjs",
+  "scripts/ci-baseline.mjs",
+  "scripts/ci-paths.mjs",
   "scripts/deploy-site.mjs",
   "scripts/dispatch-site-deployment.mjs",
   "scripts/generate-release-manifest.mjs",
@@ -1037,6 +1039,38 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
       if (!(workflow?.jobs?.["release-gates"]?.needs ?? []).includes(job))
         errors.push(`.github/workflows/ci.yml release-gates must aggregate the deferred ${job} leg`);
     }
+    // A merge run may only narrow its legs against a commit whose own run was
+    // green. Diffing the immediate parent would let a docs-only run inherit
+    // proof across a failed one, and the release waiter reads exactly that
+    // per-commit conclusion.
+    const classifyStep = (workflow?.jobs?.changes?.steps ?? []).find(
+      (step) => step?.id === "classify",
+    );
+    if (typeof classifyStep?.run !== "string") {
+      errors.push(".github/workflows/ci.yml is missing the classify step");
+    } else {
+      if (!classifyStep.run.includes("node scripts/ci-baseline.mjs --head"))
+        errors.push(".github/workflows/ci.yml pushes must classify against a proven baseline");
+      if (!classifyStep.run.includes('node scripts/ci-paths.mjs --all'))
+        errors.push(".github/workflows/ci.yml must widen to every leg without a proven baseline");
+      if (!/github\.event\.pull_request\.base\.sha/u.test(JSON.stringify(classifyStep.env ?? {})))
+        errors.push(".github/workflows/ci.yml must classify pull requests against their base");
+    }
+    if (workflow?.jobs?.changes?.permissions?.actions !== "read")
+      errors.push(".github/workflows/ci.yml changes must read Actions history to find a baseline");
+    // The classifier cannot grade itself, so a change to selection or to the
+    // release authority that trusts a run conclusion must widen to every leg.
+    const classifierSource = files.get("scripts/ci-paths.mjs") ?? "";
+    for (const boundary of [
+      String.raw`^\.github\/workflows\/(?:ci|release)\.yml$`,
+      String.raw`^scripts\/check-release-consistency(?:\.test)?\.mjs$`,
+      String.raw`^scripts\/ci-baseline(?:\.test)?\.mjs$`,
+      String.raw`^scripts\/ci-paths(?:\.test)?\.mjs$`,
+      String.raw`^scripts\/wait-for-exact-ci(?:\.test)?\.mjs$`,
+    ]) {
+      if (!classifierSource.includes(boundary))
+        errors.push(`scripts/ci-paths.mjs must force every leg for ${boundary}`);
+    }
   } catch (error) {
     errors.push(`.github/workflows/ci.yml is invalid YAML: ${error instanceof Error ? error.message : error}`);
   }
@@ -1050,6 +1084,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "run: pnpm exec playwright install --with-deps chromium",
     "run: pnpm exec playwright install-deps chromium",
     "key: ${{ steps.playwright-cache.outputs.cache-primary-key }}",
+    "run: node --test scripts/ci-paths.test.mjs scripts/ci-baseline.test.mjs",
     "legacy-bridge-continuity:",
     'ref: ${{ github.event.pull_request.head.sha || github.sha }}',
     `source_repository="$(jq -er '.verifiedRuntime.sourceRepository' compat/omp-app-matrix.json)"`,
