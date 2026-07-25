@@ -1,5 +1,5 @@
 // Live PTY bridge contract: honest feature/capability/catalog gates, the
-// lease-injected session-scoped term.open with a relative cwd, requestId
+// host-owned session-scoped term.open with a relative cwd and no OMP lease, requestId
 // correlation against the session projection (including the landed-before-
 // subscribe race), cursor-ordered utf8/base64 output with stderr and exit
 // intact, strictly serialized input, coalesced resize, exactly-one close,
@@ -56,7 +56,6 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { LiveSessionAddress } from "../src/platform/live-workspace.ts";
 import { resolveLiveSession, sessionViewId } from "../src/platform/live-workspace.ts";
-import { presentSessionControl } from "../src/features/session-runtime/session-observer.ts";
 import {
   createLivePtySessionFactory,
   createResolvingLivePtySessionFactory,
@@ -263,7 +262,6 @@ class FakeShell implements DesktopShellPort {
   holdResize = false;
   rejectOpen = false;
   challengeOpen = false;
-  leaseRefused = false;
   /** Emit the term.open response before the command promise resolves. */
   respondOpenSynchronously = false;
   openCount = 0;
@@ -305,12 +303,10 @@ class FakeShell implements DesktopShellPort {
         targetId: request.targetId,
         requestId: `lease-req-${ordinal}`,
         commandId: `lease-cmd-${ordinal}`,
-        accepted: !this.leaseRefused,
+        accepted: true,
       };
       if (intent.command === "controller.lease.release") return base;
-      return this.leaseRefused
-        ? base
-        : { ...base, leaseId: "lease-fixture", expiresAt: "2030-01-01T00:00:00.000Z" };
+      return { ...base, leaseId: "lease-fixture", expiresAt: "2030-01-01T00:00:00.000Z" };
     }
     if (intent.command === "term.open") {
       this.openCount += 1;
@@ -597,7 +593,7 @@ describe("availability gates", () => {
   });
 });
 
-describe("term.open through the controller lease", () => {
+describe("host-owned term.open", () => {
   it("recovers a drawer created before its cached session is rebound", async () => {
     const h = await harness();
     let address: LiveSessionAddress | null = null;
@@ -658,24 +654,17 @@ describe("term.open through the controller lease", () => {
     expect(events.data).toEqual(["challenge-ready"]);
   });
 
-  it("omits cwd for the project root and injects the controller lease", async () => {
+  it("omits cwd for the project root and never acquires an OMP controller lease", async () => {
     const h = await harness();
     await openLive(h);
-    const leaseCommands = h.shell.commands.filter((entry) =>
-      entry.intent.command.startsWith("controller.lease"),
-    );
-    expect(leaseCommands[0]?.intent.command).toBe("controller.lease.acquire");
+    expect(h.shell.commands.some((entry) => entry.intent.command.startsWith("controller.lease"))).toBe(false);
     const open = h.shell.termOpenRequests()[0];
     expect(open).toBeDefined();
     expect(open?.targetId).toBe(TARGET);
     expect(String(open?.intent.hostId)).toBe(HOST);
     expect(String(open?.intent.sessionId)).toBe(SESSION);
-    expect(String(open?.intent.expectedRevision)).toBe("rev-1");
-    expect(open?.intent.args).toEqual({
-      cols: 80,
-      rows: 24,
-      leaseId: "lease-fixture",
-    });
+    expect(open?.intent.expectedRevision).toBeUndefined();
+    expect(open?.intent.args).toEqual({ cols: 80, rows: 24 });
   });
 
   it("passes a safe project-relative cwd through unchanged", async () => {
@@ -705,7 +694,6 @@ describe("term.open through the controller lease", () => {
       cols: 80,
       rows: 24,
       shell: "bash",
-      leaseId: "lease-fixture",
     });
   });
 
@@ -824,7 +812,7 @@ describe("result correlation", () => {
     const h = await harness();
     const proxied = new Proxy(h.controller, {
       get(target, prop, receiver) {
-        if (prop === "commandWithControllerLease") {
+        if (prop === "command") {
           return async () => {
             throw thrown;
           };
@@ -967,7 +955,7 @@ describe("output stream", () => {
 });
 describe("input, resize, close", () => {
 
-  it("uses the cached controller lease for each terminal mutation", async () => {
+  it("sends every terminal mutation without acquiring an OMP controller lease", async () => {
     const h = await harness();
     const { session } = await openLive(h);
     session.write("x");
@@ -979,27 +967,7 @@ describe("input, resize, close", () => {
     expect(h.shell.inputs).toHaveLength(1);
     expect(h.shell.resizes).toHaveLength(1);
     expect(h.shell.closes).toHaveLength(1);
-    expect(h.shell.commands.filter((entry) => entry.intent.command === "controller.lease.acquire").length).toBe(1);
-  });
-
-  it("refused mutation leases send nothing and do not replay after updates", async () => {
-    const h = await harness();
-    const { session } = await openLive(h);
-    h.shell.emitFrame({ targetId: TARGET, frame: sessionSnapshotFrame("rev-2", 2) });
-    await settle();
-    h.shell.leaseRefused = true;
-    session.write("blocked");
-    session.resize(90, 20);
-    session.kill();
-    await settle();
-    expect(h.shell.inputs).toHaveLength(0);
-    expect(h.shell.resizes).toHaveLength(0);
-    expect(h.shell.closes).toHaveLength(0);
-    h.shell.emitFrame({ targetId: TARGET, frame: sessionSnapshotFrame("rev-3", 3) });
-    await settle();
-    expect(h.shell.inputs).toHaveLength(0);
-    expect(h.shell.resizes).toHaveLength(0);
-    expect(h.shell.closes).toHaveLength(0);
+    expect(h.shell.commands.some((entry) => entry.intent.command.startsWith("controller.lease"))).toBe(false);
   });
 
   it("serializes input writes strictly in order", async () => {
@@ -1138,88 +1106,42 @@ describe("fixture bridge stays untouched", () => {
   });
 });
 
-describe("session ownership gating", () => {
-  const observedReason = presentSessionControl(OBSERVER_CONTROL).controlReason;
-
-  it("refuses to open a shell while another app owns the session", async () => {
+describe("terminal independence from session authority", () => {
+  it("opens while another app owns the OMP session", async () => {
     const h = await harness();
-    h.shell.emitFrame({
-      targetId: TARGET,
-      frame: sessionsFrame(2, { sessionControl: OBSERVER_CONTROL }),
-    });
+    h.shell.emitFrame({ targetId: TARGET, frame: sessionsFrame(2, { sessionControl: OBSERVER_CONTROL }) });
     await settle();
-    expect(h.bridge.availability()).toEqual({
-      available: false,
-      kind: "permission",
-      reason: observedReason,
-    });
-    const session = h.bridge.open(openRequest());
-    const events = watch(session);
-    await settle();
-    expect(events.errors).toEqual([{ kind: "permission-denied", message: observedReason }]);
-    expect(h.shell.termOpenRequests()).toHaveLength(0);
+    expect(h.bridge.availability()).toEqual({ available: true });
+    const { events } = await openLive(h);
+    expect(events.errors).toEqual([]);
+    expect(h.shell.termOpenRequests()).toHaveLength(1);
   });
 
-  it("keeps an unrecognized future control shape read-only for shells", async () => {
-    const h = await harness();
-    h.shell.emitFrame({
-      targetId: TARGET,
-      frame: sessionsFrame(2, { sessionControl: { mode: "someday-mode" } }),
-    });
-    await settle();
-    const availability = h.bridge.availability();
-    expect(availability.available).toBe(false);
-    expect(h.bridge.open(openRequest())).toBeDefined();
-    await settle();
-    expect(h.shell.termOpenRequests()).toHaveLength(0);
-  });
-
-  it("gates input dispatch the moment ownership moves mid-session", async () => {
+  it("keeps input, resize, and close flowing when OMP ownership changes", async () => {
     const h = await harness();
     const { session, events } = await openLive(h);
-    h.shell.emitFrame({
-      targetId: TARGET,
-      frame: sessionsFrame(2, { sessionControl: OBSERVER_CONTROL }),
-    });
+    h.shell.emitFrame({ targetId: TARGET, frame: sessionsFrame(2, { sessionControl: OBSERVER_CONTROL }) });
     await settle();
     expect(session.write("echo hi\n")).toBe(true);
-    await settle();
-    expect(h.shell.inputs).toHaveLength(0);
-    expect(events.errors).toEqual([{ kind: "shell-error", message: observedReason }]);
-  });
-
-  it("drops resize and close dispatch while another app owns the session", async () => {
-    const h = await harness();
-    const { session, events } = await openLive(h);
-    h.shell.emitFrame({
-      targetId: TARGET,
-      frame: sessionsFrame(2, { sessionControl: OBSERVER_CONTROL }),
-    });
-    await settle();
     session.resize(120, 40);
     await settle();
-    expect(h.shell.resizes).toHaveLength(0);
     session.kill();
     await settle();
-    expect(h.shell.closes).toHaveLength(0);
+    expect(h.shell.inputs.map((request) => request.data)).toEqual(["echo hi\n"]);
+    expect(h.shell.resizes.map((request) => [request.cols, request.rows])).toEqual([[120, 40]]);
+    expect(h.shell.closes).toHaveLength(1);
     expect(events.errors).toEqual([]);
   });
 
-  it("keeps input, resize, and close flowing once the field clears", async () => {
+  it("still fails closed when the transport is stale", async () => {
     const h = await harness();
-    const { session } = await openLive(h);
-    h.shell.emitFrame({
-      targetId: TARGET,
-      frame: sessionsFrame(2, { sessionControl: OBSERVER_CONTROL }),
-    });
+    h.shell.emitState({ targetId: TARGET, state: "disconnected" });
     await settle();
-    h.shell.emitFrame({ targetId: TARGET, frame: sessionsFrame(3, { isStreaming: false }) });
+    expect(h.bridge.availability()).toMatchObject({ available: false, kind: "transport" });
+    const session = h.bridge.open(openRequest());
+    const events = watch(session);
     await settle();
-    expect(session.write("echo back\n")).toBe(true);
-    await settle();
-    expect(h.shell.inputs).toHaveLength(1);
-    session.kill();
-    await settle();
-    expect(h.shell.closes).toHaveLength(1);
+    expect(events.errors).toHaveLength(1);
+    expect(h.shell.termOpenRequests()).toHaveLength(0);
   });
 });

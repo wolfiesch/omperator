@@ -400,6 +400,7 @@ export async function runHostDaemon(
       lockStatus,
       ...(testControl ? { testControl } : {}),
       ...(config.authorityMode === "official" ? { claimLocklessSessions: true } : {}),
+      ...(config.authorityMode === "official" ? { observerIndependentTerminalOperations: true } : {}),
       ...(transcriptImageRoot ? { transcriptImageRoot } : {}),
       rpcChildInvocation: { executable: config.ompExecutable, prefixArgv: [] },
       rpcChildEnvironment: { OMP_PROFILE: config.profileId },

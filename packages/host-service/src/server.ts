@@ -815,6 +815,7 @@ export class LocalAppserver implements AppserverHandle {
 	#transcriptImages?: TranscriptImageReader;
 	#artifacts = new ArtifactReader();
 	#lockCheck: LockCheckHook;
+	#observerIndependentTerminalOperations: boolean;
 	#ringSize: number;
 	#lifecycleQuiesceTimeoutMs: number;
 	#usageReadTimeoutMs: number;
@@ -966,6 +967,7 @@ export class LocalAppserver implements AppserverHandle {
 		this.#projectRootForProject = options.projectRootForProject;
 		this.#projectRevealer = options.projectRevealer;
 		this.#claimLocklessSessions = options.claimLocklessSessions === true;
+		this.#observerIndependentTerminalOperations = options.observerIndependentTerminalOperations === true;
 		this.#runtimeAdapters = options.runtimeAdapters;
 		this.#workspaceAuthority = options.workspaceAuthority;
 		this.#workspaceTargetPathForProject = options.workspaceTargetPathForProject;
@@ -2944,6 +2946,7 @@ export class LocalAppserver implements AppserverHandle {
 	}
 	private async observerBarrierBlocks(command: CommandFrame): Promise<boolean> {
 		if (!command.sessionId) return false;
+		if (this.#observerIndependentTerminalOperations && command.command === "term.open") return false;
 		if (this.#externalRuntimes.has(command.sessionId)) return false;
 		if (command.command === "session.restore" && this.sessionArchived(command.sessionId)) {
 			const record = this.#records.get(command.sessionId);
@@ -3815,7 +3818,10 @@ export class LocalAppserver implements AppserverHandle {
 				return;
 			}
 			if (frame.type === "terminal.input" || frame.type === "terminal.resize" || frame.type === "terminal.close") {
-				if (this.#projections.get(frame.sessionId)?.value.ref.liveState?.sessionControl) {
+				if (
+					!this.#observerIndependentTerminalOperations &&
+					this.#projections.get(frame.sessionId)?.value.ref.liveState?.sessionControl
+				) {
 					await this.#sendFrame(ws, {
 						v: "omp-app/1",
 						type: "error",

@@ -33,6 +33,7 @@ import {
   probeOmpAppserver,
   repairAppserverService,
   NodeServiceFileSystem,
+  resolveOfficialOmpRuntime,
 } from "./service.ts";
 import { createDesktopSpeechService, type DesktopSpeechService } from "./speech.ts";
 import { createElectronUpdateController } from "./electron-update-controller.ts";
@@ -546,9 +547,26 @@ export class DesktopLifecycle {
     if (this.stopping) return undefined;
     let executable: string | undefined;
     let hostExecutable: string | undefined;
+    const development = developmentSandboxServiceConfig();
+    const homeDirectory = development?.homeDirectory ?? homedir();
+    // Mirrors t4-host's own default so the derived official root lands beside
+    // the state this host already owns.
+    const hostStateRoot = development?.stateRoot ?? join(homeDirectory, ".t4-code", "host");
+    let launch: OmpLaunchProfile;
+    try {
+      launch = ompLaunchProfile(hostStateRoot, profileId);
+    } catch (error) {
+      this.recordServiceFailure(error, profileId);
+      return undefined;
+    }
     try {
       [executable, hostExecutable] = await Promise.all([
-        this.discoverServiceExecutable(),
+        // Official authority brings its own runtime, so discovery is skipped:
+        // its probe demands the fork-only bridge capability and would reject
+        // every official build before the host could start.
+        launch.authority === "official"
+          ? resolveOfficialOmpRuntime(launch.executable!)
+          : this.discoverServiceExecutable(),
         this.discoverHostServiceExecutable(),
       ]);
       this.assertServiceRecoveryActive();
@@ -601,7 +619,11 @@ export class DesktopLifecycle {
           ...(launch.authority === "official"
             ? ["--omp-authority", "official", "--omp-sessions-root", launch.sessionsRoot!]
             : []),
-          ...(development === undefined ? [] : ["--state-root", development.stateRoot]),
+          // Always explicit, even though it repeats t4-host's own default. The
+          // sessions root is only verifiable against a state root that is
+          // stated, and the service definition is where that gets checked.
+          "--state-root",
+          hostStateRoot,
         ],
         fs: new NodeServiceFileSystem(),
         ...(development === undefined
