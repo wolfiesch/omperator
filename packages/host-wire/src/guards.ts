@@ -7,6 +7,7 @@ import {
 	MAX_JSON_NODES,
 	MAX_MAP_KEYS,
 	MAX_STRING_BYTES,
+	MAX_TRANSCRIPT_LINE_BYTES,
 } from "./limits.js";
 export type JsonObject = Record<string, unknown>;
 export function isSecretLikeKey(key: string): boolean {
@@ -180,12 +181,12 @@ function scanValue(text: string, start: number, depth: number): number {
 	if (!match) fail("INVALID_JSON", "invalid JSON value");
 	return i + match[0].length;
 }
-function addApprox(bytes: number, amount: number, path: string): number {
+function addApprox(bytes: number, amount: number, maxBytes: number, path: string): number {
 	const next = bytes + amount;
-	if (next > MAX_INPUT_BYTES) fail("OVERSIZED_INPUT", "JSON value exceeds protocol limit", path);
+	if (next > maxBytes) fail("OVERSIZED_INPUT", "JSON value exceeds protocol limit", path);
 	return next;
 }
-function validateJson(root: unknown): void {
+function validateJson(root: unknown, maxBytes = MAX_INPUT_BYTES): void {
 	const seen = new WeakSet<object>();
 	const stack: Array<{ value: unknown; depth: number; path: string }> = [{ value: root, depth: 0, path: "frame" }];
 	let nodes = 0,
@@ -195,13 +196,13 @@ function validateJson(root: unknown): void {
 			value = current.value;
 		if (++nodes > MAX_JSON_NODES) fail("BOUNDS", "JSON node limit exceeded", current.path);
 		if (typeof value === "string") {
-			approx = addApprox(approx, utf8ByteLength(value), current.path);
+			approx = addApprox(approx, utf8ByteLength(value), maxBytes, current.path);
 			continue;
 		}
 		if (value === null || typeof value === "boolean" || typeof value === "number") {
 			if (typeof value === "number" && !Number.isFinite(value))
 				fail("INVALID_JSON", "non-finite number", current.path);
-			approx = addApprox(approx, 8, current.path);
+			approx = addApprox(approx, 8, maxBytes, current.path);
 			continue;
 		}
 		if (typeof value !== "object") fail("INVALID_JSON", "non-JSON value", current.path);
@@ -218,14 +219,14 @@ function validateJson(root: unknown): void {
 		const keys = Object.keys(value);
 		if (keys.length > MAX_MAP_KEYS) fail("BOUNDS", "too many object keys", current.path);
 		for (const key of keys) {
-			approx = addApprox(approx, utf8ByteLength(key), current.path);
+			approx = addApprox(approx, utf8ByteLength(key), maxBytes, current.path);
 			stack.push({ value: (value as JsonObject)[key], depth: current.depth + 1, path: `${current.path}.${key}` });
 		}
 	}
 }
-export function parseBounded(input: string | Uint8Array): unknown {
+export function parseBounded(input: string | Uint8Array, maxBytes = MAX_INPUT_BYTES): unknown {
 	const bytes = typeof input === "string" ? utf8ByteLength(input) : input.byteLength;
-	if (bytes > MAX_INPUT_BYTES) fail("OVERSIZED_INPUT", "input exceeds protocol limit");
+	if (bytes > maxBytes) fail("OVERSIZED_INPUT", "input exceeds protocol limit");
 	let text: string;
 	try {
 		text = typeof input === "string" ? input : new TextDecoder("utf-8", { fatal: true }).decode(input);
@@ -241,8 +242,11 @@ export function parseBounded(input: string | Uint8Array): unknown {
 		if (error instanceof AppWireError) throw error;
 		fail("INVALID_JSON", "invalid JSON");
 	}
-	validateJson(value);
+	validateJson(value, maxBytes);
 	return value;
+}
+export function parseBoundedTranscriptLine(input: string | Uint8Array): unknown {
+	return parseBounded(input, MAX_TRANSCRIPT_LINE_BYTES);
 }
 export function inputObject(input: unknown): JsonObject {
 	const value = typeof input === "string" || input instanceof Uint8Array ? parseBounded(input) : input;

@@ -2,6 +2,7 @@ export const PROTOCOL_VERSION = "omp-app/1" as const;
 /** Schema compatibility version, intentionally independent from the T4 release package version. */
 export const APP_WIRE_VERSION = "0.7.0" as const;
 export const MAX_INPUT_BYTES = 1_048_576;
+export const MAX_TRANSCRIPT_LINE_BYTES = 10_485_760;
 export const MAX_STRING_BYTES = 65_536;
 export const MAX_ID_BYTES = 256;
 export const MAX_ARRAY_ITEMS = 1_000;
