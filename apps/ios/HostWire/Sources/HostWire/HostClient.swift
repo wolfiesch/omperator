@@ -261,6 +261,23 @@ public actor HostClient {
         case .gap(let f):
             cursorJournal[SessionKey(hostId: f.hostId, sessionId: f.sessionId)] = f.to
             frameContinuation.yield(frame)
+        case .agentState(let f):
+            cursorJournal[SessionKey(hostId: f.hostId, sessionId: f.sessionId)] = f.cursor
+            frameContinuation.yield(frame)
+        case .agentLifecycle(let f):
+            cursorJournal[SessionKey(hostId: f.hostId, sessionId: f.sessionId)] = f.cursor
+            frameContinuation.yield(frame)
+        case .agentProgress(let f):
+            cursorJournal[SessionKey(hostId: f.hostId, sessionId: f.sessionId)] = f.cursor
+            frameContinuation.yield(frame)
+        case .agentEvent(let f):
+            cursorJournal[SessionKey(hostId: f.hostId, sessionId: f.sessionId)] = f.cursor
+            frameContinuation.yield(frame)
+        case .agentTranscript(let f):
+            cursorJournal[SessionKey(hostId: f.hostId, sessionId: f.sessionId)] = f.cursor
+            frameContinuation.yield(frame)
+        case .agent:
+            frameContinuation.yield(frame)
         case .sessions, .confirmation:
             frameContinuation.yield(frame)
         }

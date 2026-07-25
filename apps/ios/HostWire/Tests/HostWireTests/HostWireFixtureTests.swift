@@ -21,6 +21,8 @@ struct HostWireFixtureTests {
         "snapshot": false,
         "entry-frame": false,
         "gap": false,
+        "agent": false,
+        "agent-progress": false,
     ]
 
     private static let invalid: Set<String> = [

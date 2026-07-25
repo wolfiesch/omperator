@@ -1,0 +1,1 @@
+{"v":"omp-app/1","type":"agent.progress","hostId":"host-1","sessionId":"session-1","agentId":"agent-1","cursor":{"epoch":"epoch-1","seq":5},"progress":0.5,"revision":"rev-2","detail":{"step":"plan"}}

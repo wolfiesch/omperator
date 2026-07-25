@@ -112,6 +112,12 @@ public enum ServerFrame: Equatable, Sendable {
     case snapshot(SnapshotFrame)
     case entry(DurableEntryFrame)
     case gap(GapFrame)
+    case agent(AgentFrame)
+    case agentState(AgentStateFrame)
+    case agentLifecycle(AgentLifecycleFrame)
+    case agentProgress(AgentProgressFrame)
+    case agentEvent(AgentEventFrame)
+    case agentTranscript(AgentTranscriptFrame)
 
     public static func decode(_ data: Data) throws -> ServerFrame {
         let type = try wireDecode(TypePeek.self, from: data).type
@@ -129,6 +135,12 @@ public enum ServerFrame: Equatable, Sendable {
         case "snapshot": return .snapshot(try wireDecode(SnapshotFrame.self, from: data))
         case "entry": return .entry(try wireDecode(DurableEntryFrame.self, from: data))
         case "gap": return .gap(try wireDecode(GapFrame.self, from: data))
+        case "agent": return .agent(try wireDecode(AgentFrame.self, from: data))
+        case "agent.state": return .agentState(try wireDecode(AgentStateFrame.self, from: data))
+        case "agent.lifecycle": return .agentLifecycle(try wireDecode(AgentLifecycleFrame.self, from: data))
+        case "agent.progress": return .agentProgress(try wireDecode(AgentProgressFrame.self, from: data))
+        case "agent.event": return .agentEvent(try wireDecode(AgentEventFrame.self, from: data))
+        case "agent.transcript": return .agentTranscript(try wireDecode(AgentTranscriptFrame.self, from: data))
         default: throw T4WireError.unknownFrame(family: "not yet ported (server): \(type)")
         }
     }
