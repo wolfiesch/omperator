@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -86,4 +86,40 @@ test("the pre-install entrypoints are the ones the deploy workflow actually runs
     ),
   );
   assert.deepEqual([...invoked].sort(), [...PRE_INSTALL_ENTRYPOINTS].sort());
+});
+
+/**
+ * The tooling suites name their files explicitly, so a new `scripts/*.test.mjs`
+ * is not picked up by anything and silently never runs. That is how a guard
+ * test becomes decoration: green CI, zero coverage. Every script test must be
+ * reachable from a package script or from a workflow that invokes it directly.
+ */
+test("every scripts test file is reachable from a configured command", () => {
+  const packageScripts = JSON.parse(
+    readFileSync(resolve(repoRoot, "package.json"), "utf8"),
+  ).scripts;
+  const workflow = readFileSync(resolve(repoRoot, ".github/workflows/ci.yml"), "utf8");
+  const commands = [...Object.values(packageScripts), workflow].join("\n");
+  const referenced = new Set(commands.match(/scripts\/[\w./*-]+\.test\.mjs/gu) ?? []);
+
+  const covers = (candidate) => {
+    for (const reference of referenced) {
+      if (reference === candidate) return true;
+      const wildcard = reference.indexOf("*");
+      if (wildcard > 0 && candidate.startsWith(reference.slice(0, wildcard))) return true;
+    }
+    return false;
+  };
+
+  const orphans = [];
+  const walk = (directory) => {
+    for (const entry of readdirSync(resolve(repoRoot, directory), { withFileTypes: true })) {
+      const child = `${directory}/${entry.name}`;
+      if (entry.isDirectory()) walk(child);
+      else if (entry.name.endsWith(".test.mjs") && !covers(child)) orphans.push(child);
+    }
+  };
+  walk("scripts");
+
+  assert.deepEqual(orphans, [], "these test files are never executed by any configured command");
 });
