@@ -72,6 +72,15 @@ struct T4WorkspaceView: View {
             if ProcessInfo.processInfo.arguments.contains("-T4RailOpen") { railProgress = 1 }
         }
         .task { await store.restore() }
+        .task {
+            // UI-test seam: launch with -T4PairCode <6-digit code> to run the
+            // pair handshake against the tailnet host on first boot.
+            let args = ProcessInfo.processInfo.arguments
+            if let index = args.firstIndex(of: "-T4PairCode"), args.indices.contains(index + 1),
+               let endpoint = URL(string: "ws://macbookpro.tail871e8b.ts.net:8787/v1/ws") {
+                await store.pairAndConnect(endpoint: endpoint, code: args[index + 1], deviceName: "sim-ui-test")
+            }
+        }
     }
 
     // MARK: - Deep links
