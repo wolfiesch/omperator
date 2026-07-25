@@ -4,8 +4,6 @@
 import { Badge, cn } from "@t4-code/ui";
 import { useNavigate } from "@tanstack/react-router";
 import {
-  ArrowDown,
-  ArrowUp,
   Folder,
   Inbox,
   LayoutList,
