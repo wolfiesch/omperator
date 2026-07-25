@@ -43,9 +43,13 @@ export function createSafeServiceEnvironment(
   return safeEnvironment;
 }
 
-// Cold OMP startup can exceed 1.5 seconds on macOS. A shorter deadline can
-// reject the verified runtime before it returns a healthy status response.
-const APP_SERVER_PROBE_TIMEOUT_MS = 3_000;
+// Cold OMP startup is far slower than a warm run: the compiled runtime may
+// extract its native addon on first invocation. Measured on macOS arm64,
+// `omp bridge --help` took 5.4-8.5s and `omp appserver status --json` took
+// 3.6-4.3s across repeated runs, so the previous 3s deadline rejected a
+// healthy verified runtime as incompatible. This bounds a hung binary; it is
+// not a latency budget, and a responsive runtime still returns in well under it.
+const APP_SERVER_PROBE_TIMEOUT_MS = 15_000;
 const APP_SERVER_PROBE_MAX_OUTPUT_BYTES = 16 * 1024;
 const AUTHORITY_BRIDGE_HELP_MARKERS = [
   "Expose the private OMP authority bridge used by T4 Code",
@@ -205,7 +209,7 @@ export async function discoverOmpExecutable(
   const runner = options.runner ?? new NodeProcessRunner();
   const timeoutMs = options.timeoutMs ?? APP_SERVER_PROBE_TIMEOUT_MS;
   const maxOutputBytes = options.maxOutputBytes ?? APP_SERVER_PROBE_MAX_OUTPUT_BYTES;
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10_000) return undefined;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000) return undefined;
   if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes < 1 || maxOutputBytes > 64 * 1024)
     return undefined;
   const candidates: string[] = [];
@@ -334,7 +338,7 @@ export async function inspectPathOmpCompatibility(
   const runner = options.runner ?? new NodeProcessRunner();
   const timeoutMs = options.timeoutMs ?? APP_SERVER_PROBE_TIMEOUT_MS;
   const maxOutputBytes = options.maxOutputBytes ?? APP_SERVER_PROBE_MAX_OUTPUT_BYTES;
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10_000) return "unavailable";
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000) return "unavailable";
   if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes < 1 || maxOutputBytes > 64 * 1024)
     return "unavailable";
 
