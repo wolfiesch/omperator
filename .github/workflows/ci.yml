@@ -340,7 +340,7 @@ jobs:
 
   current-bridge-continuity:
     needs: changes
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.continuity == 'true' }}
+    if: ${{ needs.changes.outputs.continuity == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -492,7 +492,7 @@ jobs:
 
   cluster:
     needs: changes
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.cluster == 'true' }}
+    if: ${{ needs.changes.outputs.cluster == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -567,7 +567,7 @@ jobs:
 
   tooling:
     needs: changes
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.tooling == 'true' }}
+    if: ${{ needs.changes.outputs.tooling == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -593,7 +593,7 @@ jobs:
 
   maintainer:
     needs: changes
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.maintainer == 'true' }}
+    if: ${{ needs.changes.outputs.maintainer == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -619,7 +619,7 @@ jobs:
 
   android-debug:
     needs: changes
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.android_debug == 'true' }}
+    if: ${{ needs.changes.outputs.android_debug == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:

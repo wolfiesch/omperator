@@ -1021,9 +1021,11 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     ]) {
       if (
         workflow?.jobs?.[job]?.if !==
-        `\${{ github.event_name != 'pull_request' || needs.changes.outputs.${output} == 'true' }}`
+        `\${{ needs.changes.outputs.${output} == 'true' }}`
       )
-        errors.push(`.github/workflows/ci.yml ${job} must keep blocking affected pull requests`);
+        errors.push(
+          `.github/workflows/ci.yml ${job} must follow its path classification on pull requests, merge groups, and pushes`,
+        );
     }
     for (const job of ["check", "unit-tests", "build-e2e", "t4-api-generation"]) {
       if (workflow?.jobs?.[job]?.if !== undefined)
