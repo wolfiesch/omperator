@@ -95,6 +95,12 @@ struct T4WorkspaceView: View {
             guard let index = args.firstIndex(of: "-T4Send"), args.indices.contains(index + 1) else { return }
             let text = args[index + 1]
             for _ in 0..<40 where !store.connected { try? await Task.sleep(for: .milliseconds(500)) }
+            // connected flips before the live inventory lands — wait for real
+            // sessions (sample rows carry the fake "studio-mac" host), else the
+            // lease acquire goes out with a sample revision and is rejected.
+            for _ in 0..<40 where !store.sessions.contains(where: { $0.hostId != "studio-mac" }) {
+                try? await Task.sleep(for: .milliseconds(500))
+            }
             guard store.connected, let session = store.selectedSession ?? store.sessions.first else { return }
             await store.sendPrompt(sessionId: session.sessionId, text: text)
         }
@@ -205,22 +211,48 @@ struct T4WorkspaceView: View {
                 }
             }
 
-            // Bottom bar: connect / connection state.
-            HStack(spacing: 10) {
-                Button { showConnect = true } label: {
-                    Label(store.connected ? "Host" : "Connect", systemImage: store.connected ? "checkmark.circle.fill" : "plus.circle.fill")
-                        .font(.system(size: 15, weight: .semibold))
-                        .frame(maxWidth: .infinity)
+            // Bottom bar: where you're plugged in, one obvious action.
+            if store.connected {
+                HStack(spacing: 10) {
+                    Circle().fill(t.diffAdd).frame(width: 8, height: 8)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Connected").font(.system(size: 13, weight: .semibold)).foregroundStyle(t.txt)
+                        if let endpoint = store.pairedEndpoint {
+                            Text(endpoint.replacingOccurrences(of: "ws://", with: "").replacingOccurrences(of: "/v1/ws", with: ""))
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(t.txtMuted)
+                                .lineLimit(1)
+                        }
+                    }
+                    Spacer()
+                    Button { Task { await store.disconnect() } } label: {
+                        Text("Disconnect").font(.system(size: 13, weight: .semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(t.diffDel)
+                    .accessibilityLabel("Disconnect from host")
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(t.accent)
-                .controlSize(.large)
-                .accessibilityLabel("Connect a T4 host")
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 28)
+                .overlay(alignment: .top) { Rectangle().fill(t.lineFaint).frame(height: 1) }
+            } else {
+                HStack(spacing: 10) {
+                    Button { showConnect = true } label: {
+                        Label("Connect to T4 Code", systemImage: "plus.circle.fill")
+                            .font(.system(size: 15, weight: .semibold))
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(t.accent)
+                    .controlSize(.large)
+                    .accessibilityLabel("Connect to a T4 Code host")
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 28)
+                .overlay(alignment: .top) { Rectangle().fill(t.lineFaint).frame(height: 1) }
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .padding(.bottom, 28)
-            .overlay(alignment: .top) { Rectangle().fill(t.lineFaint).frame(height: 1) }
         }
         .frame(width: width)
         .frame(maxHeight: .infinity)
