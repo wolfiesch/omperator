@@ -479,3 +479,55 @@ describe("service-manager lifecycle", () => {
     expect(content).toContain("Description=T4 Code host (default)");
   });
 });
+
+describe("official authority argv", () => {
+  const OFFICIAL = [
+    "--omp-authority",
+    "official",
+    "--omp-sessions-root",
+    "/tmp/omperator-dev/host-state/official-sessions/default",
+  ];
+  const STATE = ["--state-root", "/tmp/omperator-dev/host-state"];
+  const withArgv = (...extra: string[]): ServiceSpec => ({ ...spec, argv: [...spec.argv, ...extra] });
+
+  // Both renderers share validateSpec, so each accepted or rejected shape is
+  // checked through both service definitions rather than the validator alone.
+  const render = {
+    launchd: renderMacLaunchAgentDefinition,
+    systemd: renderLinuxSystemdDefinition,
+  };
+
+  for (const [name, renderDefinition] of Object.entries(render)) {
+    it(`accepts official authority with and without a state root on ${name}`, () => {
+      expect(renderDefinition(withArgv(...OFFICIAL, ...STATE))).toContain(
+        "/tmp/omperator-dev/host-state/official-sessions/default",
+      );
+      expect(renderDefinition(withArgv(...STATE))).toContain("--state-root");
+    });
+
+    it(`rejects malformed or reordered official argv on ${name}`, () => {
+      const rejected: readonly (readonly string[])[] = [
+        ["--omp-authority", "official", "--omp-sessions-root", "relative/official-sessions/default"],
+        ["--omp-authority", "official"],
+        ["--omp-sessions-root", "/tmp/x/official-sessions/default"],
+        [...STATE, ...OFFICIAL],
+        [...OFFICIAL, ...STATE, "--extra"],
+        // A sessions root outside the derived location would let lockless
+        // authority claim a directory the OMP TUI co-owns.
+        ["--omp-authority", "official", "--omp-sessions-root", "/tmp/shared/.omp", ...STATE],
+        [
+          "--omp-authority",
+          "official",
+          "--omp-sessions-root",
+          "/tmp/omperator-dev/host-state/official-sessions/other",
+          ...STATE,
+        ],
+        // Sessions root must belong to the state root that is also declared.
+        [...OFFICIAL, "--state-root", "/tmp/elsewhere"],
+      ];
+      for (const extra of rejected) {
+        expect(() => renderDefinition(withArgv(...extra))).toThrow(ServiceValidationError);
+      }
+    });
+  }
+});

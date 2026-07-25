@@ -263,6 +263,8 @@ export interface AppserverOptions {
 	/** Final write-lock gate, retained for every child/lifecycle mutation. */ lockCheck?: LockCheckHook;
 	/** Permit promotion of lockless transcripts only when their whole profile root is exclusively T4-owned. */
 	claimLocklessSessions?: boolean;
+	/** Keep host-owned terminal lifecycle usable while OMP session authority is read-only. */
+	observerIndependentTerminalOperations?: boolean;
 	runtimeAdapters?: RuntimeAdapterRegistry;
 	workspaceAuthority?: WorkspaceAuthority;
 	workspaceTargetPathForProject?: (projectId: ProjectId, name: string) => Promise<string> | string;
