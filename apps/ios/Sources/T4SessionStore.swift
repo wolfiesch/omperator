@@ -106,23 +106,67 @@ final class T4SessionStore: ObservableObject {
         if ok { fastBySession[sessionId] = enabled }
     }
 
+    // MARK: - Prompt leases
+    // Remote hosts require a prompt lease for every mutation (session.prompt,
+    // model/thinking/fast, cancel, …): acquire with the session's current
+    // revision, pass leaseId + expectedRevision on the mutation, release after.
+    // Local UDS connections skip the gate, but the flow is valid there too.
+
+    private func revision(of sessionId: String) -> String? {
+        sessions.first(where: { $0.sessionId == sessionId })?.revision
+    }
+
+    private func acquireLease(sessionId: String) async -> String? {
+        guard let client, connected, !hostId.isEmpty, let revision = revision(of: sessionId) else { return nil }
+        do {
+            let result = try await client.sendCommand(CommandIntent(
+                hostId: hostId, command: "prompt.lease.acquire",
+                args: ["ownerId": .string("t4-ios")],
+                sessionId: sessionId, expectedRevision: revision))
+            return try result.leaseResult()
+        } catch {
+            lastError = "\(error)"
+            return nil
+        }
+    }
+
+    private func releaseLease(sessionId: String, leaseId: String) async {
+        guard let client, connected, !hostId.isEmpty, let revision = revision(of: sessionId) else { return }
+        _ = try? await client.sendCommand(CommandIntent(
+            hostId: hostId, command: "prompt.lease.release",
+            args: ["leaseId": .string(leaseId)],
+            sessionId: sessionId, expectedRevision: revision))
+    }
+
+    /// Run a mutation under a freshly acquired prompt lease.
+    private func withLease(sessionId: String, mutation: (String) async -> Void) async {
+        guard let leaseId = await acquireLease(sessionId: sessionId) else { return }
+        await mutation(leaseId)
+        await releaseLease(sessionId: sessionId, leaseId: leaseId)
+    }
+
     /// Revision-tracked session control command. Returns true on success.
     @discardableResult
     private func control(sessionId: String, command: String, args: [String: JSONValue]) async -> Bool {
         guard let client, connected, !hostId.isEmpty else { return false }
-        guard let revision = sessions.first(where: { $0.sessionId == sessionId })?.revision else {
-            lastError = "session revision unknown"
-            return false
+        var succeeded = false
+        await withLease(sessionId: sessionId) { leaseId in
+            guard let revision = revision(of: sessionId) else {
+                lastError = "session revision unknown"
+                return
+            }
+            var fullArgs = args
+            fullArgs["leaseId"] = .string(leaseId)
+            do {
+                _ = try await client.sendCommand(CommandIntent(
+                    hostId: hostId, command: command, args: fullArgs,
+                    sessionId: sessionId, expectedRevision: revision))
+                succeeded = true
+            } catch {
+                lastError = "\(error)"
+            }
         }
-        do {
-            _ = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: command, args: args,
-                sessionId: sessionId, expectedRevision: revision))
-            return true
-        } catch {
-            lastError = "\(error)"
-            return false
-        }
+        return succeeded
     }
 
     /// Answer the pending confirmation challenge (approve/deny).
@@ -151,10 +195,17 @@ final class T4SessionStore: ObservableObject {
             for image in images {
                 refs.append(.object(["imageId": .string(try await uploadImage(image, sessionId: sessionId))]))
             }
-            var args: [String: JSONValue] = ["message": .string(text)]
-            if !refs.isEmpty { args["images"] = .array(refs) }
-            _ = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "session.prompt", args: args, sessionId: sessionId))
+            await withLease(sessionId: sessionId) { leaseId in
+                var args: [String: JSONValue] = ["message": .string(text), "leaseId": .string(leaseId)]
+                if !refs.isEmpty { args["images"] = .array(refs) }
+                do {
+                    _ = try await client.sendCommand(CommandIntent(
+                        hostId: hostId, command: "session.prompt", args: args,
+                        sessionId: sessionId, expectedRevision: revision(of: sessionId)))
+                } catch {
+                    lastError = "\(error)"
+                }
+            }
         } catch {
             lastError = "\(error)"
         }
@@ -163,11 +214,15 @@ final class T4SessionStore: ObservableObject {
     /// Interrupt a running turn (session.cancel).
     func cancel(sessionId: String) async {
         guard let client, connected, !hostId.isEmpty else { return }
-        do {
-            _ = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "session.cancel", sessionId: sessionId))
-        } catch {
-            lastError = "\(error)"
+        await withLease(sessionId: sessionId) { leaseId in
+            do {
+                _ = try await client.sendCommand(CommandIntent(
+                    hostId: hostId, command: "session.cancel",
+                    args: ["leaseId": .string(leaseId)],
+                    sessionId: sessionId, expectedRevision: revision(of: sessionId)))
+            } catch {
+                lastError = "\(error)"
+            }
         }
     }
 

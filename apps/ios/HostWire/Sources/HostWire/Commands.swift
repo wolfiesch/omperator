@@ -178,6 +178,15 @@ public struct CommandFrame: Codable, Equatable, Sendable {
 }
 
 extension ResultFrame {
+    /// Decode a lease result body: `{leaseId, cursor?}`.
+    public func leaseResult() throws -> String {
+        guard ok, let result, case .object(let o) = result, case .string(let leaseId) = o["leaseId"] ?? .null
+        else {
+            throw T4WireError.invalidFrame(path: "result", reason: "response has no lease result")
+        }
+        return leaseId
+    }
+
     /// Decode a `catalog.get` result body: `{revision, items}`.
     public func catalogItems() throws -> [CatalogItem] {
         guard ok, let result, case .object(let o) = result, let items = o["items"]
