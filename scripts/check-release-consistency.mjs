@@ -367,6 +367,7 @@ function validateOfficialGate0Snapshot(snapshot, officialRuntime, path, errors) 
       "prompt",
       "durable-jsonl",
       "t4-wire-projection",
+      "terminal",
     ])
   ) {
     errors.push(`${path} packagedHostProof.requiredScenarios must match the packaged host contract`);
@@ -397,8 +398,8 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   if (androidIdentity?.schemaVersion !== 1) {
     errors.push(`${androidIdentityPath} schemaVersion must be 1`);
   }
-  if (androidIdentity?.applicationId !== "com.lycaonsolutions.t4code") {
-    errors.push(`${androidIdentityPath} applicationId must be com.lycaonsolutions.t4code`);
+  if (androidIdentity?.applicationId !== "net.t4code.app") {
+    errors.push(`${androidIdentityPath} applicationId must be net.t4code.app`);
   }
   if (androidIdentity?.minSdkVersion !== 24) {
     errors.push(`${androidIdentityPath} minSdkVersion must be 24`);
@@ -412,9 +413,16 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   ) {
     errors.push(`${androidIdentityPath} signing certificate must be a lowercase SHA-256 digest`);
   }
-  if (
-    typeof androidIdentity?.certificateBaseline?.assetSha256 !== "string" ||
-    !SHA256_PATTERN.test(androidIdentity.certificateBaseline.assetSha256)
+  const androidIdentityIsObject =
+    typeof androidIdentity === "object" && androidIdentity !== null;
+  if (androidIdentityIsObject && !("certificateBaseline" in androidIdentity)) {
+    errors.push(
+      `${androidIdentityPath} must declare certificateBaseline, or null when no published APK establishes the key yet`,
+    );
+  } else if (
+    androidIdentity?.certificateBaseline !== null &&
+    (typeof androidIdentity?.certificateBaseline?.assetSha256 !== "string" ||
+      !SHA256_PATTERN.test(androidIdentity.certificateBaseline.assetSha256))
   ) {
     errors.push(
       `${androidIdentityPath} certificate baseline asset must have a lowercase SHA-256 digest`,
@@ -426,8 +434,8 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   if (macosIdentity?.schemaVersion !== 1) {
     errors.push(`${macosIdentityPath} schemaVersion must be 1`);
   }
-  if (macosIdentity?.bundleId !== "com.lycaonsolutions.t4code") {
-    errors.push(`${macosIdentityPath} bundleId must be com.lycaonsolutions.t4code`);
+  if (macosIdentity?.bundleId !== "net.t4code.app") {
+    errors.push(`${macosIdentityPath} bundleId must be net.t4code.app`);
   }
   if (!/^[A-Z0-9]{10}$/u.test(macosIdentity?.teamId ?? "")) {
     errors.push(`${macosIdentityPath} teamId must be 10 uppercase letters or digits`);
@@ -995,12 +1003,12 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
       )
         errors.push(".github/workflows/ci.yml current bridge evidence upload is not fail-closed");
     }
-    // Release-time gates are deferred off pull requests and must stay covered by
-    // the merge run; every other leg must keep blocking pull requests.
+    // Release-time gates are deferred to pushes and must stay covered by the
+    // merge run; every other leg must keep blocking pull requests.
     for (const job of ["legacy-bridge-continuity", "official-omp-gate0"]) {
-      const expected = `\${{ github.event_name != 'pull_request' && needs.changes.outputs.${job === "official-omp-gate0" ? "official_omp_gate0" : "continuity"} == 'true' }}`;
+      const expected = `\${{ github.event_name == 'push' && needs.changes.outputs.${job === "official-omp-gate0" ? "official_omp_gate0" : "continuity"} == 'true' }}`;
       if (workflow?.jobs?.[job]?.if !== expected)
-        errors.push(`.github/workflows/ci.yml ${job} must run only on merge runs for its affected paths`);
+        errors.push(`.github/workflows/ci.yml ${job} must run only on pushes for its affected paths`);
     }
     for (const [job, output] of [
       ["current-bridge-continuity", "continuity"],
@@ -1015,16 +1023,33 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
       )
         errors.push(`.github/workflows/ci.yml ${job} must keep blocking affected pull requests`);
     }
-    for (const job of ["core", "t4-api-generation"]) {
+    for (const job of ["check", "unit-tests", "build-e2e", "t4-api-generation"]) {
       if (workflow?.jobs?.[job]?.if !== undefined)
         errors.push(`.github/workflows/ci.yml ${job} must run unconditionally`);
+    }
+    // The required branch-protection gate must not wait on the deferred
+    // release legs, and those legs must stay aggregated by release-gates so a
+    // merge-run failure still fails the run the release waiter reads.
+    const verifyNeeds = workflow?.jobs?.verify?.needs ?? [];
+    for (const job of ["legacy-bridge-continuity", "official-omp-gate0"]) {
+      if (verifyNeeds.includes(job))
+        errors.push(`.github/workflows/ci.yml verify must not wait on the deferred ${job} leg`);
+      if (!(workflow?.jobs?.["release-gates"]?.needs ?? []).includes(job))
+        errors.push(`.github/workflows/ci.yml release-gates must aggregate the deferred ${job} leg`);
     }
   } catch (error) {
     errors.push(`.github/workflows/ci.yml is invalid YAML: ${error instanceof Error ? error.message : error}`);
   }
 
   for (const expected of [
-    "core:",
+    "check:",
+    "unit-tests:",
+    "build-e2e:",
+    "path: ~/.cache/ms-playwright",
+    "key: playwright-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}",
+    "run: pnpm exec playwright install --with-deps chromium",
+    "run: pnpm exec playwright install-deps chromium",
+    "key: ${{ steps.playwright-cache.outputs.cache-primary-key }}",
     "legacy-bridge-continuity:",
     'ref: ${{ github.event.pull_request.head.sha || github.sha }}',
     `source_repository="$(jq -er '.verifiedRuntime.sourceRepository' compat/omp-app-matrix.json)"`,
@@ -1063,10 +1088,15 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "android-debug:",
     "name: verify",
     "if: ${{ always() }}",
-    "needs: [changes, t4-api-generation, core, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, maintainer, android-debug]",
+    "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]",
+    "name: release-gates",
+    "needs: [changes, legacy-bridge-continuity, official-omp-gate0]",
     'test "$CHANGES_RESULT" = success',
     'test "$T4_API_GENERATION_RESULT" = success',
-    'test "$CORE_RESULT" = success',
+    'test "$CHECK_RESULT" = success',
+    'test "$UNIT_TESTS_RESULT" = success',
+    'test "$BUILD_E2E_RESULT" = success',
+    "OFFICIAL_OMP_GATE0_RESULT: ${{ needs.official-omp-gate0.result }}",
     "CURRENT_CONTINUITY_RESULT: ${{ needs.current-bridge-continuity.result }}",
     '"$CURRENT_CONTINUITY_RESULT" \\',
     "for result in \\",

@@ -1,4 +1,4 @@
-package com.lycaonsolutions.t4code;
+package net.t4code.app;
 
 import android.content.Context;
 import android.content.SharedPreferences;
