@@ -412,9 +412,16 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   ) {
     errors.push(`${androidIdentityPath} signing certificate must be a lowercase SHA-256 digest`);
   }
-  if (
-    typeof androidIdentity?.certificateBaseline?.assetSha256 !== "string" ||
-    !SHA256_PATTERN.test(androidIdentity.certificateBaseline.assetSha256)
+  const androidIdentityIsObject =
+    typeof androidIdentity === "object" && androidIdentity !== null;
+  if (androidIdentityIsObject && !("certificateBaseline" in androidIdentity)) {
+    errors.push(
+      `${androidIdentityPath} must declare certificateBaseline, or null when no published APK establishes the key yet`,
+    );
+  } else if (
+    androidIdentity?.certificateBaseline !== null &&
+    (typeof androidIdentity?.certificateBaseline?.assetSha256 !== "string" ||
+      !SHA256_PATTERN.test(androidIdentity.certificateBaseline.assetSha256))
   ) {
     errors.push(
       `${androidIdentityPath} certificate baseline asset must have a lowercase SHA-256 digest`,
