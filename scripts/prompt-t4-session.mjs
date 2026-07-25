@@ -65,7 +65,7 @@ ws.on("open", () => {
     v: "omp-app/1", type: "hello",
     protocol: { min: "omp-app/1", max: "omp-app/1" },
     client: { name: "t4-seed", version: "0.1", build: "dev", platform: "macos" },
-    requestedFeatures: [], savedCursors: [],
+    requestedFeatures: ["resume","prompt.lease","controller.lease","prompt.images","transcript.page","session.delta"], savedCursors: [],
     authentication: { deviceId, deviceToken },
   }));
 });
