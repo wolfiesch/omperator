@@ -5176,7 +5176,13 @@ export class LocalAppserver implements AppserverHandle {
 				const sessionIds = await control.sessionIds(runId);
 				await this.#quiesceTestSessions(control, runId);
 				const result = await control.cleanup(runId);
-				for (const sessionId of sessionIds) await this.#evictTestSession(sessionId);
+				// A session the control could not delete stays in its manifest, so
+				// it must keep its projection and ownership proof. Evicting it here
+				// would strand a still-present transcript as an unmanageable
+				// foreign session that no retry could reach.
+				const retained = new Set(await control.sessionIds(runId));
+				for (const sessionId of sessionIds)
+					if (!retained.has(sessionId)) await this.#evictTestSession(sessionId);
 				await this.refreshSessions();
 				return Response.json(await this.#testControlStatus(control, runId, result));
 			} catch {
