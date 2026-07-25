@@ -88,7 +88,9 @@ final class T4SessionStore: ObservableObject {
         do {
             _ = try await client.sendCommand(CommandIntent(
                 hostId: hostId, command: "session.attach", sessionId: sessionId))
+            t4log.notice("attach sent for \(sessionId, privacy: .public)")
         } catch {
+            t4log.error("attach failed: \(error)")
             lastError = "\(error)"
         }
     }
