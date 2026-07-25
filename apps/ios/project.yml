@@ -27,3 +27,25 @@ targets:
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGNING_ALLOWED: YES
+  T4CodeUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - UITests
+    dependencies:
+      - target: T4Code
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: sh.t4code.ios.uitests
+        TEST_TARGET_NAME: T4Code
+        SWIFT_VERSION: "5.0"
+        CODE_SIGNING_ALLOWED: NO
+schemes:
+  T4Code:
+    build:
+      targets:
+        T4Code: all
+        T4CodeUITests: [test]
+    test:
+      targets:
+        - T4CodeUITests
