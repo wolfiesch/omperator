@@ -178,6 +178,15 @@ public struct CommandFrame: Codable, Equatable, Sendable {
 }
 
 extension ResultFrame {
+    /// Decode a `catalog.get` result body: `{revision, items}`.
+    public func catalogItems() throws -> [CatalogItem] {
+        guard ok, let result, case .object(let o) = result, let items = o["items"]
+        else {
+            throw T4WireError.invalidFrame(path: "result", reason: "response has no catalog result")
+        }
+        return try JSONDecoder().decode([CatalogItem].self, from: JSONEncoder().encode(items))
+    }
+
     /// Decode a `session.image.begin` result body: `{imageId, chunkBytes}`.
     public func imageBeginResult() throws -> (imageId: String, chunkBytes: Int) {
         guard ok, let result, case .object(let o) = result,

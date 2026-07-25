@@ -23,6 +23,22 @@ final class T4SessionStore: ObservableObject {
     @Published private(set) var connected = false
     @Published var lastError: String?
     @Published var selectedSession: SessionRef?
+    /// Live transcripts by sessionId (snapshot + streamed entries). Present
+    /// only for attached sessions while connected; the sample rail falls back
+    /// to `sampleTranscript` when disconnected.
+    @Published private(set) var liveEntries: [String: [TranscriptEntry]] = [:]
+    /// Host catalog (models etc.) from catalog.get, fetched after connect.
+    @Published private(set) var catalog: [CatalogItem] = []
+    /// A confirmation challenge awaiting the user's approve/deny decision.
+    @Published var pendingConfirmation: ConfirmationChallenge?
+    /// Optimistic fast-mode state per session (the wire has no fast field).
+    @Published private(set) var fastBySession: [String: Bool] = [:]
+
+    /// Models from the catalog, in display order (supported first).
+    var catalogModels: [CatalogItem] {
+        catalog.filter { $0.kind == .model && $0.supported != false }
+            .sorted { $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending }
+    }
 
     private var client: HostClient?
     private var hostId: String = ""
@@ -55,6 +71,71 @@ final class T4SessionStore: ObservableObject {
     /// Select a session (rail tap or auto-select of the most recent).
     func select(_ session: SessionRef?) {
         selectedSession = session
+    }
+
+    /// Attach to a session's transcript stream. The host replies with a
+    /// snapshot frame (full log at a cursor) and then live entry frames;
+    /// `observe()` routes both into `liveEntries`.
+    func attach(sessionId: String) async {
+        guard let client, connected, !hostId.isEmpty else { return }
+        do {
+            _ = try await client.sendCommand(CommandIntent(
+                hostId: hostId, command: "session.attach", sessionId: sessionId))
+        } catch {
+            lastError = "\(error)"
+        }
+    }
+
+    /// Switch the session's model (session.model.set, session persistence).
+    /// `selector` is the catalog id, e.g. "deepseek/deepseek-v4-flash".
+    func setModel(sessionId: String, selector: String) async {
+        await control(sessionId: sessionId, command: "session.model.set",
+                      args: ["selector": .string(selector), "persistence": .string("session")])
+    }
+
+    /// Set the reasoning level (session.thinking.set).
+    func setThinking(sessionId: String, level: String) async {
+        await control(sessionId: sessionId, command: "session.thinking.set",
+                      args: ["level": .string(level)])
+    }
+
+    /// Toggle provider-priority fast mode (session.fast.set).
+    func setFast(sessionId: String, enabled: Bool) async {
+        let ok = await control(sessionId: sessionId, command: "session.fast.set",
+                      args: ["enabled": .bool(enabled)])
+        if ok { fastBySession[sessionId] = enabled }
+    }
+
+    /// Revision-tracked session control command. Returns true on success.
+    @discardableResult
+    private func control(sessionId: String, command: String, args: [String: JSONValue]) async -> Bool {
+        guard let client, connected, !hostId.isEmpty else { return false }
+        guard let revision = sessions.first(where: { $0.sessionId == sessionId })?.revision else {
+            lastError = "session revision unknown"
+            return false
+        }
+        do {
+            _ = try await client.sendCommand(CommandIntent(
+                hostId: hostId, command: command, args: args,
+                sessionId: sessionId, expectedRevision: revision))
+            return true
+        } catch {
+            lastError = "\(error)"
+            return false
+        }
+    }
+
+    /// Answer the pending confirmation challenge (approve/deny).
+    func confirm(_ decision: ConfirmDecision) async {
+        guard let client, let challenge = pendingConfirmation else { return }
+        pendingConfirmation = nil
+        do {
+            try await client.sendConfirm(ConfirmIntent(
+                confirmationId: challenge.confirmationId, commandId: challenge.commandId,
+                hostId: challenge.hostId, decision: decision, sessionId: challenge.sessionId))
+        } catch {
+            lastError = "\(error)"
+        }
     }
 
     /// Send a user prompt to a session (session.prompt), uploading any images
@@ -136,9 +217,15 @@ final class T4SessionStore: ObservableObject {
             .map { Group(project: $0.key, sessions: $0.value.sorted { $0.updatedAt > $1.updatedAt }) }
     }
 
-    /// Transcript entries for a session. Sample until session.attach +
-    /// transcript.page are wired to a live host; the entry shape is real.
+    /// Transcript entries for a session: the live host log when attached,
+    /// sample rows otherwise (rail preview without a host).
     func transcript(for sessionId: String) -> [TranscriptEntry] {
+        if connected { return liveEntries[sessionId] ?? [] }
+        return sampleTranscript(for: sessionId)
+    }
+
+    /// Sample transcript — offline preview only.
+    private func sampleTranscript(for sessionId: String) -> [TranscriptEntry] {
         let host = hostId.isEmpty ? "local" : hostId
         let json = """
         [
@@ -167,6 +254,7 @@ final class T4SessionStore: ObservableObject {
             if connected {
                 persist(endpoint: endpoint, authentication: authentication)
                 await refresh()
+                await loadCatalog()
                 Task { await observe() }
             }
         } catch {
@@ -185,12 +273,37 @@ final class T4SessionStore: ObservableObject {
         }
     }
 
-    /// Live sessions pushes keep the inventory current without a re-fetch.
+    /// Fetch the host catalog (models, tools, …) once after connecting.
+    private func loadCatalog() async {
+        guard let client, connected, !hostId.isEmpty else { return }
+        do {
+            let result = try await client.sendCommand(CommandIntent(hostId: hostId, command: "catalog.get"))
+            catalog = try result.catalogItems()
+        } catch {
+            lastError = "\(error)"
+        }
+    }
+
+    /// Live frames keep the inventory, transcripts, and confirmations current.
     private func observe() async {
         guard let client else { return }
         for await frame in await client.frames {
-            if case .sessions(let inventory) = frame {
+            switch frame {
+            case .sessions(let inventory):
                 sessions = inventory.sessions
+            case .snapshot(let snapshot):
+                liveEntries[snapshot.sessionId] = snapshot.entries.map { TranscriptEntry(from: $0) }
+            case .entry(let entryFrame):
+                var entries = liveEntries[entryFrame.sessionId] ?? []
+                let entry = TranscriptEntry(from: entryFrame.entry)
+                if !entries.contains(where: { $0.id == entry.id }) {
+                    entries.append(entry)
+                    liveEntries[entryFrame.sessionId] = entries
+                }
+            case .confirmation(let challenge):
+                pendingConfirmation = challenge
+            default:
+                break
             }
         }
     }

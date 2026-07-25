@@ -76,11 +76,7 @@ struct T4SessionRow: View {
             }
             HStack(spacing: 10) {
                 if let model = session.model {
-                    Label(model, systemImage: "cpu")
-                        .labelStyle(.titleAndIcon)
-                        .font(.system(size: 11))
-                        .foregroundStyle(theme.txtMuted)
-                        .lineLimit(1)
+                    T4ModelLabel(selector: model, theme: theme)
                 }
                 if let usage = session.contextUsage {
                     ContextMeter(used: usage.used, limit: usage.limit, theme: theme)

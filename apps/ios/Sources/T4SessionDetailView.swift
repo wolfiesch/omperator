@@ -41,6 +41,7 @@ struct T4SessionDetailView: View {
     @State private var showFacts = false
     @State private var attachments: [ComposerAttachment] = []
     @State private var pickerItems: [PhotosPickerItem] = []
+    @State private var showControls = false
     @FocusState private var composerFocused: Bool
     private var t: Theme { theme.t }
     private static let maxImages = 8   // PROMPT_IMAGE_MAX_COUNT on the wire
@@ -50,6 +51,9 @@ struct T4SessionDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     header
+                    if let challenge = store.pendingConfirmation {
+                        confirmationBanner(challenge)
+                    }
                     if showFacts { facts }
                     Divider().overlay(t.lineFaint)
                     T4TranscriptView(entries: store.transcript(for: session.sessionId), theme: t)
@@ -61,16 +65,63 @@ struct T4SessionDetailView: View {
         .background(t.bg.ignoresSafeArea())
         .navigationTitle(session.title)
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showControls) {
+            T4ControlsSheet(session: session, store: store).environmentObject(theme)
+        }
+        .task { await store.attach(sessionId: session.sessionId) }
+    }
+
+    /// Confirmation challenge: summary + approve/deny, matching the desktop
+    /// app's approval surface.
+    private func confirmationBanner(_ challenge: ConfirmationChallenge) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.shield.fill")
+                    .font(.system(size: 14))
+                    .foregroundStyle(t.cAdvisor)
+                Text("Approval needed")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(t.txt)
+            }
+            Text(challenge.summary)
+                .font(.system(size: 13))
+                .foregroundStyle(t.txtBody)
+            HStack(spacing: 10) {
+                Button { Task { await store.confirm(.approve) } } label: {
+                    Text("Approve")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(t.diffAdd)
+                Button { Task { await store.confirm(.deny) } } label: {
+                    Text("Deny")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .tint(t.diffDel)
+            }
+        }
+        .padding(12)
+        .background(t.diffDelBG, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             StatusPill(status: session.status, theme: t)
             if let model = session.model {
-                Label(model, systemImage: "cpu")
-                    .font(.system(size: 11))
-                    .foregroundStyle(t.txtMuted)
-                    .lineLimit(1)
+                Button { showControls = true } label: {
+                    T4ModelLabel(selector: model, theme: t)
+                }
+                .disabled(!store.connected)
+                .accessibilityLabel("Session controls")
+            } else if store.connected {
+                Button { showControls = true } label: {
+                    Label("Controls", systemImage: "slider.horizontal.3")
+                        .font(.system(size: 11))
+                        .foregroundStyle(t.txtMuted)
+                }
             }
             Spacer()
             Button { withAnimation(.easeInOut(duration: 0.2)) { showFacts.toggle() } } label: {
