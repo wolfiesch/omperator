@@ -159,7 +159,7 @@ case $tool in
         printf '{"id":%s,"node_id":"%s","full_name":"wolfiesch/oh-my-pi","clone_url":"%s","fork":true,"parent":{"id":%s,"node_id":"%s","full_name":"can1357/oh-my-pi"}}\n' \
           "$fork_id" "$fork_node" "$fork_clone" "$parent_id" "$parent_node"
         ;;
-      'repos/LycaonLLC/t4-code/pulls?state=open&base=main&per_page=100')
+      'repos/wolfiesch/omperator/pulls?state=open&base=main&per_page=100')
         count=$(read_state t4-pr-queries 0)
         count=$((count + 1))
         write_state t4-pr-queries "$count"
@@ -172,7 +172,7 @@ case $tool in
           printf '%s\n' '[]'
         fi
         ;;
-      repos/LycaonLLC/t4-code/pulls/42/files?per_page=100)
+      repos/wolfiesch/omperator/pulls/42/files?per_page=100)
         printf '%s\n' '[{"filename":"ops/t4-maintainer/run.sh"}]'
         ;;
       repos/can1357/oh-my-pi/releases/latest)
@@ -228,13 +228,13 @@ case $tool in
         write_state fork-workflow active
         printf '{}\n'
         ;;
-      repos/LycaonLLC/t4-code/releases/latest)
+      repos/wolfiesch/omperator/releases/latest)
         printf '{"draft":false,"prerelease":false,"tag_name":"v1.2.3"}\n'
         ;;
-      repos/LycaonLLC/t4-code/contents/package.json?ref=*)
+      repos/wolfiesch/omperator/contents/package.json?ref=*)
         printf '{"version":"1.2.3"}\n'
         ;;
-      repos/LycaonLLC/t4-code/contents/compat/omp-app-matrix.json?ref=*)
+      repos/wolfiesch/omperator/contents/compat/omp-app-matrix.json?ref=*)
         if [[ \${MOCK_PUBLIC_INCOMPATIBLE:-0} == 1 ||
               (\${MOCK_MAIN_INCOMPATIBLE:-0} == 1 && $endpoint == *'?ref=main') ]]; then
           upstream_tag=v9.9.9
@@ -250,7 +250,7 @@ case $tool in
       repos/wolfiesch/oh-my-pi/commits/t4code/main)
         printf '%s\n' "$MOCK_INTEGRATION_COMMIT"
         ;;
-      repos/LycaonLLC/t4-code/commits/main)
+      repos/wolfiesch/omperator/commits/main)
         count=$(read_state t4-main-queries 0)
         count=$((count + 1))
         write_state t4-main-queries "$count"
@@ -260,7 +260,7 @@ case $tool in
           printf '%s\n' "$MOCK_T4_COMMIT"
         fi
         ;;
-      repos/LycaonLLC/t4-code/commits/v1.2.3)
+      repos/wolfiesch/omperator/commits/v1.2.3)
         printf '%s\n' "$MOCK_T4_COMMIT"
         ;;
       repos/wolfiesch/oh-my-pi/compare/*)
@@ -274,10 +274,10 @@ case $tool in
             "$MOCK_UPSTREAM_COMMIT" "$MOCK_INTEGRATION_COMMIT"
         fi
         ;;
-      repos/LycaonLLC/t4-code/compare/*)
+      repos/wolfiesch/omperator/compare/*)
         printf '{"status":"identical","merge_base_commit":{"sha":"%s"}}\n' "$MOCK_T4_COMMIT"
         ;;
-      repos/LycaonLLC/t4-code/actions/runs*)
+      repos/wolfiesch/omperator/actions/runs*)
         t4_ci_path='.github/workflows/ci.yml'
         t4_release_path='.github/workflows/release.yml'
         t4_site_path='.github/workflows/deploy-site.yml'
@@ -397,7 +397,7 @@ JSON
       */releases/tags/*)
         release_tag=\${endpoint##*/}
         release_version=\${release_tag#v}
-        release_prefix="https://github.com/LycaonLLC/t4-code/releases/download/$release_tag"
+        release_prefix="https://github.com/wolfiesch/omperator/releases/download/$release_tag"
         deb_digest=$(printf 'mock-deb\n' | sha256sum | awk '{print $1}')
         asset_digest=$(printf 'mock-asset\n' | sha256sum | awk '{print $1}')
         metadata=$(linux_update_metadata "$release_version")
@@ -409,7 +409,7 @@ JSON
         manifest_digest=$(printf '%s\n' "$manifest" | sha256sum | awk '{print $1}')
         manifest_size=$(printf '%s\n' "$manifest" | wc -c)
         cat <<JSON
-{"tag_name":"$release_tag","html_url":"https://github.com/LycaonLLC/t4-code/releases/tag/$release_tag","published_at":"2026-07-15T00:00:00Z","draft":false,"prerelease":false,"assets":[
+{"tag_name":"$release_tag","html_url":"https://github.com/wolfiesch/omperator/releases/tag/$release_tag","published_at":"2026-07-15T00:00:00Z","draft":false,"prerelease":false,"assets":[
   {"name":"SHA256SUMS.txt","state":"uploaded","size":$manifest_size,"digest":"sha256:$manifest_digest","browser_download_url":"$release_prefix/SHA256SUMS.txt"},
   {"name":"T4-Code-$release_version-android.apk","state":"uploaded","size":${mockAssetSize},"digest":"sha256:$asset_digest","browser_download_url":"$release_prefix/T4-Code-$release_version-android.apk"},
   {"name":"T4-Code-$release_version-linux-amd64.deb","state":"uploaded","size":${mockDebSize},"digest":"sha256:$deb_digest","browser_download_url":"$release_prefix/T4-Code-$release_version-linux-amd64.deb"},
@@ -438,8 +438,8 @@ JSON
       if [[ $url == https://t4code.net/releases/latest.json* ]]; then
         version=1.2.3
         release_tag=v$version
-        release_url="https://github.com/LycaonLLC/t4-code/releases/tag/$release_tag"
-        release_prefix="https://github.com/LycaonLLC/t4-code/releases/download/$release_tag"
+        release_url="https://github.com/wolfiesch/omperator/releases/tag/$release_tag"
+        release_prefix="https://github.com/wolfiesch/omperator/releases/download/$release_tag"
         published_at=2026-07-15T00:00:00Z
         schema=1
         manifest_version=$version
@@ -504,7 +504,7 @@ JSON
       exit 0
     fi
     if [[ $url == https://* ]]; then
-      if [[ $url == https://github.com/LycaonLLC/t4-code/releases/download/* ]]; then
+      if [[ $url == https://github.com/wolfiesch/omperator/releases/download/* ]]; then
         exit 0
       fi
       if [[ $url == https://t4code.net/*assets/* ]]; then
@@ -1212,7 +1212,7 @@ async function createDeployFixture(options = {}) {
       upstream: { tag: "v1.2.3", commit: upstreamCommit },
       integration: { tag: "t4code-1.2.3-appserver-1", commit: integrationCommit },
       t4: { version: "1.2.3", tag: "v1.2.3", commit: t4Commit },
-      release: { url: "https://github.com/LycaonLLC/t4-code/releases/tag/v1.2.3" },
+      release: { url: "https://github.com/wolfiesch/omperator/releases/tag/v1.2.3" },
       site: { url: "https://t4code.net", releaseTag: "v1.2.3" },
     })}\n`,
   );
@@ -2713,7 +2713,7 @@ test("live Linux updater verification downloads the exact bounded public files",
     .filter(
       (line) =>
         line.startsWith("curl\t") &&
-        line.includes("https://github.com/LycaonLLC/t4-code/releases/download/v1.2.3/") &&
+        line.includes("https://github.com/wolfiesch/omperator/releases/download/v1.2.3/") &&
         line.includes("\t-o\t"),
     );
   for (const [name, size] of [
@@ -3386,7 +3386,7 @@ test("test mode cannot bypass publication gates from a production root", async (
   const calls = await fixture.callsText();
   assert.equal(calls.split("\n").filter((line) => line.startsWith("omp\t")).length, 0, calls);
   assert.equal(
-    calls.split("\n").filter((line) => line.includes("gh\tapi\trepos/LycaonLLC/t4-code/pulls\\?state")).length,
+    calls.split("\n").filter((line) => line.includes("gh\tapi\trepos/wolfiesch/omperator/pulls\\?state")).length,
     2,
     calls,
   );
@@ -3520,7 +3520,7 @@ test("normal recovery adopts the compatible latest public release before Sol", a
   assert.equal(await pathExists(fixture.pending), true, await fixture.callsText());
   assert.equal(await pathExists(fixture.processed), false);
   const calls = await fixture.callsText();
-  assert.match(calls, /gh\tapi\trepos\/LycaonLLC\/t4-code\/releases\/latest/mu);
+  assert.match(calls, /gh\tapi\trepos\/wolfiesch\/omperator\/releases\/latest/mu);
   assert.match(
     calls,
     /contents\/compat\/omp-app-matrix\.json\\\?ref=v1\.2\.3/mu,
@@ -3544,7 +3544,7 @@ test("terminal compatible publication resumes through Sol instead of waiting for
   const calls = await fixture.callsText();
   assert.doesNotMatch(
     calls,
-    /gh\tapi\trepos\/LycaonLLC\/t4-code\/releases\/latest/mu,
+    /gh\tapi\trepos\/wolfiesch\/omperator\/releases\/latest/mu,
     "an older public release cannot supersede compatible main work that is ready to resume",
   );
   assert.equal(calls.split("\n").filter((line) => line.startsWith("local-deploy\t")).length, 0);
@@ -4094,7 +4094,7 @@ test("default maintenance adopts a newer compatible T4 pair for the same OMP rel
   const processed = JSON.parse(await readFile(fixture.processed, "utf8"));
   processed.t4.version = "1.2.2";
   processed.t4.tag = "v1.2.2";
-  processed.release.url = "https://github.com/LycaonLLC/t4-code/releases/tag/v1.2.2";
+  processed.release.url = "https://github.com/wolfiesch/omperator/releases/tag/v1.2.2";
   processed.site.releaseTag = "v1.2.2";
   processed.localDeployment.t4.version = "1.2.2";
   processed.localDeployment.t4.tag = "v1.2.2";

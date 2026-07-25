@@ -40,7 +40,7 @@ export const RELEASE_CONTRACT_PATHS = [
   "vendor/app-wire/manifest.json",
 ];
 
-const REPOSITORY_URL = "https://github.com/LycaonLLC/t4-code";
+const REPOSITORY_URL = "https://github.com/wolfiesch/omperator";
 const OMP_RUNTIME_REPOSITORY = "https://github.com/wolfiesch/oh-my-pi";
 const OMP_APP_WIRE_SOURCE_REPOSITORY = "https://github.com/lyc-aon/oh-my-pi";
 const OMP_UPSTREAM_REPOSITORY = "https://github.com/can1357/oh-my-pi";
@@ -811,7 +811,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   const linkedReleaseTags = new Set(
     [
       ...readme.matchAll(
-        /https:\/\/github\.com\/LycaonLLC\/t4-code\/releases\/(?:tag|download)\/(v\d+\.\d+\.\d+)/gu,
+        /https:\/\/github\.com\/wolfiesch\/omperator\/releases\/(?:tag|download)\/(v\d+\.\d+\.\d+)/gu,
       ),
     ].map((match) => match[1]),
   );
@@ -1146,8 +1146,8 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   const builderConfig = files.get("electron-builder.config.mjs") ?? "";
   for (const expected of [
     'provider: "github"',
-    'owner: "LycaonLLC"',
-    'repo: "t4-code"',
+    'owner: "wolfiesch"',
+    'repo: "omperator"',
     'channel: "latest"',
     "publish: [linuxUpdatePublish]",
     "publish: []",

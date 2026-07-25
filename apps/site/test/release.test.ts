@@ -36,8 +36,8 @@ describe("release assets", () => {
     }
   });
 
-  it("targets the public LycaonLLC repo", () => {
-    expect(REPO_URL).toBe("https://github.com/LycaonLLC/t4-code");
+  it("targets the public Omperator repo", () => {
+    expect(REPO_URL).toBe("https://github.com/wolfiesch/omperator");
     expect(RELEASE_TAG).toBe("v0.1.31");
     expect(RELEASE_VERSION).toBe("0.1.31");
     expect(RELEASE_MANIFEST_URL).toBe("https://t4code.net/releases/latest.json");

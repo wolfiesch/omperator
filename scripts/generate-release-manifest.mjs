@@ -7,7 +7,7 @@ import { expectedReleaseAssetNames } from "./check-release-consistency.mjs";
 import { validateLinuxUpdateMetadata } from "./inspect-linux-update.mjs";
 import { readBoundedResponseBytes } from "./read-bounded-response.mjs";
 
-const REPOSITORY = "LycaonLLC/t4-code";
+const REPOSITORY = "wolfiesch/omperator";
 const REPOSITORY_URL = `https://github.com/${REPOSITORY}`;
 const VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
 const MAX_API_BYTES = 2 * 1024 * 1024;

@@ -468,7 +468,7 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
   assert.match(buildSource, /chmod 1777 "\$artifact_dir"/u);
   assert.match(buildSource, /chmod 0444 "\$metadata" "\$digest_file"/u);
 
-  const sourceArgument = "ARG SOURCE_REPOSITORY=https://github.com/LycaonLLC/t4-code";
+  const sourceArgument = "ARG SOURCE_REPOSITORY=https://github.com/wolfiesch/omperator";
   const sourceLabel = 'org.opencontainers.image.source="${SOURCE_REPOSITORY}"';
   for (const component of IMAGE_COMPONENTS) {
     const dockerfileSource = await readFile(resolve(repoRoot, "cluster/images", component, "Dockerfile"), "utf8");

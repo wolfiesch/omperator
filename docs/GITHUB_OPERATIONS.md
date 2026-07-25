@@ -7,7 +7,7 @@ settings should match it; changes to the contract land through pull requests.
 
 - `main` is the only integration and release branch.
 - `origin` is `wolfiesch/omperator` and is authoritative for product work.
-- `upstream` is the original `LycaonLLC/t4-code` repository and is fetch-only in
+- `upstream` is the original `wolfiesch/omperator` repository and is fetch-only in
   the canonical local checkout. Upstream changes are selected deliberately and
   imported through ordinary reviewed pull requests. There is no automatic sync.
 - `can1357/oh-my-pi` remains the upstream runtime project. OMP runtime updates
@@ -93,6 +93,18 @@ successful exact-SHA CI. The release workflow owns packaging and publication.
 macOS notarization, Android signing, updater metadata, deployment credentials,
 and GitHub environments remain owner-controlled.
 
-Until Omperator's application identifiers and artifacts are rebranded, do not
-publish a new stable tag from this repository. Existing T4 release tags and
-artifacts remain historical upstream records rather than Omperator releases.
+This repository is the release authority. Release tooling, download URLs, the
+desktop update feed, and the site deployment all resolve `wolfiesch/omperator`.
+Release tags and artifacts under `LycaonLLC/t4-code` are historical upstream
+records and are never queried or published to.
+
+Two things still gate a stable tag, and neither is repository ownership. The
+macOS build needs a Developer ID this project controls: `.github/macos-release-identity.json`
+still pins an upstream certificate, and notarization is required. The release
+also needs the operator proof in `docs/RELEASE_GATE.md`, whose installed-app
+step cannot run on a machine that already has T4 installed until a test build
+can adopt a service label of its own.
+
+Application identifiers and artifact names remain `com.lycaonsolutions.t4code`
+and `T4-Code-*`. Renaming them is a separate product decision and is not a
+prerequisite for publishing from this repository.
