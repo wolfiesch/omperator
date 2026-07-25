@@ -77,11 +77,12 @@ final class T4SessionStore: ObservableObject {
     /// Select a session (rail tap or auto-select of the most recent).
     func select(_ session: SessionRef?) {
         selectedSession = session
+        if connected, let session { Task { await attach(sessionId: session.sessionId) } }
     }
 
     /// Attach to a session's transcript stream. The host replies with a
     /// snapshot frame (full log at a cursor) and then live entry frames;
-    /// `observe()` routes both into `liveEntries`.
+    /// `observe()` routes both into `liveEntries`. Safe to repeat.
     func attach(sessionId: String) async {
         guard let client, connected, !hostId.isEmpty else { return }
         do {
@@ -90,6 +91,14 @@ final class T4SessionStore: ObservableObject {
         } catch {
             lastError = "\(error)"
         }
+    }
+
+    /// Attach to the selected session if we haven't yet (connection-driven,
+    /// not view-driven: a view race once left sessions permanently empty).
+    private func attachSelectedIfNeeded() {
+        guard connected, let selected = selectedSession,
+              liveEntries[selected.sessionId] == nil else { return }
+        Task { await attach(sessionId: selected.sessionId) }
     }
 
     /// Switch the session's model (session.model.set, session persistence).
@@ -427,6 +436,7 @@ final class T4SessionStore: ObservableObject {
             let result = try await client.sendCommand(CommandIntent(hostId: hostId, command: "session.list"))
             sessions = try result.sessionListResult().sessions
             reconcileSelection()
+            attachSelectedIfNeeded()
         } catch {
             lastError = "\(error)"
         }
