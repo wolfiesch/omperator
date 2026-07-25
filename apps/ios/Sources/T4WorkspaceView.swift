@@ -19,6 +19,7 @@ struct T4WorkspaceView: View {
     @EnvironmentObject var store: T4SessionStore
     @State private var railProgress: CGFloat = 0   // 0 = closed, 1 = open
     @State private var showConnect = false
+    @State private var showControls = false
     /// Prefilled pair from a t4-code://pair/... deep link; handed to the
     /// connect sheet when it opens.
     @State private var pendingPair: PendingPair?
@@ -64,6 +65,11 @@ struct T4WorkspaceView: View {
         .sheet(isPresented: $showConnect) {
             T4ConnectView(store: store, pendingPair: pendingPair)
                 .environmentObject(theme)
+        }
+        .sheet(isPresented: $showControls) {
+            if let session = store.selectedSession {
+                T4ControlsSheet(session: session, store: store).environmentObject(theme)
+            }
         }
         .onOpenURL { url in handleDeepLink(url) }
         .onAppear {
@@ -147,6 +153,14 @@ struct T4WorkspaceView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 4) {
+                        if let session = store.selectedSession {
+                            Button { showControls = true } label: {
+                                T4ModelLabel(selector: session.model ?? "choose model", theme: t, size: 12)
+                                    .frame(minHeight: 38)
+                            }
+                            .press()
+                            .accessibilityLabel("Model and session controls")
+                        }
                         Button { theme.toggle() } label: {
                             Image(systemName: theme.effective == .dark ? "sun.max" : "moon")
                                 .font(.system(size: 17, weight: .semibold))
@@ -154,14 +168,6 @@ struct T4WorkspaceView: View {
                                 .frame(width: 38, height: 38)
                         }
                         .press()
-                        Button { showConnect = true } label: {
-                            Image(systemName: "plus")
-                                .font(.system(size: 17, weight: .semibold))
-                                .foregroundStyle(t.accent)
-                                .frame(width: 38, height: 38)
-                        }
-                        .press()
-                        .accessibilityLabel("Connect a T4 host")
                     }
                 }
             }

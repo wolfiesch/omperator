@@ -128,6 +128,7 @@ final class T4SessionStore: ObservableObject {
                 sessionId: sessionId, expectedRevision: revision))
             return try result.leaseResult()
         } catch {
+            print("[T4] acquireLease failed: \(error)")
             lastError = "\(error)"
             return nil
         }
@@ -208,7 +209,9 @@ final class T4SessionStore: ObservableObject {
                     _ = try await client.sendCommand(CommandIntent(
                         hostId: hostId, command: "session.prompt", args: args,
                         sessionId: sessionId, expectedRevision: revision(of: sessionId)))
+                    print("[T4] prompt sent to \(sessionId)")
                 } catch {
+                    print("[T4] prompt failed: \(error)")
                     lastError = "\(error)"
                 }
             }
