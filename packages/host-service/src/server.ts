@@ -595,6 +595,37 @@ class ExternalRuntimeCommandError extends Error {
 		this.name = "ExternalRuntimeCommandError";
 	}
 }
+/**
+ * A session runtime that refused to start. The child's own stderr says why —
+ * no model configured, a bad executable, a missing directory — and that is far
+ * more use to an operator than the dispatcher's generic "operation failed",
+ * which is what this previously surfaced.
+ */
+class SessionStartError extends Error {
+	readonly code = "session_start_failed";
+	constructor(reason: string) {
+		super(`session runtime did not start: ${reason}`);
+		this.name = "SessionStartError";
+	}
+}
+
+/**
+ * A failed child's message embeds up to 64 KiB of its own stderr, which can
+ * carry tokens, credentialed URLs, and paths from any platform. None of it is
+ * reproduced anywhere — not to the renderer and not to a log. Known startup
+ * failures map to fixed operator text; anything else stays generic.
+ */
+function sessionStartReason(error: unknown): string {
+	const raw = error instanceof Error ? error.message : String(error);
+	if (/no models available|set an api key|\/login/i.test(raw)) return "no model is configured for this profile";
+	if (/\bENOENT\b/.test(raw)) return "the working directory or runtime executable is missing";
+	if (/\bEACCES\b|\bEPERM\b/.test(raw)) return "the runtime executable is not permitted to run";
+	if (/ready timeout/i.test(raw)) return "the runtime did not report ready in time";
+	const exited = /exited \((\d+)\)/.exec(raw);
+	if (exited) return `the runtime exited immediately with status ${exited[1]}`;
+	return "the runtime failed to start";
+}
+
 
 function objectRecord(value: unknown): Record<string, unknown> | undefined {
 	return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
@@ -2210,6 +2241,7 @@ export class LocalAppserver implements AppserverHandle {
 			const imageError =
 				error instanceof ImageUploadError || error instanceof TranscriptImageError ? error : undefined;
 			const externalRuntimeError = error instanceof ExternalRuntimeCommandError ? error : undefined;
+			const sessionStartError = error instanceof SessionStartError ? error : undefined;
 			const transcriptSearchError = error instanceof TranscriptSearchError ? error : undefined;
 			const transcriptPageError = error instanceof TranscriptPageError ? error : undefined;
 			const officialOmpOperationError = error instanceof OfficialOmpOperationError ? error : undefined;
@@ -2225,7 +2257,9 @@ export class LocalAppserver implements AppserverHandle {
 					"session.list",
 					"host.list",
 				].includes(command.command);
-			const code = officialOmpOperationError
+			const code = sessionStartError
+				? sessionStartError.code
+				: officialOmpOperationError
 				? officialOmpOperationError.code
 				: transcriptPageError
 					? transcriptPageError.code
@@ -2261,7 +2295,8 @@ export class LocalAppserver implements AppserverHandle {
 									: transcriptSearchError.code === "transcript_cursor_stale"
 										? "transcript search cursor is stale"
 										: "transcript search cursor is invalid"
-								: (externalRuntimeError?.message ??
+								: (sessionStartError?.message ??
+									externalRuntimeError?.message ??
 									imageError?.message ??
 									(operation ? "operation failed" : "command failed")),
 					...(officialOmpOperationError
@@ -2274,6 +2309,7 @@ export class LocalAppserver implements AppserverHandle {
 						: {}),
 				}),
 				unknown:
+					!sessionStartError &&
 					!officialOmpOperationError &&
 					!operation &&
 					!imageError &&
@@ -2835,12 +2871,13 @@ export class LocalAppserver implements AppserverHandle {
 	private async forkSession(source: SessionRecord): Promise<SessionRecord> {
 		if (!this.#authority?.fork) throw new Error("session forking is unavailable");
 		const forked = await this.#authority.fork(source);
+		const cwd = forked.cwd;
 		const record: SessionRecord = {
 			sessionId: forked.sessionId,
 			path: forked.path,
-			cwd: forked.cwd,
-			projectId: stableProjectId(forked.cwd),
-			projectName: projectNameFromCwd(forked.cwd),
+			cwd,
+			projectId: stableProjectId(cwd),
+			projectName: projectNameFromCwd(cwd),
 			title: forked.title ?? source.title ?? "Session",
 			updatedAt: this.#clock.now().toISOString(),
 			status: "idle",
@@ -2869,9 +2906,40 @@ export class LocalAppserver implements AppserverHandle {
 		if (!source) throw new Error("source session is unavailable");
 		const record = await this.forkSession(source);
 		const projection = this.#projections.get(record.sessionId)!;
-		await this.ensureSupervisor(record.sessionId);
+		try {
+			await this.ensureSupervisor(record.sessionId);
+		} catch (error) {
+			// The copy is already on disk and in the ledger by this point, so a
+			// runtime that cannot start would otherwise strand an orphan session
+			// and the lock its short-lived child took on the way down.
+			const reason = sessionStartReason(error);
+			try {
+				await this.discardFailedFork(record);
+			} catch (cleanupError) {
+				throw new SessionStartError(
+					`${reason}; the copy could not be removed: ${sessionStartReason(cleanupError)}`,
+				);
+			}
+			throw new SessionStartError(reason);
+		}
 		await this.broadcastIndex(projection.indexUpsert());
 		return { frame: response(this.hostId, command, true, { session: projection.value.ref }) };
+	}
+	/** Undo `forkSession` after the copy proves unusable. Never announced, so nothing to broadcast. */
+	private async discardFailedFork(record: SessionRecord): Promise<void> {
+		const sessionId = record.sessionId;
+		// Durable state first. If the copy survives on disk, the ledger entry and
+		// the in-memory record are what let an operator still see and retry it,
+		// so dropping those first would hide an orphan we failed to remove.
+		await this.#authority?.delete(record);
+		this.cleanupObserverState(sessionId);
+		this.#transcripts.delete(sessionId);
+		this.disposeSubagentState(sessionId);
+		this.#stateRefreshGenerations.delete(sessionId);
+		this.#createdPending.delete(sessionId);
+		this.#records.delete(sessionId);
+		this.#projections.delete(sessionId);
+		await this.#sessionOwnership?.delete(sessionId);
 	}
 	private async handleClose(command: CommandFrame): Promise<CommandOutcome> {
 		const sessionId = command.sessionId!;
@@ -3719,7 +3787,15 @@ export class LocalAppserver implements AppserverHandle {
 			this.#releaseAllMessageLifecycles(sessionId, "failed");
 			this.#transcripts.delete(sessionId);
 			this.disposeSubagentState(sessionId);
-			supervisor.stop();
+			// Await the process, not just the supervisor. `stop()` signals and
+			// returns, so a caller that cleans up the session's files immediately
+			// would race a child still holding — and able to rewrite — its lock.
+			const child = supervisor.child();
+			supervisor.stop("SIGTERM");
+			if (child && !(await this.childExitedWithinLifecycleTimeout(child))) {
+				supervisor.stop("SIGKILL");
+				await this.childExitedWithinLifecycleTimeout(child);
+			}
 			throw error;
 		}
 	}
