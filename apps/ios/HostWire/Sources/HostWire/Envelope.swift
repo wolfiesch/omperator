@@ -82,6 +82,7 @@ public enum ClientFrame: Equatable, Sendable {
     case confirm(ConfirmFrame)
     case pairStart(PairStartFrame)
     case ping(PingFrame)
+    case command(CommandFrame)
 
     public static func decode(_ data: Data) throws -> ClientFrame {
         let type = try wireDecode(TypePeek.self, from: data).type
@@ -90,6 +91,7 @@ public enum ClientFrame: Equatable, Sendable {
         case "confirm": return .confirm(try wireDecode(ConfirmFrame.self, from: data))
         case "pair.start": return .pairStart(try wireDecode(PairStartFrame.self, from: data))
         case "ping": return .ping(try wireDecode(PingFrame.self, from: data))
+        case "command": return .command(try wireDecode(CommandFrame.self, from: data))
         default: throw T4WireError.unknownFrame(family: "not yet ported (client): \(type)")
         }
     }
@@ -98,6 +100,7 @@ public enum ClientFrame: Equatable, Sendable {
 /// A decoded host → client frame.
 public enum ServerFrame: Equatable, Sendable {
     case welcome(WelcomeFrame)
+    case sessions(SessionsFrame)
     case event(LiveEventFrame)
     case confirmation(ConfirmationChallenge)
     case response(ResultFrame)
@@ -111,6 +114,7 @@ public enum ServerFrame: Equatable, Sendable {
         let type = try wireDecode(TypePeek.self, from: data).type
         switch type {
         case "welcome": return .welcome(try wireDecode(WelcomeFrame.self, from: data))
+        case "sessions": return .sessions(try wireDecode(SessionsFrame.self, from: data))
         case "event": return .event(try wireDecode(LiveEventFrame.self, from: data))
         case "confirmation": return .confirmation(try wireDecode(ConfirmationChallenge.self, from: data))
         case "response": return .response(try wireDecode(ResultFrame.self, from: data))

@@ -16,6 +16,8 @@ struct HostWireFixtureTests {
         "event": false,
         "pong": false,
         "bye": false,
+        "sessions": false,
+        "sessions-cluster": false,
     ]
 
     private static let invalid: Set<String> = [
@@ -82,5 +84,33 @@ struct HostWireFixtureTests {
         // bad residue char
         let badResidue = String(repeating: "A", count: 42) + "B"
         #expect(throws: T4WireError.self) { try Bounded.deviceToken(badResidue, path: "deviceToken") }
+    }
+    @Test("Session inventory decodes; command envelope round-trips and validates")
+    func sessionsAndCommand() throws {
+        let frame = try ServerFrame.decode(try data(for: "sessions"))
+        guard case .sessions(let inv) = frame else { Issue.record("expected sessions frame"); return }
+        #expect(inv.sessions.count >= 1)
+        #expect(inv.sessions.first?.project.name == "One")
+        #expect(inv.totalCount == inv.sessions.count)
+        #expect(inv.truncated == false)
+
+        let cluster = try ServerFrame.decode(try data(for: "sessions-cluster"))
+        guard case .sessions(let c) = cluster else { Issue.record("expected sessions frame"); return }
+        #expect(c.sessions.first?.hostId.hasPrefix("cluster:") ?? false)
+
+        // A host-scoped command encodes and round-trips.
+        let cmd = try CommandFrame(requestId: "req-1", commandId: "cmd-1", hostId: "host-a", command: "session.list")
+        guard case .command(let back) = try ClientFrame.decode(try encodeFrame(cmd)) else { Issue.record("expected command"); return }
+        #expect(back.command == "session.list")
+        #expect(back.sessionId == nil)
+
+        // A session-scoped command requires sessionId at construction.
+        #expect(throws: T4WireError.self) {
+            _ = try CommandFrame(requestId: "r", commandId: "c", hostId: "h", command: "session.prompt")
+        }
+        // A revision-required command needs expectedRevision.
+        #expect(throws: T4WireError.self) {
+            _ = try CommandFrame(requestId: "r", commandId: "c", hostId: "h", command: "session.rename", sessionId: "s")
+        }
     }
 }
