@@ -41,7 +41,6 @@ struct T4SessionDetailView: View {
     @State private var showFacts = false
     @State private var attachments: [ComposerAttachment] = []
     @State private var pickerItems: [PhotosPickerItem] = []
-    @State private var showControls = false
     @FocusState private var composerFocused: Bool
     private var t: Theme { theme.t }
     private static let maxImages = 8   // PROMPT_IMAGE_MAX_COUNT on the wire
@@ -76,9 +75,6 @@ struct T4SessionDetailView: View {
         .background(t.bg.ignoresSafeArea())
         .navigationTitle(session.title)
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(isPresented: $showControls) {
-            T4ControlsSheet(session: session, store: store).environmentObject(theme)
-        }
         .task(id: session.sessionId) { await store.attach(sessionId: session.sessionId) }
     }
 
@@ -122,17 +118,10 @@ struct T4SessionDetailView: View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             StatusPill(status: session.status, theme: t)
             if let model = session.model {
-                Button { showControls = true } label: {
+                T4ModelMenuButton(session: session, store: store, theme: t) {
                     T4ModelLabel(selector: model, theme: t)
                 }
-                .disabled(!store.connected)
-                .accessibilityLabel("Session controls")
-            } else if store.connected {
-                Button { showControls = true } label: {
-                    Label("Controls", systemImage: "slider.horizontal.3")
-                        .font(.system(size: 11))
-                        .foregroundStyle(t.txtMuted)
-                }
+                .accessibilityLabel("Model and session controls")
             }
             Spacer()
             Button { withAnimation(.easeInOut(duration: 0.2)) { showFacts.toggle() } } label: {
