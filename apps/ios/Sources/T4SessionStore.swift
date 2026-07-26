@@ -304,6 +304,12 @@ final class T4SessionStore: ObservableObject {
     func restore() async {
         // UI-test seam: -T4NoRestore forces the offline sample inventory.
         if ProcessInfo.processInfo.arguments.contains("-T4NoRestore") { return }
+        // Dev seam: -T4Endpoint=wss://host:port/v1/ws overrides the saved
+        // endpoint (the one-time UserDefaults migration otherwise shadows
+        // `defaults write` tweaks between runs).
+        if let seam = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("-T4Endpoint=") }) {
+            Keychain.set(String(seam.dropFirst("-T4Endpoint=".count)), forKey: Self.savedEndpointKey)
+        }
         guard !connected, !connecting,
               let endpointString = Keychain.get(Self.savedEndpointKey),
               let endpoint = URL(string: endpointString) else { return }
