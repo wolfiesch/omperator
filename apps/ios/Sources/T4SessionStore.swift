@@ -164,6 +164,11 @@ final class T4SessionStore: ObservableObject {
     /// Per-terminal last error (e.g. a denied term.open command). Cleared
     /// on a successful open or explicit close.
     @Published private(set) var terminalErrors: [String: String] = [:]
+    /// Per-session browser URL for the browser pane (T4BrowserPane). The
+    /// pane persists the URL field here so reopening a session's browser
+    /// returns to the last visited page. Defaults to localhost:3000 via
+    /// `browserURL(for:)` when unset.
+    @Published var browserURLBySession: [String: String] = [:]
     /// Code reviews per session, fed by `review` additive frames in observe().
     /// The review pane reads the latest reviewId from here to call
     /// review.read; empty when the host has not pushed a review.
@@ -885,6 +890,44 @@ final class T4SessionStore: ObservableObject {
         }
         openTerminalId.removeValue(forKey: sessionId)
         terminalErrors.removeValue(forKey: sessionId)
+    }
+
+    // MARK: - Browser pane
+    // The browser pane (T4BrowserPane) renders any http(s) URL directly in a
+    // WKWebView — it needs no host support. When the host DOES offer previews
+    // (capability preview.control/preview.read), `openPreview` opportunistically
+    // fires `preview.launch {url}` via the controller-lease path so the host's
+    // own preview pipeline (captures, navigation state) tracks the same URL.
+    // If the host lacks preview support, `preview.launch` errors and we no-op
+    // gracefully — the pane keeps rendering the URL directly regardless.
+
+    /// The default URL a session's browser opens to when none is persisted.
+    /// A dev server on localhost:3000 is the common case for T4 sessions.
+    static let defaultBrowserURL = "http://localhost:3000"
+
+    /// The persisted browser URL for a session, or the default when unset.
+    func browserURL(for sessionId: String) -> String {
+        browserURLBySession[sessionId] ?? Self.defaultBrowserURL
+    }
+
+    /// Persist the browser URL for a session (the pane's URL field calls this
+    /// on submit and on navigation). Idempotent; no host round-trip.
+    func setBrowserURL(for sessionId: String, url: String) {
+        browserURLBySession[sessionId] = url
+    }
+
+    /// Opportunistically ask the host to launch a preview for `url`
+    /// (preview.launch, controller lease). No-op when not connected or when
+    /// the host lacks preview support — the pane renders the URL directly in
+    /// WKWebView regardless of the outcome here. A failure is expected for
+    /// unsupported hosts and is swallowed (lastError is preserved) so an
+    /// unsupported preview never surfaces a spurious error to the user.
+    func openPreview(sessionId: String, url: String) async {
+        guard let client, connected, !hostId.isEmpty else { return }
+        let priorError = lastError
+        let ok = await control(sessionId: sessionId, command: "preview.launch",
+                               args: ["url": .string(url)])
+        if !ok { lastError = priorError }
     }
 
     // MARK: - Panes data

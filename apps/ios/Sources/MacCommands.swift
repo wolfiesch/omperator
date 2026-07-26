@@ -22,6 +22,7 @@ final class MacCommandsModel: ObservableObject {
     @Published var focusSearchTick = 0
     @Published var dismissTick = 0
     @Published var connectTick = 0
+    @Published var paletteTick = 0
     /// Set by the Session → Rename menu command; the workspace presents the
     /// rename alert bound to this.
     @Published var renameTarget: SessionRef?
@@ -29,9 +30,8 @@ final class MacCommandsModel: ObservableObject {
     func toggleSidebar() {
         withAnimation { columnVisibility = columnVisibility == .all ? .detailOnly : .all }
     }
-    func focusSearch() { focusSearchTick &+= 1 }
-    func dismissPresented() { dismissTick &+= 1 }
     func requestConnect() { connectTick &+= 1 }
+    func openPalette() { paletteTick &+= 1 }
 }
 
 extension FocusedValues {
@@ -87,6 +87,9 @@ struct MacCommands: SwiftUI.Commands {
         }
 
         CommandMenu("View") {
+            Button("Command Palette") { commands?.openPalette() }
+                .keyboardShortcut("k", modifiers: .command)
+
             Button("Toggle Sidebar") { commands?.toggleSidebar() }
                 .keyboardShortcut("b", modifiers: .command)
 

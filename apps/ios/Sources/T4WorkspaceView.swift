@@ -23,6 +23,7 @@ struct T4WorkspaceView: View {
     /// connect sheet when it opens.
     @State private var pendingPair: PendingPair?
     @State private var showInbox = false
+    @State private var showPalette = false
     private var t: Theme { theme.t }
 
     private var railOpen: Bool { railProgress > 0.5 }
@@ -51,6 +52,17 @@ struct T4WorkspaceView: View {
             .sheet(isPresented: $showInbox) {
                 T4InboxView(store: store, isPresented: $showInbox)
                     .environmentObject(theme)
+            }
+            .overlay {
+                if showPalette {
+                    T4PaletteView(isPresented: $showPalette)
+                        .environmentObject(theme)
+                        .environmentObject(store)
+                        .transition(.opacity)
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .t4PaletteRequestConnect)) { _ in
+                showConnect = true
             }
             .onOpenURL { url in handleDeepLink(url) }
             .onAppear {
@@ -161,8 +173,10 @@ struct T4WorkspaceView: View {
         .onChange(of: macCommands.dismissTick) { _, _ in
             showConnect = false
             showInbox = false
+            showPalette = false
         }
         .onChange(of: macCommands.connectTick) { _, _ in showConnect = true }
+        .onChange(of: macCommands.paletteTick) { _, _ in showPalette = true }
         .onChange(of: macCommands.renameTarget) { _, target in
             renameTarget = target
             renameText = target?.title ?? ""
@@ -401,6 +415,18 @@ struct T4WorkspaceView: View {
                         .accessibilityLabel("Model and session controls")
                     }
                 }
+                #if os(iOS)
+                ToolbarItem(placement: platformTrailingPlacement) {
+                    Button { showPalette = true } label: {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(t.txt)
+                            .frame(width: 38, height: 38)
+                    }
+                    .press()
+                    .accessibilityLabel("Command palette")
+                }
+                #endif
                 ToolbarItem(placement: platformTrailingPlacement) {
                     Button { showInbox = true } label: {
                         ZStack(alignment: .topTrailing) {

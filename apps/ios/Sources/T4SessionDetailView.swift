@@ -35,7 +35,7 @@ struct T4SessionDetailView: View {
     @State private var showTerminal = false
     /// One enum-driven sheet: multiple .sheet modifiers on one view stack
     /// and merge toolbars (the triple-Done bug).
-    enum ActiveSheet: String, Identifiable { case files, agents, usage, review, artifacts, settings; var id: String { rawValue } }
+    enum ActiveSheet: String, Identifiable { case files, agents, usage, review, artifacts, settings, browser; var id: String { rawValue } }
     @State private var activeSheet: ActiveSheet?
     @State private var attachments: [ComposerAttachment] = []
     @State private var pickerItems: [PhotosPickerItem] = []
@@ -173,6 +173,9 @@ struct T4SessionDetailView: View {
                     .environmentObject(theme)
             case .settings:
                 T4SettingsPane(store: store, isPresented: sheetBinding(.settings))
+                    .environmentObject(theme)
+            case .browser:
+                T4BrowserPane(session: session, store: store, isPresented: sheetBinding(.browser))
                     .environmentObject(theme)
             }
         }
@@ -436,6 +439,14 @@ struct T4SessionDetailView: View {
             }
             .press()
             .accessibilityLabel("Toggle terminal")
+            Button { activeSheet = .browser } label: {
+                Image(systemName: "safari")
+                    .font(.system(size: 16))
+                    .foregroundStyle(t.txtMuted)
+                    .frame(width: 34, height: 34)
+            }
+            .press()
+            .accessibilityLabel("Open browser")
         }
     }
 
