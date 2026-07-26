@@ -493,6 +493,7 @@ struct T4SessionDetailView: View {
             }
         }
         .glass(t, 16)
+        .background(t.glassFill, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .onChange(of: pickerItems) { _, items in loadAttachments(items) }
         .onAppear { dictation.onText = { draft = $0 } }
     }
