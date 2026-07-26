@@ -131,7 +131,7 @@ struct T4SessionDetailView: View {
             // UI-test seams: boot with a pane/drawer/card visible for screenshots.
             let args = ProcessInfo.processInfo.arguments
             if args.contains("-T4ShowFiles") { activeSheet = .files }
-            if args.contains("-T4ShowBrowser") { t4log.notice("seam: browser"); activeSheet = .browser }
+            if args.contains("-T4ShowBrowser") { NSLog("T4 seam: browser"); activeSheet = .browser }
             if args.contains("-T4ShowAgents") { activeSheet = .agents }
             if args.contains("-T4ShowTerminal") { showTerminal = true }
             if args.contains("-T4ShowPlan") { planExpanded = true }
