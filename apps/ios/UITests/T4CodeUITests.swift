@@ -83,8 +83,10 @@ final class T4CodeUITests: XCTestCase {
     // MARK: - Connection status bar
 
     @MainActor
-    func testDisconnectedRailShowsConnectButton() throws {
+    func testDisconnectedRailShowsStatusNotConnect() throws {
         let app = launch(arguments: ["-T4RailOpen"])
-        XCTAssertTrue(app.buttons["Connect to a T4 Code host"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Not connected"].waitForExistence(timeout: 5))
+        // Pairing lives in onboarding/palette, not the rail.
+        XCTAssertFalse(app.buttons["Connect to a T4 Code host"].exists)
     }
 }
