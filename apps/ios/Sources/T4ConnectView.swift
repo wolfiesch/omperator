@@ -132,13 +132,19 @@ struct T4ConnectView: View {
         Task { await pairAndConnect() }
     }
 
-    /// Build the ws:// endpoint from the host hint, defaulting the port to
-    /// 8787 when the field has no colon (e.g. a bare tailnet hostname).
+    /// Build the endpoint from the host hint. Explicit schemes pass through;
+    /// a bare hint defaults to the plain ws port (8787). Port 8788 (the
+    /// host's --remote-tls-port) implies wss so a bare `host:8788` "just
+    /// works" — no scheme typing for the common case.
     private func pairEndpoint() -> URL? {
         let host = trimmedHost
         guard !host.isEmpty else { return nil }
+        if host.hasPrefix("ws://") || host.hasPrefix("wss://") {
+            return URL(string: host.hasSuffix("/v1/ws") ? host : "\(host)/v1/ws")
+        }
         let withPort = host.contains(":") ? host : "\(host):8787"
-        return URL(string: "ws://\(withPort)/v1/ws")
+        let scheme = withPort.hasSuffix(":8788") ? "wss" : "ws"
+        return URL(string: "\(scheme)://\(withPort)/v1/ws")
     }
 
     private func pairAndConnect() async {
