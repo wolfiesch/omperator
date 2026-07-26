@@ -544,8 +544,12 @@ final class T4SessionStore: ObservableObject {
         return imageId
     }
 
+    /// Demo mode: fake inventory/transcripts render ONLY with -T4Demo in the
+    /// launch arguments (UI tests + screenshots). Never a user-facing default.
+    static let demoMode = ProcessInfo.processInfo.arguments.contains("-T4Demo")
+
     init() {
-        self.sessions = Self.sample
+        self.sessions = Self.demoMode ? Self.sample : []
     }
 
     /// Filtered + project-grouped view of the inventory (the rail model).
@@ -596,14 +600,14 @@ final class T4SessionStore: ObservableObject {
     /// otherwise (agents-pane preview without a host).
     func agents(for sessionId: String) -> [AgentState] {
         if connected { return agentsBySession[sessionId] ?? [] }
-        return Self.sampleAgents
+        return Self.demoMode ? Self.sampleAgents : []
     }
 
     /// Transcript entries for a session: the live host log when attached,
     /// sample rows otherwise (rail preview without a host).
     func transcript(for sessionId: String) -> [TranscriptEntry] {
         if connected { return liveEntries[sessionId] ?? [] }
-        return sampleTranscript(for: sessionId)
+        return Self.demoMode ? sampleTranscript(for: sessionId) : []
     }
 
     /// Sample transcript — offline preview only.

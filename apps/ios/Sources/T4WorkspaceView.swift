@@ -142,6 +142,8 @@ struct T4WorkspaceView: View {
             Group {
                 if !store.hasLiveInventory && store.hasSavedConnection {
                     bootSplash
+                } else if !store.hasLiveInventory && !T4SessionStore.demoMode {
+                    onboarding
                 } else if let session = store.selectedSession {
                     T4SessionDetailView(session: session, store: store)
                         .environmentObject(theme)
@@ -195,6 +197,33 @@ struct T4WorkspaceView: View {
             }
         }
         .tint(t.accent)
+    }
+
+    /// Fresh device, nothing configured: honest onboarding, never fake data.
+    private var onboarding: some View {
+        VStack(spacing: 18) {
+            Text("T4 Code")
+                .font(.term(44))
+                .foregroundStyle(t.accent)
+            Text("Your agents, from your pocket.")
+                .font(.system(size: 15))
+                .foregroundStyle(t.txtMuted)
+            Button { showConnect = true } label: {
+                Label("Pair a host", systemImage: "link.badge.plus")
+                    .font(.system(size: 16, weight: .semibold))
+                    .frame(maxWidth: 260)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(t.accent)
+            .controlSize(.large)
+            .padding(.top, 8)
+            Text("Run `t4-host pair` on your Mac and enter the 6-digit code.")
+                .font(.system(size: 12))
+                .foregroundStyle(t.txtLabel)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(t.bg)
     }
 
     /// Boot state for saved-connection devices: connecting, never fake chat.
