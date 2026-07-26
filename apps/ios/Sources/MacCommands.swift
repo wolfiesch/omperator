@@ -42,7 +42,7 @@ extension FocusedValues {
 /// macOS menu bar + keyboard shortcuts. Menus: Session, View, Host, Go to
 /// Session. Shortcuts: ⌘N new, ⌘B toggle sidebar, ⌘F focus search, ⌘1…⌘9
 /// select visible session by index, ⌘⌫ delete, Esc close sheet.
-struct MacCommands: Commands {
+struct MacCommands: SwiftUI.Commands {
     @FocusedValue(\.t4SessionStore) private var store: T4SessionStore?
     @FocusedValue(\.macCommands) private var commands: MacCommandsModel?
 
@@ -51,7 +51,7 @@ struct MacCommands: Commands {
     /// same ordering the sidebar shows — the index ⌘1…⌘9 addresses.
     private var flatSessions: [SessionRef] { store?.groups.flatMap(\.sessions) ?? [] }
 
-    var body: some Commands {
+    var body: some SwiftUI.Commands {
         CommandGroup {}
         CommandMenu("Session") {
             Button("New Session") { Task { await newSession() } }
@@ -97,9 +97,6 @@ struct MacCommands: Commands {
             Button("Close Sheet") { commands?.dismissPresented() }
                 .keyboardShortcut(.escape, modifiers: [])
 
-            Divider()
-
-            modelMenu
         }
 
         CommandMenu("Host") {
@@ -140,42 +137,6 @@ struct MacCommands: Commands {
         store.select(flatSessions[i])
     }
 
-    // MARK: - Model submenu (mirrors T4ModelMenuButton's provider groups)
 
-    @CommandsBuilder
-    private var modelMenu: some Commands {
-        if let store, !store.catalogModels.isEmpty {
-            Menu("Model") {
-                ForEach(providerGroups(for: store), id: \.name) { group in
-                    Menu(group.name) {
-                        ForEach(group.models, id: \.id) { item in
-                            Button(item.name.isEmpty ? item.id : item.name) {
-                                if let s = selected {
-                                    Task { await store.setModel(sessionId: s.sessionId, selector: item.id) }
-                                }
-                            }
-                            .disabled(selected == nil)
-                        }
-                    }
-                }
-            }
-        } else {
-            Button("No models available") {}.disabled(true)
-        }
-    }
-
-    private struct ProviderGroup {
-        let name: String
-        let models: [CatalogItem]
-    }
-
-    private func providerGroups(for store: T4SessionStore) -> [ProviderGroup] {
-        var byProvider: [String: [CatalogItem]] = [:]
-        for item in store.catalogModels {
-            let provider = splitModelSelector(item.id).provider ?? "other"
-            byProvider[provider, default: []].append(item)
-        }
-        return byProvider.keys.sorted().map { ProviderGroup(name: $0, models: byProvider[$0] ?? []) }
-    }
 }
 #endif
