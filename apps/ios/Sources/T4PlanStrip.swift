@@ -69,4 +69,47 @@ struct T4PlanStrip: View {
         .clipped()
         .animation(.easeInOut(duration: 0.22), value: expanded)
     }
+
+    private var planBody: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            ForEach(phases) { phase in
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 6) {
+                        Text(phase.name.uppercased())
+                            .font(.labl(9)).tracking(1.2)
+                            .foregroundStyle(phase.doneCount == phase.tasks.count && !phase.tasks.isEmpty ? t.cOk : t.txtMuted)
+                        Text("\(phase.doneCount)/\(phase.tasks.count)")
+                            .font(.term(11)).foregroundStyle(t.txtLabel)
+                    }
+                    ForEach(phase.tasks) { task in
+                        HStack(alignment: .firstTextBaseline, spacing: 7) {
+                            Image(systemName: icon(for: task.status))
+                                .font(.system(size: 9))
+                                .foregroundStyle(color(for: task.status))
+                            Text(task.content)
+                                .font(.bodyF(12))
+                                .foregroundStyle(task.status == "completed" ? t.txtLabel : t.txtBody)
+                                .strikethrough(task.status == "completed")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func icon(for status: String) -> String {
+        switch status {
+        case "completed": return "checkmark.circle.fill"
+        case "in_progress": return "circle.lefthalf.filled"
+        default: return "circle"
+        }
+    }
+
+    private func color(for status: String) -> Color {
+        switch status {
+        case "completed": return t.cOk
+        case "in_progress": return t.accent
+        default: return t.txtLabel
+        }
+    }
 }
