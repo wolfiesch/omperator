@@ -101,18 +101,28 @@ export function createLiveSettingsController(options: LiveSettingsControllerOpti
     });
     const timer = setTimeout(resolve, timeoutMs);
     try {
-      // `allSettled` so one failing command cannot mask the other's result,
-      // but a rejection must not read as "the host published an empty
-      // catalog": that turned a broken refresh into a silently empty rail.
-      const results = await Promise.allSettled([
-        runtime.command(targetId, { hostId: wireHostId, command: "settings.read", args: {} }),
-        runtime.command(targetId, { hostId: wireHostId, command: "catalog.get", args: {} }),
-      ]);
-      const rejected = results.filter((result) => result.status === "rejected");
-      if (rejected.length === results.length) {
-        throw new Error(
-          `settings refresh failed: ${rejected.map((result) => String(result.reason)).join("; ")}`,
-        );
+      // `allSettled` so one failing command cannot mask the other's outcome,
+      // but both are then reported. A host refusal RESOLVES with
+      // `accepted: false` rather than throwing (see `browser-shell-port`), so
+      // rejection status alone misses the common case.
+      const commands = ["settings.read", "catalog.get"] as const;
+      const results = await Promise.allSettled(
+        commands.map((command) => runtime.command(targetId, { hostId: wireHostId, command, args: {} })),
+      );
+      // The two are complementary, not redundant: `catalog.get` carries the
+      // sections and `settings.read` the values, so either one failing leaves
+      // the screen wrong. Report whichever failed instead of waiting for both.
+      const failures = results.flatMap((result, index) => {
+        const reason =
+          result.status === "rejected"
+            ? String(result.reason)
+            : result.value.accepted
+              ? null
+              : (result.value.error?.message ?? "host refused the command");
+        return reason === null ? [] : [`${commands[index]}: ${reason}`];
+      });
+      if (failures.length > 0) {
+        throw new Error(`settings refresh failed: ${failures.join("; ")}`);
       }
       const settled = runtime.getSnapshot().settings.get(hostId);
       if (settled === undefined || String(settled.revision) === previousRevision) await promise;

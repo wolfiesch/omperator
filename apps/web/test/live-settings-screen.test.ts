@@ -122,9 +122,30 @@ class FakeRuntime implements LiveSettingsRuntimePort {
     return () => {};
   }
   commandRejection: string | null = null;
+  commandRefusal: string | null = null;
+  refuseCommand: string | null = null;
   async command(_targetId: string, intent: CommandRequest["intent"]): Promise<CommandResult> {
     this.commands.push(intent);
     if (this.commandRejection !== null) throw new Error(this.commandRejection);
+    if (this.refuseCommand !== null && intent.command === this.refuseCommand) {
+      return {
+        targetId: "local",
+        requestId: `req-${this.commands.length}`,
+        commandId: "cmd",
+        accepted: false,
+        error: { code: "REFUSED", message: `${this.refuseCommand} refused` },
+      };
+    }
+    if (this.commandRefusal !== null) {
+      // A host refusal resolves with `accepted: false`; it does not throw.
+      return {
+        targetId: "local",
+        requestId: `req-${this.commands.length}`,
+        commandId: "cmd",
+        accepted: false,
+        error: { code: "REFUSED", message: this.commandRefusal },
+      };
+    }
     return { targetId: "local", requestId: `req-${this.commands.length}`, commandId: "cmd", accepted: true };
   }
   async confirm(request: ConfirmRequest): Promise<ConfirmResult> {
@@ -624,4 +645,48 @@ describe("settings refresh rejection", () => {
       detach();
     }
   });
+});
+
+describe("settings refusal", () => {
+  it("reports a resolved refusal, which does not reject the command promise", async () => {
+    // `browser-shell-port` maps protocol `ok` onto `accepted`, so a refused
+    // command RESOLVES. A `.catch`-only path stays silent and the rail renders
+    // empty with no explanation.
+    const runtime = new FakeRuntime();
+    runtime.connectLocal();
+    runtime.commandRefusal = "settings unavailable on this host";
+    const { model, detach } = attachedModel(runtime, 20);
+    try {
+      await vi.waitFor(() => {
+        const state = model.getState();
+        if (state.phase !== "error") throw new Error(`still ${state.phase}`);
+        expect(state.message).toContain("settings unavailable on this host");
+      }, { timeout: 2000 });
+    } finally {
+      detach();
+    }
+  });
+});
+
+describe("partial settings refusal", () => {
+  for (const refused of ["catalog.get", "settings.read"]) {
+    it(`reports ${refused} failing while the other succeeds`, async () => {
+      // The pair is complementary: catalog.get carries the sections and
+      // settings.read the values. One succeeding does not make the screen
+      // correct, so a single refusal must still surface.
+      const runtime = new FakeRuntime();
+      runtime.connectLocal();
+      runtime.refuseCommand = refused;
+      const { model, detach } = attachedModel(runtime, 20);
+      try {
+        await vi.waitFor(() => {
+          const state = model.getState();
+          if (state.phase !== "error") throw new Error(`still ${state.phase}`);
+          expect(state.message).toContain(`${refused} refused`);
+        }, { timeout: 2000 });
+      } finally {
+        detach();
+      }
+    });
+  }
 });

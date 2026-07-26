@@ -359,19 +359,27 @@ export function createLiveSettingsScreenModel(options: LiveSettingsScreenModelOp
       // timeout below, which reports the recorded reason rather than guessing
       // that the host lacks settings support.
       const wireHostId = brandHostId(active.hostId);
-      // Bind the key: a rejection can land after the active host changed, and
+      // Bind the key: a failure can land after the active host changed, and
       // reporting host A's reason under host B's timeout is worse than no
       // reason at all.
       const nudgedKey = key;
       const recordFailure = (reason: unknown): void => {
         if (publishNudgedKey === nudgedKey) publishFailure = String(reason);
       };
-      void runtime
-        .command(active.targetId, { hostId: wireHostId, command: "settings.read", args: {} })
-        .catch(recordFailure);
-      void runtime
-        .command(active.targetId, { hostId: wireHostId, command: "catalog.get", args: {} })
-        .catch(recordFailure);
+      // A refusal RESOLVES with `accepted: false` rather than throwing (see
+      // `browser-shell-port`), so a bare `.catch` never sees the common case.
+      const nudge = (command: string): void => {
+        void runtime
+          .command(active.targetId, { hostId: wireHostId, command, args: {} })
+          .then((result) => {
+            if (!result.accepted) {
+              recordFailure(result.error?.message ?? `host refused ${command}`);
+            }
+          })
+          .catch(recordFailure);
+      };
+      nudge("settings.read");
+      nudge("catalog.get");
       clearPublishTimer();
       publishTimer = setTimeout(() => {
         publishTimer = null;
