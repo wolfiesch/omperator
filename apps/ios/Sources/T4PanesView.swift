@@ -612,14 +612,8 @@ struct T4SettingsPane: View {
                     Spacer()
                     paneError(error, t)
                     Spacer()
-                } else if let settings, !settings.isEmpty {
-                    settingsList(settings)
                 } else {
-                    Spacer()
-                    Text("No settings.")
-                        .font(.system(size: 13))
-                        .foregroundStyle(t.txtMuted)
-                    Spacer()
+                    settingsList(settings ?? [:])
                 }
             }
             .background(t.bg.ignoresSafeArea())
@@ -647,6 +641,7 @@ struct T4SettingsPane: View {
 
     private func settingsList(_ settings: [String: JSONValue]) -> some View {
         List {
+            hostSection
             ForEach(sortedKeys, id: \.self) { key in
                 settingRow(key, settings[key] ?? .null)
             }
@@ -657,6 +652,48 @@ struct T4SettingsPane: View {
         .listStyle(.inset)
         #endif
         .scrollContentBackground(.hidden)
+    }
+    /// Host identity/version + connection controls, always shown at the top
+    /// of the settings list so the user can inspect or cut the connection
+    /// even before settings.read succeeds. `store.hostInfo` is captured from
+    /// the WelcomeFrame on connect; `pairedEndpoint` is the live ws URL.
+    @ViewBuilder
+    private var hostSection: some View {
+        Section(header: Text("Host").font(.system(size: 12, weight: .bold)).foregroundStyle(t.txtLabel)) {
+            if let info = store.hostInfo {
+                hostRow("Host ID", info.hostId)
+                hostRow("OMP version", info.ompVersion)
+                hostRow("Appserver", info.appserverVersion)
+            } else {
+                hostRow("Host ID", "—")
+                hostRow("OMP version", "—")
+                hostRow("Appserver", "—")
+            }
+            hostRow("Endpoint", store.pairedEndpoint?
+                .replacingOccurrences(of: "ws://", with: "")
+                .replacingOccurrences(of: "/v1/ws", with: "") ?? "Not connected")
+            Button(role: .destructive) {
+                Task { await store.disconnect() }
+            } label: {
+                Label("Disconnect", systemImage: "antenna.radiowaves.left.and.right.slash")
+            }
+            .disabled(!store.connected)
+        }
+    }
+
+    @ViewBuilder
+    private func hostRow(_ key: String, _ value: String) -> some View {
+        HStack {
+            Text(key)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(t.txt)
+            Spacer()
+            Text(value)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(t.txtMuted)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
     }
 
     @ViewBuilder

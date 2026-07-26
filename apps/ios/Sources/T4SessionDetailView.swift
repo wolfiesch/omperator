@@ -35,7 +35,7 @@ struct T4SessionDetailView: View {
     @State private var showTerminal = false
     /// One enum-driven sheet: multiple .sheet modifiers on one view stack
     /// and merge toolbars (the triple-Done bug).
-    enum ActiveSheet: String, Identifiable { case files, agents, usage, review, artifacts, settings, browser; var id: String { rawValue } }
+    enum ActiveSheet: String, Identifiable { case files, agents, usage, review, artifacts, settings, browser, searchDiff; var id: String { rawValue } }
     @State private var activeSheet: ActiveSheet?
     @State private var attachments: [ComposerAttachment] = []
     @State private var pickerItems: [PhotosPickerItem] = []
@@ -176,6 +176,9 @@ struct T4SessionDetailView: View {
                     .environmentObject(theme)
             case .browser:
                 T4BrowserPane(session: session, store: store, isPresented: sheetBinding(.browser))
+                    .environmentObject(theme)
+            case .searchDiff:
+                T4SearchPane(session: session, store: store, isPresented: sheetBinding(.searchDiff))
                     .environmentObject(theme)
             }
         }
@@ -400,6 +403,11 @@ struct T4SessionDetailView: View {
                     activeSheet = .artifacts
                 } label: {
                     Label("Artifacts", systemImage: "paperclip")
+                }
+                Button {
+                    activeSheet = .searchDiff
+                } label: {
+                    Label("Search & Diff", systemImage: "magnifyingglass.and.list.bullet.indent")
                 }
                 Button {
                     activeSheet = .settings

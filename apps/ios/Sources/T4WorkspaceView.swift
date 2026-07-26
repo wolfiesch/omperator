@@ -24,6 +24,7 @@ struct T4WorkspaceView: View {
     @State private var pendingPair: PendingPair?
     @State private var showInbox = false
     @State private var showPalette = false
+    @StateObject private var notifier = T4Notifier()
     private var t: Theme { theme.t }
 
     private var railOpen: Bool { railProgress > 0.5 }
@@ -72,7 +73,10 @@ struct T4WorkspaceView: View {
                 // UI-test seam: launch with -T4ShowInbox to boot with the inbox open.
                 if ProcessInfo.processInfo.arguments.contains("-T4ShowInbox") { showInbox = true }
             }
-            .task { await store.restore() }
+            .task {
+                notifier.attach(store)
+                await store.restore()
+            }
             .task {
                 // UI-test seam: launch with -T4PairCode <code> [-T4PairHost <host[:port]>]
                 // to run the pair handshake on first boot. Default host is the

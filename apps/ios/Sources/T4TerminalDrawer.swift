@@ -21,12 +21,14 @@ struct T4TerminalDrawer: View {
     @EnvironmentObject var theme: ThemeStore
     let isOpen: Bool
     private var t: Theme { theme.t }
+    /// Per-session terminal cap (matches the desktop drawer).
+    private static let maxTerminals = 4
 
     var body: some View {
         Group {
             if isOpen {
                 VStack(spacing: 0) {
-                    drawerHeader
+                    tabBar
                     terminalContent
                 }
                 .frame(height: 280)
@@ -42,52 +44,106 @@ struct T4TerminalDrawer: View {
         }
     }
 
-    /// Header row: title + exit/close state. Shows the exit code when the pty
-    /// has exited; otherwise a Close button sends terminal.close and clears
-    /// the drawer's open state upstream via the binding the owner manages.
-    private var drawerHeader: some View {
-        let terminalId = store.openTerminalId[session.sessionId]
-        let exited = terminalId.flatMap { store.terminalExits[$0] }
-        let error = store.terminalErrors[session.sessionId]
-        return HStack(spacing: 8) {
-            Image(systemName: "terminal")
-                .font(.system(size: 12))
-                .foregroundStyle(t.cBash)
-            Text("Terminal")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(t.txtLabel)
-            if let error {
+    /// Tab row across the drawer's top: one rounded tab per open terminal
+    /// (max 4), a `+` button to open another (disabled at the cap with an
+    /// accessibility reason), and a close `×` on the active tab. The active
+    /// tab is tinted with the accent; inactive tabs are muted. Tapping a tab
+    /// switches the active terminal instantly via `store.selectTerminal`.
+    private var tabBar: some View {
+        let sessionId = session.sessionId
+        let ids = store.openTerminalIds[sessionId] ?? []
+        let active = store.activeTerminalId[sessionId]
+        return HStack(spacing: 6) {
+            ForEach(Array(ids.enumerated()), id: \.element) { idx, terminalId in
+                terminalTab(index: idx + 1, terminalId: terminalId, isActive: terminalId == active)
+            }
+            addButton(count: ids.count)
+            Spacer(minLength: 4)
+            if let error = store.terminalErrors[sessionId], active == nil {
                 Text(error)
                     .font(.system(size: 11))
                     .foregroundStyle(t.diffDel)
                     .lineLimit(1)
-            } else if let code = exited {
-                Text("exited (\(code))")
-                    .font(.system(size: 11))
-                    .foregroundStyle(t.txtMuted)
             }
-            Spacer()
-            if terminalId != nil && exited == nil {
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .overlay(alignment: .bottom) { Rectangle().fill(t.line).frame(height: 0.5) }
+    }
+
+    /// One tab: title (`Terminal N`, or `exit <code>` once the pty exits) with
+    /// active accent tint, and a close `×` shown only on the active tab.
+    private func terminalTab(index: Int, terminalId: String, isActive: Bool) -> some View {
+        let exited = store.terminalExits[terminalId]
+        let title = exited.map { "exit \($0)" } ?? "Terminal \(index)"
+        return HStack(spacing: 5) {
+            Text(title)
+                .font(.system(size: 11, weight: isActive ? .semibold : .regular))
+                .foregroundStyle(isActive ? t.accent : t.txtMuted)
+                .lineLimit(1)
+            if isActive {
                 Button {
-                    Task { await store.closeTerminal(sessionId: session.sessionId) }
+                    Task { await store.closeTerminal(terminalId: terminalId) }
                 } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 14))
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(t.txtMuted)
                 }
                 .press()
-                .accessibilityLabel("Close terminal")
+                .accessibilityLabel("Close terminal \(index)")
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(isActive ? t.accent.opacity(0.14) : .clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(isActive ? t.accentLine : t.line, lineWidth: 0.5)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            store.selectTerminal(sessionId: session.sessionId, terminalId: terminalId)
+        }
+        .accessibilityLabel("Switch to terminal \(index)")
+        .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 
-    /// The terminal surface, or a status row when there is no terminal yet.
+    /// The `+` button: opens another terminal when below the cap, disabled
+    /// (with an accessibility reason) at 4. A failed open surfaces via
+    /// `terminalErrors`, shown in the tab row's trailing slot.
+    private func addButton(count: Int) -> some View {
+        let full = count >= Self.maxTerminals
+        return Button {
+            Task { await store.openTerminal(sessionId: session.sessionId) }
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(full ? t.txtGhost : t.txtMuted)
+                .frame(width: 24, height: 24)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .stroke(t.line, lineWidth: 0.5)
+                )
+                .contentShape(Rectangle())
+        }
+        .press()
+        .disabled(full)
+        .accessibilityLabel(full ? "Terminal limit reached" : "Open another terminal")
+        .accessibilityHint(full ? "Maximum of \(Self.maxTerminals) terminals per session" : "")
+    }
+
+    /// The active terminal's surface, or a status row when there is no
+    /// terminal yet / an open error left none open. Switching tabs changes
+    /// `activeTerminalId` and re-renders this instantly (the surface is keyed
+    /// by terminalId, so SwiftTerm state is preserved per terminal).
     @ViewBuilder private var terminalContent: some View {
-        let terminalId = store.openTerminalId[session.sessionId]
-        let error = store.terminalErrors[session.sessionId]
-        if let error {
+        let sessionId = session.sessionId
+        let terminalId = store.activeTerminalId[sessionId]
+        let error = store.terminalErrors[sessionId]
+        if let error, terminalId == nil {
             HStack {
                 Spacer()
                 VStack(spacing: 6) {
@@ -115,6 +171,7 @@ struct T4TerminalDrawer: View {
                     Task { await store.resizeTerminal(sessionId: session.sessionId, cols: cols, rows: rows) }
                 }
             )
+            .id(terminalId)
         } else {
             HStack {
                 Spacer()
@@ -129,9 +186,11 @@ struct T4TerminalDrawer: View {
         }
     }
 
-    /// Ensure a terminal is open for the session (idempotent in the store).
+    /// Ensure at least one terminal is open for the session (idempotent). The
+    /// drawer's first open triggers `openTerminal`; subsequent `+` taps add
+    /// tabs. If an active terminal already exists, do nothing.
     private func ensureOpen() async {
-        guard store.openTerminalId[session.sessionId] == nil,
+        guard store.activeTerminalId[session.sessionId] == nil,
               store.terminalErrors[session.sessionId] == nil else { return }
         await store.openTerminal(sessionId: session.sessionId)
     }

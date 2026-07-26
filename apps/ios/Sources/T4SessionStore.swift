@@ -66,6 +66,14 @@ final class T4SessionStore: ObservableObject {
         var detail: String?
         var id: String { agentId }
     }
+    /// Host version/identity snapshot captured from the WelcomeFrame on
+    /// connect (hostId, ompVersion, appserverVersion). Shown in the Settings
+    /// pane's Host section; nil while disconnected.
+    struct HostInfo: Equatable, Sendable {
+        let hostId: String
+        let ompVersion: String
+        let appserverVersion: String
+    }
 
     @Published private(set) var sessions: [SessionRef]
     @Published var query: String = ""
@@ -75,6 +83,9 @@ final class T4SessionStore: ObservableObject {
     /// Human-readable endpoint the store is currently paired/connected to
     /// (e.g. "ws://macbookpro.my-tailnet.ts.net:8787/v1/ws"), for UI display.
     @Published private(set) var pairedEndpoint: String?
+    /// Host version/identity from the WelcomeFrame (hostId, OMP version,
+    /// appserver version). Captured on connect, cleared on disconnect.
+    @Published private(set) var hostInfo: HostInfo?
     @Published var selectedSession: SessionRef?
     /// Live transcripts by sessionId (snapshot + streamed entries). Present
     /// only for attached sessions while connected; the sample rail falls back
@@ -157,10 +168,15 @@ final class T4SessionStore: ObservableObject {
     /// Presence of a key means the pty has exited; nil value means exited
     /// with code 0 recorded as absent until exit.
     @Published private(set) var terminalExits: [String: Int] = [:]
-    /// The terminal id opened for the selected session by `openTerminal`,
-    /// or nil when no terminal is open. The drawer watches this to know
-    /// which buffered output stream to render.
-    @Published private(set) var openTerminalId: [String: String] = [:]
+    /// Per-session ordered terminal ids (max 4), in the order `openTerminal`
+    /// opened them. The drawer renders one tab per id; the active id is the
+    /// tab whose buffered output is rendered and whose keystrokes are sent.
+    @Published private(set) var openTerminalIds: [String: [String]] = [:]
+    /// The active terminal id for a session — the tab the drawer renders and
+    /// the target of `sendTerminalInput`/`resizeTerminal`. Set by `openTerminal`
+    /// (new terminal becomes active) and `selectTerminal` (tab switch), and
+    /// reselected to a neighbor when the active terminal is closed.
+    @Published private(set) var activeTerminalId: [String: String] = [:]
     /// Per-terminal last error (e.g. a denied term.open command). Cleared
     /// on a successful open or explicit close.
     @Published private(set) var terminalErrors: [String: String] = [:]
@@ -641,6 +657,7 @@ final class T4SessionStore: ObservableObject {
         do {
             let welcome = try await c.connect()
             hostId = welcome.hostId
+            hostInfo = HostInfo(hostId: welcome.hostId, ompVersion: welcome.ompVersion, appserverVersion: welcome.appserverVersion)
             grantedCapabilities = welcome.grantedCapabilities
             connected = welcome.authentication == .paired || welcome.authentication == .local
             if connected {
@@ -674,6 +691,7 @@ final class T4SessionStore: ObservableObject {
         do {
             let welcome = try await c.connect()
             hostId = welcome.hostId
+            hostInfo = HostInfo(hostId: welcome.hostId, ompVersion: welcome.ompVersion, appserverVersion: welcome.appserverVersion)
             if welcome.authentication == .paired || welcome.authentication == .local {
                 // Open host — no pairing round-trip needed.
                 connected = true
@@ -816,6 +834,113 @@ final class T4SessionStore: ObservableObject {
         }
     }
 
+    // MARK: - Files search & diff
+    // files.search (capability files.list, session scope, revision optional)
+    // searches the workspace by file-name substring; the host returns up to
+    // PROJECT_FILE_SEARCH_MAX_RESULTS (50) matches as safe relative paths plus
+    // a `truncated` flag. files.diff (capability files.diff) returns either
+    // `{diff}` patch text (no turnId) or a turn review snapshot `{turnId,
+    // baseTree, headTree, changes, patch?}` (turnId set); the snapshot's patch
+    // artifact is read via artifact.read. Both are desktop-bridge operations —
+    // standalone hosts don't implement them; the pane shows the honest failure.
+
+    /// Search the session workspace by file name (files.search). `query` is a
+    /// substring; the host returns up to 50 matches as safe relative paths.
+    /// Returns the matches or nil on failure (lastError is set).
+    func filesSearch(sessionId: String, query: String) async -> FilesSearchResult? {
+        guard let client, connected, !hostId.isEmpty else {
+            lastError = "Not connected to a host."
+            return nil
+        }
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return FilesSearchResult(matches: [], truncated: false) }
+        do {
+            let result = try await client.sendCommand(CommandIntent(
+                hostId: hostId, command: "files.search",
+                args: ["query": .string(trimmed)], sessionId: sessionId))
+            return Self.decodeFilesSearchResult(result)
+        } catch {
+            t4log.error("files.search failed: \(error)")
+            lastError = "This host has no files bridge (desktop hosts only)."
+            return nil
+        }
+    }
+
+    /// Fetch a unified diff for the session workspace (files.diff). With no
+    /// `turnId` the host returns `{diff}` patch text; with a `turnId` it
+    /// returns a turn review snapshot whose `patch` artifact is read via
+    /// artifact.read. Returns the patch text (and change list when available)
+    /// or nil on failure (lastError is set).
+    func filesDiff(sessionId: String, turnId: String? = nil) async -> FilesDiffResult? {
+        guard let client, connected, !hostId.isEmpty else {
+            lastError = "Not connected to a host."
+            return nil
+        }
+        var args: [String: JSONValue] = [:]
+        if let turnId, !turnId.isEmpty { args["turnId"] = .string(turnId) }
+        do {
+            let result = try await client.sendCommand(CommandIntent(
+                hostId: hostId, command: "files.diff", args: args, sessionId: sessionId))
+            guard result.ok, let body = result.result, case .object(let o) = body else {
+                lastError = "files.diff returned no result."
+                return nil
+            }
+            // {diff} patch-text shape (no turnId).
+            if case .string(let diff) = o["diff"] ?? .null {
+                return FilesDiffResult(patchText: diff, changes: [])
+            }
+            // Turn review snapshot shape (turnId present).
+            let changes = Self.parseTurnChanges(o["changes"] ?? .null)
+            var patchText: String?
+            if case .object(let pd) = o["patch"] ?? .null,
+               case .string(let artifactId) = pd["artifactId"] ?? .null {
+                if let chunk = await artifactRead(sessionId: sessionId, artifactId: artifactId),
+                   let data = chunk.decodedBytes {
+                    patchText = String(data: data, encoding: .utf8)
+                }
+            }
+            return FilesDiffResult(patchText: patchText, changes: changes)
+        } catch {
+            t4log.error("files.diff failed: \(error)")
+            lastError = "This host has no files bridge (desktop hosts only)."
+            return nil
+        }
+    }
+
+    /// Decode a files.search result body `{matches: [{path}], truncated}`.
+    private static func decodeFilesSearchResult(_ result: ResultFrame) -> FilesSearchResult? {
+        guard result.ok, let body = result.result, case .object(let o) = body else { return nil }
+        let truncated = (o["truncated"] ?? .null) == .bool(true)
+        let matches: [FilesSearchMatch] = {
+            guard case .array(let arr) = o["matches"] ?? .null else { return [] }
+            return arr.compactMap { v in
+                guard case .object(let m) = v, case .string(let p) = m["path"] ?? .null else { return nil }
+                return FilesSearchMatch(path: p)
+            }
+        }()
+        return FilesSearchResult(matches: matches, truncated: truncated)
+    }
+
+    /// Parse a turn review snapshot's `changes` array into typed rows.
+    private static func parseTurnChanges(_ value: JSONValue) -> [TurnFileChange] {
+        guard case .array(let arr) = value else { return [] }
+        return arr.compactMap { v in
+            guard case .object(let c) = v,
+                  case .string(let path) = c["path"] ?? .null,
+                  case .string(let status) = c["status"] ?? .null,
+                  case .string(let kind) = c["kind"] ?? .null else { return nil }
+            return TurnFileChange(path: path, status: status, kind: kind,
+                                  additions: intField(c["additions"]),
+                                  deletions: intField(c["deletions"]))
+        }
+    }
+
+    /// Extract a non-negative integer from a JSON number field (0 otherwise).
+    private static func intField(_ value: JSONValue) -> Int {
+        if case .number(let n) = value, n.isFinite, n >= 0 { return Int(n) }
+        return 0
+    }
+
     // MARK: - Terminal drawer
     // term.open is a session-scoped command (capability term.open, revision
     // optional) that opens a pty and returns {terminalId}. Output arrives as
@@ -825,14 +950,22 @@ final class T4SessionStore: ObservableObject {
     // term.open (the paired device lacks the capability), the command throws
     // and lastError surfaces — the drawer shows an error row.
 
-    /// Open a terminal for a session (term.open {cols, rows}). Returns the
-    /// new terminalId, or nil on failure (lastError / terminalErrors set).
-    /// Reuses an already-open terminal for the session if present.
+    /// Open another terminal for a session (term.open {cols, rows}). Appends
+    /// the new terminalId to the session's ordered list (max 4) and makes it
+    /// the active tab. Returns the new terminalId, or nil on failure
+    /// (lastError / terminalErrors set). Callers that only need *a* terminal
+    /// should check `activeTerminal(sessionId:)` first and call this solely to
+    /// add a new tab — this method always opens a fresh pty.
     @discardableResult
     func openTerminal(sessionId: String, cols: Int = 80, rows: Int = 24) async -> String? {
-        if let existing = openTerminalId[sessionId] { return existing }
         guard let client, connected, !hostId.isEmpty else {
             lastError = "Not connected to a host."
+            return nil
+        }
+        let ids = openTerminalIds[sessionId] ?? []
+        guard ids.count < 4 else {
+            lastError = "Terminal limit reached (4)."
+            terminalErrors[sessionId] = "Terminal limit reached (4)."
             return nil
         }
         do {
@@ -841,7 +974,8 @@ final class T4SessionStore: ObservableObject {
                 args: ["cols": .number(Double(cols)), "rows": .number(Double(rows))],
                 sessionId: sessionId))
             let terminalId = try result.termOpenResult()
-            openTerminalId[sessionId] = terminalId
+            openTerminalIds[sessionId, default: []].append(terminalId)
+            activeTerminalId[sessionId] = terminalId
             terminalOutput[terminalId] = ""
             terminalErrors.removeValue(forKey: sessionId)
             t4log.notice("term.open \(terminalId, privacy: .public) for \(sessionId, privacy: .public)")
@@ -854,41 +988,89 @@ final class T4SessionStore: ObservableObject {
         }
     }
 
-    /// Send user keystrokes to a pty (terminal.input). No-op when the
-    /// terminal is not open or not connected. `data` is UTF-8 text.
+    /// The active terminal id for a session (the tab the drawer renders and
+    /// the target of input/resize), or nil when no terminal is open.
+    func activeTerminal(sessionId: String) -> String? { activeTerminalId[sessionId] }
+
+    /// Switch the active tab for a session. No-op if `terminalId` is not in
+    /// the session's open list. Instant for the drawer — it re-renders the
+    /// active terminal's buffered output without re-opening the pty.
+    func selectTerminal(sessionId: String, terminalId: String) {
+        guard (openTerminalIds[sessionId] ?? []).contains(terminalId) else { return }
+        activeTerminalId[sessionId] = terminalId
+    }
+
+    /// Send user keystrokes to the session's active pty (terminal.input). No-op
+    /// when no terminal is active or not connected. `data` is UTF-8 text.
     func sendTerminalInput(sessionId: String, data: String) async {
-        guard let client, let terminalId = openTerminalId[sessionId] else { return }
+        guard let client, let terminalId = activeTerminalId[sessionId] else { return }
         let frame = TerminalInputFrame(hostId: hostId, sessionId: sessionId, terminalId: terminalId, data: data)
         try? await client.sendFrame(frame)
     }
 
-    /// Resize a pty (terminal.resize {cols, rows}). No-op when no terminal
-    /// is open for the session.
+    /// Resize the session's active pty (terminal.resize {cols, rows}). No-op
+    /// when no terminal is active for the session.
     func resizeTerminal(sessionId: String, cols: Int, rows: Int) async {
-        guard let client, let terminalId = openTerminalId[sessionId] else { return }
+        guard let client, let terminalId = activeTerminalId[sessionId] else { return }
         let frame = TerminalResizeFrame(hostId: hostId, sessionId: sessionId, terminalId: terminalId, cols: cols, rows: rows)
         try? await client.sendFrame(frame)
     }
 
-    /// Close a pty (terminal.close). Clears the session's open terminal id
-    /// and buffered output; the host may still emit a terminal.exit frame.
+    /// Close the session's active pty (terminal.close). Convenience for the
+    /// drawer's close control on the active tab; delegates to the per-terminal
+    /// close, which removes the id and selects a neighbor as active.
     func closeTerminal(sessionId: String, reason: String? = nil) async {
-        guard let client, let terminalId = openTerminalId[sessionId] else { return }
-        let frame = TerminalCloseFrame(hostId: hostId, sessionId: sessionId, terminalId: terminalId, reason: reason)
-        try? await client.sendFrame(frame)
-        openTerminalId.removeValue(forKey: sessionId)
+        guard let terminalId = activeTerminalId[sessionId] else { return }
+        await closeTerminal(terminalId: terminalId, reason: reason)
+    }
+
+    /// Close a specific pty by terminalId (terminal.close). Removes the id
+    /// from its session's ordered list and, if it was active, selects a
+    /// neighbor (the next tab, or the previous when closing the last) as the
+    /// new active tab. When the last terminal closes, the session has no
+    /// active terminal and the drawer shows its empty state.
+    func closeTerminal(terminalId: String, reason: String? = nil) async {
+        guard let sessionId = openTerminalIds.first(where: { $0.value.contains(terminalId) })?.key else { return }
+        if let client {
+            let frame = TerminalCloseFrame(hostId: hostId, sessionId: sessionId, terminalId: terminalId, reason: reason)
+            try? await client.sendFrame(frame)
+        }
+        removeTerminal(terminalId, sessionId: sessionId)
+    }
+
+    /// Remove a terminal from a session's list and reselect the active tab.
+    /// Shared by `closeTerminal(terminalId:)` and `clearTerminal`. Does not
+    /// send terminal.close — callers handle the wire frame (or transport is
+    /// gone, in the clear case).
+    private func removeTerminal(_ terminalId: String, sessionId: String) {
+        var ids = openTerminalIds[sessionId] ?? []
+        guard let removed = ids.firstIndex(where: { $0 == terminalId }) else { return }
+        ids.remove(at: removed)
         terminalOutput.removeValue(forKey: terminalId)
         terminalExits.removeValue(forKey: terminalId)
+        if ids.isEmpty {
+            openTerminalIds.removeValue(forKey: sessionId)
+            activeTerminalId.removeValue(forKey: sessionId)
+        } else {
+            openTerminalIds[sessionId] = ids
+            // Reselect only when the closed tab was active (or active is
+            // missing); otherwise leave the user's selection alone.
+            if activeTerminalId[sessionId] == nil || activeTerminalId[sessionId] == terminalId {
+                let neighborIdx = min(removed, ids.count - 1)
+                activeTerminalId[sessionId] = ids[neighborIdx]
+            }
+        }
     }
 
     /// Drop all terminal state for a session (e.g. on disconnect). Does not
     /// send terminal.close — the transport is gone.
     func clearTerminal(sessionId: String) {
-        if let terminalId = openTerminalId[sessionId] {
+        for terminalId in openTerminalIds[sessionId] ?? [] {
             terminalOutput.removeValue(forKey: terminalId)
             terminalExits.removeValue(forKey: terminalId)
         }
-        openTerminalId.removeValue(forKey: sessionId)
+        openTerminalIds.removeValue(forKey: sessionId)
+        activeTerminalId.removeValue(forKey: sessionId)
         terminalErrors.removeValue(forKey: sessionId)
     }
 
@@ -1319,10 +1501,12 @@ final class T4SessionStore: ObservableObject {
         client = nil
         connected = false
         pairedEndpoint = nil
+        hostInfo = nil
         // Drop any open terminals — the transport is gone, no close frame.
         terminalOutput.removeAll()
         terminalExits.removeAll()
-        openTerminalId.removeAll()
+        openTerminalIds.removeAll()
+        activeTerminalId.removeAll()
         terminalErrors.removeAll()
         let defaults = UserDefaults.standard
         defaults.removeObject(forKey: Self.savedEndpointKey)
