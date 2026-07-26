@@ -263,7 +263,8 @@ export interface HostDaemonDependencies {
 
 /**
  * Load or generate the self-signed cert a wss listener serves. Persisted per
- * profile so the fingerprint clients pin (TOFU) survives restarts.
+ * profile so the fingerprint clients pin (TOFU) survives restarts. RSA rather
+ * than ECDSA: Bun's BoringSSL rejected LibreSSL-written EC keys at startup.
  */
 async function ensureSelfSignedCert(
   dir: string,
@@ -280,7 +281,7 @@ async function ensureSelfSignedCert(
     return { cert: existing[0], key: existing[1], fingerprint: certFingerprint(existing[0]) };
   const child = Bun.spawn(
     [
-      "/usr/bin/openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256",
+      "/usr/bin/openssl", "req", "-x509", "-newkey", "rsa:2048",
       "-nodes", "-days", "3650", "-subj", `/CN=${commonName}`,
       "-keyout", keyPath, "-out", certPath,
     ],
