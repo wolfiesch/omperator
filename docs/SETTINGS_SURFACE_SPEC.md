@@ -434,13 +434,25 @@ be empty". A key that appears in either input schema and matches no claim fails 
 matches a claim lands as a reviewable manifest diff naming its exact section. Nothing is silently
 absorbed.
 
-The generator takes **two** schema inputs, and the guarantee above depends on that. The pinned fork
-schema decides what the GUI can render today. An upstream schema snapshot lets sections pre-claim
-keys the pin has not reached; without it, the 26 upstream-only keys would drop out of every `keys`
-array and an upstream addition would stay invisible until a pin bump. Both live in a checked-in
-`docs/settings-surface/schema-snapshot.json` carrying each schema's key list and originating commit,
-so generation and CI stay deterministic and offline and a refresh is its own reviewable commit.
-Drift *between* the two schemas is reported, not failed, because the pin advances on its own schedule.
+The snapshot carries **three** sources, and the guarantee above depends on covering all of them.
+Omperator ships a pinned fork runtime and also supports the official upstream runtime (ADR-019), so a
+key published by either needs a home; upstream's tip is snapshotted too so sections can pre-claim keys
+before the pin advances. Refs come from `compat/omp-app-matrix.json`, the manifest the release gate
+already trusts, never from a checkout's mutable `HEAD`. Snapshotting HEAD would validate coverage
+against a schema no released build ships, and would erase the pin drift this exists to expose.
+
+| Source | Role | Keys | Exclusive |
+|---|---|---:|---:|
+| `pinned` (`t4code-17.0.5-appserver-18`) | shipped fork runtime | 421 | 6 |
+| `official` (`v17.0.9`) | supported upstream runtime | 421 | 0 |
+| `upstream-tip` (`origin/main`) | not yet shipped by any pin | 439 | 20 |
+| **union** | what the manifest partitions | **447** | |
+
+Two comparisons are reported and must not be conflated. `exclusiveToSource` is measured against every
+other source and answers "does anything only this runtime know about". `pinVersusTip` is pairwise
+between the shipped pin and upstream's tip and answers "how far behind is what we ship": 26 missing
+from the pin, 8 extra in it, 34 differing, net -18. A key can be absent from the first while counting
+in the second, because a third source also carries it.
 
 An earlier draft of this manifest carried two catch-all sections as future insurance against a pin
 bump. They claimed zero keys, and they would have let a new upstream key pass the check with nobody
@@ -453,14 +465,13 @@ connected host publishes a key the committed manifest has never seen, the page r
 "Unrecognized keys" affordance and the client records it in `issues[]`. That is a diagnostic for a
 mismatched host, not a substitute for curation.
 
-None of these three scripts exist yet; all are Phase 1 deliverables, and this is their contract.
-`scripts/gen-settings-coverage.mjs` will expand claims against the two-schema snapshot;
-`scripts/refresh-schema-snapshot.mjs` will update that snapshot; `scripts/check-settings-coverage.mjs`
-will run in `pnpm check` and fail on unclaimed keys, double-claimed keys, empty sections, and any diff
-against a fresh regeneration. `docs/settings-surface/README.md` records the candidate sources for each
-input and the tradeoff Phase 1 must settle, including a refresh cadence for the upstream side, since
-nothing forces it to stay current. Until those land, `coverage.json` is reviewed input rather than
-generated output.
+**Built and passing.** `scripts/refresh-schema-snapshot.mjs` regenerates the snapshot from two
+checkouts; `scripts/check-settings-coverage.mjs` verifies the partition and re-expands `keys` with
+`--write`; `scripts/settings-schema-keys.mjs` parses a schema source. `pnpm check:settings` runs the
+verifier inside `pnpm check`, and `scripts/check-settings-coverage.test.mjs` is registered in
+`pnpm test:tooling`. Current state: 447 paths, 447 owned, 0 failures, 16 tests passing. See
+`docs/settings-surface/README.md` for the settled schema-source decision and the two parser failures
+that earned regression tests.
 
 At runtime, `apps/web/src/features/settings/route-map.ts` is generated from the same manifest.
 
@@ -577,21 +588,45 @@ their own.
 
 Each phase is independently shippable and independently verifiable.
 
-**Phase 0: unblock the bridge.** Repo: the OMP fork (`OMP-T4-appserver-adapters`, pushed to
-`wolfiesch/oh-my-pi`). Items 1 through 3 and 5 of section 5.5. Add a fork↔upstream schema diff to CI.
-*Done when:* the 13 false-positive keys report values and accept writes; `condition`, `ordered`,
-`secret`, and `group` appear in the catalog frame; a project-scope write lands in `<cwd>/.omp/config.yml`;
-CI reports the asymmetric drift (26 missing, 8 extra, 34 differing, net -18) rather than a single net number.
+**Phase 0: unblock the bridge. Implemented, pending review.** Repo: the OMP fork
+(`OMP-T4-appserver-adapters`, pushed to `wolfiesch/oh-my-pi`), branch `agent/settings-bridge-phase0`.
+Items 1 and 2 of section 5.5 are done: the substring `SECRET_KEY` classifier is replaced by an
+exported `SENSITIVE_SETTINGS` allow-list of exactly 7 credential paths, which unblocks the 15
+innocuous keys it was censoring by collision, and `ui.condition`, `ui.ordered`, and `ui.secret` are
+now forwarded (`ui.group` already was). Item 3, project-scope writes, was investigated rather than
+implemented; the finding is that the project layer is read-only by construction in the capability
+discovery pipeline, so a scope-only authority change would be unsafe.
+*Verified on the fork branch:* 21 tests pass, 126 assertions, Biome clean. The fork declares 35
+`ui.condition` occurrences and zero `ui.ordered`/`ui.secret`, so those two forward generically and are
+unit-tested against `controlMetadata` directly; my earlier counts of 2 and 1 were upstream-only facts.
+*Still open:* the schema still declares no `min`, `max`, `unit`, or `restartRequired`, so item 4
+remains upstream work, and project scope needs its own design.
 
-**Phase 1: IA and total coverage.** Repo: Omperator. Settle the two schema sources, land
-`schema-snapshot.json` plus `refresh-schema-snapshot.mjs`, generate `coverage.json` and
-`route-map.ts`, add `check-settings-coverage.mjs` to `pnpm check`, rebuild `SettingsWorkspace` around
-the six groups, render section headings, delete `ADVANCED_SECTION`, wire the three cross-cutting
-views, remove the twelve dead rail section ids.
-*Done when:* every key the pinned runtime publishes renders in a named section with a label; adding a
-key to either input schema without claiming it fails `pnpm check`; adding a key that *is* claimed
-produces a manifest diff naming its section; "All settings" lists the same key count as
-`omp config list` against the pinned runtime.
+**Phase 1a: coverage tooling. Done.** Repo: Omperator. Landed `docs/settings-surface/schema-snapshot.json`
+(three sources, refs from the compatibility matrix), `scripts/refresh-schema-snapshot.mjs`,
+`scripts/settings-schema-keys.mjs`, `scripts/check-settings-coverage.mjs`, and
+`scripts/check-settings-coverage.test.mjs`. Wired `pnpm check:settings` into `pnpm check` and the test
+into `pnpm test:tooling`; both new paths already classify into the existing `tooling` CI leg, so
+`ci-paths.mjs` needed no change. `coverage.json` lost its duplicated `schemaUniverse` block, which the
+snapshot now owns.
+*Verified:* 447 paths, 447 owned, 0 failures; 16 tests passing, including negative cases for unclaimed
+keys, double claims, overlapping prefixes, empty sections, and stale expansions, plus regressions for
+the two parser failures found while building it.
+
+**Phase 1b: the settings shell.** Repo: Omperator. Generate `route-map.ts` from the manifest, rebuild
+`SettingsWorkspace` around the six groups and the accordion rail, render section headings, delete
+`ADVANCED_SECTION`, wire the three cross-cutting views, remove the twelve dead rail section ids.
+*Done when:* every key the pinned runtime publishes renders in a named section with a label; "All
+settings" lists the same key count as `omp config list` against the pinned runtime; and the visual
+smoke below passes.
+
+*Visual smoke, required before the IA is frozen.* Structural metrics prove coverage and density, not
+elegance. Run the real desktop settings shell, not a fixture harness, and inspect it at 768, 1080, and
+1220px heights plus a sub-768px width, exercising one form page (`agent/providers`), one collection
+page (`tools/extensions`), and one action page (`system/diagnostics`). Confirm the accordion holds its
+15-row budget at 768px, that all six groups are reachable without scrolling at that height, that the
+1220px breakpoint expands cleanly, and that the narrow-width drill-down works, since `apps/mobile`
+ships this bundle. Revise the IA from what that shows before treating the manifest as frozen.
 
 **Phase 2: control kit.** The nine new editors, `nested` disclosure, layer badges, restart chips,
 per-row `omp config` copy, conditional page visibility driven by the now-forwarded `condition`.

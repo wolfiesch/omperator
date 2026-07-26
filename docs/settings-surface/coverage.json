@@ -1,47 +1,5 @@
 {
   "$comment": "Reviewed input, not yet generated output. See README.md. Every setting path the pinned OMP runtime publishes must be explicitly claimed by exactly one named section of exactly one page. Section `keys` arrays are the committed expansion of `claims` and must not be hand-edited; CI regenerates and requires an empty diff.",
-  "schemaUniverse": {
-    "total": 447,
-    "upstreamOnly": [
-      "bash.direnv",
-      "bash.direnvLoadTimeoutMs",
-      "bash.patterns",
-      "computer.backend",
-      "computer.display",
-      "computer.enabled",
-      "computer.maxHeight",
-      "computer.maxWidth",
-      "error.notify",
-      "hindsight.recallTimeoutMs",
-      "hindsight.reflectTimeoutMs",
-      "hindsight.requestTimeoutMs",
-      "hindsight.retainTimeoutMs",
-      "mcp.renderMarkdownResults",
-      "providers.imageOrder",
-      "providers.webSearchOrder",
-      "read.renderMarkdown",
-      "retry.usageAwareFallback",
-      "retry.usageReservePct",
-      "retry.usageReservePolicy",
-      "searxng.engines",
-      "task.isolation.apply",
-      "tools.xdevDocs",
-      "tools.xdevInlineDevices",
-      "tui.titleState",
-      "workspace.additionalDirectories"
-    ],
-    "forkOnly": [
-      "appserver.remoteAddress",
-      "appserver.remoteMode",
-      "appserver.remoteOrigins",
-      "appserver.remotePort",
-      "providers.image",
-      "providers.webSearch",
-      "task.maxNestedConcurrency",
-      "task.nestedEager"
-    ],
-    "note": "upstreamOnly keys exist in can1357/oh-my-pi but not in the pinned fork, so the GUI cannot surface them until the runtime pin advances. forkOnly keys are fork-local or upstream-removed."
-  },
   "groups": [
     {
       "id": "agent",
