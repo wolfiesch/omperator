@@ -1034,10 +1034,23 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
           `.github/workflows/ci.yml ${job} must follow its path classification on pull requests, merge groups, and pushes`,
         );
     }
-    for (const job of ["check", "unit-tests", "build-e2e", "t4-api-generation"]) {
+    for (const job of ["check", "unit-tests", "t4-api-generation"]) {
       if (workflow?.jobs?.[job]?.if !== undefined)
         errors.push(`.github/workflows/ci.yml ${job} must run unconditionally`);
     }
+    const hostedBuildCondition =
+      "github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || vars.M1_CI_ENABLED != 'true'";
+    const m1BuildCondition =
+      "github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.M1_CI_ENABLED == 'true'";
+    if (workflow?.jobs?.["build-e2e"]?.if !== hostedBuildCondition)
+      errors.push(".github/workflows/ci.yml hosted build-e2e must cover pushes, forks, and the M1 fallback");
+    if (workflow?.jobs?.["m1-build-e2e"]?.if !== m1BuildCondition)
+      errors.push(".github/workflows/ci.yml M1 build-e2e must be restricted to same-repository pull requests");
+    if (
+      JSON.stringify(workflow?.jobs?.["m1-build-e2e"]?.["runs-on"]) !==
+      JSON.stringify(["self-hosted", "macOS", "ARM64", "wolfie-m1", "trusted"])
+    )
+      errors.push(".github/workflows/ci.yml M1 build-e2e must require the trusted M1 labels");
     // The required branch-protection gate must not wait on the deferred
     // release legs, and those legs must stay aggregated by release-gates so a
     // merge-run failure still fails the run the release waiter reads.
@@ -1088,6 +1101,10 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "check:",
     "unit-tests:",
     "build-e2e:",
+    "m1-build-e2e:",
+    "runs-on: [self-hosted, macOS, ARM64, wolfie-m1, trusted]",
+    "vars.M1_CI_ENABLED == 'true'",
+    "run: scripts/run-with-m1-lock.sh scripts/ci-m1-build-e2e.sh",
     "path: ~/.cache/ms-playwright",
     "key: playwright-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}",
     "run: pnpm exec playwright install --with-deps chromium",
@@ -1132,14 +1149,16 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "android-debug:",
     "name: verify",
     "if: ${{ always() }}",
-    "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]",
+    "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, m1-build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]",
     "name: release-gates",
     "needs: [changes, legacy-bridge-continuity, official-omp-gate0]",
     'test "$CHANGES_RESULT" = success',
     'test "$T4_API_GENERATION_RESULT" = success',
     'test "$CHECK_RESULT" = success',
     'test "$UNIT_TESTS_RESULT" = success',
-    'test "$BUILD_E2E_RESULT" = success',
+    "M1_BUILD_E2E_RESULT: ${{ needs.m1-build-e2e.result }}",
+    'case "$BUILD_E2E_RESULT:$M1_BUILD_E2E_RESULT" in',
+    "success:skipped|skipped:success) ;;",
     "OFFICIAL_OMP_GATE0_RESULT: ${{ needs.official-omp-gate0.result }}",
     "CURRENT_CONTINUITY_RESULT: ${{ needs.current-bridge-continuity.result }}",
     '"$CURRENT_CONTINUITY_RESULT" \\',
