@@ -63,6 +63,35 @@ class FakeFactory implements RpcChildFactory {
 		return ["omp", "--mode", "rpc", "--session", path];
 	}
 }
+class TransferChild implements ChildHandle {
+	#output = Promise.withResolvers<void>();
+	#exited = Promise.withResolvers<number>();
+	killed = false;
+	stdin = { write: () => {} };
+	stdout: AsyncIterable<string> = this.stream();
+	exited = this.#exited.promise;
+	async *stream() {
+		yield `${JSON.stringify({ type: "ready" })}\n`;
+		await this.#output.promise;
+	}
+	kill() {
+		if (this.killed) return;
+		this.killed = true;
+		this.#output.resolve();
+		this.#exited.resolve(0);
+	}
+}
+class TransferFactory implements RpcChildFactory {
+	children: TransferChild[] = [];
+	spawn() {
+		const child = new TransferChild();
+		this.children.push(child);
+		return child;
+	}
+	argv(path: string) {
+		return ["omp", "--mode", "rpc", "--session", path];
+	}
+}
 class DeferredPromptChild implements ChildHandle {
 	#prompt = Promise.withResolvers<Record<string, unknown>>();
 	#state = Promise.withResolvers<Record<string, unknown>>();
@@ -563,19 +592,25 @@ describe("appserver lifecycle", () => {
 			"unsupported capability has no handler",
 		);
 	});
-	test("every desktop catalog command has a live appserver handler", () => {
-		const appserver = createAppserver({
-			operationsAuthority: {
-				brokerStatus: async () => ({ state: "local", generation: 0 }),
-			},
-			usageAuthority: {
-				read: async () => ({ generatedAt: 0, reports: [], accountsWithoutUsage: [], capacity: {} }),
-			},
-			projectRootForProject: () => "/tmp/project",
-			projectRevealer: async () => true,
-		});
-		const unhandled = DESKTOP_CATALOG_COMMANDS.filter(command => !appserver.hasDesktopCatalogCommandHandler(command));
-		expect(unhandled).toEqual([]);
+	test("every desktop catalog command has a live appserver handler", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-desktop-catalog-"));
+		try {
+			const appserver = createAppserver({
+				operationsAuthority: {
+					brokerStatus: async () => ({ state: "local", generation: 0 }),
+				},
+				usageAuthority: {
+					read: async () => ({ generatedAt: 0, reports: [], accountsWithoutUsage: [], capacity: {} }),
+				},
+				projectRootForProject: () => "/tmp/project",
+				projectRevealer: async () => true,
+				sessionOwnershipPath: join(root, "owned-sessions.json"),
+			});
+			const unhandled = DESKTOP_CATALOG_COMMANDS.filter(command => !appserver.hasDesktopCatalogCommandHandler(command));
+			expect(unhandled).toEqual([]);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
 	});
 	test("indexes three sessions, starts one child each, and removes socket", async () => {
 		const root = await mkdtemp(join(tmpdir(), "omp-appserver-"));
@@ -1063,6 +1098,430 @@ describe("appserver lifecycle", () => {
 				}),
 			]);
 			expect(factory.children).toHaveLength(1);
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+	test("restores a waiting terminal transfer after restart and reclaims it after a stale terminal lock", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-terminal-transfer-restart-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const sessionOwnershipPath = join(root, "profile", "owned-sessions.json");
+		const transcriptPath = join(root, "transferred-session.jsonl");
+		const sid = sessionId("transferred-session-restart");
+		const timestamp = "2026-07-25T00:00:00.000Z";
+		await writeFile(
+			transcriptPath,
+			`${JSON.stringify({
+				type: "session",
+				version: 3,
+				id: sid,
+				cwd: root,
+				timestamp,
+				title: "Transferred session after restart",
+				authorityProtocol: "t4-omp-authority/1",
+			})}\n`,
+		);
+		const ownership = new SessionOwnershipStore(sessionOwnershipPath);
+		await ownership.add(sid, transcriptPath);
+		await ownership.release(sid, transcriptPath);
+		let lockStatus: "live" | "missing" | "stale" = "missing";
+		const factory = new TransferFactory();
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "terminal-transfer-restart-test",
+			socketPath,
+			sessionOwnershipPath,
+			discovery: new FileSessionDiscovery(root, realFs, host, true),
+			childFactory: factory,
+			lockStatus: () => lockStatus,
+			lockCheck: async () => {},
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "transfer-restart-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: ["session.observer", "session.transfer"],
+				capabilities: { client: ["sessions.read"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect((await client.nextServer()).type).toBe("sessions");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "attach-released-after-restart",
+				commandId: "attach-released-after-restart-command",
+				hostId: host,
+				sessionId: sid,
+				command: "session.attach",
+				args: {},
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "attach-released-after-restart") {
+					expect(frame.ok).toBe(true);
+					break;
+				}
+			}
+			await Promise.race([
+				(async () => {
+					while (appserver.snapshot(sid)?.ref.liveState?.sessionControl?.mode !== "released") {
+						await Bun.sleep(10);
+					}
+				})(),
+				Bun.sleep(1_000).then(() => {
+					throw new Error("waiting terminal transfer was not restored after restart");
+				}),
+			]);
+			expect(appserver.snapshot(sid)?.ref.liveState?.sessionControl).toEqual({
+				mode: "released",
+				transcript: "live",
+				resumeCommand: "t4-omp --resume transferred-session-restart",
+			});
+			expect(factory.children).toHaveLength(0);
+
+			lockStatus = "live";
+			await Promise.race([
+				(async () => {
+					while (appserver.snapshot(sid)?.ref.liveState?.sessionControl?.mode !== "observer") {
+						await Bun.sleep(10);
+					}
+				})(),
+				Bun.sleep(1_000).then(() => {
+					throw new Error("terminal writer was not observed after restart");
+				}),
+			]);
+			const observed = new SessionOwnershipStore(sessionOwnershipPath);
+			await observed.load();
+			expect(observed.transfer(sid, transcriptPath)).toBe("observed");
+
+			lockStatus = "stale";
+			await Promise.race([
+				(async () => {
+					while (factory.children.length === 0) await Bun.sleep(10);
+					while (appserver.snapshot(sid)?.ref.liveState?.sessionControl !== undefined) await Bun.sleep(10);
+				})(),
+				Bun.sleep(1_000).then(() => {
+					throw new Error(
+						`stale terminal writer was not reclaimed after restart: ${JSON.stringify({
+							children: factory.children.length,
+							control: appserver.snapshot(sid)?.ref.liveState?.sessionControl,
+							transfer: observed.transfer(sid, transcriptPath),
+						})}`,
+					);
+				}),
+			]);
+			const returned = new SessionOwnershipStore(sessionOwnershipPath);
+			await returned.load();
+			expect(returned.owns(sid, transcriptPath)).toBe(true);
+			expect(returned.transfer(sid, transcriptPath)).toBeUndefined();
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+	test("releases an owned session to a terminal writer and automatically resumes after it exits", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-terminal-transfer-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const sessionOwnershipPath = join(root, "profile", "owned-sessions.json");
+		const transcriptPath = join(root, "transferred-session.jsonl");
+		const sid = sessionId("transferred-session;echo-bad");
+		const resumeCommand = "t4-omp --resume 'transferred-session;echo-bad'";
+		const timestamp = "2026-07-25T00:00:00.000Z";
+		await writeFile(
+			transcriptPath,
+			`${JSON.stringify({
+				type: "session",
+				version: 3,
+				id: sid,
+				cwd: root,
+				timestamp,
+				title: "Transferred session",
+				authorityProtocol: "t4-omp-authority/1",
+			})}\n`,
+		);
+		const created = {
+			...record(sid),
+			path: transcriptPath,
+			cwd: root,
+			projectId: stableProjectId(root),
+			authorityProtocol: "t4-omp-authority/1" as const,
+		};
+		let visible = false;
+		const sessionAuthority = {
+			create: async () => {
+				visible = true;
+				return created;
+			},
+			list: async () => (visible ? [created] : []),
+			archive: async () => {},
+			restore: async () => {},
+			delete: async () => {},
+		};
+		let lockStatus: "live" | "missing" = "missing";
+		const factory = new TransferFactory();
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "terminal-transfer-test",
+			socketPath,
+			sessionOwnershipPath,
+			discovery: sessionAuthority,
+			sessionAuthority,
+			projectRootForProject: () => root,
+			childFactory: factory,
+			lockStatus: () => lockStatus,
+			lockCheck: async () => {
+				if (lockStatus !== "missing") throw new Error("session lock is live");
+			},
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		const nextResponse = async (requestId: string) => {
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === requestId) return frame;
+			}
+		};
+		const approveRelease = async (requestId: string, expectedRevision: string) => {
+			const commandId = `${requestId}-command`;
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId,
+				commandId,
+				hostId: host,
+				sessionId: sid,
+				command: "session.release",
+				expectedRevision,
+				args: {},
+			});
+			let confirmationId: string | undefined;
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "confirmation" && frame.commandId === commandId) {
+					confirmationId = frame.confirmationId;
+					break;
+				}
+				if (frame.type === "response" && frame.requestId === requestId)
+					throw new Error(`release was rejected before confirmation: ${JSON.stringify(frame)}`);
+			}
+			client.sendJson({
+				v: "omp-app/1",
+				type: "confirm",
+				requestId: `${requestId}-confirm`,
+				confirmationId,
+				commandId,
+				hostId: host,
+				sessionId: sid,
+				decision: "approve",
+			});
+			return nextResponse(requestId);
+		};
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "terminal-transfer-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: ["session.observer", "session.transfer"],
+				capabilities: { client: ["sessions.read", "sessions.manage", "sessions.control"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({
+				type: "welcome",
+				grantedFeatures: expect.arrayContaining(["session.transfer"]),
+			});
+			expect((await client.nextServer()).type).toBe("sessions");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "create-transfer",
+				commandId: "create-transfer-command",
+				hostId: host,
+				command: "session.create",
+				args: { projectId: created.projectId },
+			});
+			expect(await nextResponse("create-transfer")).toMatchObject({
+				ok: true,
+				result: { session: { sessionId: sid } },
+			});
+			await Promise.race([
+				(async () => {
+					while (factory.children.length === 0) await Bun.sleep(10);
+				})(),
+				Bun.sleep(1_000).then(() => {
+					throw new Error("created session was not started");
+				}),
+			]);
+			expect(appserver.snapshot(sid)?.ref.liveState?.sessionControl).toBeUndefined();
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "attach-transfer",
+				commandId: "attach-transfer-command",
+				hostId: host,
+				sessionId: sid,
+				command: "session.attach",
+				args: {},
+			});
+			expect(await nextResponse("attach-transfer")).toMatchObject({ ok: true });
+			expect(appserver.snapshot(sid)?.ref.liveState?.sessionControl).toBeUndefined();
+
+			const expectedRevision = appserver.snapshot(sid)?.revision;
+			if (expectedRevision === undefined) throw new Error("missing session revision");
+			expect(await approveRelease("release-transfer", expectedRevision)).toMatchObject({
+				ok: true,
+				result: { released: true, resumeCommand },
+			});
+			expect(factory.children[0]?.killed).toBe(true);
+			expect(appserver.snapshot(sid)?.ref.liveState?.sessionControl).toEqual({
+				mode: "released",
+				transcript: "live",
+				resumeCommand,
+			});
+
+			const releasedRevision = appserver.snapshot(sid)?.revision;
+			if (releasedRevision === undefined) throw new Error("missing released session revision");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "reclaim-transfer",
+				commandId: "reclaim-transfer-command",
+				hostId: host,
+				sessionId: sid,
+				command: "session.reclaim",
+				expectedRevision: releasedRevision,
+				args: {},
+			});
+			expect(await nextResponse("reclaim-transfer")).toMatchObject({
+				ok: true,
+				result: { reclaimed: true },
+			});
+			expect(factory.children).toHaveLength(2);
+			expect(appserver.snapshot(sid)?.ref.liveState?.sessionControl).toBeUndefined();
+
+			const rereleaseRevision = appserver.snapshot(sid)?.revision;
+			if (rereleaseRevision === undefined) throw new Error("missing reclaimed session revision");
+			expect(await approveRelease("release-transfer-again", rereleaseRevision)).toMatchObject({
+				ok: true,
+				result: { released: true },
+			});
+			expect(factory.children[1]?.killed).toBe(true);
+
+			lockStatus = "live";
+			await Promise.race([
+				(async () => {
+					while (appserver.snapshot(sid)?.ref.liveState?.sessionControl?.mode !== "observer") {
+						await Bun.sleep(10);
+					}
+				})(),
+				Bun.sleep(1_000).then(() => {
+					throw new Error("terminal writer was not observed");
+				}),
+			]);
+			const observed = new SessionOwnershipStore(sessionOwnershipPath);
+			await observed.load();
+			expect(observed.transfer(sid, transcriptPath)).toBe("observed");
+
+			lockStatus = "missing";
+			await Promise.race([
+				(async () => {
+					while (factory.children.length < 3) await Bun.sleep(10);
+					while (appserver.snapshot(sid)?.ref.liveState?.sessionControl !== undefined) await Bun.sleep(10);
+				})(),
+				Bun.sleep(1_000).then(() => {
+					throw new Error("session did not return to Omperator after the terminal exited");
+				}),
+			]);
+			const returned = new SessionOwnershipStore(sessionOwnershipPath);
+			await returned.load();
+			expect(returned.owns(sid, transcriptPath)).toBe(true);
+			expect(returned.transfer(sid, transcriptPath)).toBeUndefined();
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+	test("reclaims a completed short T4 session from its durable authority protocol", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-short-session-receipt-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const transcriptPath = join(root, "short-session.jsonl");
+		const sid = sessionId("short-session-receipt");
+		const timestamp = "2026-07-25T00:00:00.000Z";
+		await writeFile(
+			transcriptPath,
+			`${JSON.stringify({
+				type: "session",
+				version: 3,
+				id: sid,
+				cwd: root,
+				timestamp,
+				title: "Short session",
+				authorityProtocol: "t4-omp-authority/1",
+			})}\n`,
+		);
+		const factory = new FakeFactory();
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "short-session-receipt-test",
+			socketPath,
+			discovery: new FileSessionDiscovery(root, realFs, host, true),
+			childFactory: factory,
+			lockStatus: () => "missing",
+			lockCheck: async () => {},
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "short-receipt-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: ["session.observer", "session.unverified"],
+				capabilities: { client: ["sessions.read"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect((await client.nextServer()).type).toBe("sessions");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "attach-short-receipt",
+				commandId: "attach-short-receipt-command",
+				hostId: host,
+				sessionId: sid,
+				command: "session.attach",
+				args: {},
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "attach-short-receipt") {
+					expect(frame.ok).toBe(true);
+					break;
+				}
+			}
+			await Promise.race([
+				(async () => {
+					while (factory.children.length === 0) await Bun.sleep(20);
+				})(),
+				Bun.sleep(1_000).then(() => {
+					throw new Error("short T4 session was not reclaimed");
+				}),
+			]);
+			expect(factory.children).toHaveLength(1);
+			expect(appserver.snapshot(sid)?.ref.liveState?.sessionControl?.mode).not.toBe("unverified");
 		} finally {
 			client.destroy();
 			await client.closed();
@@ -1676,7 +2135,15 @@ describe("appserver lifecycle", () => {
 		const timestamp = "2026-07-23T00:00:00.000Z";
 		await writeFile(
 			transcriptPath,
-			`${JSON.stringify({ type: "session", version: 3, id: sid, cwd: root, timestamp, title: "Promoted session" })}\n`,
+			`${JSON.stringify({
+				type: "session",
+				version: 3,
+				id: sid,
+				cwd: root,
+				timestamp,
+				title: "Promoted session",
+				authorityProtocol: "t4-omp-authority/1",
+			})}\n`,
 		);
 		let lockStatus: "live" | "missing" = "live";
 		const factory = new DeferredPromptFactory();
@@ -1754,6 +2221,86 @@ describe("appserver lifecycle", () => {
 			const ownership = new SessionOwnershipStore(sessionOwnershipPath);
 			await ownership.load();
 			expect(ownership.owns(sid, transcriptPath)).toBe(true);
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+	test("does not promote an unmarked session after its live lock disappears", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-unmarked-live-session-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const transcriptPath = join(root, "unmarked-session.jsonl");
+		const sid = sessionId("unmarked-live-session");
+		const timestamp = "2026-07-25T00:00:00.000Z";
+		await writeFile(
+			transcriptPath,
+			`${JSON.stringify({ type: "session", version: 3, id: sid, cwd: root, timestamp, title: "Unmarked session" })}\n`,
+		);
+		let lockStatus: "live" | "missing" = "live";
+		const factory = new FakeFactory();
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "unmarked-live-session-test",
+			socketPath,
+			discovery: new FileSessionDiscovery(root, realFs, host, true),
+			childFactory: factory,
+			lockStatus: () => lockStatus,
+			lockCheck: async () => {},
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "unmarked-live-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: ["session.observer", "session.unverified"],
+				capabilities: { client: ["sessions.read"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect((await client.nextServer()).type).toBe("sessions");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "attach-unmarked-live",
+				commandId: "attach-unmarked-live-command",
+				hostId: host,
+				sessionId: sid,
+				command: "session.attach",
+				args: {},
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "attach-unmarked-live") break;
+			}
+			await Promise.race([
+				(async () => {
+					while (appserver.snapshot(sid)?.ref.liveState?.sessionControl?.mode !== "observer") {
+						await Bun.sleep(10);
+					}
+				})(),
+				Bun.sleep(1_000).then(() => {
+					throw new Error("unmarked live session did not enter observer mode");
+				}),
+			]);
+
+			lockStatus = "missing";
+			await Promise.race([
+				(async () => {
+					while (appserver.snapshot(sid)?.ref.liveState?.sessionControl?.mode !== "unverified") {
+						await Bun.sleep(10);
+					}
+				})(),
+				Bun.sleep(1_000).then(() => {
+					throw new Error("unmarked session did not become unverified after its lock disappeared");
+				}),
+			]);
+			await Bun.sleep(100);
+			expect(factory.children).toHaveLength(0);
 		} finally {
 			client.destroy();
 			await client.closed();

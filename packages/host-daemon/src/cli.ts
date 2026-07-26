@@ -30,7 +30,7 @@ import {
 import { COMMAND_DESCRIPTORS, type ProjectId, type SessionId } from "@t4-code/protocol";
 import { parsePairArgs, runPairAction } from "./pair.ts";
 
-export const T4_HOST_VERSION = "0.1.33";
+export const T4_HOST_VERSION = "0.2.1";
 export const OFFICIAL_OMP_VERSION = "17.0.9";
 export const OFFICIAL_OMP_BUILD = "639bac596d94b5993349f3f6696176cb2bf9b5d3";
 const PROFILE = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
@@ -47,6 +47,8 @@ const OFFICIAL_CATALOG_COMMANDS = Object.freeze([
   "session.thinking.set",
   "session.cancel",
   "session.close",
+  "session.release",
+  "session.reclaim",
   "term.open",
 ]);
 

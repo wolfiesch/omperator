@@ -766,7 +766,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     requireText(site, `"${filename}"`, "apps/site/src/release.ts", errors);
   }
   const siteAssetVersions = new Set(
-    [...site.matchAll(/T4-Code-(\d+\.\d+\.\d+)-(?:android|linux|mac)(?:\.|-)/gu)].map(
+    [...site.matchAll(/Omperator-(\d+\.\d+\.\d+)-(?:android|linux|mac)(?:\.|-)/gu)].map(
       (match) => match[1],
     ),
   );
@@ -787,7 +787,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   );
   requireText(
     readme,
-    `T4 Code ${expectedTag} was verified with OMP ${ompRuntimeVersion} built from [\`${String(ompRuntimeCommit).slice(0, 8)}\`](${ompRuntimeCommitUrl}), tagged [\`${ompRuntimeSourceTag}\`](${ompRuntimeSourceUrl}).`,
+    `Omperator ${expectedTag} was verified with OMP ${ompRuntimeVersion} built from [\`${String(ompRuntimeCommit).slice(0, 8)}\`](${ompRuntimeCommitUrl}), tagged [\`${ompRuntimeSourceTag}\`](${ompRuntimeSourceUrl}).`,
     "README.md",
     errors,
   );
@@ -799,13 +799,13 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   );
   requireText(
     readme,
-    `The official upstream ${ompUpstreamTag} tag has no \`appserver\` command, so it cannot host T4 Code.`,
+    `The official upstream ${ompUpstreamTag} tag has no \`appserver\` command, so it cannot host Omperator.`,
     "README.md",
     errors,
   );
   requireText(
     readme,
-    `T4 Code vendors \`@oh-my-pi/app-wire\` ${publishedAppWireVersion} from integration commit [\`${publishedAppWireSourceCommit.slice(0, 8)}\`](${OMP_APP_WIRE_SOURCE_REPOSITORY}/commit/${publishedAppWireSourceCommit}), source tree \`${publishedAppWireSourceTree}\`.`,
+    `Omperator vendors \`@oh-my-pi/app-wire\` ${publishedAppWireVersion} from integration commit [\`${publishedAppWireSourceCommit.slice(0, 8)}\`](${OMP_APP_WIRE_SOURCE_REPOSITORY}/commit/${publishedAppWireSourceCommit}), source tree \`${publishedAppWireSourceTree}\`.`,
     "README.md",
     errors,
   );
@@ -881,7 +881,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   requireText(siteDocs, "OMP_UPSTREAM_COMMIT", "apps/site/src/docs/content.ts", errors);
   requireText(
     siteDocs,
-    "Official upstream OMP v${OMP_RUNTIME_VERSION} does not ship the \\`appserver\\` command, so it cannot host T4 Code.",
+    "Official upstream OMP v${OMP_RUNTIME_VERSION} does not ship the \\`appserver\\` command, so it cannot host Omperator.",
     "apps/site/src/docs/content.ts",
     errors,
   );
@@ -1199,11 +1199,14 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "pnpm --filter @t4-code/mobile build:android:release",
     "node scripts/inspect-android-release.mjs",
     "node scripts/inspect-linux-update.mjs",
+    "node scripts/inspect-macos-update.mjs",
     '--metadata "$metadata"',
     '--aapt "$build_tools/aapt"',
     '--apksigner "$build_tools/apksigner"',
-    "T4-Code-${VERSION}-android.apk",
+    "Omperator-${VERSION}-android.apk",
     "artifacts/latest-linux.yml",
+    "artifacts/latest-mac.yml",
+    "artifacts/Omperator-*.zip.blockmap",
     "needs: [verify, ci-authority, build-android, build-linux, build-macos]",
     'node scripts/reconcile-release-assets.mjs --mode prepare --version "$VERSION"',
     'node scripts/reconcile-release-assets.mjs --mode verify --version "$VERSION"',
@@ -1305,8 +1308,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     'owner: "wolfiesch"',
     'repo: "omperator"',
     'channel: "latest"',
-    "publish: [linuxUpdatePublish]",
-    "publish: []",
+    "publish: [desktopUpdatePublish]",
   ]) {
     requireText(builderConfig, expected, "electron-builder.config.mjs", errors);
   }
@@ -1314,6 +1316,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   for (const expected of [
     "RELEASE_MANIFEST_SCHEMA_VERSION = 1",
     'LINUX_UPDATE_METADATA_NAME = "latest-linux.yml"',
+    'MAC_UPDATE_METADATA_NAME = "latest-mac.yml"',
     'channel: "stable"',
     "validateLinuxUpdateMetadata",
     "readBoundedResponseBytes",
@@ -1343,6 +1346,12 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   requireText(
     files.get("scripts/wait-for-release-assets.mjs") ?? "",
     '"latest-linux.yml"',
+    "scripts/wait-for-release-assets.mjs",
+    errors,
+  );
+  requireText(
+    files.get("scripts/wait-for-release-assets.mjs") ?? "",
+    '"latest-mac.yml"',
     "scripts/wait-for-release-assets.mjs",
     errors,
   );
@@ -1467,7 +1476,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   for (const expected of [
     "`testDebugUnitTest`, `assembleDebug`, and `lintDebug`",
     "pinned Developer ID certificate",
-    "exact seven-asset GitHub bundle",
+    "exact nine-asset GitHub bundle",
     "defers only when the exact GitHub release lookup returns HTTP 404",
     "writes `/releases/latest.json`",
     "immutable release tag",
@@ -1477,8 +1486,8 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   }
   const maintainerReadme = files.get("ops/t4-maintainer/README.md") ?? "";
   for (const expected of [
-    "exact seven-asset bundle",
-    "whose six entries cover the packages and updater metadata",
+    "exact nine-asset bundle",
+    "whose six entries cover the packages and Linux updater metadata",
     "https://t4code.net/releases/latest.json",
     "downloads the live `latest-linux.yml`, deb, and AppImage",
     "actual byte sizes and SHA-512",

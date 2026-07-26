@@ -338,8 +338,8 @@ export function createBrowserShellPort(
         authentication = { deviceId: result.deviceId, deviceToken: result.deviceToken };
       },
       client: {
-        name: "T4 Code",
-        version: "0.1.33",
+        name: "Omperator",
+        version: "0.2.1",
         build: mobilePlatform ?? "browser",
         platform: mobilePlatform ?? (platform === "darwin" ? "darwin" : "linux"),
       },

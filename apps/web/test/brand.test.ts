@@ -1,4 +1,4 @@
-// Product-name guard: every human-visible surface says "T4 Code"; the
+// Product-name guard: every human-visible surface says "Omperator"; the
 // retired name never comes back, and runtime references ("T4 host",
 // "Oh My Pi") stay untouched.
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -22,9 +22,9 @@ function listSourceFiles(dir: string): string[] {
 }
 
 describe("product identity", () => {
-  it("titles the document T4 Code", () => {
+  it("titles the document Omperator", () => {
     const html = readFileSync(join(WEB_ROOT, "index.html"), "utf8");
-    expect(html).toContain("<title>T4 Code</title>");
+    expect(html).toContain("<title>Omperator</title>");
   });
 
   it("never says the retired product name anywhere in web source", () => {
@@ -53,7 +53,7 @@ describe("product identity", () => {
       join(SRC_ROOT, "features/onboarding/OnboardingFlow.tsx"),
       "utf8",
     );
-    expect(onboarding).toContain("Set up T4 Code");
+    expect(onboarding).toContain("Set up Omperator");
     expect(onboarding).toContain("Powered by Oh My Pi");
   });
 });

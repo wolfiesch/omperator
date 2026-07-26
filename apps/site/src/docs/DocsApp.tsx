@@ -343,7 +343,7 @@ export function DocsApp() {
   }, []);
 
   useEffect(() => {
-    document.title = `${topic.title} — T4 Code docs`;
+    document.title = `${topic.title} — Omperator docs`;
   }, [topic]);
 
   // Global Cmd/Ctrl+K toggles search.
@@ -399,7 +399,7 @@ export function DocsApp() {
           </button>
           <a className="wordmark" href="/">
             <img src="/omp-mark.svg" alt="" width="26" height="20" />
-            T4 Code <span className="docs-suffix">docs</span>
+            Omperator <span className="docs-suffix">docs</span>
           </a>
           <nav className="topbar-nav" aria-label="Site">
             <button

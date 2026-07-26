@@ -145,6 +145,8 @@ function mutation(command: string): boolean {
 		"session.fast.set",
 		"session.mode.set",
 		"session.close",
+		"session.release",
+		"session.reclaim",
 		"session.cancel",
 		"files.write",
 		"files.patch",
@@ -163,6 +165,7 @@ function commandFeature(command: string): string | undefined {
 	if (command === "files.diff") return "files.diff";
 	if (command === "transcript.search" || command === "transcript.context") return "transcript.search";
 	if (command === "transcript.page") return "transcript.page";
+	if (command === "session.release" || command === "session.reclaim") return "session.transfer";
 	if (command.startsWith("preview.")) return "preview.control";
 	return undefined;
 }

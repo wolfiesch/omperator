@@ -7,7 +7,6 @@ import {
 	type PreviewAuthorityDescriptor,
 	type PreviewCaptureId,
 	type PreviewCaptureMetadata,
-	type PreviewCaptureMimeType,
 	type PreviewId,
 	type PreviewSnapshot,
 	PREVIEW_ACTIONS,
@@ -34,7 +33,6 @@ const DEFAULT_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_ACTION_TIMEOUT_MS = 15_000;
 const DEFAULT_CAPTURE_QUALITY = 60;
 const IDLE_SWEEP_INTERVAL_MS = 30_000;
-const MIGRATED_HOST_TAILNET_SUFFIX = ".ts.net";
 
 const AVAILABLE_ACTIONS: readonly PreviewAction[] = PREVIEW_ACTIONS;
 
@@ -68,10 +66,6 @@ function sha256(data: Uint8Array): string {
 
 function toBase64(bytes: Uint8Array): string {
 	return Buffer.from(bytes).toString("base64");
-}
-
-function fromBase64(text: string): Uint8Array {
-	return new Uint8Array(Buffer.from(text, "base64"));
 }
 
 /**
@@ -181,11 +175,6 @@ export class PreviewService {
 			if (now < entry.lease.expiresAt)
 				throw new PreviewServiceError("lease_held", "preview is held by another lease");
 		}
-	}
-
-	#refreshNavigation(entry: PreviewEntry): void {
-		entry.url = entry.page.url();
-		entry.canGoBack = Boolean(entry.page.url() && entry.context.pages().length > 0);
 	}
 
 	async #updateFromPage(entry: PreviewEntry): Promise<void> {
@@ -626,7 +615,7 @@ export class PreviewService {
 	async closeSession(sessionId: SessionId): Promise<void> {
 		const ids = this.#bySession.get(sessionId);
 		if (!ids) return;
-		for (const id of [...ids]) await this.#closePreview(id, "session_closed");
+		for (const id of ids) await this.#closePreview(id, "session_closed");
 	}
 
 	/** Stops the service: closes all previews and the idle sweep. */
@@ -636,7 +625,7 @@ export class PreviewService {
 			clearInterval(this.#idleTimer);
 			this.#idleTimer = undefined;
 		}
-		for (const id of [...this.#previews.keys()]) await this.#closePreview(id, "stopped");
+		for (const id of this.#previews.keys()) await this.#closePreview(id, "stopped");
 	}
 }
 

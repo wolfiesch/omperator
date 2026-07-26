@@ -27,6 +27,11 @@ export type SessionControlState =
     }
   | { readonly mode: "reconciling"; readonly transcript: ObserverTranscript }
   | { readonly mode: "unverified"; readonly transcript: ObserverTranscript }
+  | {
+      readonly mode: "released";
+      readonly transcript: ObserverTranscript;
+      readonly resumeCommand: string;
+    }
   | { readonly mode: "unknown" };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -36,6 +41,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const OBSERVER_KEYS: Record<string, true> = { mode: true, lockStatus: true, transcript: true };
 const RECONCILING_KEYS: Record<string, true> = { mode: true, transcript: true };
 const UNVERIFIED_KEYS: Record<string, true> = { mode: true, transcript: true };
+const RELEASED_KEYS: Record<string, true> = { mode: true, transcript: true, resumeCommand: true };
 
 /**
  * Strict reader for `liveState.sessionControl`. Only a truly absent
@@ -77,6 +83,17 @@ export function readSessionControl(ref: SessionRef | undefined): SessionControlS
     const { transcript } = raw;
     if (transcript !== "live" && transcript !== "snapshot") return { mode: "unknown" };
     return { mode: "unverified", transcript };
+  }
+  if (raw.mode === "released") {
+    if (Object.keys(raw).some((key) => RELEASED_KEYS[key] !== true)) {
+      return { mode: "unknown" };
+    }
+    const { resumeCommand, transcript } = raw;
+    if (transcript !== "live" && transcript !== "snapshot") return { mode: "unknown" };
+    if (typeof resumeCommand !== "string" || resumeCommand.length === 0 || resumeCommand.length > 1024) {
+      return { mode: "unknown" };
+    }
+    return { mode: "released", transcript, resumeCommand };
   }
   return { mode: "unknown" };
 }
@@ -136,7 +153,7 @@ export interface SessionControlPresentation {
 
 /** Announced when a watched session reaches confirmed live + writable. */
 export const SESSION_CONTROL_RETURNED_ANNOUNCEMENT =
-  "Session is now available in T4. Input is back.";
+  "Session is now available in Omperator. Input is back.";
 
 /** Freshness copy always wins over ownership copy on non-live links. */
 export const CACHED_WRITE_REASON =
@@ -159,9 +176,9 @@ const OBSERVER_COMPOSER_REASON =
   "This session is active in another app. You can read everything here; input returns when the session is released. Run /continue-in-t4 there to move it here.";
 
 // A malformed lock or an unrecognized future shape never claims another app
-// controls the session — ownership is simply unclear, so T4 stays read-only.
+// controls the session — ownership is simply unclear, so Omperator stays read-only.
 const UNCLEAR_DETAIL =
-  "Ownership of this session is unclear right now. You can read everything here; T4 stays read-only until it's safe.";
+  "Ownership of this session is unclear right now. You can read everything here; Omperator stays read-only until it's safe.";
 
 const UNCLEAR_PRESENTATION: Omit<
   SessionControlPresentation,
@@ -174,7 +191,7 @@ const UNCLEAR_PRESENTATION: Omit<
   controlReason: "This session is read-only while its ownership is unclear.",
   slashReason: "Read-only right now",
   managementReason:
-    "Ownership of this session is unclear right now. T4 stays read-only until it's safe.",
+    "Ownership of this session is unclear right now. Omperator stays read-only until it's safe.",
   announcement: "Read-only: ownership of this session is unclear.",
 };
 
@@ -209,16 +226,16 @@ export function presentSessionControl(state: SessionControlState): SessionContro
         railLabel: "Waiting to take over",
         bannerTitle: "Waiting to take over",
         bannerDetail:
-          "The other app has gone quiet. T4 waits, then takes over on its own once the session settles.",
+          "The other app has gone quiet. Omperator waits, then takes over on its own once the session settles.",
         bannerBusy: false,
         forkAction: FORK_ACTION,
         composerReason:
-          "The app running this session has gone quiet. T4 takes over on its own once the session settles; input returns then.",
+          "The app running this session has gone quiet. Omperator takes over on its own once the session settles; input returns then.",
         cancelReason: "Only the app running this session can stop it.",
-        controlReason: "This session is read-only while T4 waits to take over.",
+        controlReason: "This session is read-only while Omperator waits to take over.",
         slashReason: "Waiting to take over",
-        managementReason: "T4 is waiting to take over this session. Try again in a moment.",
-        announcement: "Read-only: the app running this session has gone quiet. T4 takes over once it settles.",
+        managementReason: "Omperator is waiting to take over this session. Try again in a moment.",
+        announcement: "Read-only: the app running this session has gone quiet. Omperator takes over once it settles.",
       };
     }
     return {
@@ -252,17 +269,35 @@ export function presentSessionControl(state: SessionControlState): SessionContro
       railLabel: "Read-only · use t4-omp",
       bannerTitle: "Read-only terminal session",
       bannerDetail:
-        "This session did not publish a T4-compatible handoff signal. Keep using it in the terminal if it is still running. Start future terminal sessions with t4-omp to move them safely into T4 Code.",
+        "This session did not publish a T4-compatible handoff signal. Keep using it in the terminal if it is still running. Start future terminal sessions with t4-omp to move them safely into Omperator.",
       bannerBusy: false,
       forkAction: FORK_ACTION,
       composerReason:
         "This session has no T4-compatible handoff signal. Start future terminal sessions with t4-omp.",
       cancelReason: "Only the terminal process that started this session can stop it.",
-      controlReason: "This session is read-only because T4 cannot verify its writer.",
+      controlReason: "This session is read-only because Omperator cannot verify its writer.",
       slashReason: "Read-only terminal session",
       managementReason:
-        "T4 cannot safely manage this session because its terminal writer did not publish a compatible handoff signal.",
+        "Omperator cannot safely manage this session because its terminal writer did not publish a compatible handoff signal.",
       announcement: "Read-only terminal session. Use t4-omp for future terminal handoff.",
+    };
+  }
+  if (state.mode === "released") {
+    return {
+      railLabel: "Ready for terminal",
+      bannerTitle: "Released to terminal",
+      bannerDetail:
+        "Omperator stopped its writer safely. Run the shown t4-omp resume command in a terminal, or bring the session back here.",
+      bannerBusy: false,
+      forkAction: null,
+      composerReason:
+        "This session is waiting for a terminal to resume it. Bring it back to Omperator to write here instead.",
+      cancelReason: "No Omperator runtime is running for this session.",
+      controlReason: "This session has been released to a terminal.",
+      slashReason: "Released to terminal",
+      managementReason:
+        "This session is waiting for a terminal. Bring it back to Omperator before managing it here.",
+      announcement: "Session released. It is ready to resume in a terminal.",
     };
   }
   return {
@@ -280,11 +315,18 @@ export function presentSessionControl(state: SessionControlState): SessionContro
  * quiet lock reads as waiting, and a malformed lock or an unrecognized
  * shape stays an unclear read-only state that never names an owner.
  */
-export type SessionControlDisplayKind = "observer" | "suspect" | "reconciling" | "unverified" | "unclear";
+export type SessionControlDisplayKind =
+  | "observer"
+  | "suspect"
+  | "reconciling"
+  | "unverified"
+  | "released"
+  | "unclear";
 
 export function sessionControlDisplayKind(state: SessionControlState): SessionControlDisplayKind {
   if (state.mode === "reconciling") return "reconciling";
   if (state.mode === "unverified") return "unverified";
+  if (state.mode === "released") return "released";
   if (state.mode === "observer") {
     if (state.lockStatus === "live") return "observer";
     if (state.lockStatus === "suspect") return "suspect";
@@ -300,6 +342,7 @@ const DISPLAY_KIND_STATE: Record<SessionControlDisplayKind, SessionControlState>
   suspect: { mode: "observer", lockStatus: "suspect", transcript: "live" },
   reconciling: { mode: "reconciling", transcript: "live" },
   unverified: { mode: "unverified", transcript: "live" },
+  released: { mode: "released", transcript: "live", resumeCommand: "t4-omp --resume <session>" },
   unclear: { mode: "unknown" },
 };
 

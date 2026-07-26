@@ -34,6 +34,7 @@ export const PROTOCOL_FEATURES = [
 	"session.delta",
 	"session.observer",
 	"session.unverified",
+	"session.transfer",
 	"session.fork",
 	"controller.lease",
 	"prompt.lease",

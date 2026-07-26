@@ -97,7 +97,7 @@ describe("application update view model", () => {
     expect(actionForUpdate(state({ phase: "ready" })).kind).toBe("restart");
     expect(actionForUpdate(state({ phase: "error" })).label).toBe("Try again");
     expect(actionForUpdate(state({ delivery: "web", phase: "current" }))).toEqual({
-      label: "Refresh T4 Code",
+      label: "Refresh Omperator",
       busy: false,
       kind: "refresh",
     });
@@ -186,7 +186,7 @@ describe("application update settings UI", () => {
       />,
     );
     expect(markup).toContain("Updates");
-    expect(markup).toContain("Refresh T4 Code");
+    expect(markup).toContain("Refresh Omperator");
     expect(markup).toContain("Host settings");
     expect(markup).toContain("No host is connected");
   });

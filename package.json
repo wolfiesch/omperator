@@ -1,6 +1,6 @@
 {
   "name": "@t4-code/root",
-  "version": "0.1.33",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -39,8 +39,8 @@
     "package:dir": "pnpm prepackage && node scripts/run-electron-builder.mjs --linux --x64 --dir",
     "inspect:package": "node scripts/inspect-package.mjs",
     "inspect:dmg": "node scripts/inspect-macos-dmg.mjs",
-    "test:packaging": "node --test scripts/packaging.test.mjs scripts/inspect-linux-update.test.mjs scripts/inspect-macos-dmg.test.mjs scripts/inspect-macos-release.test.mjs",
-    "test:tooling": "node --test scripts/benchmark-omp-codex-transport.test.mjs scripts/check-adr-numbering.test.mjs scripts/check-host-ownership.test.mjs scripts/check-release-consistency.test.mjs scripts/check-release-publication.test.mjs scripts/check-provenance.test.mjs scripts/deploy-demo.test.mjs scripts/deploy-site.test.mjs scripts/dev-log.test.mjs scripts/dev-sandbox.test.mjs scripts/dispatch-site-deployment.test.mjs scripts/generate-release-manifest.test.mjs scripts/perf/perf.test.mjs scripts/pre-install-scripts.test.mjs scripts/reconcile-release-assets.test.mjs scripts/test-temporary-directory.test.mjs scripts/tailnet-gateway.test.mjs scripts/tailnet-service.test.mjs scripts/verify-affected.test.mjs scripts/wait-for-exact-ci.test.mjs scripts/wait-for-release-assets.test.mjs scripts/worktree-sandbox.test.mjs",
+    "test:packaging": "node --test scripts/packaging.test.mjs scripts/inspect-linux-update.test.mjs scripts/inspect-macos-dmg.test.mjs scripts/inspect-macos-release.test.mjs scripts/inspect-macos-update.test.mjs",
+    "test:tooling": "node --test scripts/benchmark-omp-codex-transport.test.mjs scripts/check-adr-numbering.test.mjs scripts/check-host-ownership.test.mjs scripts/check-release-consistency.test.mjs scripts/check-release-publication.test.mjs scripts/check-provenance.test.mjs scripts/deploy-demo.test.mjs scripts/deploy-site.test.mjs scripts/dev-log.test.mjs scripts/dev-sandbox.test.mjs scripts/dispatch-site-deployment.test.mjs scripts/fetch-omp-release-native.test.mjs scripts/generate-release-manifest.test.mjs scripts/perf/perf.test.mjs scripts/pre-install-scripts.test.mjs scripts/reconcile-release-assets.test.mjs scripts/test-temporary-directory.test.mjs scripts/tailnet-gateway.test.mjs scripts/tailnet-service.test.mjs scripts/verify-affected.test.mjs scripts/wait-for-exact-ci.test.mjs scripts/wait-for-release-assets.test.mjs scripts/worktree-sandbox.test.mjs",
     "test:maintainer": "node --test scripts/t4-maintainer-authority.test.mjs scripts/t4-maintainer-contract.test.mjs scripts/t4-maintainer-convergence.test.mjs scripts/t4-maintainer-deploy.test.mjs scripts/t4-maintainer-mirror.test.mjs scripts/t4-maintainer-omp-publish.test.mjs",
     "check:release": "node scripts/check-release-consistency.mjs",
     "check:provenance": "node scripts/check-provenance.mjs",

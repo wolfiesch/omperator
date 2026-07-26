@@ -103,7 +103,7 @@ test("checksum parser requires one exact entry per package and Linux metadata", 
   const names = [...packages.map(({ name }) => name), LINUX_UPDATE_METADATA_NAME];
   assert.equal(parseChecksums(checksumsText, names).size, 6);
   assert.throws(() => parseChecksums(`${checksumsText}${digest("extra")}  extra.bin\n`, names), /exactly/u);
-  assert.throws(() => parseChecksums(checksumsText.replace("  T4-Code", " *T4-Code"), names), /invalid/u);
+  assert.throws(() => parseChecksums(checksumsText.replace("  Omperator", " *Omperator"), names), /invalid/u);
 });
 
 test("fails closed on extra, renamed, draft, mutable-URL, and digest drift", () => {

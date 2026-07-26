@@ -1,23 +1,26 @@
-# T4 Code — native iOS client (from Enclave)
+# T4 Code native SwiftUI client candidates
 
-This directory is a **native SwiftUI iOS client for T4 Code**, built on the
-[Enclave](https://github.com/verticalrectangle/Enclave) SwiftUI app. T4 Code
-ships desktop (Electron), web (canonical React renderer), and an Android
-React/Capacitor compatibility client — but **no native iOS app** (iOS currently
-uses the responsive Tailnet PWA). This closes that gap with a real native client
-that speaks T4's authoritative wire protocol and implements the full T4
-interface.
+This directory contains a candidate native SwiftUI iPhone companion for T4 Code,
+built from the [Enclave](https://github.com/verticalrectangle/Enclave) SwiftUI
+lineage. It speaks T4's authoritative wire protocol and connects to an existing
+host. It is not part of the current release.
 
-> Plan of record. Edit here as decisions change; do not keep a second copy.
+The shared source tree also builds a macOS target for development and
+cross-platform integration checks. Electron and the canonical React renderer
+remain Omperator's primary desktop product; the Swift macOS target is not a
+second shipped desktop application or an implicit replacement.
 
-## Decisions (confirmed)
+See [ADR 020](../../docs/adr/020-native-ios-companion.md) for the product boundary
+and release-proof requirements.
+
+## Decisions
 
 | Decision | Choice | Why |
 |---|---|---|
 | iOS approach | **Native SwiftUI**, ported from Enclave | Keeps Enclave's native lineage; best fit for a control-room tool. |
 | Wire protocol | **Port `@t4-code/host-wire` (`omp-app/1`) to Swift** | The collab-guest `/collab` protocol Enclave uses is read-mostly and *cannot enumerate host sessions* — it can't back "the whole interface". The authoritative host-wire can. |
 | Combine mechanics | **Vendor Enclave sources into `apps/ios`** in this repo | Branch lives in omperator. |
-| First deliverable | **Branch + scaffold + start protocol port** | Foundation first; UI rework after the wire is real. |
+| Product role | **iPhone companion candidate; macOS integration harness** | Avoids creating two competing desktop products without a deliberate cutover. |
 
 iOS **cannot bundle a host**; it connects to an **existing** `t4-host` over the
 network (Tailnet address or pairing link), exactly like the Android client.
@@ -116,20 +119,15 @@ host-wire port lands: the mock session library + slash commands, edit→rewind
 (host-only), model-routing editor, paired-devices/fingerprint fiction, the
 `/collab` link seam (`ENCLAVE_COLLAB_LINK`), and `EngineBridge.swift` itself.
 
-## Build & verify
+## Build and verify
 
-We build on a Mac over SSH (`macbookpro.local`: Swift 6.2.4, Xcode 26.3,
-xcodegen). There is no Swift toolchain on the Linux dev box.
+The complete verification requires macOS, a compatible Xcode simulator SDK,
+and XcodeGen.
 
 ```sh
-# HostWire package (model layer + client) — builds + tests on macOS:
-cd apps/ios/HostWire
-swift test
-
-# Full app (requires Xcode + xcodegen):
-cd apps/ios
-xcodegen generate
-xcodebuild -scheme Enclave -destination 'platform=iOS Simulator,name=iPhone 16' build
+# From the repository root: generate the project, compile the iOS app,
+# and run its XCUITest bundle on a discovered compatible simulator.
+node scripts/verify-ios.mjs
 ```
 
 Protocol correctness is cross-checked against the real wire fixtures in
@@ -138,9 +136,7 @@ package tests against.
 
 ## Status
 
-- [x] Branch `t4code-ios` created.
 - [x] Enclave app sources vendored into `apps/ios/`.
-- [x] Plan of record (this file).
 - [x] HostWire foundation (envelope/handshake/pairing/result, bounded validators) — compiles + passes fixture tests.
 - [x] Session inventory (`SessionsFrame`/`SessionListResult`/`SessionRef`) + `CommandFrame` envelope (rail + core session descriptors).
 - [x] Client runtime (`HostClient`: connect/handshake, command dispatch + correlation, projection stream, heartbeat, reconnect) — 10/10 tests green.
@@ -175,8 +171,10 @@ package tests against.
 | Notifications (turn end, approvals) | ✅ both |
 | Prompt/controller leases, revision handling | ✅ both |
 | files.search + files.diff | ✅ both |
-| Preview captures | ⛔ host-side preview service needed (own milestone) |
+| Preview captures | ✅ implementation present; current-head integration proof required |
 | Cluster operator | ⛔ deferred — needs protocol scoping |
 | Speech (wake-word) | ⛔ dropped (dictation ships instead) |
 
-**iOS**: XCUITest suite green (5/5). **macOS**: live-host verified. Demo data is opt-in (`-T4Demo`); fresh installs get real onboarding.
+The branch previously passed five XCUITest cases and a macOS live-host check.
+Those results are historical until rerun on the current integrated head. Demo
+data is opt-in (`-T4Demo`); fresh installs get real onboarding.

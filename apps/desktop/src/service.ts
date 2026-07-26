@@ -52,6 +52,8 @@ export function createSafeServiceEnvironment(
 const APP_SERVER_PROBE_TIMEOUT_MS = 15_000;
 const APP_SERVER_PROBE_MAX_OUTPUT_BYTES = 16 * 1024;
 const AUTHORITY_BRIDGE_HELP_MARKERS = [
+  // Immutable integration-runtime compatibility marker. The public OMP runtime was
+  // released before the v0.2 product-name cutover.
   "Expose the private OMP authority bridge used by T4 Code",
   "--stdio",
 ] as const;
@@ -61,7 +63,7 @@ export class OmpAppserverCompatibilityError extends Error {
 
   constructor() {
     super(
-      "Installed OMP is incompatible with this T4 Code build. T4 Code requires the versioned `omp bridge --stdio` authority bridge. Update OMP, then choose Check again.",
+      "Installed OMP is incompatible with this Omperator build. Omperator requires the versioned `omp bridge --stdio` authority bridge. Update OMP, then choose Check again.",
     );
     this.name = "OmpAppserverCompatibilityError";
     Object.defineProperty(this, "stack", {

@@ -332,12 +332,10 @@ final class T4SessionStore: ObservableObject {
     /// snapshot frame (full log at a cursor) and then live entry frames;
     /// `observe()` routes both into `liveEntries`. Safe to repeat.
     func attach(sessionId: String) async {
-        t4log.notice("attach entry \(sessionId, privacy: .public)")
         guard let client, connected, !hostId.isEmpty else { return }
         do {
             _ = try await client.sendCommand(CommandIntent(
                 hostId: hostId, command: "session.attach", sessionId: sessionId))
-            t4log.notice("attach sent for \(sessionId, privacy: .public)")
         } catch {
             t4log.error("attach failed: \(error)")
             lastError = "\(error)"
@@ -347,7 +345,6 @@ final class T4SessionStore: ObservableObject {
     /// Attach to the selected session if we haven't yet (connection-driven,
     /// not view-driven: a view race once left sessions permanently empty).
     private func attachSelectedIfNeeded() {
-        t4log.notice("attachIfNeeded: conn=\(self.connected) sel=\(self.selectedSession?.sessionId ?? "nil") live=\(self.liveEntries.keys.count)")
         guard connected, let selected = selectedSession,
               liveEntries[selected.sessionId] == nil else { return }
         Task {
@@ -1713,7 +1710,7 @@ final class T4SessionStore: ObservableObject {
                 recordCapture(sessionId: f.sessionId, metadata: f.capture, previewId: f.previewId)
                 Task { await fetchCaptureBytes(sessionId: f.sessionId, previewId: f.previewId, metadata: f.capture) }
             case .previewError(let f):
-                t4log.notice("preview error \(f.code, privacy: .public): \(f.message, privacy: .public)")
+                t4log.notice("preview error \(f.code, privacy: .public): \(f.message)")
             default:
                 break
             }

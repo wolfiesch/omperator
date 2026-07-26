@@ -4,7 +4,7 @@ Date: 2026-07-18
 
 ## Decision
 
-T4 Code can benefit from OMP's WebSocket transport for long, tool-heavy Codex sessions. It should
+Omperator can benefit from OMP's WebSocket transport for long, tool-heavy Codex sessions. It should
 not connect to OpenAI or handle ChatGPT credentials itself. OMP already owns authentication and the
 model connection; T4 should ask OMP for redacted transport status and benchmark results through the
 existing app-wire boundary.
@@ -86,7 +86,7 @@ ChatGPT OAuth credentials
           |
           | redacted status + benchmark command over app-wire
           v
-   T4 Code desktop UI  ---- displays facts; never handles provider credentials
+   Omperator desktop UI  ---- displays facts; never handles provider credentials
 ```
 
 T4 currently mirrors OMP state and sends commands over app-wire. Adding direct OpenAI calls or

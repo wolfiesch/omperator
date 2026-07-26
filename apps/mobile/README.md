@@ -1,6 +1,6 @@
-# T4 Code Mobile
+# Omperator Mobile
 
-Android thin-client shell for the bundled T4 Code web application. The APK contains the UI assets and connects over secure WebSocket to a separately running T4 Tailnet gateway; it never embeds or starts an OMP appserver.
+Android thin-client shell for the bundled Omperator web application. The APK contains the UI assets and connects over secure WebSocket to a separately running T4 Tailnet gateway; it never embeds or starts an OMP appserver.
 
 ## Build
 

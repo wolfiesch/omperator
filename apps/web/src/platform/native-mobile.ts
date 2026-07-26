@@ -365,7 +365,7 @@ export async function prepareNativeMobileBackend(): Promise<MobileBootResult> {
 
   const plugin = secureStorage();
   if (plugin === null) {
-    return { kind: "setup", message: "The Android security bridge did not start. Close T4 Code and open it again." };
+    return { kind: "setup", message: "The Android security bridge did not start. Close Omperator and open it again." };
   }
 
   let credentials: NativeMobileCredentials | null = null;
@@ -379,7 +379,7 @@ export async function prepareNativeMobileBackend(): Promise<MobileBootResult> {
     if (error instanceof SecureStorageBridgeTimeoutError) {
       return {
         kind: "setup",
-        message: "Android secure storage did not answer. Close T4 Code and open it again.",
+        message: "Android secure storage did not answer. Close Omperator and open it again.",
       };
     }
     await withSecureStorageTimeout(
@@ -473,7 +473,7 @@ export async function removeNativeMobileBackend(
       writeStoredMobileBackendDirectory(directory, storage);
     } catch {
       throw new Error(
-        "Secure storage failed and T4 Code could not restore the saved host list. Close and reopen the app.",
+        "Secure storage failed and Omperator could not restore the saved host list. Close and reopen the app.",
       );
     }
     throw error;
@@ -517,9 +517,9 @@ export async function probeMobileBackend(
       socket.close(1000, "T4 mobile connection check");
     };
     const onError = () =>
-      finish(new Error("T4 Code could not reach that host. Check Tailscale and the address."));
+      finish(new Error("Omperator could not reach that host. Check Tailscale and the address."));
     const onClose = () =>
-      finish(new Error("The host closed the connection before T4 Code could start."));
+      finish(new Error("The host closed the connection before Omperator could start."));
     const onAbort = () => {
       finish(new DOMException("The host check was cancelled.", "AbortError"));
       socket.close();

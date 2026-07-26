@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: T4 Code static site on private S3 with CloudFront
+Description: Omperator static site on private S3 with CloudFront
 
 Parameters:
   SiteBucketName:
@@ -33,7 +33,7 @@ Resources:
     Type: AWS::CloudFront::OriginAccessControl
     Properties:
       OriginAccessControlConfig:
-        Description: Signed access from the T4 Code distribution to its private S3 bucket
+        Description: Signed access from the Omperator distribution to its private S3 bucket
         Name: t4-code-site-oac
         OriginAccessControlOriginType: s3
         SigningBehavior: always
@@ -55,7 +55,7 @@ Resources:
           return request;
         }
       FunctionConfig:
-        Comment: Resolve extensionless T4 Code site paths to static index files
+        Comment: Resolve extensionless Omperator site paths to static index files
         Runtime: cloudfront-js-2.0
       Name: t4-code-static-paths
 
@@ -64,7 +64,7 @@ Resources:
     Properties:
       ResponseHeadersPolicyConfig:
         Name: t4-code-site-security
-        Comment: Security headers for the T4 Code project site
+        Comment: Security headers for the Omperator project site
         CustomHeadersConfig:
           Items:
             - Header: Cross-Origin-Opener-Policy
@@ -138,7 +138,7 @@ Resources:
         Aliases:
           - t4code.net
           - www.t4code.net
-        Comment: T4 Code public website and docs
+        Comment: Omperator public website and docs
         DefaultCacheBehavior:
           AllowedMethods: [GET, HEAD, OPTIONS]
           CachedMethods: [GET, HEAD, OPTIONS]

@@ -61,7 +61,7 @@ final class T4UpdateFileStore {
         synchronized (OWNERSHIP_LOCK) {
             requireOwnership();
             ensureDirectory();
-            return File.createTempFile("T4-Code-" + version + "-", PARTIAL_SUFFIX, directory);
+            return File.createTempFile("Omperator-" + version + "-", PARTIAL_SUFFIX, directory);
         }
     }
 

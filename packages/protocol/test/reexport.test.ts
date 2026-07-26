@@ -172,6 +172,65 @@ describe("@omp/protocol app-wire facade", () => {
     });
   });
 
+  it("preserves released session control through every session decoder", () => {
+    const releasedControl = {
+      mode: "released",
+      transcript: "live",
+      resumeCommand: "t4-omp --resume session-a",
+    };
+    const released = rawSession({ sessionControl: releasedControl });
+    const sessionLists = [
+      decodeSessions({
+        v: "omp-app/1",
+        type: "sessions",
+        cursor: { epoch: "epoch-1", seq: 5 },
+        sessions: [released],
+      }),
+      decodeSessionListResult({
+        cursor: { epoch: "epoch-1", seq: 6 },
+        sessions: [released],
+      }),
+    ];
+    for (const result of sessionLists) {
+      expect(result).toMatchObject({
+        sessions: [{ liveState: { sessionControl: releasedControl } }],
+      });
+    }
+
+    expect(
+      decodeServerFrame({
+        v: "omp-app/1",
+        type: "session.delta",
+        hostId: "host-a",
+        sessionId: "session-a",
+        cursor: { epoch: "epoch-1", seq: 7 },
+        revision: "rev-2",
+        upsert: released,
+      }),
+    ).toMatchObject({
+      upsert: { liveState: { sessionControl: releasedControl } },
+    });
+
+    expect(
+      decodeServerFrame({
+        v: "omp-app/1",
+        type: "response",
+        requestId: "request-list-released",
+        hostId: "host-a",
+        ok: true,
+        command: "session.list",
+        result: {
+          cursor: { epoch: "epoch-1", seq: 8 },
+          sessions: [released],
+        },
+      }),
+    ).toMatchObject({
+      result: {
+        sessions: [{ liveState: { sessionControl: releasedControl } }],
+      },
+    });
+  });
+
   it("preserves additive provider transport evidence through list decoders", () => {
     const sessions = [
       decodeServerFrame({

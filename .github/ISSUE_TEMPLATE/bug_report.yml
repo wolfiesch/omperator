@@ -10,8 +10,8 @@ body:
     id: version
     attributes:
       label: Omperator version
-      description: Use the displayed T4 Code version while the application rebrand is in progress.
-      placeholder: "0.1.33"
+      description: Use the displayed Omperator version while the application rebrand is in progress.
+      placeholder: "0.2.1"
     validations:
       required: true
   - type: dropdown
@@ -54,7 +54,7 @@ body:
     attributes:
       label: Redacted logs (optional)
       description: |
-        Appserver logs live in `~/.local/state/t4-code/appserver` (Linux) or `~/Library/Logs/T4 Code/appserver` (macOS).
+        Appserver logs stay in `~/.local/state/t4-code/appserver` (Linux) or `~/Library/Logs/T4 Code/appserver` (macOS).
         **Redact before pasting**: remove API keys, tokens, pairing codes, credentials, usernames, home paths, hostnames, and anything private. Trim to the relevant time window.
       render: text
   - type: checkboxes

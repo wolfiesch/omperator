@@ -42,14 +42,14 @@ const firstSession = session("session-a", "Fix app router", "2026-07-20T08:00:00
 const secondSession = session("session-b", "Write release notes", "2026-07-20T07:00:00.000Z");
 const shellData: WorkspaceData = {
   hosts: [{ id: "host", runtimeKind: "omp", name: "This Mac", kind: "local" }],
-  projects: [{ id: "project", name: "T4 Code", path: "T4 Code", hostId: "host" }],
+  projects: [{ id: "project", name: "Omperator", path: "Omperator", hostId: "host" }],
   sessions: [firstSession, secondSession],
 };
 
 const groups: readonly ProjectGroup[] = [
   {
     project: shellData.projects[0]!,
-    displayName: "T4 Code",
+    displayName: "Omperator",
     host: shellData.hosts[0]!,
     expanded: true,
     sessions: [

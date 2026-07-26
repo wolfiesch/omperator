@@ -7,7 +7,6 @@ import { PreviewServiceError } from "../src/preview/types.ts";
 import { PreviewService } from "../src/preview/preview-service.ts";
 import { createPreviewChromiumResolver } from "../src/preview/chromium-resolver.ts";
 import type { PreviewChromiumResolver } from "../src/preview/types.ts";
-import type { Browser, BrowserContext, Page } from "playwright-core";
 import type { SessionId } from "@t4-code/host-wire";
 
 const SESSION_ID = "sess_test" as SessionId;
@@ -97,85 +96,10 @@ describe("preview URL policy", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
-// Fake browser for service-level tests
-// ---------------------------------------------------------------------------
-
-function fakePage(url: string): Page {
-	let currentUrl = url;
-	let title = "Test Page";
-	const history: string[] = [url];
-	let historyIndex = 0;
-	return {
-		url: () => currentUrl,
-		title: async () => title,
-		goto: async (target: string) => {
-			currentUrl = target;
-			history.splice(historyIndex + 1);
-			history.push(target);
-			historyIndex = history.length - 1;
-			return undefined;
-		},
-		goBack: async () => {
-			if (historyIndex > 0) {
-				historyIndex--;
-				currentUrl = history[historyIndex]!;
-			}
-			return undefined;
-		},
-		goForward: async () => {
-			if (historyIndex < history.length - 1) {
-				historyIndex++;
-				currentUrl = history[historyIndex]!;
-			}
-			return undefined;
-		},
-		reload: async () => undefined,
-		setDefaultTimeout: () => undefined,
-		evaluate: async (fn: unknown) => {
-			if (typeof fn === "function") return (fn as () => boolean)();
-			return false;
-		},
-		click: async () => undefined,
-		fill: async () => undefined,
-		type: async () => undefined,
-		scroll: async () => undefined,
-		press: async () => undefined,
-		selectOption: async () => [] as string[],
-		screenshot: async () => new Uint8Array(0),
-	} as unknown as Page;
-}
-
-function fakeContext(page: Page): BrowserContext {
-	return {
-		newPage: async () => page,
-		pages: () => [page],
-		close: async () => undefined,
-	} as unknown as BrowserContext;
-}
-
-function fakeBrowser(page: Page): Browser {
-	return {
-		newContext: async () => fakeContext(page),
-		close: async () => undefined,
-	} as unknown as Browser;
-}
-
-/** A chromium resolver that injects a fake browser via a monkey-patched launch. */
-function fakeChromiumResolver(page: Page): PreviewChromiumResolver {
-	return async () => {
-		// Patch chromium.launch to return our fake browser instead of spawning.
-		// We can't easily monkey-patch the module, so we return a path and
-		// rely on the service using playwright-core's chromium.launch.
-		// For testing, we'll use a resolver that throws a special marker
-		// that the test can catch — but actually, the simplest approach is
-		// to test the service with a fake browser injected via a test-only
-		// seam. Since the service calls chromium.launch() directly, we test
-		// the parts that don't need a real browser: URL policy, validation,
-		// capture chunking, lease management, policy check.
-		return { path: "/fake/chrome", browserVersion: "0.0.0.0" };
-	};
-}
+const fakeChromiumResolver: PreviewChromiumResolver = async () => ({
+	path: "/fake/chrome",
+	browserVersion: "0.0.0.0",
+});
 
 // ---------------------------------------------------------------------------
 // PreviewService — validation and non-browser logic
@@ -183,69 +107,35 @@ function fakeChromiumResolver(page: Page): PreviewChromiumResolver {
 
 describe("PreviewService non-browser logic", () => {
 	describe("policyCheck", () => {
-		it("allows all PREVIEW_ACTIONS for localhost URLs", () => {
-			const svc = new PreviewService({
-				chromiumResolver: fakeChromiumResolver(fakePage("http://localhost:3000")),
-			});
+			it("allows all PREVIEW_ACTIONS for localhost URLs", () => {
+				const svc = new PreviewService({
+					chromiumResolver: fakeChromiumResolver,
+				});
 			const result = svc.policyCheck({ action: "navigate", url: "http://localhost:3000" });
 			expect(result.allowed).toBe(true);
 		});
 
-		it("rejects forbidden URLs", () => {
-			const svc = new PreviewService({
-				chromiumResolver: fakeChromiumResolver(fakePage("http://localhost:3000")),
-			});
+			it("rejects forbidden URLs", () => {
+				const svc = new PreviewService({
+					chromiumResolver: fakeChromiumResolver,
+				});
 			const result = svc.policyCheck({ action: "navigate", url: "https://example.com" });
 			expect(result.allowed).toBe(false);
 		});
 
-		it("rejects unknown actions", () => {
-			const svc = new PreviewService({
-				chromiumResolver: fakeChromiumResolver(fakePage("http://localhost:3000")),
-			});
+			it("rejects unknown actions", () => {
+				const svc = new PreviewService({
+					chromiumResolver: fakeChromiumResolver,
+				});
 			const result = svc.policyCheck({ action: "unknown" as never, url: "http://localhost:3000" });
 			expect(result.allowed).toBe(false);
-		});
-	});
-
-	describe("captureRead chunking", () => {
-		it("chunks a capture into base64 segments ≤ chunkBytes", () => {
-			const svc = new PreviewService({
-				chromiumResolver: fakeChromiumResolver(fakePage("http://localhost:3000")),
-				captureChunkBytes: 100,
-			});
-			// Build a 500-byte payload → base64 is ~680 chars → ~7 chunks of 100
-			const payload = new Uint8Array(500).fill(0xab);
-			const base64 = Buffer.from(payload).toString("base64");
-			// Inject a capture record directly via the internal map
-			// We use captureRead with a fabricated capture — but captureRead
-			// requires a preview entry. Instead, test the chunking math:
-			const chunkSize = 100;
-			const chunks: string[] = [];
-			for (let i = 0; i < base64.length; i += chunkSize) {
-				chunks.push(base64.slice(i, i + chunkSize));
-			}
-			expect(chunks.length).toBe(Math.ceil(base64.length / chunkSize));
-			expect(chunks.join("")).toBe(base64);
-			// Verify each chunk is ≤ chunkSize
-			for (const c of chunks) expect(c.length).toBeLessThanOrEqual(chunkSize);
-		});
-
-		it("returns empty array for zero-length capture", () => {
-			const base64 = "";
-			const chunkSize = 256 * 1024;
-			const chunks: string[] = [];
-			for (let i = 0; i < base64.length; i += chunkSize) {
-				chunks.push(base64.slice(i, i + chunkSize));
-			}
-			expect(chunks).toEqual([]);
 		});
 	});
 
 	describe("lease management", () => {
 		it("leaseAcquire returns a lease with ttl", () => {
 			const svc = new PreviewService({
-				chromiumResolver: fakeChromiumResolver(fakePage("http://localhost:3000")),
+				chromiumResolver: fakeChromiumResolver,
 			});
 			// Without a real preview, leaseAcquire should throw not_found
 			expect(() =>
@@ -255,7 +145,7 @@ describe("PreviewService non-browser logic", () => {
 
 		it("leaseRenew throws for missing preview", () => {
 			const svc = new PreviewService({
-				chromiumResolver: fakeChromiumResolver(fakePage("http://localhost:3000")),
+				chromiumResolver: fakeChromiumResolver,
 			});
 			expect(() =>
 				svc.leaseRenew({
@@ -268,7 +158,7 @@ describe("PreviewService non-browser logic", () => {
 
 		it("leaseRelease throws for missing preview", () => {
 			const svc = new PreviewService({
-				chromiumResolver: fakeChromiumResolver(fakePage("http://localhost:3000")),
+				chromiumResolver: fakeChromiumResolver,
 			});
 			expect(() =>
 				svc.leaseRelease({
@@ -283,7 +173,7 @@ describe("PreviewService non-browser logic", () => {
 	describe("state", () => {
 		it("returns empty previews for unknown session", async () => {
 			const svc = new PreviewService({
-				chromiumResolver: fakeChromiumResolver(fakePage("http://localhost:3000")),
+				chromiumResolver: fakeChromiumResolver,
 			});
 			const result = await svc.state({ sessionId: SESSION_ID });
 			expect(result.previews).toEqual([]);
@@ -291,7 +181,7 @@ describe("PreviewService non-browser logic", () => {
 
 		it("throws not_found for unknown previewId", async () => {
 			const svc = new PreviewService({
-				chromiumResolver: fakeChromiumResolver(fakePage("http://localhost:3000")),
+				chromiumResolver: fakeChromiumResolver,
 			});
 			expect(async () =>
 				svc.state({ sessionId: SESSION_ID, previewId: "pv_missing" as never }),
@@ -302,7 +192,7 @@ describe("PreviewService non-browser logic", () => {
 	describe("stop", () => {
 		it("marks service as stopped", async () => {
 			const svc = new PreviewService({
-				chromiumResolver: fakeChromiumResolver(fakePage("http://localhost:3000")),
+				chromiumResolver: fakeChromiumResolver,
 			});
 			await svc.stop();
 			// After stop, launch should throw
@@ -342,6 +232,27 @@ describe("PreviewService real chromium smoke", () => {
 				const stateResult = await svc.state({ sessionId: SESSION_ID });
 				expect(stateResult.previews.length).toBe(1);
 				expect(stateResult.previews[0]!.previewId).toBe(snapshot.previewId);
+				const captured = await svc.capture({
+					sessionId: SESSION_ID,
+					previewId: snapshot.previewId,
+				});
+				expect(captured.capture).toBeDefined();
+				const capture = captured.capture!;
+				const chunks: Uint8Array[] = [];
+				let offset = 0;
+				let complete = false;
+				while (!complete) {
+					const read = svc.captureRead({
+						sessionId: SESSION_ID,
+						previewId: snapshot.previewId,
+						captureId: capture.captureId,
+						offset,
+					});
+					chunks.push(Buffer.from(read.content, "base64"));
+					offset = read.nextOffset;
+					complete = read.complete;
+				}
+				expect(chunks.reduce((size, chunk) => size + chunk.length, 0)).toBe(capture.size);
 			} finally {
 				await svc.stop();
 				server.stop(true);

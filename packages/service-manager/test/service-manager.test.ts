@@ -459,7 +459,7 @@ describe("service-manager lifecycle", () => {
         new LinuxSystemdUserManager(
           {
             ...spec,
-            executable: "/Applications/T4 Code.app/Contents/Resources/runtime/t4-host",
+            executable: "/Applications/Omperator.app/Contents/Resources/runtime/t4-host",
             argv: ["serve", "--omp", "/opt/omp/bin/omp", "--profile", "other"],
           },
           options(new MemoryFs(), new MemoryRunner()),
@@ -469,14 +469,14 @@ describe("service-manager lifecycle", () => {
   it("renders the standalone T4 host with an explicit OMP bridge executable and profile", () => {
     const hostSpec: ServiceSpec = {
       ...spec,
-      executable: "/Applications/T4 Code.app/Contents/Resources/runtime/t4-host",
+      executable: "/Applications/Omperator.app/Contents/Resources/runtime/t4-host",
       argv: ["serve", "--omp", "/opt/omp/bin/omp", "--profile", "default"],
     };
     const content = renderLinuxSystemdDefinition(hostSpec);
     expect(content).toContain(
-      'ExecStart="/Applications/T4 Code.app/Contents/Resources/runtime/t4-host" "serve" "--omp" "/opt/omp/bin/omp" "--profile" "default"',
+      'ExecStart="/Applications/Omperator.app/Contents/Resources/runtime/t4-host" "serve" "--omp" "/opt/omp/bin/omp" "--profile" "default"',
     );
-    expect(content).toContain("Description=T4 Code host (default)");
+    expect(content).toContain("Description=Omperator host (default)");
   });
 });
 
