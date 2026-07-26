@@ -442,7 +442,7 @@ export function Rail({
                 onRestore={() => {
                   workspaceStore.getState().setProjectHidden(group.project.id, false);
                   setAnnouncement(
-                    `Restored ${group.displayName} to Projects on this T4 Code client.`,
+                    `Restored ${group.displayName} to Projects on this Omperator client.`,
                   );
                 }}
                 pinned={pinnedProjectIds[group.project.id] === true}

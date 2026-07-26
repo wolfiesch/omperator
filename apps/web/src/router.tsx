@@ -220,7 +220,7 @@ function SessionRouteGate({
           <EmptyHeader>
             <EmptyTitle>This session host is not answering</EmptyTitle>
             <EmptyDescription>
-              T4 Code has not received a complete session list from this host. It may still be
+              Omperator has not received a complete session list from this host. It may still be
               starting or it may be offline; this page will recover automatically if it reconnects.
             </EmptyDescription>
           </EmptyHeader>
@@ -437,7 +437,7 @@ function HostsRoute() {
       <div className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
         <p className="font-medium text-sm">Hosts are managed in the desktop app</p>
         <p className="max-w-[48ch] text-muted-foreground text-xs">
-          This browser showcase has no runtime to connect. Open T4 Code on your desktop to add and
+          This browser showcase has no runtime to connect. Open Omperator on your desktop to add and
           pair computers.
         </p>
         <Button onClick={() => void navigate({ to: "/settings" })} size="sm" variant="outline">

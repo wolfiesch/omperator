@@ -1,11 +1,18 @@
 ## Current independently owned release
 
-T4 Code v0.1.35 is the current release published from
+Omperator v0.2.0 is the current release published from
 [`wolfiesch/omperator`](https://github.com/wolfiesch/omperator). Its Android package uses the
 project's new `net.t4code.app` signing key, and its macOS packages use Michael Schoenberger's pinned
 Developer ID certificate and notarization credentials. GitHub Releases is the authoritative
 download surface, and the protected release workflow publishes the same immutable release manifest
 and checksums to `t4code.net`.
+
+This is the public product-name cutover from T4 Code to Omperator. The desktop
+bundle, Android label, web/PWA surfaces, documentation, and downloadable
+artifacts now show Omperator. The signed upgrade intentionally keeps
+`net.t4code.app`, `t4-code://`, `@t4-code/*`, `t4-omp`, service labels, and the
+existing Application Support and log paths so installed credentials, runtime
+state, pairing links, and background services continue without migration.
 
 This release adds safe reclaim for short `t4-omp` sessions and the first native macOS update feed.
 Newly created OMP transcripts carry the exact `t4-omp-authority/1` marker, allowing the standalone
@@ -16,7 +23,7 @@ actual signed packages before publication.
 
 ## Electron and React are the product authority
 
-T4 Code has standardized on the Electron desktop shell and canonical React renderer. The abandoned
+Omperator has standardized on the Electron desktop shell and canonical React renderer. The abandoned
 Flutter migration, its duplicate platform targets, and its CI and release plumbing have been
 removed. macOS is the primary desktop target, Linux remains supported, and React/Capacitor Android
 plus the responsive Tailnet browser/PWA remain compatibility clients for paired hosts.
@@ -47,18 +54,18 @@ release includes `latest-mac.yml`, the signed ZIP, and its blockmap; publication
 metadata references the exact ZIP and DMG names, sizes, and SHA-512 digests. The app downloads only
 after the user chooses, then offers an explicit restart into the verified update.
 
-When a bundled OMP upgrade temporarily fails to stop the existing macOS service, T4 Code retries the stop-and-replace sequence. This avoids leaving the installed backend half-updated during normal desktop upgrades while preserving the existing signed-runtime checks.
+When a bundled OMP upgrade temporarily fails to stop the existing macOS service, Omperator retries the stop-and-replace sequence. This avoids leaving the installed backend half-updated during normal desktop upgrades while preserving the existing signed-runtime checks.
 
 The bundled backend now also recovers from an inactive Unix socket when the crashed owner's process ID still appears alive, and after a restart that renumbers the disk identifiers recorded in the leftover ownership files. Previously such a reboot could leave the backend permanently unable to reclaim its own socket, so the app opened with an empty session list. Recovery still confirms the endpoint is unreachable more than once and revalidates every ownership file before reclaiming it, while leaving a responsive backend untouched.
 
 ## T4 now owns the host service
 
-T4 Code now packages its own standalone `t4-host` executable instead of running the network host inside OMP. The desktop replaces the old service definition directly and automatically repairs a stopped default service when the local connection falls back to reconnecting. The service label and local socket stay stable, so ordinary local clients and administrative commands keep using the same connection point.
+Omperator now packages its own standalone `t4-host` executable instead of running the network host inside OMP. The desktop replaces the old service definition directly and automatically repairs a stopped default service when the local connection falls back to reconnecting. The service label and local socket stay stable, so ordinary local clients and administrative commands keep using the same connection point.
 
 OMP remains the authority for session files, locks, agent execution, credentials, and takeover decisions. The smaller `omp bridge --stdio` command exposes only the versioned authority operations T4 needs. T4 validates the exact `t4-omp-authority/1` bridge before accepting an OMP installation and rejects older appserver-only runtimes.
 
 New sessions created by the paired runtime persist that exact authority protocol in their transcript
-header. Once a short-lived terminal writer has released its lock, T4 Code can therefore prove the
+header. Once a short-lived terminal writer has released its lock, Omperator can therefore prove the
 session is compatible and resume it writable; transcripts without the marker remain read-only.
 
 ## Native Browser workspace
@@ -73,11 +80,11 @@ Session-linked Host Browser Previews continue to open in their dedicated workspa
 
 ## Runtime provenance
 
-T4 Code v0.1.35 vendors app-wire 0.7.0 from integration commit [796bb7dc](https://github.com/lyc-aon/oh-my-pi/commit/796bb7dca45027bd4b7b94017cdf41ef214a11f2), source tree `0c195a01ba0bb98fbf4d4863aee59bf23a6e81b7`. The frozen package remains compatibility evidence; T4 owns the active `omp-app/1` wire schema.
+Omperator v0.2.0 vendors app-wire 0.7.0 from integration commit [796bb7dc](https://github.com/lyc-aon/oh-my-pi/commit/796bb7dca45027bd4b7b94017cdf41ef214a11f2), source tree `0c195a01ba0bb98fbf4d4863aee59bf23a6e81b7`. The frozen package remains compatibility evidence; T4 owns the active `omp-app/1` wire schema.
 
 The verified OMP 17.0.5 runtime is built from commit [ccb86bb7](https://github.com/wolfiesch/oh-my-pi/commit/ccb86bb74f4c59ebacca67d42c4e16b65fd5c8ec) and tagged [t4code-17.0.5-appserver-18](https://github.com/wolfiesch/oh-my-pi/tree/t4code-17.0.5-appserver-18). It provides the bounded authority bridge used by T4's standalone host and no longer exposes the old public appserver launchers. It pages snapshot-consistent session inventories across bounded frames, marks over-limit inventories partial, and allows lifecycle actions only when a lock is missing or provably stale. It also keeps session-list metadata sparse before bridge encoding, publishes `xd://` mounts atomically with their transport tools, preserves bounded newest-first transcript paging, stale-owner recovery, privacy-safe local project reveal, lazy session indexing, cross-session attention and transcript search, and the negotiated browser-preview command surface, and writes the durable authority marker used for safe short-session reclaim. Its release includes the five platform binaries, two provenance-bound Linux native addons, and their manifest. It also lets a copied historic session use a caller-selected existing working directory when its recorded directory is gone. Unsupported optional capabilities remain hidden when the host does not advertise them.
 
-The integration is based on the official upstream [v17.0.5 tag](https://github.com/can1357/oh-my-pi/tree/v17.0.5), commit [9fd6e971](https://github.com/can1357/oh-my-pi/commit/9fd6e97113f5ed3a847e66d346970efdf8afcad9). Official upstream OMP v17.0.5 has no `appserver` command and cannot host T4 Code.
+The integration is based on the official upstream [v17.0.5 tag](https://github.com/can1357/oh-my-pi/tree/v17.0.5), commit [9fd6e971](https://github.com/can1357/oh-my-pi/commit/9fd6e97113f5ed3a847e66d346970efdf8afcad9). Official upstream OMP v17.0.5 has no `appserver` command and cannot host Omperator.
 
 ## Packages
 

@@ -1,6 +1,6 @@
 # OMP Desktop Product Surface Map
 
-This file maps product ideas to their OMP authority and intended T4 Code surface. It is a design and ownership reference, not a list of features shipped in the current release. A row can describe planned work, partial work, or verified behavior; its presence here is not completion proof.
+This file maps product ideas to their OMP authority and intended Omperator surface. It is a design and ownership reference, not a list of features shipped in the current release. A row can describe planned work, partial work, or verified behavior; its presence here is not completion proof.
 
 The README and release notes are the release contract. They must only claim behavior exercised by the current build. OMP remains the behavioral authority, and T3 Code remains a presentation and interaction reference where noted below.
 

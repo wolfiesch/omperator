@@ -59,7 +59,7 @@ function SettingsButton() {
       <TooltipTrigger
         render={
           <IconButton
-            aria-label={hasUpdate ? "Open settings; T4 Code update available" : "Open settings"}
+            aria-label={hasUpdate ? "Open settings; Omperator update available" : "Open settings"}
             className="size-11 sm:size-7"
             onClick={() => void navigate({ to: "/settings" })}
             size="icon-sm"
@@ -77,7 +77,7 @@ function SettingsButton() {
         }
       />
       <TooltipPopup side="bottom">
-        {hasUpdate ? "Settings · T4 Code update available" : "Settings (Ctrl+,)"}
+        {hasUpdate ? "Settings · Omperator update available" : "Settings (Ctrl+,)"}
       </TooltipPopup>
     </Tooltip>
   );
@@ -117,7 +117,7 @@ export function Titlebar({
         <TooltipPopup side="bottom">{railToggle.label} (Ctrl+B)</TooltipPopup>
       </Tooltip>
       <BrandLockup
-        aria-label="T4 Code"
+        aria-label="Omperator"
         className="min-w-0 [&>span>span]:hidden sm:[&>span>span]:inline"
       />
       <div className="flex-1" />

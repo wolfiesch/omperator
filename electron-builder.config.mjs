@@ -15,10 +15,10 @@ export const desktopUpdatePublish = {
 /** @type {import("electron-builder").Configuration} */
 const config = {
   appId: "net.t4code.app",
-  productName: "T4 Code",
+  productName: "Omperator",
   executableName: "t4-code",
   electronVersion: "41.5.0",
-  artifactName: "T4-Code-${version}-${os}-${arch}.${ext}",
+  artifactName: "Omperator-${version}-${os}-${arch}.${ext}",
   directories: {
     app: "apps/desktop",
     output: "release",
@@ -35,7 +35,7 @@ const config = {
     { from: "packages/host-daemon/dist/t4-host", to: "runtime/t4-host" },
     { from: "LICENSE", to: "LICENSE" },
   ],
-  protocols: [{ name: "T4 Code", schemes: ["t4-code"] }],
+  protocols: [{ name: "Omperator", schemes: ["t4-code"] }],
   linux: {
     category: "Development",
     icon: "apps/desktop/build/icons",

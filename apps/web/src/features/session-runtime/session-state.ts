@@ -45,7 +45,7 @@ function lifecyclePresentation(session: WorkspaceSession): SessionStatePresentat
   return {
     label: "Status unknown",
     detail:
-      "T4 has saved history for this session, but the runtime did not report whether it is running, idle, or stopped.",
+      "Omperator has saved history for this session, but the runtime did not report whether it is running, idle, or stopped.",
     status: null,
     busy: false,
   };
@@ -62,7 +62,7 @@ export function presentSessionState(session: WorkspaceSession): SessionStatePres
   if (session.freshness === "offline") {
     return {
       label: "Offline",
-      detail: "The host is unreachable. This is the last state T4 received.",
+      detail: "The host is unreachable. This is the last state Omperator received.",
       status: null,
       busy: false,
     };

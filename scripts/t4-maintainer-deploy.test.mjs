@@ -319,7 +319,7 @@ test("same-version package repair is an effective reinstall", async (t) => {
     .filter((line) => line.startsWith("apt-get\t") && !line.includes("--simulate"));
   assert.equal(aptCalls.length, 1);
   assert.match(aptCalls[0], /--reinstall/u);
-  assert.match(aptCalls[0], /T4-Code-1\.2\.3-linux-amd64\.deb/u);
+  assert.match(aptCalls[0], /Omperator-1\.2\.3-linux-amd64\.deb/u);
 });
 
 test("same-version repair accepts the explicit local-unreleased-candidate manifest kind", async (t) => {
@@ -495,7 +495,7 @@ test("post-exposure busy or changed appserver preserves new state behind a durab
       assert.equal(effectiveAptBefore.length, 1, callsBefore);
       assert.doesNotMatch(
         callsBefore,
-        /^apt-get\t.*previous-T4-Code-1\.2\.2-linux-amd64\.deb/mu,
+        /^apt-get\t.*previous-Omperator-1\.2\.2-linux-amd64\.deb/mu,
       );
 
       const second = fixture.run();

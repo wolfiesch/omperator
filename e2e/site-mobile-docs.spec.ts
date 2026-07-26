@@ -130,14 +130,20 @@ test("offers the Android APK without hiding desktop downloads", async ({ page })
   await expect(androidDownload).toBeVisible();
   await expect(androidDownload).toHaveAttribute(
     "href",
-    "https://github.com/wolfiesch/omperator/releases/download/v0.1.35/T4-Code-0.1.35-android.apk",
+    "https://github.com/wolfiesch/omperator/releases/download/v0.2.0/Omperator-0.2.0-android.apk",
   );
   await expect(page.getByRole("link", { name: /Linux/u }).first()).toBeVisible();
   await expect(page.getByRole("link", { name: /macOS/u }).first()).toBeVisible();
   await expect(page.getByText("TestFlight coming soon", { exact: true }).first()).toBeVisible();
-  const handoff = page.locator('img[src="/screenshots/t4-code-tui-handoff.gif"]');
-  await handoff.scrollIntoViewIfNeeded();
-  await expect(handoff).toHaveJSProperty("naturalWidth", 800);
+  const handoffHeading = page.getByRole("heading", {
+    name: "Start in the terminal, continue in Omperator",
+  });
+  await handoffHeading.scrollIntoViewIfNeeded();
+  await expect(handoffHeading).toBeVisible();
+  await expect(page.locator('img[src="/screenshots/t4-code-main.png"]')).toHaveJSProperty(
+    "naturalWidth",
+    1280,
+  );
 
   const geometry = await page.evaluate(() => ({
     clientWidth: document.documentElement.clientWidth,

@@ -42,11 +42,11 @@ function manifest(version: string) {
     publishedAt: "2026-07-15T20:00:00.000Z",
     releaseUrl: `https://github.com/wolfiesch/omperator/releases/tag/v${version}`,
     assets: [
-      asset(version, "android", "apk", "universal", `T4-Code-${version}-android.apk`),
-      asset(version, "linux", "deb", "x86_64", `T4-Code-${version}-linux-amd64.deb`),
-      asset(version, "linux", "appimage", "x86_64", `T4-Code-${version}-linux-x86_64.AppImage`),
-      asset(version, "mac", "dmg", "arm64", `T4-Code-${version}-mac-arm64.dmg`),
-      asset(version, "mac", "zip", "arm64", `T4-Code-${version}-mac-arm64.zip`),
+      asset(version, "android", "apk", "universal", `Omperator-${version}-android.apk`),
+      asset(version, "linux", "deb", "x86_64", `Omperator-${version}-linux-amd64.deb`),
+      asset(version, "linux", "appimage", "x86_64", `Omperator-${version}-linux-x86_64.AppImage`),
+      asset(version, "mac", "dmg", "arm64", `Omperator-${version}-mac-arm64.dmg`),
+      asset(version, "mac", "zip", "arm64", `Omperator-${version}-mac-arm64.zip`),
     ],
   };
 }
@@ -184,7 +184,7 @@ describe("desktop update controller", () => {
     const hostile = manifest("0.1.18");
     hostile.assets[1] = {
       ...hostile.assets[1]!,
-      url: "https://attacker.invalid/T4-Code-0.1.18-linux-amd64.deb",
+      url: "https://attacker.invalid/Omperator-0.1.18-linux-amd64.deb",
     };
     expect(() => decodeReleaseManifest(hostile)).toThrow("invalid release asset URL");
     const substituted = manifest("0.1.18");
@@ -193,7 +193,7 @@ describe("desktop update controller", () => {
       platform: "linux",
       kind: "appimage",
       arch: "x86_64",
-      name: "T4-Code-0.1.18-linux-amd64.deb",
+      name: "Omperator-0.1.18-linux-amd64.deb",
     };
     expect(() => decodeReleaseManifest(substituted)).toThrow("invalid canonical release assets");
     expect(() => decodeReleaseManifest({ ...manifest("0.1.18"), extra: true })).toThrow(
@@ -215,7 +215,7 @@ describe("desktop update controller", () => {
 
     const openedState = await instance.downloadUpdate();
     expect(opened).toEqual([
-      "https://github.com/wolfiesch/omperator/releases/download/v0.1.18/T4-Code-0.1.18-linux-amd64.deb",
+      "https://github.com/wolfiesch/omperator/releases/download/v0.1.18/Omperator-0.1.18-linux-amd64.deb",
     ]);
     expect(openedState.phase).toBe("manual");
     expect(updater.downloadCalls).toBe(0);
@@ -244,7 +244,7 @@ describe("desktop update controller", () => {
     expect((await instance.checkForUpdate()).phase).toBe("manual");
     await instance.downloadUpdate();
     expect(opened).toEqual([
-      "https://github.com/wolfiesch/omperator/releases/download/v0.1.18/T4-Code-0.1.18-mac-arm64.dmg",
+      "https://github.com/wolfiesch/omperator/releases/download/v0.1.18/Omperator-0.1.18-mac-arm64.dmg",
     ]);
     expect(updater.checkCalls).toBe(0);
     instance.dispose();

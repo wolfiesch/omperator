@@ -66,8 +66,8 @@ async function main() {
   const app = await firstExisting([
     resolve(repoRoot, "release", "mac-arm64", "t4-code.app"),
     resolve(repoRoot, "release", "mac", "t4-code.app"),
-    resolve(repoRoot, "release", "mac-arm64", "T4 Code.app"),
-    resolve(repoRoot, "release", "mac", "T4 Code.app"),
+    resolve(repoRoot, "release", "mac-arm64", "Omperator.app"),
+    resolve(repoRoot, "release", "mac", "Omperator.app"),
   ]);
   const resources = join(app, "Contents", "Resources");
   const host = join(resources, "runtime", "t4-host");

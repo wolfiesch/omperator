@@ -129,6 +129,6 @@ the website deployment targets and scoped AWS credentials. The release workflow
 publishes GitHub artifacts first and dispatches the immutable site deployment
 only when `T4_RELEASE_SITE_DEPLOY_ENABLED` is explicitly enabled.
 
-Application identifiers and artifact names remain `net.t4code.app`
-and `T4-Code-*`. Renaming them is a separate product decision and is not a
-prerequisite for publishing from this repository.
+The application identifier remains `net.t4code.app` so signed Android and
+macOS updates retain their installed identity. Public artifacts use the
+`Omperator-*` product name from v0.2.0 onward.

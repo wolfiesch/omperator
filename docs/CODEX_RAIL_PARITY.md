@@ -1,10 +1,10 @@
 # Codex Desktop rail parity
 
 This checklist records the Codex Desktop sidebar behavior observed in the live macOS app on
-2026-07-19 and the matching T4 Code behavior. It is deliberately limited to organizing and acting
+2026-07-19 and the matching Omperator behavior. It is deliberately limited to organizing and acting
 on projects and sessions in the left rail.
 
-| Codex Desktop behavior | T4 Code behavior | Verification |
+| Codex Desktop behavior | Omperator behavior | Verification |
 | --- | --- | --- |
 | Organize **By project** or **In one list** | Same two labels and layouts | Browser test and live DOM inspection |
 | Sort by **Priority**, **Last updated**, or **Manual order** | Same three choices | Browser test and live DOM inspection |

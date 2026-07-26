@@ -157,7 +157,7 @@ describe("presentSessionControl", () => {
       }
     }
     expect(SESSION_CONTROL_RETURNED_ANNOUNCEMENT).toBe(
-      "Session is now available in T4. Input is back.",
+      "Session is now available in Omperator. Input is back.",
     );
   });
 
@@ -231,11 +231,11 @@ describe("presentSessionControl", () => {
       lockStatus: "malformed",
       transcript: "live",
     });
-    // Suspect: the other app went quiet; T4 waits before taking over.
+    // Suspect: the other app went quiet; Omperator waits before taking over.
     expect(suspect.bannerDetail).toContain("gone quiet");
     expect(suspect.bannerDetail).toContain("waits");
     expect(suspect.bannerDetail).not.toContain("/continue-in-t4");
-    // Malformed: ownership is unclear; T4 stays read-only until safe.
+    // Malformed: ownership is unclear; Omperator stays read-only until safe.
     expect(malformed.bannerDetail.toLowerCase()).toContain("ownership");
     expect(malformed.bannerDetail.toLowerCase()).toContain("unclear");
     expect(malformed.bannerDetail.toLowerCase()).toContain("read-only");

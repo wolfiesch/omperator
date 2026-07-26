@@ -216,7 +216,7 @@ export function renderSystemdUnit(input) {
   );
   return [
     "[Unit]",
-    "Description=T4 Code Tailnet web gateway",
+    "Description=Omperator Tailnet web gateway",
     "Documentation=https://github.com/wolfiesch/omperator/blob/main/docs/TAILNET_REMOTE.md",
     "Wants=network-online.target",
     "After=network-online.target",
@@ -636,7 +636,7 @@ export function validateCliOptions(command, options) {
 }
 
 function usage() {
-  return `T4 Code Tailnet gateway service
+  return `Omperator Tailnet gateway service
 
 Usage:
   node scripts/tailnet-service.mjs install --origin https://HOST.TAILNET.ts.net[:PORT] [options]
@@ -649,7 +649,7 @@ Install options:
   --app-socket PATH     OMP appserver Unix socket
   --profile-routes JSON Static named-profile route array
   --start-profiles       Allow configured named profiles to start on demand
-  --label TEXT          Host label shown by T4 Code
+  --label TEXT          Host label shown by Omperator
   --deployment-identity SHA256:HEX
                         Immutable identity for the exact deployed T4/OMP tuple (required)
   --electron-run-as-node

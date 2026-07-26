@@ -111,10 +111,10 @@ async function inspect({ version, metadataPath, zipPath, dmgPath, blockmapPath }
   ]);
   const result = validateMacUpdateMetadata(metadata, {
     version,
-    zipName: `T4-Code-${version}-mac-arm64.zip`,
+    zipName: `Omperator-${version}-mac-arm64.zip`,
     zipSize: zipInfo.size,
     zipSha512,
-    dmgName: `T4-Code-${version}-mac-arm64.dmg`,
+    dmgName: `Omperator-${version}-mac-arm64.dmg`,
     dmgSize: dmgInfo.size,
     dmgSha512,
   });

@@ -7,15 +7,15 @@ const dmgSha512 = Buffer.alloc(64, 8).toString("base64");
 
 function metadata(overrides = {}) {
   return [
-    "version: 0.1.35",
+    "version: 0.2.0",
     "files:",
-    "  - url: T4-Code-0.1.35-mac-arm64.zip",
+    "  - url: Omperator-0.2.0-mac-arm64.zip",
     `    sha512: ${sha512}`,
     "    size: 1234",
-    "  - url: T4-Code-0.1.35-mac-arm64.dmg",
+    "  - url: Omperator-0.2.0-mac-arm64.dmg",
     `    sha512: ${dmgSha512}`,
     "    size: 2345",
-    "path: T4-Code-0.1.35-mac-arm64.zip",
+    "path: Omperator-0.2.0-mac-arm64.zip",
     `sha512: ${sha512}`,
     "releaseDate: '2026-07-25T00:00:00.000Z'",
     ...Object.entries(overrides).map(([key, value]) => `${key}: ${value}`),
@@ -25,20 +25,20 @@ function metadata(overrides = {}) {
 test("validates the exact signed macOS update zip contract", () => {
   assert.deepEqual(
     validateMacUpdateMetadata(metadata(), {
-      version: "0.1.35",
-      zipName: "T4-Code-0.1.35-mac-arm64.zip",
+      version: "0.2.0",
+      zipName: "Omperator-0.2.0-mac-arm64.zip",
       zipSize: 1234,
       zipSha512: sha512,
-      dmgName: "T4-Code-0.1.35-mac-arm64.dmg",
+      dmgName: "Omperator-0.2.0-mac-arm64.dmg",
       dmgSize: 2345,
       dmgSha512,
     }),
     {
-      version: "0.1.35",
-      zipName: "T4-Code-0.1.35-mac-arm64.zip",
+      version: "0.2.0",
+      zipName: "Omperator-0.2.0-mac-arm64.zip",
       zipSize: 1234,
       zipSha512: sha512,
-      dmgName: "T4-Code-0.1.35-mac-arm64.dmg",
+      dmgName: "Omperator-0.2.0-mac-arm64.dmg",
       dmgSize: 2345,
       dmgSha512,
     },
@@ -47,11 +47,11 @@ test("validates the exact signed macOS update zip contract", () => {
 
 test("rejects extra fields and zip identity, size, or digest substitution", () => {
   const options = {
-    version: "0.1.35",
-    zipName: "T4-Code-0.1.35-mac-arm64.zip",
+    version: "0.2.0",
+    zipName: "Omperator-0.2.0-mac-arm64.zip",
     zipSize: 1234,
     zipSha512: sha512,
-    dmgName: "T4-Code-0.1.35-mac-arm64.dmg",
+    dmgName: "Omperator-0.2.0-mac-arm64.dmg",
     dmgSize: 2345,
     dmgSha512,
   };

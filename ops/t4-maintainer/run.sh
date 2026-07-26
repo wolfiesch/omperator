@@ -1017,11 +1017,11 @@ release_assets_are_public() {
   local release_json=$1 version=$2
   local -a expected=(
     "SHA256SUMS.txt"
-    "T4-Code-${version}-android.apk"
-    "T4-Code-${version}-linux-amd64.deb"
-    "T4-Code-${version}-linux-x86_64.AppImage"
-    "T4-Code-${version}-mac-arm64.dmg"
-    "T4-Code-${version}-mac-arm64.zip"
+    "Omperator-${version}-android.apk"
+    "Omperator-${version}-linux-amd64.deb"
+    "Omperator-${version}-linux-x86_64.AppImage"
+    "Omperator-${version}-mac-arm64.dmg"
+    "Omperator-${version}-mac-arm64.zip"
     "latest-linux.yml"
   )
   local name url manifest_url manifest_digest manifest_file actual_manifest_digest expected_digest asset_digest
@@ -1087,8 +1087,8 @@ canonical_linux_update_assets() {
   local release_json=$1 version=$2
   printf '%s' "$release_json" | $JQ -ceS --arg version "$version" '
     [
-      {name: "T4-Code-\($version)-linux-amd64.deb", maximumSize: 536870912},
-      {name: "T4-Code-\($version)-linux-x86_64.AppImage", maximumSize: 536870912},
+      {name: "Omperator-\($version)-linux-amd64.deb", maximumSize: 536870912},
+      {name: "Omperator-\($version)-linux-x86_64.AppImage", maximumSize: 536870912},
       {name: "latest-linux.yml", maximumSize: 65536}
     ] as $expected |
     . as $release |
@@ -1191,8 +1191,8 @@ verify_live_linux_update() {
   done < <(printf '%s' "$canonical" | $JQ -c '.assets[]')
 
   metadata_path="$download_dir/latest-linux.yml"
-  deb_path="$download_dir/T4-Code-${version}-linux-amd64.deb"
-  appimage_path="$download_dir/T4-Code-${version}-linux-x86_64.AppImage"
+  deb_path="$download_dir/Omperator-${version}-linux-amd64.deb"
+  appimage_path="$download_dir/Omperator-${version}-linux-x86_64.AppImage"
   "$NODE" "$LINUX_UPDATE_INSPECTOR" \
     --version "$version" \
     --metadata "$metadata_path" \
@@ -1271,11 +1271,11 @@ site_release_manifest_matches() {
     --slurpfile github "$release_file" \
     --rawfile sums "$checksums_file" '
       def expected_packages($version): [
-        {platform: "android", kind: "apk", arch: "universal", name: "T4-Code-\($version)-android.apk"},
-        {platform: "linux", kind: "deb", arch: "x86_64", name: "T4-Code-\($version)-linux-amd64.deb"},
-        {platform: "linux", kind: "appimage", arch: "x86_64", name: "T4-Code-\($version)-linux-x86_64.AppImage"},
-        {platform: "mac", kind: "dmg", arch: "arm64", name: "T4-Code-\($version)-mac-arm64.dmg"},
-        {platform: "mac", kind: "zip", arch: "arm64", name: "T4-Code-\($version)-mac-arm64.zip"}
+        {platform: "android", kind: "apk", arch: "universal", name: "Omperator-\($version)-android.apk"},
+        {platform: "linux", kind: "deb", arch: "x86_64", name: "Omperator-\($version)-linux-amd64.deb"},
+        {platform: "linux", kind: "appimage", arch: "x86_64", name: "Omperator-\($version)-linux-x86_64.AppImage"},
+        {platform: "mac", kind: "dmg", arch: "arm64", name: "Omperator-\($version)-mac-arm64.dmg"},
+        {platform: "mac", kind: "zip", arch: "arm64", name: "Omperator-\($version)-mac-arm64.zip"}
       ];
       def checksum_entries:
         ($sums | if endswith("\n") then .[0:-1] else . end) | split("\n") | map(
@@ -1704,11 +1704,11 @@ site_has_release() {
   local t4_tag=$1 integration_tag=$2 version=$3
   local cache_bust index docs site_assets asset bundle_file release_asset
   local -a release_assets=(
-    "T4-Code-${version}-android.apk"
-    "T4-Code-${version}-linux-amd64.deb"
-    "T4-Code-${version}-linux-x86_64.AppImage"
-    "T4-Code-${version}-mac-arm64.dmg"
-    "T4-Code-${version}-mac-arm64.zip"
+    "Omperator-${version}-android.apk"
+    "Omperator-${version}-linux-amd64.deb"
+    "Omperator-${version}-linux-x86_64.AppImage"
+    "Omperator-${version}-mac-arm64.dmg"
+    "Omperator-${version}-mac-arm64.zip"
   )
   cache_bust=$(date +%s)
   index=$($CURL -fsSL --retry 3 --retry-all-errors --max-time 45 "$T4_SITE/?maintainer=$cache_bust") || return 1
@@ -2542,7 +2542,7 @@ run_live_maintenance() {
   rm -f -- "$result_file" "$deferral_file"
 
 
-  release_instruction="Publish T4 Code for official OMP $upstream_tag at $upstream_commit. Reuse and complete any compatible main commit, version, or tag already present. Use the wrapper-owned atomic publisher for the OMP base tag, product branch, and annotated integration tag."
+  release_instruction="Publish Omperator for official OMP $upstream_tag at $upstream_commit. Reuse and complete any compatible main commit, version, or tag already present. Use the wrapper-owned atomic publisher for the OMP base tag, product branch, and annotated integration tag."
   if [[ $RESUME_PUBLICATION_JSON != null ]]; then
     release_instruction="Continue and complete the compatible T4 publication for official OMP $upstream_tag at $upstream_commit, reusing its existing main commit, version, and tag where valid."
   fi
