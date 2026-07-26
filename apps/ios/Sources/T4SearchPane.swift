@@ -178,13 +178,13 @@ struct T4SearchPane: View {
                 .multilineTextAlignment(.center)
                 .padding(20)
             Spacer()
-        } else if let results, results.matches.isEmpty {
+        } else if let results = searchResults, results.matches.isEmpty {
             Spacer()
             Text("No matching files.")
                 .font(.system(size: 13))
                 .foregroundStyle(t.txtMuted)
             Spacer()
-        } else if let results {
+        } else if let results = searchResults {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     if results.truncated {
