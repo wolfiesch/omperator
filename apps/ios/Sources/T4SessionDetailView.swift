@@ -108,6 +108,17 @@ struct T4SessionDetailView: View {
                 .environmentObject(theme)
         }
         .background(t.bg.ignoresSafeArea())
+        // A narrow fade pinned to the screen's bottom edge, BELOW the floating
+        // composer/plan strip — anything scrolling under there dissolves into
+        // the background instead of hard-clipping at the edge.
+        .overlay(alignment: .bottom) {
+            LinearGradient(colors: [t.bg.opacity(0), t.bg],
+                           startPoint: .top, endPoint: .bottom)
+                .frame(height: 56)
+                .frame(maxWidth: .infinity)
+                .ignoresSafeArea(.container, edges: .bottom)
+                .allowsHitTesting(false)
+        }
         // Floating glass: plan strip + composer hover over the transcript,
         // which scrolls underneath. No floor, no divider.
         .safeAreaInset(edge: .bottom, spacing: 8) {
