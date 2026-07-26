@@ -258,8 +258,8 @@ final class T4BrowserCoordinator: NSObject, WKNavigationDelegate {
          loading: Binding<Bool>,
          onNavigated: @escaping (String) -> Void) {
         let config = WKWebViewConfiguration()
-        config.allowsInlineMediaPlayback = true
         #if os(iOS)
+        config.allowsInlineMediaPlayback = true
         config.allowsAirPlayForMediaPlayback = true
         #endif
         self.webView = WKWebView(frame: .zero, configuration: config)
