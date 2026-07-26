@@ -108,6 +108,17 @@ struct T4SessionDetailView: View {
                 .environmentObject(theme)
         }
         .background(t.bg.ignoresSafeArea())
+        // Floating plan panel: bottom-anchored above the pill+composer,
+        // transition-driven — never in the layout flow, so nothing can jump.
+        .overlay(alignment: .bottom) {
+            if planExpanded && !store.todoPhases(for: session.sessionId).isEmpty {
+                T4PlanPanel(phases: store.todoPhases(for: session.sessionId), t: t)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 118)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.22), value: planExpanded)
         // Floating glass: plan strip + composer hover over the transcript,
         // which scrolls underneath. No floor, no divider.
         .safeAreaInset(edge: .bottom, spacing: 8) {

@@ -31,31 +31,8 @@ struct T4PlanStrip: View {
     }
 
     var body: some View {
-        // The pill is the anchor: it never moves. The plan panel lives in an
-        // overlay pinned above it (no layout impact) and grows upward — so
-        // expand/collapse is one clean unfold from the strip, no overshoot.
-        pill
-            .glass(t, 16, panel: true)
-            .overlay(alignment: .bottom) {
-                ScrollView { planBody.padding(.horizontal, 13).padding(.top, 12).padding(.bottom, 8) }
-                    .scrollDisabled(!expanded)
-                    .frame(maxHeight: expanded ? 260 : 0, alignment: .bottom)
-                    .opacity(expanded ? 1 : 0)
-                    .allowsHitTesting(expanded)
-                    .accessibilityHidden(!expanded)
-                    .background(t.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(t.glassBorder, lineWidth: 1)
-                    )
-                    .clipped()
-                    .padding(.horizontal, 2)
-                    .alignmentGuide(.bottom) { $0[.top] - 8 }
-            }
-            .animation(.easeInOut(duration: 0.22), value: expanded)
-    }
-
-    private var pill: some View {
+        // The pill is the anchor in the layout flow; the plan panel is a
+        // floating layer rendered by the detail view (T4PlanPanel) above it.
         Button { expanded.toggle() } label: {
             HStack(spacing: 7) {
                 Image(systemName: "checklist").font(.system(size: 12)).foregroundStyle(t.accent)
@@ -76,6 +53,24 @@ struct T4PlanStrip: View {
             .padding(.horizontal, 13).padding(.vertical, 10)
         }
         .buttonStyle(.plain)
+        .glass(t, 16, panel: true)
+    }
+}
+
+/// The floating plan panel: rendered by the detail view as a bottom-anchored
+/// overlay above the composer (transition-driven, never in the layout flow).
+struct T4PlanPanel: View {
+    let phases: [PlanPhase]
+    let t: Theme
+
+    var body: some View {
+        ScrollView { planBody.padding(.horizontal, 13).padding(.top, 12).padding(.bottom, 8) }
+            .frame(maxHeight: 260)
+            .background(t.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(t.glassBorder, lineWidth: 1)
+            )
     }
 
     private var planBody: some View {
