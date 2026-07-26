@@ -29,6 +29,83 @@ struct T4WorkspaceView: View {
     private func railWidth(for screen: CGFloat) -> CGFloat { min(320, screen * 0.84) }
 
     var body: some View {
+        #if os(macOS)
+        sharedModifiers(macBody)
+        #else
+        sharedModifiers(drawerBody)
+        #endif
+    }
+
+    /// Sheets, deep links, and UI-test task seams shared by both platforms so
+    /// the iOS drawer and the macOS split view stay in lockstep.
+    @ViewBuilder
+    private func sharedModifiers(_ content: some View) -> some View {
+        content
+            .sheet(isPresented: $showConnect) {
+                T4ConnectView(store: store, pendingPair: pendingPair)
+                    .environmentObject(theme)
+                    #if os(macOS)
+                    .frame(minWidth: 520, minHeight: 480)
+                    #endif
+            }
+            .sheet(isPresented: $showInbox) {
+                T4InboxView(store: store, isPresented: $showInbox)
+                    .environmentObject(theme)
+            }
+            .onOpenURL { url in handleDeepLink(url) }
+            .onAppear {
+                if store.selectedSession == nil { store.select(store.sessions.first) }
+                // UI-test seam: launch with -T4RailOpen to boot with the rail open.
+                if ProcessInfo.processInfo.arguments.contains("-T4RailOpen") { railProgress = 1 }
+                // UI-test seam: launch with -T4ShowInbox to boot with the inbox open.
+                if ProcessInfo.processInfo.arguments.contains("-T4ShowInbox") { showInbox = true }
+            }
+            .task { await store.restore() }
+            .task {
+                // UI-test seam: launch with -T4PairCode <code> [-T4PairHost <host[:port]>]
+                // to run the pair handshake on first boot. Default host is the
+                // tailnet IP (the sim has no MagicDNS resolver).
+                let args = ProcessInfo.processInfo.arguments
+                if let index = args.firstIndex(of: "-T4PairCode"), args.indices.contains(index + 1) {
+                    var host = "100.98.34.4"
+                    if let hIndex = args.firstIndex(of: "-T4PairHost"), args.indices.contains(hIndex + 1) {
+                        host = args[hIndex + 1]
+                    }
+                    if let endpoint = URL(string: "ws://\(host):8787/v1/ws") {
+                        await store.pairAndConnect(endpoint: endpoint, code: args[index + 1], deviceName: "sim-ui-test")
+                    }
+                }
+            }
+            .task {
+                // UI-test seam: launch with -T4Send <message> to send one prompt
+                // from the app's own send path once connected (proves the Swift
+                // lease flow end-to-end without touch injection).
+                let args = ProcessInfo.processInfo.arguments
+                guard let index = args.firstIndex(of: "-T4Send"), args.indices.contains(index + 1) else { return }
+                let text = args[index + 1]
+                for _ in 0..<40 where !store.connected { try? await Task.sleep(for: .milliseconds(500)) }
+                // connected flips before the live inventory lands — wait for real
+                // sessions (sample rows carry the fake "studio-mac" host), else the
+                // lease acquire goes out with a sample revision and is rejected.
+                for _ in 0..<40 where !store.sessions.contains(where: { $0.hostId != "studio-mac" }) {
+                    try? await Task.sleep(for: .milliseconds(500))
+                }
+                guard store.connected, let session = store.selectedSession ?? store.sessions.first else { return }
+                // The socket can be mid-reconnect when we get here; retry a few
+                // times before giving up (errors surface via store.lastError).
+                for attempt in 0..<3 {
+                    let before = store.lastError
+                    await store.sendPrompt(sessionId: session.sessionId, text: text)
+                    if store.lastError == before { return }   // no new error → sent
+                    try? await Task.sleep(for: .seconds(2))
+                    if attempt == 2 { return }
+                }
+            }
+    }
+
+    // MARK: - iOS root (drawer)
+
+    private var drawerBody: some View {
         GeometryReader { geo in
             let width = railWidth(for: geo.size.width)
 
@@ -62,65 +139,216 @@ struct T4WorkspaceView: View {
             }
         }
         .background(t.bg.ignoresSafeArea())
-        .sheet(isPresented: $showConnect) {
-            T4ConnectView(store: store, pendingPair: pendingPair)
-                .environmentObject(theme)
-                #if os(macOS)
-                .frame(minWidth: 520, minHeight: 480)
-                #endif
+    }
+
+    #if os(macOS)
+    // MARK: - macOS root (NavigationSplitView)
+
+    @EnvironmentObject private var macCommands: MacCommandsModel
+    @FocusState private var railSearchFocused: Bool
+    @State private var renameTarget: SessionRef?
+    @State private var renameText = ""
+
+    private var macBody: some View {
+        NavigationSplitView(columnVisibility: $macCommands.columnVisibility) {
+            macRail
+        } detail: {
+            macDetail
         }
-        .sheet(isPresented: $showInbox) {
-            T4InboxView(store: store, isPresented: $showInbox)
-                .environmentObject(theme)
+        .focusedSceneValue(\.t4SessionStore, store)
+        .focusedSceneValue(\.macCommands, macCommands)
+        .onChange(of: macCommands.focusSearchTick) { _, _ in railSearchFocused = true }
+        .onChange(of: macCommands.dismissTick) { _, _ in
+            showConnect = false
+            showInbox = false
         }
-        .onOpenURL { url in handleDeepLink(url) }
-        .onAppear {
-            if store.selectedSession == nil { store.select(store.sessions.first) }
-            // UI-test seam: launch with -T4RailOpen to boot with the rail open.
-            if ProcessInfo.processInfo.arguments.contains("-T4RailOpen") { railProgress = 1 }
-            // UI-test seam: launch with -T4ShowInbox to boot with the inbox open.
-            if ProcessInfo.processInfo.arguments.contains("-T4ShowInbox") { showInbox = true }
+        .onChange(of: macCommands.connectTick) { _, _ in showConnect = true }
+        .onChange(of: macCommands.renameTarget) { _, target in
+            renameTarget = target
+            renameText = target?.title ?? ""
         }
-        .task { await store.restore() }
-        .task {
-            // UI-test seam: launch with -T4PairCode <code> [-T4PairHost <host[:port]>]
-            // to run the pair handshake on first boot. Default host is the
-            // tailnet IP (the sim has no MagicDNS resolver).
-            let args = ProcessInfo.processInfo.arguments
-            if let index = args.firstIndex(of: "-T4PairCode"), args.indices.contains(index + 1) {
-                var host = "100.98.34.4"
-                if let hIndex = args.firstIndex(of: "-T4PairHost"), args.indices.contains(hIndex + 1) {
-                    host = args[hIndex + 1]
+        .alert("Rename Session", isPresented: Binding(
+            get: { renameTarget != nil },
+            set: { if !$0 { renameTarget = nil; macCommands.renameTarget = nil } }
+        )) {
+            TextField("Session name", text: $renameText)
+            Button("Rename") {
+                if let s = renameTarget {
+                    Task { await store.renameSession(sessionId: s.sessionId, name: renameText) }
                 }
-                if let endpoint = URL(string: "ws://\(host):8787/v1/ws") {
-                    await store.pairAndConnect(endpoint: endpoint, code: args[index + 1], deviceName: "sim-ui-test")
+                renameTarget = nil
+                macCommands.renameTarget = nil
+            }
+            Button("Cancel", role: .cancel) {
+                renameTarget = nil
+                macCommands.renameTarget = nil
+            }
+        } message: {
+            Text("Enter a new title for this session.")
+        }
+    }
+
+    /// Sidebar column: rail header (title + theme + live status), search field,
+    /// the session list, and the shared connect bar.
+    private var macRail: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Text("T4 Code")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(t.txt)
+                Spacer()
+                Button { theme.toggle() } label: {
+                    Image(systemName: theme.effective == .dark ? "sun.max" : "moon")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(t.txtMuted)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Toggle dark mode")
+                if store.connected {
+                    HStack(spacing: 5) {
+                        LiveDot(t: t)
+                        Text("Live").font(.system(size: 11, weight: .semibold)).foregroundStyle(t.diffAdd)
+                    }
                 }
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+
+            TextField("Search sessions", text: $store.query)
+                .textFieldStyle(.roundedBorder)
+                .focused($railSearchFocused)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+
+            T4SessionsView(store: store) { session in store.select(session) }
+
+            connectBar
         }
-        .task {
-            // UI-test seam: launch with -T4Send <message> to send one prompt
-            // from the app's own send path once connected (proves the Swift
-            // lease flow end-to-end without touch injection).
-            let args = ProcessInfo.processInfo.arguments
-            guard let index = args.firstIndex(of: "-T4Send"), args.indices.contains(index + 1) else { return }
-            let text = args[index + 1]
-            for _ in 0..<40 where !store.connected { try? await Task.sleep(for: .milliseconds(500)) }
-            // connected flips before the live inventory lands — wait for real
-            // sessions (sample rows carry the fake "studio-mac" host), else the
-            // lease acquire goes out with a sample revision and is rejected.
-            for _ in 0..<40 where !store.sessions.contains(where: { $0.hostId != "studio-mac" }) {
-                try? await Task.sleep(for: .milliseconds(500))
+        .frame(minWidth: 240)
+        .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 460)
+        .navigationTitle("T4 Code")
+    }
+
+    /// Detail column: the workspace content (boot splash / onboarding / session
+    /// detail / empty state) with the sidebar-toggle, model, and inbox toolbar.
+    private var macDetail: some View {
+        Group {
+            if !store.hasLiveInventory && !T4SessionStore.demoMode && store.hasSavedConnection {
+                bootSplash
+            } else if !store.hasLiveInventory && !T4SessionStore.demoMode {
+                onboarding
+            } else if let session = store.selectedSession {
+                T4SessionDetailView(session: session, store: store)
+                    .environmentObject(theme)
+            } else {
+                macEmptyState
             }
-            guard store.connected, let session = store.selectedSession ?? store.sessions.first else { return }
-            // The socket can be mid-reconnect when we get here; retry a few
-            // times before giving up (errors surface via store.lastError).
-            for attempt in 0..<3 {
-                let before = store.lastError
-                await store.sendPrompt(sessionId: session.sessionId, text: text)
-                if store.lastError == before { return }   // no new error → sent
-                try? await Task.sleep(for: .seconds(2))
-                if attempt == 2 { return }
+        }
+        .navigationTitle(store.selectedSession?.title ?? "T4 Code")
+        .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button { macCommands.toggleSidebar() } label: {
+                    Image(systemName: "sidebar.left")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(t.txt)
+                }
+                .accessibilityLabel("Toggle sidebar")
             }
+            ToolbarItem(placement: platformTrailingPlacement) {
+                if let session = store.selectedSession {
+                    T4ModelMenuButton(session: session, store: store, theme: t) {
+                        T4ModelLabel(selector: session.model ?? "choose model", theme: t, size: 12)
+                            .frame(minHeight: 28)
+                    }
+                    .accessibilityLabel("Model and session controls")
+                }
+            }
+            ToolbarItem(placement: platformTrailingPlacement) {
+                Button { showInbox = true } label: {
+                    ZStack(alignment: .topTrailing) {
+                        Image(systemName: "bell")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(t.txt)
+                        if !store.attentionSessions.isEmpty {
+                            Text("\(store.attentionSessions.count)")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(t.bg)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(t.cAdvisor, in: Capsule())
+                                .offset(x: 4, y: 2)
+                        }
+                    }
+                }
+                .accessibilityLabel("Attention inbox")
+            }
+        }
+        .tint(t.accent)
+    }
+
+    private var macEmptyState: some View {
+        VStack(spacing: 18) {
+            Image(systemName: "sidebar.left")
+                .font(.system(size: 44, weight: .light))
+                .foregroundStyle(t.txtGhost)
+            Text("No session selected")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(t.txtBody)
+            Text("Pick a session from the sidebar, or press \u{2309}B to show it.")
+                .font(.system(size: 13))
+                .foregroundStyle(t.txtMuted)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 260)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(t.bg)
+    }
+    #endif
+
+    /// Bottom bar: where you're plugged in, one obvious action. Shared by the
+    /// iOS drawer rail and the macOS sidebar.
+    @ViewBuilder
+    private var connectBar: some View {
+        if store.connected {
+            HStack(spacing: 10) {
+                Circle().fill(t.diffAdd).frame(width: 8, height: 8)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Connected").font(.system(size: 13, weight: .semibold)).foregroundStyle(t.txt)
+                    if let endpoint = store.pairedEndpoint {
+                        Text(endpoint.replacingOccurrences(of: "ws://", with: "").replacingOccurrences(of: "/v1/ws", with: ""))
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(t.txtMuted)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer()
+                Button { Task { await store.disconnect() } } label: {
+                    Text("Disconnect").font(.system(size: 13, weight: .semibold))
+                }
+                .buttonStyle(.bordered)
+                .tint(t.diffDel)
+                .accessibilityLabel("Disconnect from host")
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 28)
+            .overlay(alignment: .top) { Rectangle().fill(t.lineFaint).frame(height: 1) }
+        } else {
+            HStack(spacing: 10) {
+                Button { showConnect = true } label: {
+                    Label("Connect to T4 Code", systemImage: "plus.circle.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(t.accent)
+                .controlSize(.large)
+                .accessibilityLabel("Connect to a T4 Code host")
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 28)
+            .overlay(alignment: .top) { Rectangle().fill(t.lineFaint).frame(height: 1) }
         }
     }
 
@@ -302,47 +530,7 @@ struct T4WorkspaceView: View {
             }
 
             // Bottom bar: where you're plugged in, one obvious action.
-            if store.connected {
-                HStack(spacing: 10) {
-                    Circle().fill(t.diffAdd).frame(width: 8, height: 8)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Connected").font(.system(size: 13, weight: .semibold)).foregroundStyle(t.txt)
-                        if let endpoint = store.pairedEndpoint {
-                            Text(endpoint.replacingOccurrences(of: "ws://", with: "").replacingOccurrences(of: "/v1/ws", with: ""))
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(t.txtMuted)
-                                .lineLimit(1)
-                        }
-                    }
-                    Spacer()
-                    Button { Task { await store.disconnect() } } label: {
-                        Text("Disconnect").font(.system(size: 13, weight: .semibold))
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(t.diffDel)
-                    .accessibilityLabel("Disconnect from host")
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 12)
-                .padding(.bottom, 28)
-                .overlay(alignment: .top) { Rectangle().fill(t.lineFaint).frame(height: 1) }
-            } else {
-                HStack(spacing: 10) {
-                    Button { showConnect = true } label: {
-                        Label("Connect to T4 Code", systemImage: "plus.circle.fill")
-                            .font(.system(size: 15, weight: .semibold))
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(t.accent)
-                    .controlSize(.large)
-                    .accessibilityLabel("Connect to a T4 Code host")
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 12)
-                .padding(.bottom, 28)
-                .overlay(alignment: .top) { Rectangle().fill(t.lineFaint).frame(height: 1) }
-            }
+            connectBar
         }
         .frame(width: width)
         .frame(maxHeight: .infinity)

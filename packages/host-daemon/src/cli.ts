@@ -9,6 +9,7 @@ import {
   OfficialOmpProfileAuthority,
   OmpAuthorityBridgeClient,
   profileSocketPath,
+  FilesAuthority,
   ProjectFileSearchAuthority,
   PtyTerminalAuthority,
   SeedingTestControl,
@@ -371,6 +372,8 @@ export async function runHostDaemon(
     const projectFileSearchAuthority = new ProjectFileSearchAuthority(
       projectRootForSession,
     );
+    const filesAuthority = new FilesAuthority({ projectRootForSession });
+    const filesOperations = filesAuthority.operations();
     const testControl = config.testControl
       ? new SeedingTestControl({
           token: requiredTestControlToken(),
@@ -393,6 +396,11 @@ export async function runHostDaemon(
       operationsAuthority: {
         ...operationsAuthority,
         ...projectFileSearchAuthority.operations(),
+        // The bridge forwards files.list/read to the OMP RPC when the runtime
+        // advertises them; the T4-owned standalone host serves them directly
+        // from the session cwd so remote clients get the files pane either way.
+        ...(operationsAuthority.filesList ? {} : { filesList: filesOperations.filesList }),
+        ...(operationsAuthority.filesRead ? {} : { filesRead: filesOperations.filesRead }),
       },
       ...(usageAuthority ? { usageAuthority } : {}),
       transcriptSearchAuthority,
