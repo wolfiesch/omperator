@@ -23,6 +23,7 @@ import path from "node:path";
 
 export const COVERAGE_RELATIVE_PATH = "docs/settings-surface/coverage.json";
 export const SNAPSHOT_RELATIVE_PATH = "docs/settings-surface/schema-snapshot.json";
+export const ROUTE_MAP_RELATIVE_PATH = "apps/web/src/features/settings/route-map.ts";
 
 const PAGE_ID = /^[a-z][\w-]*\/[a-z][\w-]*$/u;
 
@@ -149,17 +150,108 @@ export function formatReport(result, universe) {
   return result.failures.length ? `${head}\n${result.failures.join("\n")}` : head;
 }
 
+const TS_HEADER = `// Generated from ${COVERAGE_RELATIVE_PATH} by scripts/check-settings-coverage.mjs.
+// Do not edit. Run \`node scripts/check-settings-coverage.mjs --write\` to regenerate.
+//
+// This is the settings information architecture: the rail's groups and pages,
+// the named sections inside each page, and which OMP setting path belongs to
+// which section. It replaces deriving sections from the host's \`ui.tab\`, which
+// left every untabbed key in one unlabelled bucket.
+`;
+
+const quote = (value) => JSON.stringify(value);
+
+/** Render the manifest as a typed module the renderer imports. */
+export function renderRouteMap(coverage) {
+  const lines = [TS_HEADER];
+  lines.push(`export interface SettingsRouteGroup {
+  readonly id: string;
+  readonly label: string;
+  readonly summary: string;
+}
+
+export interface SettingsRouteSection {
+  readonly label: string;
+  readonly keys: readonly string[];
+}
+
+export type SettingsPageTemplate = "form" | "collection" | "action" | "form+collection" | "form+action";
+
+export interface SettingsRoutePage {
+  readonly id: string;
+  readonly group: string;
+  readonly label: string;
+  readonly template: SettingsPageTemplate;
+  /** Named runtime predicate that must hold for this page to appear in the rail. */
+  readonly visibleWhen?: string;
+  /** Resource kinds this page edits through \`config.resource.*\`. */
+  readonly collections: readonly string[];
+  readonly sections: readonly SettingsRouteSection[];
+}
+`);
+  lines.push(
+    `export const SETTINGS_GROUPS: readonly SettingsRouteGroup[] = [\n${(coverage.groups ?? [])
+      .map((group) => `  { id: ${quote(group.id)}, label: ${quote(group.label)}, summary: ${quote(group.summary ?? "")} },`)
+      .join("\n")}\n];\n`,
+  );
+  const pages = (coverage.pages ?? []).map((page) => {
+    const sections = page.sections
+      .map(
+        (section) =>
+          `      {\n        label: ${quote(section.label)},\n        keys: [${section.keys
+            .map((key) => `\n          ${quote(key)},`)
+            .join("")}\n        ],\n      },`,
+      )
+      .join("\n");
+    return [
+      "  {",
+      `    id: ${quote(page.id)},`,
+      `    group: ${quote(page.group)},`,
+      `    label: ${quote(page.label)},`,
+      `    template: ${quote(page.template)},`,
+      ...(page.visibleWhen ? [`    visibleWhen: ${quote(page.visibleWhen)},`] : []),
+      `    collections: [${(page.collections ?? []).map((kind) => quote(kind)).join(", ")}],`,
+      page.sections.length === 0 ? "    sections: []," : `    sections: [\n${sections}\n    ],`,
+      "  },",
+    ].join("\n");
+  });
+  lines.push(`export const SETTINGS_PAGES: readonly SettingsRoutePage[] = [\n${pages.join("\n")}\n];\n`);
+  lines.push(`const ROUTE_BY_PATH = new Map<string, { readonly page: SettingsRoutePage; readonly section: SettingsRouteSection }>(
+  SETTINGS_PAGES.flatMap((page) => page.sections.flatMap((section) => section.keys.map((key) => [key, { page, section }] as const))),
+);
+
+/** The single home of one OMP setting path, or undefined when no section claims it. */
+export function routeForSetting(path: string): { readonly page: SettingsRoutePage; readonly section: SettingsRouteSection } | undefined {
+  return ROUTE_BY_PATH.get(path);
+}
+
+/** Every setting path the manifest accounts for. */
+export function routedSettingPaths(): readonly string[] {
+  return [...ROUTE_BY_PATH.keys()];
+}
+`);
+  return lines.join("\n");
+}
+
 export async function checkSettingsCoverage(root = process.cwd(), { write = false } = {}) {
   const coveragePath = path.join(root, COVERAGE_RELATIVE_PATH);
+  const routePath = path.join(root, ROUTE_MAP_RELATIVE_PATH);
   const coverage = JSON.parse(await fs.readFile(coveragePath, "utf8"));
   const snapshot = JSON.parse(await fs.readFile(path.join(root, SNAPSHOT_RELATIVE_PATH), "utf8"));
-  const result = auditCoverage(coverage, snapshot);
+  let result = auditCoverage(coverage, snapshot);
   if (write) {
     applyExpansion(coverage, result.expansion);
     await fs.writeFile(coveragePath, `${JSON.stringify(coverage, null, 2)}\n`);
-    const rechecked = auditCoverage(coverage, snapshot);
-    return { ...rechecked, universe: result.universe, wrote: true };
+    await fs.writeFile(routePath, renderRouteMap(coverage));
+    result = { ...auditCoverage(coverage, snapshot), universe: result.universe };
+    return { ...result, wrote: true };
   }
+  // The route map is derived too, so a stale one is the same class of failure
+  // as a stale `keys` array: regenerate and the diff must be empty.
+  const expected = renderRouteMap(coverage);
+  const actual = await fs.readFile(routePath, "utf8").catch(() => null);
+  if (actual === null) result.failures.push(`${ROUTE_MAP_RELATIVE_PATH}: missing; rerun with --write`);
+  else if (actual !== expected) result.failures.push(`${ROUTE_MAP_RELATIVE_PATH}: stale; rerun with --write`);
   return { ...result, wrote: false };
 }
 

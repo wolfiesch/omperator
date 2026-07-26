@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { applyExpansion, auditCoverage, checkSettingsCoverage, resolveKey, schemaUniverse } from "./check-settings-coverage.mjs";
+import { applyExpansion, auditCoverage, checkSettingsCoverage, renderRouteMap, resolveKey, schemaUniverse } from "./check-settings-coverage.mjs";
 import { settingsSchemaKeys } from "./settings-schema-keys.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -168,4 +169,35 @@ test("duplicate schema keys are reported", () => {
   const source = schemaSource([`\tdupe: { type: "boolean", default: false },`, `\tdupe: { type: "boolean", default: true },`, padding].join("\n"));
   const { failures } = settingsSchemaKeys(source);
   assert.ok(failures.some((failure) => /duplicate schema key: dupe/u.test(failure)));
+});
+
+// ── generated route map ──────────────────────────────────────────────────────
+
+test("the committed route map matches a fresh render", async () => {
+  const coverage = JSON.parse(await readFile(path.join(ROOT, "docs/settings-surface/coverage.json"), "utf8"));
+  const committed = await readFile(path.join(ROOT, "apps/web/src/features/settings/route-map.ts"), "utf8");
+  assert.equal(committed, renderRouteMap(coverage));
+});
+
+test("the route map carries every page, section, and key from the manifest", () => {
+  const coverage = manifest([
+    { label: "Roles", exact: ["modelRoles"], keys: ["modelRoles"] },
+    { label: "Reasoning", prefixes: ["thinkingBudgets."], keys: ["thinkingBudgets.low"] },
+  ]);
+  coverage.pages[0].template = "form+collection";
+  coverage.pages[0].visibleWhen = "advisorEnabled";
+  coverage.pages[0].collections = ["agent"];
+  const rendered = renderRouteMap(coverage);
+  assert.match(rendered, /id: "agent\/models"/u);
+  assert.match(rendered, /template: "form\+collection"/u);
+  assert.match(rendered, /visibleWhen: "advisorEnabled"/u);
+  assert.match(rendered, /collections: \["agent"\]/u);
+  assert.match(rendered, /label: "Reasoning"/u);
+  assert.match(rendered, /"thinkingBudgets\.low"/u);
+  assert.match(rendered, /export function routeForSetting/u);
+});
+
+test("a page with no sections renders an empty array rather than invalid syntax", () => {
+  const coverage = { groups: [{ id: "system", label: "System", summary: "" }], pages: [{ id: "system/hosts", group: "system", label: "Hosts", template: "collection", collections: [], sections: [] }] };
+  assert.match(renderRouteMap(coverage), /sections: \[\],/u);
 });

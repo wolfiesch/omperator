@@ -66,8 +66,8 @@
             "cycleOrder",
             "enabledModels",
             "modelProviderOrder",
-            "modelRoleStorage",
             "modelRoles",
+            "modelRoleStorage",
             "modelTags"
           ]
         },
@@ -220,10 +220,10 @@
             ]
           },
           "keys": [
+            "exa.enabled",
             "exa.enableResearcher",
             "exa.enableSearch",
             "exa.enableWebsets",
-            "exa.enabled",
             "exa.searchDelayMs",
             "fetch.enabled",
             "providers.fetch",
@@ -393,10 +393,10 @@
             "skills.enableClaudeProject",
             "skills.enableClaudeUser",
             "skills.enableCodexUser",
+            "skills.enabled",
             "skills.enablePiProject",
             "skills.enablePiUser",
             "skills.enableSkillCommands",
-            "skills.enabled",
             "skills.ignoredSkills",
             "skills.includeSkills"
           ]
