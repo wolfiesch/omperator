@@ -176,8 +176,9 @@ struct T4SessionDetailView: View {
                 T4SettingsPane(store: store, isPresented: sheetBinding(.settings))
                     .environmentObject(theme)
             case .browser:
-                T4BrowserPane(session: session, store: store, isPresented: sheetBinding(.browser))
-                    .environmentObject(theme)
+                NavigationStack { Text("browser placeholder") }
+//                T4BrowserPane(session: session, store: store, isPresented: sheetBinding(.browser))
+//                    .environmentObject(theme)
             case .searchDiff:
                 T4SearchPane(session: session, store: store, isPresented: sheetBinding(.searchDiff))
                     .environmentObject(theme)
