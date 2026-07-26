@@ -40,13 +40,11 @@ struct T4SessionDetailView: View {
     @State private var sending = false
     @State private var showFacts = false
     @State private var planExpanded = false
-    @State private var showFiles = false
-    @State private var showAgents = false
     @State private var showTerminal = false
-    @State private var showUsage = false
-    @State private var showReview = false
-    @State private var showArtifacts = false
-    @State private var showSettings = false
+    /// One enum-driven sheet: multiple .sheet modifiers on one view stack
+    /// and merge toolbars (the triple-Done bug).
+    enum ActiveSheet: String, Identifiable { case files, agents, usage, review, artifacts, settings; var id: String { rawValue } }
+    @State private var activeSheet: ActiveSheet?
     @State private var attachments: [ComposerAttachment] = []
     @State private var pickerItems: [PhotosPickerItem] = []
     @State private var askDraft = ""
@@ -55,6 +53,10 @@ struct T4SessionDetailView: View {
     @FocusState private var composerFocused: Bool
     private var t: Theme { theme.t }
     private static let maxImages = 8   // PROMPT_IMAGE_MAX_COUNT on the wire
+
+    private func sheetBinding(_ sheet: ActiveSheet) -> Binding<Bool> {
+        Binding(get: { activeSheet == sheet }, set: { if !$0 { activeSheet = nil } })
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -114,8 +116,8 @@ struct T4SessionDetailView: View {
         .onAppear {
             // UI-test seams: boot with a pane/drawer/card visible for screenshots.
             let args = ProcessInfo.processInfo.arguments
-            if args.contains("-T4ShowFiles") { showFiles = true }
-            if args.contains("-T4ShowAgents") { showAgents = true }
+            if args.contains("-T4ShowFiles") { activeSheet = .files }
+            if args.contains("-T4ShowAgents") { activeSheet = .agents }
             if args.contains("-T4ShowTerminal") { showTerminal = true }
             if args.contains("-T4ShowPlan") { planExpanded = true }
         }
@@ -138,29 +140,27 @@ struct T4SessionDetailView: View {
         } message: {
             Text("Enter a new title for this session.")
         }
-        .sheet(isPresented: $showFiles) {
-            T4FilesPane(session: session, store: store, isPresented: $showFiles)
-                .environmentObject(theme)
-        }
-        .sheet(isPresented: $showAgents) {
-            T4AgentsPane(session: session, store: store, isPresented: $showAgents)
-                .environmentObject(theme)
-        }
-        .sheet(isPresented: $showUsage) {
-            T4UsagePane(store: store, isPresented: $showUsage)
-                .environmentObject(theme)
-        }
-        .sheet(isPresented: $showReview) {
-            T4ReviewPane(session: session, store: store, isPresented: $showReview)
-                .environmentObject(theme)
-        }
-        .sheet(isPresented: $showArtifacts) {
-            T4ArtifactsPane(session: session, store: store, isPresented: $showArtifacts)
-                .environmentObject(theme)
-        }
-        .sheet(isPresented: $showSettings) {
-            T4SettingsPane(store: store, isPresented: $showSettings)
-                .environmentObject(theme)
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .files:
+                T4FilesPane(session: session, store: store, isPresented: sheetBinding(.files))
+                    .environmentObject(theme)
+            case .agents:
+                T4AgentsPane(session: session, store: store, isPresented: sheetBinding(.agents))
+                    .environmentObject(theme)
+            case .usage:
+                T4UsagePane(store: store, isPresented: sheetBinding(.usage))
+                    .environmentObject(theme)
+            case .review:
+                T4ReviewPane(session: session, store: store, isPresented: sheetBinding(.review))
+                    .environmentObject(theme)
+            case .artifacts:
+                T4ArtifactsPane(session: session, store: store, isPresented: sheetBinding(.artifacts))
+                    .environmentObject(theme)
+            case .settings:
+                T4SettingsPane(store: store, isPresented: sheetBinding(.settings))
+                    .environmentObject(theme)
+            }
         }
     }
 
@@ -366,28 +366,28 @@ struct T4SessionDetailView: View {
                     Label("New Session in Project", systemImage: "plus.square")
                 }
                 Button {
-                    showAgents = true
+                    activeSheet = .agents
                 } label: {
                     Label("Agents", systemImage: "person.3.sequence")
                 }
                 Divider()
                 Button {
-                    showUsage = true
+                    activeSheet = .usage
                 } label: {
                     Label("Usage", systemImage: "chart.bar.xaxis")
                 }
                 Button {
-                    showReview = true
+                    activeSheet = .review
                 } label: {
                     Label("Review", systemImage: "checkmark.shield")
                 }
                 Button {
-                    showArtifacts = true
+                    activeSheet = .artifacts
                 } label: {
                     Label("Artifacts", systemImage: "paperclip")
                 }
                 Button {
-                    showSettings = true
+                    activeSheet = .settings
                 } label: {
                     Label("Settings", systemImage: "gearshape")
                 }
@@ -408,7 +408,7 @@ struct T4SessionDetailView: View {
             }
             .press()
             .accessibilityLabel("Session details")
-            Button { showFiles = true } label: {
+            Button { activeSheet = .files } label: {
                 Image(systemName: "folder")
                     .font(.system(size: 16))
                     .foregroundStyle(t.txtMuted)
