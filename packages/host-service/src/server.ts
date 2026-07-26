@@ -4441,7 +4441,6 @@ export class LocalAppserver implements AppserverHandle {
 				return;
 			}
 			if (typeof raw !== "string") throw new Error("binary websocket frames are not supported");
-			console.error("[dbg] message in:", raw.slice(0, 80));
 			const input = parseBounded(raw);
 			const frame = ws.remote && this.#remotePolicy?.decodeClientFrame
 				? this.#remotePolicy.decodeClientFrame(input)
@@ -4679,8 +4678,7 @@ export class LocalAppserver implements AppserverHandle {
 				}
 			}
 			await Promise.all(outputFrames.map(output => this.#sendFrame(ws, output)));
-		} catch (messageError) {
-			console.error("[dbg] message error:", messageError?.stack ?? String(messageError));
+		} catch {
 			if (attachingSessionId) {
 				this.#attached.get(ws)?.delete(attachingSessionId);
 				if (!this.hasAttachedClient(attachingSessionId)) this.cleanupObserverState(attachingSessionId);
@@ -4825,10 +4823,8 @@ export class LocalAppserver implements AppserverHandle {
 		};
 		await this.#sendFrame(ws, welcome as ServerFrame);
 		if (decision?.authentication === "pairing-required") return;
-		console.error("[dbg] hello: welcome sent, refreshing sessions");
 		try {
 			await this.refreshSessions();
-			console.error("[dbg] hello: refreshSessions done");
 		} catch {
 			await this.#sendFrame(ws, {
 				v: "omp-app/1",
@@ -4941,9 +4937,7 @@ export class LocalAppserver implements AppserverHandle {
 				return false;
 			}
 			if (transformed === undefined) return false;
-			const sent = transport.send(typeof transformed === "string" ? transformed : JSON.stringify(transformed));
-			console.error("[dbg] remote send:", compatibleFrame.type, sent);
-			return sent;
+			return transport.send(typeof transformed === "string" ? transformed : JSON.stringify(transformed));
 		}
 		return transport.send(JSON.stringify(compatibleFrame));
 	}
