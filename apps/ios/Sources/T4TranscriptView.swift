@@ -71,36 +71,88 @@ struct T4AssistantMessage: View {
     }
 }
 
-/// Tool / review / compaction rows: the card treatment (accent rail +
-/// headline + body), unchanged from the original rail renderer.
+/// Tool / review / compaction rows: per-kind icon + tinted header, terminal
+/// voice for outputs, syntax-colored code, and diff line tinting when the
+/// body is a diff.
 struct T4TranscriptRow: View {
     let entry: TranscriptEntry
     let theme: Theme
+    @State private var expanded = false
 
-    private var accent: Color {
-        guard let kind = entry.kind else { return theme.txtLabel }
-        switch kind {
-        case .message: return theme.accent
-        case .toolUse: return theme.cBash
-        case .toolResult: return entry.body.contains("error") ? theme.diffDel : theme.diffAdd
-        case .turnReview: return theme.cTask
-        case .compaction: return theme.txtMuted
+    /// Tool-kind identity from the entry kind/headline.
+    private var tool: (name: String, icon: String, color: Color) {
+        let head = entry.headline.lowercased()
+        switch entry.kind {
+        case .toolUse, .toolResult:
+            let name = head.split(separator: " ").first.map(String.init) ?? "tool"
+            switch name {
+            case "read":              return (name, "doc.text", theme.cLsp)
+            case "write":             return (name, "doc.badge.plus", theme.diffAdd)
+            case "edit", "patch":    return (name, "rectangle.and.pencil.and.ellipsis", theme.cEdit)
+            case "bash", "terminal": return (name, "terminal", theme.cBash)
+            case "task", "agent":    return (name, "person.3", theme.cTask)
+            case "search", "find", "grep": return (name, "magnifyingglass", theme.accent)
+            case "lsp":               return (name, "cross", theme.cLsp)
+            case "todo":               return (name, "checklist", theme.accent)
+            default:                  return (name, "wrench", theme.cAdvisor)
+            }
+        case .turnReview: return ("review", "eye", theme.cTask)
+        case .compaction: return ("compact", "archivebox", theme.txtMuted)
+        default:          return (entry.kind?.rawValue ?? "entry", "circle", theme.txtLabel)
         }
     }
 
+    private var isDiffBody: Bool {
+        entry.body.contains("\n@@") || entry.body.hasPrefix("diff ") || entry.body.contains("\n--- ") && entry.body.contains("\n+++ ")
+    }
+
+    private static let bodyCap = 1_600
+
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Rectangle().fill(accent).frame(width: 3).clipShape(RoundedRectangle(cornerRadius: 1.5))
-            VStack(alignment: .leading, spacing: 3) {
-                Text(entry.headline.isEmpty ? (entry.kind?.rawValue ?? "entry") : entry.headline)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(theme.txtBody)
-                if !entry.body.isEmpty {
-                    Text(entry.body).font(.system(size: 13)).foregroundStyle(theme.txt)
+        VStack(alignment: .leading, spacing: 0) {
+            Button { withAnimation(.easeInOut(duration: 0.18)) { expanded.toggle() } } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: tool.icon)
+                        .font(.system(size: 11))
+                        .foregroundStyle(tool.color)
+                        .frame(width: 15)
+                    Text(entry.headline.isEmpty ? tool.name : entry.headline)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(theme.txtBody)
+                        .lineLimit(expanded ? nil : 1)
+                    Spacer(minLength: 4)
+                    if !entry.body.isEmpty {
+                        Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(theme.txtLabel)
+                    }
                 }
-                Text(entry.timestamp).font(.system(size: 9)).foregroundStyle(theme.txtLabel)
+                .padding(.horizontal, 10).padding(.vertical, 8)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if expanded && !entry.body.isEmpty {
+                Group {
+                    if isDiffBody {
+                        Text(AttributedString(SyntaxHighlighter.diff(
+                            String(entry.body.prefix(Self.bodyCap)), theme: theme, fontSize: 11)))
+                    } else {
+                        Text(String(entry.body.prefix(Self.bodyCap)))
+                            .font(.term(12))
+                            .foregroundStyle(theme.txt)
+                    }
+                }
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10).padding(.bottom, 8)
             }
         }
+        .background(theme.glassFill2, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(tool.color.opacity(0.35), lineWidth: 1)
+        )
     }
 }
 

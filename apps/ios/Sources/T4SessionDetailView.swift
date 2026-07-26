@@ -39,6 +39,7 @@ struct T4SessionDetailView: View {
     @State private var draft = ""
     @State private var sending = false
     @State private var showFacts = false
+    @State private var planExpanded = false
     @State private var showFiles = false
     @State private var showAgents = false
     @State private var showTerminal = false
@@ -66,7 +67,9 @@ struct T4SessionDetailView: View {
                             confirmationBanner(challenge)
                         }
                         if let ask = store.pendingAsk, ask.sessionId == session.sessionId {
-                            askBanner(ask)
+                            T4AskCard(ask: ask, theme: t) { value in
+                                Task { await store.respondAsk(value: value) }
+                            }
                         }
                         if showFacts { facts }
                         Divider().overlay(t.lineFaint)
@@ -99,6 +102,7 @@ struct T4SessionDetailView: View {
             }
             T4TerminalDrawer(session: session, store: store, isOpen: showTerminal)
                 .environmentObject(theme)
+            planStripSection
             composer
         }
         .background(t.bg.ignoresSafeArea())
@@ -181,6 +185,17 @@ struct T4SessionDetailView: View {
         case "plan":     return ("PLAN", t.cTask)
         case "readOnly": return ("READ-ONLY", t.cAdvisor)
         default:         return nil
+        }
+    }
+
+    /// Plan strip placement: above the composer when the session has todos.
+    private var planStripSection: some View {
+        Group {
+            if !store.todoPhases(for: session.sessionId).isEmpty {
+                T4PlanStrip(phases: store.todoPhases(for: session.sessionId), t: t, expanded: $planExpanded)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 4)
+            }
         }
     }
 
@@ -454,11 +469,11 @@ struct T4SessionDetailView: View {
     private var placeholder: String {
         if !store.connected { return "Connect a host to message" }
         if dictation.recording { return "Listening\u{2026}" }
-        return session.status == "active" ? "Steer the turn\u{2026}" : "Message the agent\u{2026}"
+        return store.activeTurns.contains(session.sessionId) ? "Steer the turn\u{2026}" : "Message the agent\u{2026}"
     }
 
     @ViewBuilder private var sendOrStop: some View {
-        if store.connected && session.status == "active" {
+        if store.connected && store.activeTurns.contains(session.sessionId) {
             Button { Task { await store.cancel(sessionId: session.sessionId) } } label: {
                 Image(systemName: "stop.fill").font(.system(size: 15)).foregroundStyle(t.txt)
                     .frame(width: 34, height: 34)

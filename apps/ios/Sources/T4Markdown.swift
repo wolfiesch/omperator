@@ -103,9 +103,7 @@ struct T4CodeBlock: View {
             .overlay(alignment: .bottom) { Rectangle().fill(theme.lineFaint).frame(height: 1) }
 
             ScrollView(.horizontal, showsIndicators: false) {
-                Text(code)
-                    .font(.system(size: 12.5, design: .monospaced))
-                    .foregroundStyle(theme.txt)
+                Text(AttributedString(SyntaxHighlighter.attributed(code, language: language, theme: theme, fontSize: 12.5)))
                     .textSelection(.enabled)
                     .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)

@@ -1419,6 +1419,44 @@ describe("app-wire authority", () => {
 			{ ...semanticState, fastAvailable: "yes" },
 		])
 			expect(() => decodeCommandResult("session.state.get", malformed)).toThrow(AppWireError);
+		const baseState = {
+			...state,
+			todoPhases: [
+				{
+					name: "Research",
+					tasks: [
+						{ content: "Map the call sites", status: "completed" },
+						{ content: "Note the shared helper", status: "in_progress" },
+						{ content: "Sketch the contract", status: "pending" },
+					],
+				},
+				{
+					name: "Implement",
+					tasks: [{ content: "Wire the decoder", status: "custom_status" }],
+				},
+			],
+		};
+		expect(decodeCommandResult("session.state.get", baseState)).toEqual(baseState);
+		// Absent todoPhases decodes cleanly and omits the field.
+		expect(decodeCommandResult("session.state.get", state)).toEqual(state);
+		expect(decodeCommandResult("session.state.get", state).todoPhases).toBeUndefined();
+		// Unknown statuses are preserved verbatim, not failed.
+		expect(
+			decodeCommandResult("session.state.get", baseState).todoPhases?.[1]?.tasks?.[0]?.status,
+		).toBe("custom_status");
+		for (const malformed of [
+			{ ...state, todoPhases: [{ name: "x", tasks: [{ content: "c", status: "pending", extra: 1 }] }] },
+			{ ...state, todoPhases: [{ name: "x", tasks: [{ content: "c" }] }] },
+			{ ...state, todoPhases: [{ name: "x", extra: 1 }] },
+			{ ...state, todoPhases: [{ tasks: [] }] },
+			{ ...state, todoPhases: [{ name: "x", tasks: "nope" }] },
+			{ ...state, todoPhases: "nope" },
+			{ ...state, todoPhases: [{ name: "x".repeat(1024), tasks: [] }] },
+			{ ...state, todoPhases: Array.from({ length: 33 }, () => ({ name: "p", tasks: [] })) },
+			{ ...state, todoPhases: [{ name: "p", tasks: Array.from({ length: 65 }, () => ({ content: "c", status: "pending" })) }] },
+			{ ...state, todoPhases: [{ name: "p", tasks: [{ content: "c", status: "pen\u0000ding" }] }] },
+		])
+			expect(() => decodeCommandResult("session.state.get", malformed)).toThrow(AppWireError);
 		expect(() =>
 			decodeClientFrame({
 				v: "omp-app/1",

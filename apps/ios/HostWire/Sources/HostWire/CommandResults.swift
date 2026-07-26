@@ -848,6 +848,17 @@ public struct ReviewReadResult: Decodable, Equatable, Sendable {
     public let findings: [JSONValue]
 
     private enum CodingKeys: String, CodingKey { case reviewId, status, path, findings }
+
+    /// Memberwise init for client-side synthesis (e.g. offline preview from a
+    /// `ReviewFrame`). Bypasses host validation — callers must pass already-
+    /// bounded values.
+    public init(reviewId: String, status: String, path: String?, findings: [JSONValue]) {
+        self.reviewId = reviewId
+        self.status = status
+        self.path = path
+        self.findings = findings
+    }
+
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         reviewId = try Bounded.controlFree(try c.decode(String.self, forKey: .reviewId), path: "result.reviewId", maxBytes: 256)

@@ -87,6 +87,48 @@ final class T4SessionStore: ObservableObject {
     /// transcript view renders this as a pulsing live tail row after the
     /// durable entries.
     @Published private(set) var streamingText: [String: String] = [:]
+    /// Sessions with a turn in flight, from turn.start/turn.end events — the
+    /// composer's stop button keys off this (the ref's `status` sticks at
+    /// "active" long after the turn actually ends).
+    @Published private(set) var activeTurns: Set<String> = []
+    /// OMP todo phases by sessionId (the plan strip's data), refreshed on
+    /// attach and after streamed entries.
+    @Published private(set) var todoPhasesBySession: [String: [PlanPhase]] = [:]
+
+    /// Todo phases for a session (live when connected, empty otherwise).
+    func todoPhases(for sessionId: String) -> [PlanPhase] {
+        todoPhasesBySession[sessionId] ?? []
+    }
+
+    /// Pull session.state.get and mirror todoPhases for the plan strip.
+    func refreshTodos(sessionId: String) async {
+        guard let client, connected, !hostId.isEmpty else { return }
+        do {
+            let result = try await client.sendCommand(CommandIntent(
+                hostId: hostId, command: "session.state.get", sessionId: sessionId))
+            todoPhasesBySession[sessionId] = Self.parseTodoPhases(result.result)
+        } catch {
+            t4log.error("refreshTodos failed: \(error)")
+        }
+    }
+
+    /// Parse the optional todoPhases field out of a state result body.
+    static func parseTodoPhases(_ result: JSONValue?) -> [PlanPhase] {
+        guard case .object(let o) = result ?? .null, case .array(let phases) = o["todoPhases"] ?? .null
+        else { return [] }
+        var out: [PlanPhase] = []
+        for phase in phases {
+            guard case .object(let p) = phase, case .string(let name) = p["name"] ?? .null,
+                  case .array(let tasks) = p["tasks"] ?? .null else { continue }
+            let mapped: [PlanTask] = tasks.compactMap { task in
+                guard case .object(let t) = task, case .string(let content) = t["content"] ?? .null,
+                      case .string(let status) = t["status"] ?? .null else { return nil }
+                return PlanTask(content: content, status: status)
+            }
+            out.append(PlanPhase(name: name, tasks: mapped))
+        }
+        return out
+    }
     /// Host catalog (models etc.) from catalog.get, fetched after connect.
     @Published private(set) var catalog: [CatalogItem] = []
     /// A confirmation challenge awaiting the user's approve/deny decision.
@@ -209,7 +251,10 @@ final class T4SessionStore: ObservableObject {
     private func attachSelectedIfNeeded() {
         guard connected, let selected = selectedSession,
               liveEntries[selected.sessionId] == nil else { return }
-        Task { await attach(sessionId: selected.sessionId) }
+        Task {
+            await attach(sessionId: selected.sessionId)
+            await refreshTodos(sessionId: selected.sessionId)
+        }
     }
 
     /// Switch the session's model (session.model.set, session persistence).
@@ -1101,6 +1146,11 @@ final class T4SessionStore: ObservableObject {
                 // entry then arrives via .entry above).
                 let sid = frame.sessionId
                 switch frame.event.type {
+                case "turn.start":
+                    activeTurns.insert(sid)
+                case "turn.end", "turn.error":
+                    activeTurns.remove(sid)
+                    Task { await refreshTodos(sessionId: sid) }
                 case "message.update":
                     // Only stream the assistant voice; user echoes are sent
                     // by the client itself and settle immediately.

@@ -130,6 +130,82 @@ class DeferredPromptFactory implements RpcChildFactory {
 		return ["omp", "--mode", "rpc", "--session", path];
 	}
 }
+class StatePhaseChild implements ChildHandle {
+	#pending: Record<string, unknown>[] = [];
+	#drained = Promise.withResolvers<void>();
+	#finish = Promise.withResolvers<void>();
+	#exited = Promise.withResolvers<number>();
+	killed = false;
+	todoPhases: unknown = [
+		{
+			name: "Research",
+			tasks: [
+				{ content: "Map the call sites", status: "completed" },
+				{ content: "Note the shared helper", status: "in_progress" },
+				{ content: "Sketch the contract", status: "pending" },
+			],
+		},
+		{
+			name: "Implement",
+			tasks: [{ content: "Wire the decoder", status: "custom_status" }],
+		},
+	];
+	stdin = {
+		write: (data: string) => {
+			const frame = JSON.parse(data) as Record<string, unknown>;
+			if (frame.type !== "get_state") return;
+			this.#pending.push(frame);
+			this.#drained.resolve();
+		},
+	};
+	stdout: AsyncIterable<string> = this.stream();
+	exited = this.#exited.promise;
+	async *stream() {
+		yield `${JSON.stringify({ type: "ready" })}\n`;
+		for (;;) {
+			if (this.killed) return;
+			const frame = this.#pending.shift();
+			if (!frame) {
+				await Promise.race([this.#drained.promise, this.#finish.promise]);
+				this.#drained = Promise.withResolvers<void>();
+				continue;
+			}
+			yield `${JSON.stringify({
+				type: "response",
+				id: frame.id,
+				command: "get_state",
+				success: true,
+				data: {
+					isStreaming: false,
+					isCompacting: false,
+					isPaused: false,
+					messageCount: 0,
+					queuedMessageCount: 0,
+					steeringMode: "all",
+					followUpMode: "all",
+					interruptMode: "immediate",
+					...(this.todoPhases === undefined ? {} : { todoPhases: this.todoPhases }),
+				},
+			})}\n`;
+		}
+	}
+	kill() {
+		this.killed = true;
+		this.#finish.resolve();
+		this.#exited.resolve(0);
+	}
+}
+class StatePhaseFactory implements RpcChildFactory {
+	children: StatePhaseChild[] = [];
+	spawn() {
+		const child = new StatePhaseChild();
+		this.children.push(child);
+		return child;
+	}
+	argv(path: string) {
+		return ["omp", "--mode", "rpc", "--session", path];
+	}
+}
 class StaticDiscovery implements SessionDiscovery {
 	constructor(private readonly records: SessionRecord[]) {}
 	async list() {
@@ -2306,6 +2382,135 @@ describe("appserver lifecycle", () => {
 			expect(await runPrompt("plan")).toBe(PLAN_PREFIX + "hello");
 			expect(await runPrompt("readOnly")).toBe(READONLY_PREFIX + "hello");
 			expect(await runPrompt("build")).toBe("hello");
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+	test("session.state.get surfaces todoPhases reported by the child", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-session-state-phases-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const sessionOwnershipPath = join(root, "profile", "owned-sessions.json");
+		let createCount = 0;
+		const sessionAuthority = {
+			create: async () => {
+				const id = `state-phase-session-${++createCount}`;
+				return {
+					...record(id),
+					path: join(root, `${id}.jsonl`),
+					cwd: root,
+					projectId: stableProjectId(root),
+				};
+			},
+			list: async () => [],
+			archive: async () => {},
+			restore: async () => {},
+			delete: async () => {},
+		};
+		const factory = new StatePhaseFactory();
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "session-state-phases-test",
+			socketPath,
+			discovery: sessionAuthority,
+			sessionAuthority,
+			sessionOwnershipPath,
+			projectRootForProject: () => root,
+			childFactory: factory,
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		const nextResponse = async (requestId: string) => {
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === requestId) return frame;
+			}
+		};
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "state-phases-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: [],
+				capabilities: { client: ["sessions.manage", "sessions.read", "sessions.prompt"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect((await client.nextServer()).type).toBe("sessions");
+
+			const reqCreate = "create-state-phases";
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: reqCreate,
+				commandId: `${reqCreate}-command`,
+				hostId: host,
+				command: "session.create",
+				args: { projectId: stableProjectId(root) },
+			});
+			const createResp = await nextResponse(reqCreate);
+			expect(createResp).toMatchObject({ ok: true });
+			const createResult = createResp.result;
+			if (!createResult || typeof createResult !== "object" || !("session" in createResult))
+				throw new Error("session.create result missing session");
+			const sessionShape = createResult.session;
+			if (!sessionShape || typeof sessionShape !== "object" || !("sessionId" in sessionShape))
+				throw new Error("session.create result missing sessionId");
+			const sid = sessionId(sessionShape.sessionId);
+
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "state-phases",
+				commandId: "state-phases-command",
+				hostId: host,
+				sessionId: sid,
+				command: "session.state.get",
+				args: {},
+			});
+			const stateResp = await nextResponse("state-phases");
+			expect(stateResp).toMatchObject({ type: "response", ok: true });
+			const stateResult = stateResp.result;
+			if (!stateResult || typeof stateResult !== "object" || !("todoPhases" in stateResult))
+				throw new Error("session.state.get result missing todoPhases");
+			expect(stateResult.todoPhases).toEqual([
+				{
+					name: "Research",
+					tasks: [
+						{ content: "Map the call sites", status: "completed" },
+						{ content: "Note the shared helper", status: "in_progress" },
+						{ content: "Sketch the contract", status: "pending" },
+					],
+				},
+				{
+					name: "Implement",
+					tasks: [{ content: "Wire the decoder", status: "custom_status" }],
+				},
+			]);
+
+			// A child that omits todoPhases yields a result without the field.
+			const phaseless = factory.children.at(-1);
+			if (!phaseless) throw new Error("created session did not start its writer");
+			phaseless.todoPhases = undefined;
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "state-no-phases",
+				commandId: "state-no-phases-command",
+				hostId: host,
+				sessionId: sid,
+				command: "session.state.get",
+				args: {},
+			});
+			const noPhasesResp = await nextResponse("state-no-phases");
+			expect(noPhasesResp).toMatchObject({ type: "response", ok: true });
+			const noPhasesResult = noPhasesResp.result;
+			expect(
+				noPhasesResult && typeof noPhasesResult === "object" && "todoPhases" in noPhasesResult,
+			).toBe(false);
 		} finally {
 			client.destroy();
 			await client.closed();

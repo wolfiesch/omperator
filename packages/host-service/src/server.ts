@@ -489,6 +489,7 @@ function safeSessionState(value: unknown): SessionStateResult {
 			? { contextUsage: { used: context.used ?? context.tokens, limit: context.limit ?? context.contextWindow } }
 			: {}),
 		...(queued ? { queuedMessages: { steering: queued.steering, followUp: queued.followUp } } : {}),
+		...(raw.todoPhases === undefined ? {} : { todoPhases: raw.todoPhases }),
 	};
 	return decodeSessionStateResult(state);
 }
