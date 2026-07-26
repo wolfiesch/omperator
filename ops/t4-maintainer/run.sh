@@ -1373,7 +1373,7 @@ legacy_omp_authority_transfer_is_valid() {
       .publication.integrationTag == $integration_tag and
       .publication.integrationCommit == $integration_commit and
       .publication.integrationTagObject == $r.integration.tagObject and
-      (.releaseAssets | type == "array" and length == 5) and
+      (.releaseAssets | type == "array" and length == 8) and
       all(.releaseAssets[];
         (.name | type == "string") and
         (.size | type == "number" and floor == . and . > 0) and
