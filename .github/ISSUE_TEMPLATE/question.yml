@@ -19,7 +19,7 @@ body:
     attributes:
       label: Omperator version
       description: Use the displayed T4 Code version while the application rebrand is in progress.
-      placeholder: "0.1.33"
+      placeholder: "0.1.34"
   - type: dropdown
     id: platform
     attributes:
