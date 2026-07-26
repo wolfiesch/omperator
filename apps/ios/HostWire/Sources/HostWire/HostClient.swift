@@ -231,7 +231,7 @@ public actor HostClient {
                     try await self.ingest(data)
                 } catch {
                     t4wireLog.error("ingest failed: \(error)")
-                    await self.handleDisconnect("receive error")
+                    await self.handleDisconnect("\(error)")
                     break
                 }
             }
