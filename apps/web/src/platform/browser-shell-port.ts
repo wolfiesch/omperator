@@ -259,6 +259,9 @@ export function createBrowserShellPort(
   let welcomeAuthentication: "local" | "pairing-required" | "paired" | undefined;
   let stopLifecycle: Unsubscribe | undefined;
   let connectionState: DesktopTarget["state"] = "disconnected";
+  /** Monotonic count of client state reports. A per-attempt boolean would be
+   * reset by a concurrent connect() and let an older rejection fire falsely. */
+  let stateCallbackCount = 0;
   let authentication: { deviceId: string; deviceToken: string } | undefined =
     backendConfig.deviceId === undefined || backendConfig.deviceToken === undefined
       ? undefined
@@ -364,6 +367,10 @@ export function createBrowserShellPort(
         fatal: "error",
       };
       const newState = stateMap[snapshot.state] ?? "disconnected";
+      // Record the callback even when it repeats the current value: `connect`
+      // uses this to tell "the client never reported" from "the client
+      // reported the same state".
+      stateCallbackCount += 1;
       if (newState !== connectionState) emitState(TARGET_ID, newState);
     });
 
@@ -455,10 +462,13 @@ export function createBrowserShellPort(
       ensureLifecycle();
       // connect() is idempotent — it calls connection.begin() if idle.
       // If it throws before the client ever reports a state, no callback runs
-      // and the target sits at "connecting" forever with the failure lost, so
-      // fall back to the error state here rather than swallowing it.
+      // and the target sits at "connecting" forever with the failure lost.
+      // Gate on whether the client reported anything, not on a state value: a
+      // callback may legitimately repeat "disconnected", and comparing values
+      // would then overwrite a real report with a spurious error.
+      const callbacksAtConnect = stateCallbackCount;
       void client.connect().catch(() => {
-        if (connectionState === "connecting") emitState(TARGET_ID, "error");
+        if (stateCallbackCount === callbacksAtConnect) emitState(TARGET_ID, "error");
       });
       return { targetId: TARGET_ID, state: "connecting" };
     },

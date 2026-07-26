@@ -200,6 +200,78 @@ describe("browser platform boundary", () => {
     expect(wakes).toBe(1);
   });
 
+  it("reports a connect rejection that arrives before any state callback", async () => {
+    // The port used to discard this rejection on the assumption that the state
+    // callback reports errors. When the failure precedes the first callback,
+    // nothing ran and the target stayed at "connecting" with no reason.
+    setBackendScript(JSON.stringify({ wsUrl: "wss://omp.example/v1/ws" }));
+    const states: string[] = [];
+    const fakeClient = {
+      state: "connecting",
+      connect: async () => {
+        throw new Error("handshake refused");
+      },
+      close: async () => undefined,
+      wake: () => undefined,
+      onEvent: () => () => undefined,
+      onState: () => () => undefined,
+      onError: () => () => undefined,
+    };
+    const shell = createBrowserShellPort({
+      clientFactory: () => fakeClient as unknown as OmpClient,
+      lifecycle: { windowTarget: new FakeLifecycleTarget(), documentTarget: new FakeLifecycleTarget() },
+    });
+    if (shell === null) return;
+    const unsubscribe = shell.onConnectionState((update) => states.push(update.state));
+    try {
+      const immediate = await shell.connect({ targetId: "remote" });
+      expect(immediate.state).toBe("connecting");
+      for (let i = 0; i < 50 && !states.includes("error"); i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(states).toContain("error");
+    } finally {
+      unsubscribe?.();
+    }
+  });
+
+  it("keeps a reported state when the connect rejection arrives after it", async () => {
+    // The fallback must not overwrite a real report. A callback may repeat the
+    // current value, so gating on the state value rather than on whether a
+    // callback fired would emit a spurious error here.
+    setBackendScript(JSON.stringify({ wsUrl: "wss://omp.example/v1/ws" }));
+    const states: string[] = [];
+    let publish: ((snapshot: { state: string }) => void) | undefined;
+    const fakeClient = {
+      state: "idle",
+      connect: async () => {
+        publish?.({ state: "idle" });
+        throw new Error("handshake refused after a report");
+      },
+      close: async () => undefined,
+      wake: () => undefined,
+      onEvent: () => () => undefined,
+      onState: (listener: (snapshot: { state: string }) => void) => {
+        publish = listener;
+        return () => undefined;
+      },
+      onError: () => () => undefined,
+    };
+    const shell = createBrowserShellPort({
+      clientFactory: () => fakeClient as unknown as OmpClient,
+      lifecycle: { windowTarget: new FakeLifecycleTarget(), documentTarget: new FakeLifecycleTarget() },
+    });
+    if (shell === null) return;
+    const unsubscribe = shell.onConnectionState((update) => states.push(update.state));
+    try {
+      await shell.connect({ targetId: "remote" });
+      for (let i = 0; i < 20; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(states).not.toContain("error");
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it("bounds transport URLs and cleans listeners on close", () => {
     expect(() => new BrowserWebSocketTransport({ url: "https://not-websocket" })).toThrow(
       /invalid browser transport URL/u,
