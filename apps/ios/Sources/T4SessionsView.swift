@@ -131,17 +131,23 @@ struct T4SessionRow: View {
             HStack(spacing: 10) {
                 if let model = session.model {
                     T4ModelLabel(selector: model, theme: theme)
+                        .lineLimit(1)
                 }
                 if let usage = session.contextUsage {
                     ContextMeter(used: usage.used, limit: usage.limit, theme: theme)
                 }
                 Spacer(minLength: 0)
             }
+            .lineLimit(1)
+            .truncationMode(.tail)
             HStack(spacing: 6) {
                 if session.pendingApproval == true { Tag(text: "approval", color: theme.diffAdd, theme: theme) }
                 if session.pendingUserInput == true { Tag(text: "input", color: theme.cTask, theme: theme) }
                 Text(session.updatedAt).font(.system(size: 10)).foregroundStyle(theme.txtLabel)
+                    .lineLimit(1)
             }
+            .lineLimit(1)
+            .truncationMode(.tail)
         }
         .padding(.vertical, 3)
     }

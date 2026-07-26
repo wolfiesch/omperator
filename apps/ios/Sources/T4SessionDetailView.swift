@@ -467,6 +467,7 @@ struct T4SessionDetailView: View {
                         .foregroundStyle(t.txtLabel)
                         .frame(width: 84, alignment: .leading)
                     Text(row.1).font(.system(size: 13)).foregroundStyle(t.txtBody)
+                        .lineLimit(1).truncationMode(.middle)
                 }
             }
         }

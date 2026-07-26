@@ -230,6 +230,7 @@ public actor HostClient {
                     let data = try await self.receiveNext()
                     try await self.ingest(data)
                 } catch {
+                    t4wireLog.error("ingest failed: \(error)")
                     await self.handleDisconnect("receive error")
                     break
                 }
