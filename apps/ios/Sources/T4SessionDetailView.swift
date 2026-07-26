@@ -87,6 +87,10 @@ struct T4SessionDetailView: View {
                     .padding()
                 }
                 .onAppear { proxy.scrollTo("transcript-bottom", anchor: .bottom) }
+                // Native iOS 26 scroll-edge fade at the bottom, like the nav
+                // bar's top-of-screen effect — lines dissolve under the
+                // floating composer instead of hard-clipping.
+                .scrollEdgeEffectStyle(.hard, for: .bottom)
                 .onChange(of: store.transcript(for: session.sessionId).count) { _, _ in
                     // A page prepend increases the count too; suppress the
                     // scroll-to-bottom follow while the store is prepending
@@ -111,21 +115,12 @@ struct T4SessionDetailView: View {
         // Floating glass: plan strip + composer hover over the transcript,
         // which scrolls underneath. No floor, no divider.
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            ZStack(alignment: .bottom) {
-                // Bottom-edge fade: above the transcript, behind the composer.
-                LinearGradient(colors: [t.bg.opacity(0), t.bg],
-                               startPoint: .top, endPoint: .bottom)
-                    .frame(height: 56)
-                    .frame(maxWidth: .infinity)
-                    .ignoresSafeArea(.container, edges: .bottom)
-                    .allowsHitTesting(false)
-                VStack(spacing: 8) {
-                    planStripSection
-                    composer
-                }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 6)
+            VStack(spacing: 8) {
+                planStripSection
+                composer
             }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 6)
         }
         // Collapse the plan strip while typing so the keyboard never buries it.
         .onChange(of: composerFocused) { _, focused in
