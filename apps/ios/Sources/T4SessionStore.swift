@@ -670,7 +670,7 @@ final class T4SessionStore: ObservableObject {
                 deviceId: "ios-\(slug)",
                 deviceName: deviceName,
                 platform: "ios",
-                requestedCapabilities: ["sessions.read", "sessions.prompt", "sessions.control", "sessions.manage", "catalog.read", "term.open", "term.input", "term.resize"]
+                requestedCapabilities: ["sessions.read", "sessions.prompt", "sessions.control", "sessions.manage", "catalog.read", "files.list", "files.read", "term.open", "term.input", "term.resize"]
             )
             let ok = try await c.pair(intent)
             // The paired connection is inert by design (the host rejects

@@ -169,6 +169,8 @@ struct T4FilesPane: View {
             }
         }
         .task(id: currentPath) { await load() }
+        // The sheet can open before the host connection lands — retry then.
+        .onChange(of: store.connected) { _, now in if now { Task { await load() } } }
     }
 
     /// Breadcrumb of path segments; tap any crumb to pop back to that depth.
