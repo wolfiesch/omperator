@@ -125,31 +125,31 @@ public struct TranscriptEntry: Equatable, Sendable {
 // MARK: - JSONValue accessors
 extension JSONValue {
     /// Read a string field from an object value. Non-string values are ignored.
-    func string(_ key: String) -> String? {
+    public func string(_ key: String) -> String? {
         guard case .object(let o) = self, case .string(let s) = o[key] ?? .null else { return nil }
         return s
     }
 
     /// Read a bool field from an object value. Non-bool values are ignored.
-    func bool(_ key: String) -> Bool? {
+    public func bool(_ key: String) -> Bool? {
         guard case .object(let o) = self, case .bool(let b) = o[key] ?? .null else { return nil }
         return b
     }
 
     /// Read a nested object field from an object value.
-    func object(_ key: String) -> JSONValue? {
+    public func object(_ key: String) -> JSONValue? {
         guard case .object(let o) = self, let v = o[key], case .object = v else { return nil }
         return v
     }
 
     /// Read a nested array field from an object value.
-    func array(_ key: String) -> [JSONValue]? {
+    public func array(_ key: String) -> [JSONValue]? {
         guard case .object(let o) = self, let v = o[key], case .array(let a) = v else { return nil }
         return a
     }
 
     /// Read a number field from an object value as a Double.
-    func number(_ key: String) -> Double? {
+    public func number(_ key: String) -> Double? {
         guard case .object(let o) = self, case .number(let n) = o[key] ?? .null else { return nil }
         return n
     }
