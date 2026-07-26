@@ -52,7 +52,7 @@ struct T4AgentsPane: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: platformTrailingPlacement) {
                     Button("Done") { isPresented = false }
                         .font(.system(size: 14, weight: .semibold))
                 }

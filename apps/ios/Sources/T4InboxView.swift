@@ -58,7 +58,7 @@ struct T4InboxView: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: platformTrailingPlacement) {
                     Button("Done") { isPresented = false }
                         .font(.system(size: 14, weight: .semibold))
                 }

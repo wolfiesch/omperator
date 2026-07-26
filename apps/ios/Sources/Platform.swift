@@ -125,3 +125,22 @@ private func nsJPEG(_ image: NSImage, quality: CGFloat) -> Data? {
     return rep.representation(using: .jpeg, properties: [.compressionFactor: quality])
 }
 #endif
+
+import SwiftUI
+
+/// Toolbar placements that exist on both platforms (topBar* is iOS-only).
+var platformTrailingPlacement: ToolbarItemPlacement {
+    #if os(iOS)
+    .topBarTrailing
+    #else
+    .primaryAction
+    #endif
+}
+
+var platformLeadingPlacement: ToolbarItemPlacement {
+    #if os(iOS)
+    .topBarLeading
+    #else
+    .navigation
+    #endif
+}

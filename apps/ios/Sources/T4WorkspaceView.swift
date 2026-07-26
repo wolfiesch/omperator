@@ -156,7 +156,7 @@ struct T4WorkspaceView: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: platformLeadingPlacement) {
                     Button { toggleRail() } label: {
                         Image(systemName: "sidebar.left")
                             .font(.system(size: 17, weight: .semibold))
@@ -166,7 +166,7 @@ struct T4WorkspaceView: View {
                     .press()
                     .accessibilityLabel("Show sessions")
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: platformTrailingPlacement) {
                     if let session = store.selectedSession {
                         T4ModelMenuButton(session: session, store: store, theme: t) {
                             T4ModelLabel(selector: session.model ?? "choose model", theme: t, size: 12)
@@ -175,7 +175,7 @@ struct T4WorkspaceView: View {
                         .accessibilityLabel("Model and session controls")
                     }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: platformTrailingPlacement) {
                     Button { showInbox = true } label: {
                         ZStack(alignment: .topTrailing) {
                             Image(systemName: "bell")
@@ -279,7 +279,7 @@ struct T4WorkspaceView: View {
                 .searchable(text: $store.query, placement: .toolbar, prompt: "Search sessions")
                 #endif
                 .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
+                    ToolbarItem(placement: platformLeadingPlacement) {
                         Button { theme.toggle() } label: {
                             Image(systemName: theme.effective == .dark ? "sun.max" : "moon")
                                 .font(.system(size: 16, weight: .semibold))
@@ -288,7 +288,7 @@ struct T4WorkspaceView: View {
                         .accessibilityLabel("Toggle dark mode")
                     }
                     if store.connected {
-                        ToolbarItem(placement: .topBarTrailing) {
+                        ToolbarItem(placement: platformTrailingPlacement) {
                             HStack(spacing: 5) {
                                 LiveDot(t: t)
                                 Text("Live").font(.system(size: 11, weight: .semibold)).foregroundStyle(t.diffAdd)

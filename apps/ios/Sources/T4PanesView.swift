@@ -64,11 +64,11 @@ struct T4UsagePane: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: platformTrailingPlacement) {
                     Button("Done") { isPresented = false }
                         .font(.system(size: 14, weight: .semibold))
                 }
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: platformLeadingPlacement) {
                     Button {
                         Task { await load() }
                     } label: {
@@ -275,11 +275,11 @@ struct T4ReviewPane: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: platformTrailingPlacement) {
                     Button("Done") { isPresented = false }
                         .font(.system(size: 14, weight: .semibold))
                 }
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: platformLeadingPlacement) {
                     Button {
                         Task { await load() }
                     } label: {
@@ -445,7 +445,7 @@ struct T4ArtifactsPane: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: platformTrailingPlacement) {
                     Button("Done") { isPresented = false }
                         .font(.system(size: 14, weight: .semibold))
                 }
@@ -628,11 +628,11 @@ struct T4SettingsPane: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: platformTrailingPlacement) {
                     Button("Done") { isPresented = false }
                         .font(.system(size: 14, weight: .semibold))
                 }
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: platformLeadingPlacement) {
                     Button {
                         Task { await load() }
                     } label: {
