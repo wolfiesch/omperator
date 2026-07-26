@@ -193,7 +193,7 @@ struct T4TerminalSurface: UIViewRepresentable {
         coordinator.lastFedLength = count
     }
 
-    private func uiColor(_ c: Color) -> UIColor {
+    private func uiColor(_ c: SwiftUI.Color) -> UIColor {
         UIColor(c)
     }
 
