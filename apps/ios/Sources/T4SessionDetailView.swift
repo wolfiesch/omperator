@@ -110,24 +110,22 @@ struct T4SessionDetailView: View {
         .background(t.bg.ignoresSafeArea())
         // Floating glass: plan strip + composer hover over the transcript,
         // which scrolls underneath. No floor, no divider.
-        .safeAreaInset(edge: .bottom, spacing: 8) {
-            VStack(spacing: 8) {
-                planStripSection
-                composer
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            ZStack(alignment: .bottom) {
+                // Bottom-edge fade: above the transcript, behind the composer.
+                LinearGradient(colors: [t.bg.opacity(0), t.bg],
+                               startPoint: .top, endPoint: .bottom)
+                    .frame(height: 56)
+                    .frame(maxWidth: .infinity)
+                    .ignoresSafeArea(.container, edges: .bottom)
+                    .allowsHitTesting(false)
+                VStack(spacing: 8) {
+                    planStripSection
+                    composer
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 6)
             }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 6)
-        }
-        // A narrow fade pinned to the SCREEN's bottom edge, BELOW the
-        // floating composer/plan strip. Must come after safeAreaInset or it
-        // anchors above the inset content instead.
-        .overlay(alignment: .bottom) {
-            LinearGradient(colors: [t.bg.opacity(0), t.bg],
-                           startPoint: .top, endPoint: .bottom)
-                .frame(height: 56)
-                .frame(maxWidth: .infinity)
-                .ignoresSafeArea(.container, edges: .bottom)
-                .allowsHitTesting(false)
         }
         // Collapse the plan strip while typing so the keyboard never buries it.
         .onChange(of: composerFocused) { _, focused in
