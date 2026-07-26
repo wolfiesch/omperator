@@ -141,8 +141,8 @@ struct MacCommands: Commands {
 
     // MARK: - Model submenu (mirrors T4ModelMenuButton's provider groups)
 
-    @ViewBuilder
-    private var modelMenu: some View {
+    @CommandsBuilder
+    private var modelMenu: some Commands {
         if let store, !store.catalogModels.isEmpty {
             Menu("Model") {
                 ForEach(providerGroups(for: store), id: \.name) { group in
