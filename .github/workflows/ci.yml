@@ -178,7 +178,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name != github.repository ||
-      vars.M1_CI_ENABLED != 'true'
+      vars.PRIVATE_CI_ENABLED != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -241,13 +241,13 @@ jobs:
           path: ~/.cache/ms-playwright
           key: ${{ steps.playwright-cache.outputs.cache-primary-key }}
 
-  m1-build-e2e:
-    name: m1-build-e2e
+  private-build-e2e:
+    name: vps-build-e2e
     if: >-
       github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      vars.M1_CI_ENABLED == 'true'
-    runs-on: [self-hosted, macOS, ARM64, wolfie-m1, trusted]
+      vars.PRIVATE_CI_ENABLED == 'true'
+    runs-on: [self-hosted, Linux, X64, wolfie-vps, omperator-primary, trusted]
     timeout-minutes: 30
     steps:
       - name: Check out source
@@ -269,8 +269,8 @@ jobs:
         with:
           bun-version: 1.3.14
 
-      - name: Run build, end-to-end, and packaging gates on the shared M1
-        run: scripts/run-with-m1-lock.sh scripts/ci-m1-build-e2e.sh
+      - name: Run build, end-to-end, and packaging gates on the VPS
+        run: scripts/ci-vps-build-e2e.sh
 
   # Release-time gates, deferred to pushes. The legacy pin is a frozen
   # historical compatibility proof and the gate0 matrix spans three runners
@@ -711,7 +711,7 @@ jobs:
   verify:
     name: verify
     if: ${{ always() }}
-    needs: [changes, t4-api-generation, check, unit-tests, build-e2e, m1-build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]
+    needs: [changes, t4-api-generation, check, unit-tests, build-e2e, private-build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -723,7 +723,7 @@ jobs:
           CHECK_RESULT: ${{ needs.check.result }}
           UNIT_TESTS_RESULT: ${{ needs.unit-tests.result }}
           BUILD_E2E_RESULT: ${{ needs.build-e2e.result }}
-          M1_BUILD_E2E_RESULT: ${{ needs.m1-build-e2e.result }}
+          PRIVATE_BUILD_E2E_RESULT: ${{ needs.private-build-e2e.result }}
           CURRENT_CONTINUITY_RESULT: ${{ needs.current-bridge-continuity.result }}
           CLUSTER_RESULT: ${{ needs.cluster.result }}
           TOOLING_RESULT: ${{ needs.tooling.result }}
@@ -735,7 +735,7 @@ jobs:
           test "$T4_API_GENERATION_RESULT" = success
           test "$CHECK_RESULT" = success
           test "$UNIT_TESTS_RESULT" = success
-          case "$BUILD_E2E_RESULT:$M1_BUILD_E2E_RESULT" in
+          case "$BUILD_E2E_RESULT:$PRIVATE_BUILD_E2E_RESULT" in
             success:skipped|skipped:success) ;;
             *) exit 1 ;;
           esac

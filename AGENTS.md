@@ -41,8 +41,8 @@ Do not reach for the full repository gates while iterating. `pnpm check` and
   (for example `test`, `typecheck`, or `dev`) instead of the recursive
   `pnpm test` and `pnpm typecheck`.
 - CI mirrors this split. `check`, `unit-tests`, and `build-e2e` run in
-  parallel. Same-repository pull requests run `build-e2e` on the trusted M1
-  when the `M1_CI_ENABLED` repository variable is `true`; fork pull requests
+  parallel. Same-repository pull requests run `build-e2e` on the trusted VPS
+  when the `PRIVATE_CI_ENABLED` repository variable is `true`; fork pull requests
   and pushes use disposable GitHub runners. Set the variable to `false` and
   rerun CI for the hosted fallback. The remaining legs are path-gated by
   `scripts/ci-paths.mjs`, so a local affected run predicts what a pull request
