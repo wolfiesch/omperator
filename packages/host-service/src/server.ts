@@ -4679,7 +4679,8 @@ export class LocalAppserver implements AppserverHandle {
 				}
 			}
 			await Promise.all(outputFrames.map(output => this.#sendFrame(ws, output)));
-		} catch {
+		} catch (messageError) {
+			console.error("[dbg] message error:", messageError?.stack ?? String(messageError));
 			if (attachingSessionId) {
 				this.#attached.get(ws)?.delete(attachingSessionId);
 				if (!this.hasAttachedClient(attachingSessionId)) this.cleanupObserverState(attachingSessionId);
