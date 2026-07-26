@@ -176,7 +176,7 @@ package tests against.
 | Notifications (turn end, approvals) | ✅ both |
 | Prompt/controller leases, revision handling | ✅ both |
 | files.search + files.diff | ✅ both |
-| Preview captures | ⛔ host-side preview service needed (own milestone) |
+| Preview captures | ✅ both — host preview service (headless Chromium, 22 `preview.*` commands) + inline captures |
 | Cluster operator | ⛔ deferred — needs protocol scoping |
 | Speech (wake-word) | ⛔ dropped (dictation ships instead) |
 

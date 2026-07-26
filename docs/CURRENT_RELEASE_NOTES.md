@@ -1,3 +1,68 @@
+## Native iOS and macOS apps, host Browser Preview service (unreleased, `t4code-ios` branch)
+
+T4 Code gains two first-party native clients and a host-side browser preview pipeline, and sheds the
+compatibility shims that stood in for them.
+
+### Native iOS and macOS clients
+
+A single SwiftUI codebase (`apps/ios`) ships the full T4 interface on iPhone and Mac: the session rail
+(swipe-right drawer, project grouping, search, status pills, context meters), live transcript with plan
+panels and ask cards, composer with dictation, and desktop-parity panes — files, agents, terminal
+(host PTY, four tabs per session), review, usage, artifacts, settings, search/diff, and a Browser pane
+(WKWebView with opportunistic host `preview.launch`). Pairing works by code, QR, or `t4-code://pair`
+deep link, with credentials in the Keychain and automatic reconnect. Local notifications fire on turn
+end and approval requests.
+
+Both clients speak the authoritative `omp-app/1` wire through **HostWire**, a new Swift package porting
+the complete frame vocabulary — every command, result, and push frame the desktop uses, verified
+against the live host.
+
+### Removed and simplified
+
+The native apps replace Enclave's collab-guest foundation. Removed as guest fiction that the
+authoritative host-wire cannot and should not back:
+
+- the collab-guest client and its `/collab` link seam (`ENCLAVE_COLLAB_LINK`), which could not even
+  enumerate host sessions;
+- the mock session library and its slash commands;
+- edit→rewind (host-only by design);
+- the model-routing editor and the paired-devices/fingerprint UI fiction;
+- `EngineBridge` and the `AppModel` layer — one `T4SessionStore` (host-wire inventory) plus one
+  `ThemeStore` is the whole client state;
+- wake-word speech, dropped in favor of on-device dictation.
+
+On iOS, the responsive Tailnet PWA is superseded as the primary experience; it remains a fallback for
+unpaired browsers.
+
+### Host Browser Preview service
+
+The host now runs a bounded headless-Chromium preview service (playwright-core, pinned runtime,
+localhost/tailnet URL policy, two-context bound, idle reap) implementing all 22 `preview.*` commands —
+launch, navigate, capture, click/type/scroll automation, leases, and policy checks. The native apps
+render captures inline: a capture view in the Browser pane with zoom, and capture rows in the
+transcript, with sha256-verified chunked reassembly. Preview commands are confirmation-challenged like
+other lifecycle mutations.
+
+### Host hardening
+
+The standalone host gained structured NDJSON logging (rotating; connections, pairings, denials,
+supervisors, watchdog), a boot reaper for stale session locks and zombie supervisors, a richer
+`/healthz` (version, uptime, sessions, supervisors, watchdog stats), and Keychain-backed device
+credentials on both native clients.
+
+### Pinned wss transport
+
+Hosts can serve a second, TLS listener alongside the plain tailnet one: `t4-host serve --remote-tls-port
+8788` generates a per-profile self-signed certificate (persisted under the profile's `remote/tls/`, RSA
+after BoringSSL rejected LibreSSL-written EC keys) and publishes its sha256 fingerprint as
+`tlsFingerprint` on `/healthz`. The native apps pin that fingerprint (TOFU, stored in the Keychain) and
+refuse mismatches — authenticating the host against rogue tailnet peers without depending on Tailscale
+Serve, which is plan-gated on this tailnet. Plain `ws://` inside the tailnet remains supported and is
+already WireGuard-encrypted; iOS keeps `NSAllowsArbitraryLoads` because iOS 26 honors no narrower ATS
+key for WebSocket tasks.
+
+---
+
 ## First independently owned release
 
 T4 Code v0.1.33 is the first release published from
