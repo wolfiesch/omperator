@@ -102,7 +102,7 @@ export class ClusterGateway {
 		this.#connector = options.connector;
 		this.#mutations = options.mutations;
 		this.#ci = options.ciProvider;
-		this.#version = options.appserverVersion ?? "0.2.0";
+		this.#version = options.appserverVersion ?? "0.2.1";
 		this.#build = options.appserverBuild ?? "cluster";
 	}
 	get connectionCount(): number { return this.#connections.size; }

@@ -1,25 +1,22 @@
 ## Current independently owned release
 
-Omperator v0.2.0 is the current release published from
+Omperator v0.2.1 is the current release published from
 [`wolfiesch/omperator`](https://github.com/wolfiesch/omperator). Its Android package uses the
 project's new `net.t4code.app` signing key, and its macOS packages use Michael Schoenberger's pinned
 Developer ID certificate and notarization credentials. GitHub Releases is the authoritative
 download surface, and the protected release workflow publishes the same immutable release manifest
 and checksums to `t4code.net`.
 
-This is the public product-name cutover from T4 Code to Omperator. The desktop
-bundle, Android label, web/PWA surfaces, documentation, and downloadable
-artifacts now show Omperator. The signed upgrade intentionally keeps
-`net.t4code.app`, `t4-code://`, `@t4-code/*`, `t4-omp`, service labels, and the
-existing Application Support and log paths so installed credentials, runtime
-state, pairing links, and background services continue without migration.
+This patch release corrects the composer explanation shown during backend
+recovery. A session whose inventory has not finished reconciling now says that
+Omperator is reconnecting or connected and syncing; only a genuinely
+disconnected transport says that the host is unreachable. The transcript
+remains readable throughout recovery.
 
-This release adds safe reclaim for short `t4-omp` sessions and the first native macOS update feed.
-Newly created OMP transcripts carry the exact `t4-omp-authority/1` marker, allowing the standalone
-host to distinguish a completed compatible terminal session from an unverified historical
-transcript. Signed Mac releases now publish `latest-mac.yml` and the ZIP blockmap required by
-Electron's native updater; the release workflow verifies both the ZIP and DMG metadata against the
-actual signed packages before publication.
+The signed upgrade preserves the `net.t4code.app` application identifier,
+`t4-code://`, `@t4-code/*`, `t4-omp`, service labels, and the existing
+Application Support and log paths, so installed credentials, runtime state,
+pairing links, and background services continue without migration.
 
 ## Electron and React are the product authority
 
@@ -80,7 +77,7 @@ Session-linked Host Browser Previews continue to open in their dedicated workspa
 
 ## Runtime provenance
 
-Omperator v0.2.0 vendors app-wire 0.7.0 from integration commit [796bb7dc](https://github.com/lyc-aon/oh-my-pi/commit/796bb7dca45027bd4b7b94017cdf41ef214a11f2), source tree `0c195a01ba0bb98fbf4d4863aee59bf23a6e81b7`. The frozen package remains compatibility evidence; T4 owns the active `omp-app/1` wire schema.
+Omperator v0.2.1 vendors app-wire 0.7.0 from integration commit [796bb7dc](https://github.com/lyc-aon/oh-my-pi/commit/796bb7dca45027bd4b7b94017cdf41ef214a11f2), source tree `0c195a01ba0bb98fbf4d4863aee59bf23a6e81b7`. The frozen package remains compatibility evidence; T4 owns the active `omp-app/1` wire schema.
 
 The verified OMP 17.0.5 runtime is built from commit [ccb86bb7](https://github.com/wolfiesch/oh-my-pi/commit/ccb86bb74f4c59ebacca67d42c4e16b65fd5c8ec) and tagged [t4code-17.0.5-appserver-18](https://github.com/wolfiesch/oh-my-pi/tree/t4code-17.0.5-appserver-18). It provides the bounded authority bridge used by T4's standalone host and no longer exposes the old public appserver launchers. It pages snapshot-consistent session inventories across bounded frames, marks over-limit inventories partial, and allows lifecycle actions only when a lock is missing or provably stale. It also keeps session-list metadata sparse before bridge encoding, publishes `xd://` mounts atomically with their transport tools, preserves bounded newest-first transcript paging, stale-owner recovery, privacy-safe local project reveal, lazy session indexing, cross-session attention and transcript search, and the negotiated browser-preview command surface, and writes the durable authority marker used for safe short-session reclaim. Its release includes the five platform binaries, two provenance-bound Linux native addons, and their manifest. It also lets a copied historic session use a caller-selected existing working directory when its recorded directory is gone. Unsupported optional capabilities remain hidden when the host does not advertise them.
 

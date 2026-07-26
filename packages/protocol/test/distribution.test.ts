@@ -166,7 +166,7 @@ describe("T4 host-wire distribution", () => {
       readFileSync(join(installedRoot, "package.json"), "utf8"),
     ) as Record<string, unknown>;
     expect(installedPackage.name).toBe("@t4-code/host-wire");
-    expect(installedPackage.version).toBe("0.2.0");
+    expect(installedPackage.version).toBe("0.2.1");
     expect(installedPackage.version).not.toBe(manifest.version);
     expect(installedPackage.dependencies ?? {}).toEqual({});
   });
