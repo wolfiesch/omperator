@@ -67,8 +67,12 @@ final class T4CertPinner: NSObject, URLSessionDelegate {
         } else {
             // TOFU: accept and pin. Logged loudly so a compromised first
             // connect is at least audible in the logs.
+            guard Keychain.set(fingerprint, forKey: key) else {
+                t4pinLog.error("failed to persist cert pin for \(self.label, privacy: .public)")
+                completionHandler(.cancelAuthenticationChallenge, nil)
+                return
+            }
             t4pinLog.notice("TOFU pin for \(self.label, privacy: .public): \(fingerprint, privacy: .public)")
-            Keychain.set(fingerprint, forKey: key)
             completionHandler(.useCredential, URLCredential(trust: trust))
         }
     }
