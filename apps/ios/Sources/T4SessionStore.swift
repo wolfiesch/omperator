@@ -753,6 +753,8 @@ final class T4SessionStore: ObservableObject {
     /// safe relative POSIX path; pass "" for the project root — the host
     /// treats an absent/empty path as the workspace root. Returns the
     /// entries (folders and files) or nil on failure (lastError is set).
+    /// NOTE: files.* is a desktop-bridge operation — standalone official
+    /// hosts don't implement it; the pane shows the honest failure.
     func listFiles(sessionId: String, path: String) async -> [FileListEntry]? {
         guard let client, connected, !hostId.isEmpty else {
             lastError = "Not connected to a host."
@@ -766,7 +768,7 @@ final class T4SessionStore: ObservableObject {
             return try result.filesListResult()
         } catch {
             t4log.error("files.list failed: \(error)")
-            lastError = "\(error)"
+            lastError = "This host has no files bridge (desktop hosts only)."
             return nil
         }
     }
