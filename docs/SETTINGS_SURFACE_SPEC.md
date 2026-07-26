@@ -602,17 +602,24 @@ The design, all of it required together:
   through global `set()`.
 - **Derive the target server-side** from `Settings.#cwd`. The wire never carries a path, matching the
   `config.resource.*` boundary above.
+- **Bind the root when the edit is accepted, not when the saver runs.** Reading `#cwd` inside the
+  debounced saver is a time-of-check bug: a cwd switch during the debounce window would write project
+  A's pending changes into project B's `.omp/config.yml`. Capture the resolved root with each queued
+  mutation and key the pending set by it, so the queue is per-root and a switch simply leaves the old
+  root's queue to drain against its own file. Flush-before-switch is the weaker alternative; it works
+  only if every switch path is guaranteed to call it, which per-root queues do not depend on.
 - Exclude host-local paths, which `getDesktopSnapshot()` already reports as having no project layer.
 - Make rollback persist. `restoreDesktopSnapshot()` restores `#project` in memory but only queues the
   global layer, so a failed multi-edit project write would be reverted in memory and left wrong on
   disk.
-- Extend `flush()` to drain the generalized project queue, keeping the global and project debounce
-  queues separate. Each saver re-reads under its own file lock and patches only its own paths, so
-  external edits survive.
+- Extend `flush()` to drain every per-root project queue, keeping global and project debounces
+  separate. Each saver re-reads under its own file lock and patches only its own paths, so external
+  edits survive.
 
 Tests this needs: persistence, reset revealing a discovered fallback, host-local exclusion, rollback
 after a failed multi-edit write, preservation of an external edit made while the debounce is pending,
-and a cwd switch mid-session.
+and a cwd switch mid-debounce that asserts **both** files: project A received its edit and project B
+received nothing.
 
 ### 5.6 What stays out of settings
 
