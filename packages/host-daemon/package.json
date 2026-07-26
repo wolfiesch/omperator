@@ -8,7 +8,7 @@
   "bin": { "t4-host": "src/cli.ts" },
   "scripts": {
     "build": "bun run build:binary",
-    "build:binary": "bun build --compile src/cli.ts --outfile dist/t4-host",
+    "build:binary": "bun build --compile --external playwright-core src/cli.ts --outfile dist/t4-host",
     "check": "bun run typecheck",
     "test": "bun test test",
     "verify:official-omp-packaged": "node ../../scripts/stage-omp-runtime.mjs --runtime official && bun run build:binary && bun run bin/official-omp-packaged-proof.ts",
