@@ -4441,6 +4441,7 @@ export class LocalAppserver implements AppserverHandle {
 				return;
 			}
 			if (typeof raw !== "string") throw new Error("binary websocket frames are not supported");
+			console.error("[dbg] message in:", raw.slice(0, 80));
 			const input = parseBounded(raw);
 			const frame = ws.remote && this.#remotePolicy?.decodeClientFrame
 				? this.#remotePolicy.decodeClientFrame(input)
