@@ -4941,7 +4941,9 @@ export class LocalAppserver implements AppserverHandle {
 				return false;
 			}
 			if (transformed === undefined) return false;
-			return transport.send(typeof transformed === "string" ? transformed : JSON.stringify(transformed));
+			const sent = transport.send(typeof transformed === "string" ? transformed : JSON.stringify(transformed));
+			console.error("[dbg] remote send:", compatibleFrame.type, sent);
+			return sent;
 		}
 		return transport.send(JSON.stringify(compatibleFrame));
 	}
