@@ -945,6 +945,130 @@ describe("appserver lifecycle", () => {
 			await rm(root, { recursive: true, force: true });
 		}
 	});
+	test("restores a waiting terminal transfer after restart and reclaims it after a stale terminal lock", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-terminal-transfer-restart-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const sessionOwnershipPath = join(root, "profile", "owned-sessions.json");
+		const transcriptPath = join(root, "transferred-session.jsonl");
+		const sid = sessionId("transferred-session-restart");
+		const timestamp = "2026-07-25T00:00:00.000Z";
+		await writeFile(
+			transcriptPath,
+			`${JSON.stringify({
+				type: "session",
+				version: 3,
+				id: sid,
+				cwd: root,
+				timestamp,
+				title: "Transferred session after restart",
+				authorityProtocol: "t4-omp-authority/1",
+			})}\n`,
+		);
+		const ownership = new SessionOwnershipStore(sessionOwnershipPath);
+		await ownership.add(sid, transcriptPath);
+		await ownership.release(sid, transcriptPath);
+		let lockStatus: "live" | "missing" | "stale" = "missing";
+		const factory = new TransferFactory();
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "terminal-transfer-restart-test",
+			socketPath,
+			sessionOwnershipPath,
+			discovery: new FileSessionDiscovery(root, realFs, host, true),
+			childFactory: factory,
+			lockStatus: () => lockStatus,
+			lockCheck: async () => {},
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "transfer-restart-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: ["session.observer", "session.transfer"],
+				capabilities: { client: ["sessions.read"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect((await client.nextServer()).type).toBe("sessions");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "attach-released-after-restart",
+				commandId: "attach-released-after-restart-command",
+				hostId: host,
+				sessionId: sid,
+				command: "session.attach",
+				args: {},
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "attach-released-after-restart") {
+					expect(frame.ok).toBe(true);
+					break;
+				}
+			}
+			await Promise.race([
+				(async () => {
+					while (appserver.snapshot(sid)?.ref.liveState?.sessionControl?.mode !== "released") {
+						await Bun.sleep(10);
+					}
+				})(),
+				Bun.sleep(1_000).then(() => {
+					throw new Error("waiting terminal transfer was not restored after restart");
+				}),
+			]);
+			expect(appserver.snapshot(sid)?.ref.liveState?.sessionControl).toEqual({
+				mode: "released",
+				transcript: "live",
+				resumeCommand: "t4-omp --resume transferred-session-restart",
+			});
+			expect(factory.children).toHaveLength(0);
+
+			lockStatus = "live";
+			await Promise.race([
+				(async () => {
+					while (appserver.snapshot(sid)?.ref.liveState?.sessionControl?.mode !== "observer") {
+						await Bun.sleep(10);
+					}
+				})(),
+				Bun.sleep(1_000).then(() => {
+					throw new Error("terminal writer was not observed after restart");
+				}),
+			]);
+			const observed = new SessionOwnershipStore(sessionOwnershipPath);
+			await observed.load();
+			expect(observed.transfer(sid, transcriptPath)).toBe("observed");
+
+			lockStatus = "stale";
+			await Promise.race([
+				(async () => {
+					while (factory.children.length === 0) await Bun.sleep(10);
+					while (appserver.snapshot(sid)?.ref.liveState?.sessionControl !== undefined) await Bun.sleep(10);
+				})(),
+				Bun.sleep(1_000).then(() => {
+					throw new Error(
+						`stale terminal writer was not reclaimed after restart: ${JSON.stringify({
+							children: factory.children.length,
+							control: appserver.snapshot(sid)?.ref.liveState?.sessionControl,
+							transfer: observed.transfer(sid, transcriptPath),
+						})}`,
+					);
+				}),
+			]);
+			const returned = new SessionOwnershipStore(sessionOwnershipPath);
+			await returned.load();
+			expect(returned.owns(sid, transcriptPath)).toBe(true);
+			expect(returned.transfer(sid, transcriptPath)).toBeUndefined();
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
 	test("releases an owned session to a terminal writer and automatically resumes after it exits", async () => {
 		const root = await mkdtemp(join(tmpdir(), "t4-terminal-transfer-"));
 		const socketPath = join(root, "run", "appserver.sock");

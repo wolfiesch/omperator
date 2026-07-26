@@ -74,7 +74,7 @@ function snapshot(options: {
       targetId: TARGET,
       hostId: HOST,
       ompVersion: "17.0.5",
-      ompBuild: "ccb86bb7",
+      ompBuild: "d83b6888",
       appserverVersion: "1",
       appserverBuild: "test",
       epoch: "host-epoch",

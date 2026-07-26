@@ -107,6 +107,13 @@ async function main() {
     await stopChild(electron);
     await resetDevelopmentSandbox(sandboxName, repoRoot);
   }
+  run(process.execPath, [
+    "scripts/packaged-session-handoff.mjs",
+    "--app",
+    app,
+    "--artifact-root",
+    artifactRoot,
+  ]);
   const report = {
     schemaVersion: 1,
     commit,
@@ -115,6 +122,7 @@ async function main() {
     bundledHost: relative(repoRoot, host),
     bundledRuntime: relative(repoRoot, runtime),
     packagedElectronLaunch: launchPassed,
+    packagedSessionHandoff: true,
     isolatedSandboxCleaned: true,
     passed: launchPassed,
   };
