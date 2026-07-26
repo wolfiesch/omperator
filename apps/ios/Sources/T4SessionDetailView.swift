@@ -103,16 +103,6 @@ struct T4SessionDetailView: View {
                         proxy.scrollTo("transcript-bottom", anchor: .bottom)
                     }
                 }
-                // Fade the transcript out under the floating glass instead of
-                // hard-clipping lines at the screen's bottom edge.
-                .mask(
-                    VStack(spacing: 0) {
-                        LinearGradient(colors: [.black, .black, .black.opacity(0.85)],
-                                       startPoint: .top, endPoint: .bottom)
-                        LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
-                            .frame(height: 28)
-                    }
-                )
             }
             T4TerminalDrawer(session: session, store: store, isOpen: showTerminal)
                 .environmentObject(theme)
