@@ -193,9 +193,9 @@ steps:
     commands:
       - git init .current-continuity/omp
       - git -C .current-continuity/omp remote add origin https://github.com/wolfiesch/oh-my-pi.git
-      - git -C .current-continuity/omp fetch --depth=1 origin 675499f428ada2d116088b6a6ceae6586aba137a
+      - git -C .current-continuity/omp fetch --depth=1 origin c0308ffb97f72c0e7ac5ffca80955f8cc9c7172b
       - git -C .current-continuity/omp checkout --detach FETCH_HEAD
-      - test "$(git -C .current-continuity/omp rev-parse HEAD)" = 675499f428ada2d116088b6a6ceae6586aba137a
+      - test "$(git -C .current-continuity/omp rev-parse HEAD)" = c0308ffb97f72c0e7ac5ffca80955f8cc9c7172b
     backend_options:
       kubernetes:
         serviceAccountName: woodpecker-ci-untrusted

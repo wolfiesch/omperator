@@ -29,10 +29,10 @@
     "currentBaseTagObject": null,
     "currentBaseCommitAccessible": true,
     "productBranch": "t4code/main",
-    "productCommit": "675499f428ada2d116088b6a6ceae6586aba137a",
-    "integrationTag": "t4code-17.0.5-appserver-16",
-    "integrationCommit": "675499f428ada2d116088b6a6ceae6586aba137a",
-    "integrationTagObject": "be1c2a3e349094940aadfcc67e06674469346218"
+    "productCommit": "c0308ffb97f72c0e7ac5ffca80955f8cc9c7172b",
+    "integrationTag": "t4code-17.0.5-appserver-17",
+    "integrationCommit": "c0308ffb97f72c0e7ac5ffca80955f8cc9c7172b",
+    "integrationTagObject": "8822aa956cf48163e06077801e0dab3600de0b29"
   },
   "releaseAssets": [
     {"name":"omp-darwin-arm64","size":120893008,"digest":"sha256:60ce5193eadc2884a4313289ff1166b6a1daae97f3a3ec66dc260ea5c5713756"},
