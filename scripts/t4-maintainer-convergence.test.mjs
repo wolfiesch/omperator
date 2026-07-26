@@ -772,9 +772,12 @@ test("fresh verification downloads OMP assets once across later convergence retr
   const downloads = calls
     .split("\n")
     .filter(
-      (line) => line.startsWith("curl\t") && line.includes("mock://omp-") && line.includes("\t-o\t"),
+      (line) =>
+        line.startsWith("curl\t") &&
+        (line.includes("mock://omp-") || line.includes("mock://pi_natives.")) &&
+        line.includes("\t-o\t"),
     );
-  assert.equal(downloads.length, 5, downloads.join("\n"));
+  assert.equal(downloads.length, 8, downloads.join("\n"));
 });
 
 test("active compatible publication waits without launching duplicate Sol work", async (t) => {
