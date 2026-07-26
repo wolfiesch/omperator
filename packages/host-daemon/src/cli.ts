@@ -38,6 +38,8 @@ const OFFICIAL_CATALOG_COMMANDS = Object.freeze([
   "session.thinking.set",
   "session.cancel",
   "session.close",
+  "session.release",
+  "session.reclaim",
   "term.open",
 ]);
 

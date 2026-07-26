@@ -236,6 +236,8 @@ describe("T4 host daemon CLI", () => {
     const commandNames = officialItems.map(item => item.name);
     expect(officialItems.every(item => item.kind === "command")).toBe(true);
     expect(commandNames).toContain("session.model.set");
+    expect(commandNames).toContain("session.release");
+    expect(commandNames).toContain("session.reclaim");
     expect(commandNames).not.toContain("session.fast.set");
     expect(commandNames).not.toContain("session.retry");
     expect(authorityCloses).toBe(1);
