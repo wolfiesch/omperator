@@ -343,16 +343,14 @@ struct T4WorkspaceView: View {
             .padding(.bottom, 28)
             .overlay(alignment: .top) { Rectangle().fill(t.lineFaint).frame(height: 1) }
         } else {
+            // No Connect button here — onboarding and the palette own that.
+            // The rail bar only manages an EXISTING connection.
             HStack(spacing: 10) {
-                Button { showConnect = true } label: {
-                    Label("Connect to T4 Code", systemImage: "plus.circle.fill")
-                        .font(.system(size: 15, weight: .semibold))
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(t.interactiveAccent)
-                .controlSize(.large)
-                .accessibilityLabel("Connect to a T4 Code host")
+                Circle().fill(t.txtGhost).frame(width: 8, height: 8)
+                Text("Not connected")
+                    .font(.system(size: 13))
+                    .foregroundStyle(t.txtMuted)
+                Spacer()
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
@@ -490,6 +488,12 @@ struct T4WorkspaceView: View {
             if let error = store.lastError {
                 Text(error).font(.system(size: 12)).foregroundStyle(t.diffDel)
                     .multilineTextAlignment(.center).padding(.horizontal, 32)
+                Button { showConnect = true } label: {
+                    Text("Pair a different host").font(.system(size: 13, weight: .semibold))
+                }
+                .buttonStyle(.bordered)
+                .tint(t.interactiveAccent)
+                .padding(.top, 4)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
