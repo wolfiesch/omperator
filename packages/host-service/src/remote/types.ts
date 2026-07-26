@@ -40,6 +40,9 @@ export interface RemoteListenerConfig {
 	serveProxy?: boolean;
 	/** Fixed peer identity for a pod-network listener whose omp-app hello is authenticated by a dedicated policy. */
 	internalPeerNodeId?: string;
+	/** PEM cert/key for a TLS (wss) listener; fingerprint is sha256 of the cert DER, hex. */
+	tls?: { readonly cert: string; readonly key: string };
+	tlsFingerprint?: string;
 	originAllowlist?: readonly string[];
 	maxConnections?: number;
 	maxFrameBytes?: number;
