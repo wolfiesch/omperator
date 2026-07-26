@@ -31,45 +31,51 @@ struct T4PlanStrip: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Always in the hierarchy: animating maxHeight + opacity gives a
-            // smooth height tween; a conditional insert pops in mid-resize
-            // (the expand/collapse jitter).
-            ScrollView { planBody.padding(.horizontal, 13).padding(.top, 12).padding(.bottom, 8) }
-                .scrollDisabled(!expanded)
-                .frame(maxHeight: expanded ? 260 : 0)
-                .opacity(expanded ? 1 : 0)
-                .clipped()
-                .allowsHitTesting(expanded)
-                .accessibilityHidden(!expanded)
-            if expanded {
-                Rectangle().frame(height: 0.5).foregroundStyle(t.lineFaint)
+        // The pill is the anchor: it never moves. The plan panel lives in an
+        // overlay pinned above it (no layout impact) and grows upward — so
+        // expand/collapse is one clean unfold from the strip, no overshoot.
+        pill
+            .glass(t, 16, panel: true)
+            .overlay(alignment: .bottom) {
+                ScrollView { planBody.padding(.horizontal, 13).padding(.top, 12).padding(.bottom, 8) }
+                    .scrollDisabled(!expanded)
+                    .frame(maxHeight: expanded ? 260 : 0, alignment: .bottom)
+                    .opacity(expanded ? 1 : 0)
+                    .allowsHitTesting(expanded)
+                    .accessibilityHidden(!expanded)
+                    .background(t.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(t.glassBorder, lineWidth: 1)
+                    )
+                    .clipped()
+                    .padding(.horizontal, 2)
+                    .alignmentGuide(.bottom) { $0[.top] - 8 }
             }
-            Button { expanded.toggle() } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: "checklist").font(.system(size: 12)).foregroundStyle(t.accent)
-                    Text("PLAN").font(.labl(10)).tracking(1.6).foregroundStyle(t.txt)
-                    Text("\(phasesDone)/\(phases.count)").font(.term(12)).foregroundStyle(t.txtMuted)
-                    if let cur = currentTask {
-                        Image(systemName: "circle.lefthalf.filled").font(.system(size: 9)).foregroundStyle(t.accent)
-                        Text(cur).font(.term(12)).foregroundStyle(t.txtBody).lineLimit(1)
-                    } else {
-                        Image(systemName: "checkmark.circle.fill").font(.system(size: 9)).foregroundStyle(t.cOk)
-                        Text("complete").font(.term(12)).foregroundStyle(t.cOk)
-                    }
-                    Spacer(minLength: 4)
-                    Image(systemName: expanded ? "chevron.down" : "chevron.up")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(t.txtLabel)
+            .animation(.easeInOut(duration: 0.22), value: expanded)
+    }
+
+    private var pill: some View {
+        Button { expanded.toggle() } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "checklist").font(.system(size: 12)).foregroundStyle(t.accent)
+                Text("PLAN").font(.labl(10)).tracking(1.6).foregroundStyle(t.txt)
+                Text("\(phasesDone)/\(phases.count)").font(.term(12)).foregroundStyle(t.txtMuted)
+                if let cur = currentTask {
+                    Image(systemName: "circle.lefthalf.filled").font(.system(size: 9)).foregroundStyle(t.accent)
+                    Text(cur).font(.term(12)).foregroundStyle(t.txtBody).lineLimit(1)
+                } else {
+                    Image(systemName: "checkmark.circle.fill").font(.system(size: 9)).foregroundStyle(t.cOk)
+                    Text("complete").font(.term(12)).foregroundStyle(t.cOk)
                 }
-                .padding(.horizontal, 13).padding(.vertical, 10)
+                Spacer(minLength: 4)
+                Image(systemName: expanded ? "chevron.down" : "chevron.up")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(t.txtLabel)
             }
-            .buttonStyle(.plain)
+            .padding(.horizontal, 13).padding(.vertical, 10)
         }
-        .glass(t, 16, panel: true)
-        // One animation context for the whole strip — panel height AND pill
-        // position tween together; animating only the inner height snapped.
-        .animation(.easeInOut(duration: 0.22), value: expanded)
+        .buttonStyle(.plain)
     }
 
     private var planBody: some View {

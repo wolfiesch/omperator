@@ -111,11 +111,9 @@ struct T4SessionDetailView: View {
         // Floating glass: plan strip + composer hover over the transcript,
         // which scrolls underneath. No floor, no divider.
         .safeAreaInset(edge: .bottom, spacing: 8) {
-            GlassEffectContainer(spacing: 8) {
-                VStack(spacing: 8) {
-                    planStripSection
-                    composer
-                }
+            VStack(spacing: 8) {
+                planStripSection
+                composer
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 6)
