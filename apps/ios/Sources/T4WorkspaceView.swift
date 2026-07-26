@@ -78,18 +78,22 @@ struct T4WorkspaceView: View {
                 await store.restore()
             }
             .task {
-                // UI-test seam: launch with -T4PairCode <code> [-T4PairHost <host[:port]>]
-                // to run the pair handshake on first boot. Default host is the
-                // tailnet IP (the sim has no MagicDNS resolver).
+                // UI-test seam: launch with
+                // -T4PairCode <code> -T4PairEndpoint <ws-or-wss-url>
+                // to run the pair handshake on first boot. The endpoint is
+                // always explicit so test builds never embed a private host.
                 let args = ProcessInfo.processInfo.arguments
-                if let index = args.firstIndex(of: "-T4PairCode"), args.indices.contains(index + 1) {
-                    var host = "100.98.34.4"
-                    if let hIndex = args.firstIndex(of: "-T4PairHost"), args.indices.contains(hIndex + 1) {
-                        host = args[hIndex + 1]
-                    }
-                    if let endpoint = URL(string: "ws://\(host):8787/v1/ws") {
-                        await store.pairAndConnect(endpoint: endpoint, code: args[index + 1], deviceName: "sim-ui-test")
-                    }
+                if let codeIndex = args.firstIndex(of: "-T4PairCode"),
+                   args.indices.contains(codeIndex + 1),
+                   let endpointIndex = args.firstIndex(of: "-T4PairEndpoint"),
+                   args.indices.contains(endpointIndex + 1),
+                   let endpoint = URL(string: args[endpointIndex + 1]),
+                   endpoint.scheme == "ws" || endpoint.scheme == "wss" {
+                    await store.pairAndConnect(
+                        endpoint: endpoint,
+                        code: args[codeIndex + 1],
+                        deviceName: "sim-ui-test"
+                    )
                 }
             }
             .task {

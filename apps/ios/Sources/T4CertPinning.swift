@@ -23,7 +23,7 @@ private let t4pinLog = Logger(subsystem: "sh.t4code.ios", category: "pinning")
 /// Only `wss://` endpoints should route through this; plain `ws://` carries no
 /// server trust challenge at all.
 final class T4CertPinner: NSObject, URLSessionDelegate {
-    /// Keychain account key for a host:port pair, e.g. "certpin.100.98.34.4:8788".
+    /// Keychain account key for a host:port pair, e.g. "certpin.host.tailnet.ts.net:8788".
     static func pinKey(host: String, port: Int) -> String { "certpin.\(host.lowercased()):\(port)" }
 
     private let key: String
