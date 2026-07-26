@@ -121,8 +121,10 @@ class FakeRuntime implements LiveSettingsRuntimePort {
   ): () => void {
     return () => {};
   }
+  commandRejection: string | null = null;
   async command(_targetId: string, intent: CommandRequest["intent"]): Promise<CommandResult> {
     this.commands.push(intent);
+    if (this.commandRejection !== null) throw new Error(this.commandRejection);
     return { targetId: "local", requestId: `req-${this.commands.length}`, commandId: "cmd", accepted: true };
   }
   async confirm(request: ConfirmRequest): Promise<ConfirmResult> {
@@ -600,5 +602,26 @@ describe("rail accordion", () => {
 
   it("falls back to the first group when nothing is active", () => {
     expect([...expandedRailGroups(groups, "nonexistent", new Set(), false)]).toEqual(["agent"]);
+  });
+});
+
+describe("settings refresh rejection", () => {
+  it("reports the host's rejection reason instead of guessing at missing support", async () => {
+    // A rejected `settings.read` / `catalog.get` pair previously fell through
+    // to a timeout that blamed the host's OMP build. The real reason has to
+    // reach the message, or an empty rail is indistinguishable from a refusal.
+    const runtime = new FakeRuntime();
+    runtime.connectLocal();
+    runtime.commandRejection = "host refused: catalog unavailable";
+    const { model, detach } = attachedModel(runtime, 20);
+    try {
+      await vi.waitFor(() => {
+        const state = model.getState();
+        if (state.phase !== "error") throw new Error(`still ${state.phase}`);
+        expect(state.message).toContain("catalog unavailable");
+      }, { timeout: 2000 });
+    } finally {
+      detach();
+    }
   });
 });

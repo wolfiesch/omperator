@@ -279,6 +279,8 @@ export function createLiveSettingsScreenModel(options: LiveSettingsScreenModelOp
   let publishTimer: ReturnType<typeof setTimeout> | null = null;
   let publishNudgedKey: string | null = null;
   let publishTimedOutKey: string | null = null;
+  /** Reason the host rejected a publish nudge, reported instead of a guess. */
+  let publishFailure: string | null = null;
 
   const broker = createBrokerStatusModel(runtime, options.brokerTimeoutMs);
 
@@ -341,7 +343,10 @@ export function createLiveSettingsScreenModel(options: LiveSettingsScreenModelOp
     if (publishTimedOutKey === key) {
       setState({
         phase: "error",
-        message: `${active.hostLabel} is connected but hasn't published its settings. The host may be running an OMP build without desktop settings support.`,
+        message:
+          publishFailure === null
+            ? `${active.hostLabel} is connected but hasn't published its settings. The host may be running an OMP build without desktop settings support.`
+            : `${active.hostLabel} is connected but rejected the settings request: ${publishFailure}`,
         hostLabel: active.hostLabel,
         hosts,
         activeTargetId: active.targetId,
@@ -350,11 +355,23 @@ export function createLiveSettingsScreenModel(options: LiveSettingsScreenModelOp
     }
     if (publishNudgedKey !== key) {
       publishNudgedKey = key;
-      // Best effort: ask the host to (re)publish. Failures fall through to
-      // the timeout below, which reports honestly.
+      // Best effort: ask the host to (re)publish. Failures fall through to the
+      // timeout below, which reports the recorded reason rather than guessing
+      // that the host lacks settings support.
       const wireHostId = brandHostId(active.hostId);
-      void runtime.command(active.targetId, { hostId: wireHostId, command: "settings.read", args: {} }).catch(() => {});
-      void runtime.command(active.targetId, { hostId: wireHostId, command: "catalog.get", args: {} }).catch(() => {});
+      // Bind the key: a rejection can land after the active host changed, and
+      // reporting host A's reason under host B's timeout is worse than no
+      // reason at all.
+      const nudgedKey = key;
+      const recordFailure = (reason: unknown): void => {
+        if (publishNudgedKey === nudgedKey) publishFailure = String(reason);
+      };
+      void runtime
+        .command(active.targetId, { hostId: wireHostId, command: "settings.read", args: {} })
+        .catch(recordFailure);
+      void runtime
+        .command(active.targetId, { hostId: wireHostId, command: "catalog.get", args: {} })
+        .catch(recordFailure);
       clearPublishTimer();
       publishTimer = setTimeout(() => {
         publishTimer = null;
@@ -405,6 +422,7 @@ export function createLiveSettingsScreenModel(options: LiveSettingsScreenModelOp
     if (active === null) {
       clearPublishTimer();
       publishNudgedKey = null;
+      publishFailure = null;
       if (problem.error !== null) {
         setState({
           phase: "error",
@@ -449,6 +467,7 @@ export function createLiveSettingsScreenModel(options: LiveSettingsScreenModelOp
 
     clearPublishTimer();
     publishNudgedKey = null;
+    publishFailure = null;
     publishTimedOutKey = null;
 
     if (entry === undefined) {
@@ -569,6 +588,7 @@ export function createLiveSettingsScreenModel(options: LiveSettingsScreenModelOp
           detachBroker = null;
           clearPublishTimer();
           publishNudgedKey = null;
+          publishFailure = null;
         }
       };
     },
