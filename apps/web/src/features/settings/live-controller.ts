@@ -101,10 +101,19 @@ export function createLiveSettingsController(options: LiveSettingsControllerOpti
     });
     const timer = setTimeout(resolve, timeoutMs);
     try {
-      await Promise.allSettled([
+      // `allSettled` so one failing command cannot mask the other's result,
+      // but a rejection must not read as "the host published an empty
+      // catalog": that turned a broken refresh into a silently empty rail.
+      const results = await Promise.allSettled([
         runtime.command(targetId, { hostId: wireHostId, command: "settings.read", args: {} }),
         runtime.command(targetId, { hostId: wireHostId, command: "catalog.get", args: {} }),
       ]);
+      const rejected = results.filter((result) => result.status === "rejected");
+      if (rejected.length === results.length) {
+        throw new Error(
+          `settings refresh failed: ${rejected.map((result) => String(result.reason)).join("; ")}`,
+        );
+      }
       const settled = runtime.getSnapshot().settings.get(hostId);
       if (settled === undefined || String(settled.revision) === previousRevision) await promise;
     } finally {
