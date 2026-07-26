@@ -246,14 +246,9 @@ struct T4WorkspaceView: View {
         }
         .navigationTitle(store.selectedSession?.title ?? "T4 Code")
         .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Button { macCommands.toggleSidebar() } label: {
-                    Image(systemName: "sidebar.left")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(t.txt)
-                }
-                .accessibilityLabel("Toggle sidebar")
-            }
+            // No custom sidebar toggle here: NavigationSplitView already
+            // provides the anchored system one (a second button moved with
+            // the column — the duplication the user flagged).
             ToolbarItem(placement: platformTrailingPlacement) {
                 if let session = store.selectedSession {
                     T4ModelMenuButton(session: session, store: store, theme: t) {
