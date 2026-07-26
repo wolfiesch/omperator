@@ -453,9 +453,12 @@ export function createBrowserShellPort(
         client = buildClient();
       }
       ensureLifecycle();
-      // connect() is idempotent — it calls connection.begin() if idle
+      // connect() is idempotent — it calls connection.begin() if idle.
+      // If it throws before the client ever reports a state, no callback runs
+      // and the target sits at "connecting" forever with the failure lost, so
+      // fall back to the error state here rather than swallowing it.
       void client.connect().catch(() => {
-        /* state callback handles errors */
+        if (connectionState === "connecting") emitState(TARGET_ID, "error");
       });
       return { targetId: TARGET_ID, state: "connecting" };
     },
