@@ -346,6 +346,7 @@ final class T4SessionStore: ObservableObject {
     /// Attach to the selected session if we haven't yet (connection-driven,
     /// not view-driven: a view race once left sessions permanently empty).
     private func attachSelectedIfNeeded() {
+        t4log.notice("attachIfNeeded: conn=\(connected) sel=\(self.selectedSession?.sessionId ?? "nil") live=\(self.liveEntries.keys.count)")
         guard connected, let selected = selectedSession,
               liveEntries[selected.sessionId] == nil else { return }
         Task {
