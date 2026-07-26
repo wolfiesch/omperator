@@ -45,7 +45,7 @@ struct T4PlanStrip: View {
             if expanded {
                 Rectangle().frame(height: 0.5).foregroundStyle(t.lineFaint)
             }
-            Button { withAnimation(.easeInOut(duration: 0.22)) { expanded.toggle() } } label: {
+            Button { expanded.toggle() } label: {
                 HStack(spacing: 7) {
                     Image(systemName: "checklist").font(.system(size: 12)).foregroundStyle(t.accent)
                     Text("PLAN").font(.labl(10)).tracking(1.6).foregroundStyle(t.txt)
@@ -67,6 +67,9 @@ struct T4PlanStrip: View {
             .buttonStyle(.plain)
         }
         .glass(t, 16, panel: true)
+        // One animation context for the whole strip — panel height AND pill
+        // position tween together; animating only the inner height snapped.
+        .animation(.easeInOut(duration: 0.22), value: expanded)
     }
 
     private var planBody: some View {
