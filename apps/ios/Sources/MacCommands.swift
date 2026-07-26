@@ -22,8 +22,6 @@ final class MacCommandsModel: ObservableObject {
     @Published var focusSearchTick = 0
     @Published var dismissTick = 0
     @Published var connectTick = 0
-    @Published var focusSearchTick = 0
-    @Published var dismissTick = 0
     @Published var paletteTick = 0
     /// Set by the Session → Rename menu command; the workspace presents the
     /// rename alert bound to this.
