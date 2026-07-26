@@ -574,9 +574,45 @@ system browser and polls, rather than embedding a credential flow in the rendere
    then the existing forwarding at `authority.ts:183-194` starts producing real data. Fixes D5.
    This is upstream schema work and can be contributed to `can1357/oh-my-pi`.
 5. Publish per-key `scopes` reflecting reality, and accept `scope: "project"` writes against
-   `<cwd>/.omp/config.yml`. Fixes D8.
+   `<cwd>/.omp/config.yml`. Fixes D8. See "Project-layer writes" below: this is not a one-line
+   allow-list change.
 6. Publish `secretStatus` for sensitive keys (set / unset / from-env / from-broker) without the value,
    so `SecretFieldEditor` can show state.
+
+#### Project-layer writes
+
+`<cwd>/.omp/config.yml` is a first-class OMP layer, so "everything you can do in OMP" is not met while
+the GUI can only write global and session. Adding `"project"` to the authority's accepted scopes is
+nonetheless the wrong fix, for a reason worth writing down.
+
+`Settings.#project` is the **merged product of every project-capability provider**: the native `.omp`
+file plus Claude, Codex, Cursor, Gemini, and OpenCode contributions. Persisting from that merged map
+would write foreign-provider-derived values into OMP's own file, and deleting a path from it removes
+the lower-priority fallback in memory until the next reload, so reset would report the wrong value.
+The capability pipeline is deliberately a read boundary; write ownership belongs to `Settings`.
+
+The design, all of it required together:
+
+- Keep a **distinct native project map** alongside the discovered-provider base, rebuild `#project`
+  from both, and persist only the native map. Reset deletes from the native map and re-reveals the
+  discovered value.
+- Generalize the existing project save path. `setProjectModelRole` already writes only `modelRoles.*`
+  to `<cwd>/.omp/config.yml` under `withFileLock`, patching just the marked paths; that machinery
+  extends to arbitrary schema paths with a general `#modifiedProject` set. Do not route project edits
+  through global `set()`.
+- **Derive the target server-side** from `Settings.#cwd`. The wire never carries a path, matching the
+  `config.resource.*` boundary above.
+- Exclude host-local paths, which `getDesktopSnapshot()` already reports as having no project layer.
+- Make rollback persist. `restoreDesktopSnapshot()` restores `#project` in memory but only queues the
+  global layer, so a failed multi-edit project write would be reverted in memory and left wrong on
+  disk.
+- Extend `flush()` to drain the generalized project queue, keeping the global and project debounce
+  queues separate. Each saver re-reads under its own file lock and patches only its own paths, so
+  external edits survive.
+
+Tests this needs: persistence, reset revealing a discovered fallback, host-local exclusion, rollback
+after a failed multi-edit write, preservation of an external edit made while the debounce is pending,
+and a cwd switch mid-session.
 
 ### 5.6 What stays out of settings
 
