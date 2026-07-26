@@ -2287,18 +2287,30 @@ export class LocalAppserver implements AppserverHandle {
 						this.#supportedCapabilities.has("term.input") &&
 						this.#supportedCapabilities.has("term.resize");
 					const authorityItems = catalog.items as readonly CatalogItem[];
-					const items = terminalAvailable
-						? [
-								{
-									id: catalogId("cmd-term-open"),
-									kind: "command" as const,
-									name: "term.open",
-									capabilities: ["term.open"],
-									supported: true,
-								},
-								...authorityItems.filter(item => item.id !== "cmd-term-open" && item.name !== "term.open"),
-							].slice(0, MAX_ARRAY_ITEMS)
-						: authorityItems;
+					const hostItems: CatalogItem[] = [];
+					if (terminalAvailable)
+						hostItems.push({
+							id: catalogId("cmd-term-open"),
+							kind: "command",
+							name: "term.open",
+							capabilities: ["term.open"],
+							supported: true,
+						});
+					if (this.#sessionOwnership)
+						for (const name of ["session.release", "session.reclaim"] as const)
+							hostItems.push({
+								id: catalogId(`cmd-${name.replaceAll(".", "-")}`),
+								kind: "command",
+								name,
+								capabilities: [COMMAND_DESCRIPTORS[name].capability],
+								supported: true,
+							});
+					const hostItemIds = new Set(hostItems.map(item => item.id));
+					const hostItemNames = new Set(hostItems.map(item => item.name));
+					const items = [
+						...hostItems,
+						...authorityItems.filter(item => !hostItemIds.has(item.id) && !hostItemNames.has(item.name)),
+					].slice(0, MAX_ARRAY_ITEMS);
 					const revisionHash = createHash("sha256")
 						.update(catalog.revision)
 						.update(JSON.stringify(operations))
