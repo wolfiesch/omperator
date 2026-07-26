@@ -66,6 +66,7 @@ public struct SessionEvent: Equatable, Sendable {
 public struct AskOption: Equatable, Sendable, Identifiable {
     public let id: String
     public let label: String
+    public init(id: String, label: String) { self.id = id; self.label = label }
 }
 
 /// A host-asked question awaiting the user's answer (question mode). Either
@@ -75,6 +76,9 @@ public struct AskRequest: Equatable, Sendable {
     public let question: String?
     public let options: [AskOption]
     public var isFreeText: Bool { options.isEmpty }
+    public init(askId: String, question: String? = nil, options: [AskOption] = []) {
+        self.askId = askId; self.question = question; self.options = options
+    }
 }
 
 /// Host → client: one live session event with its cursor.
