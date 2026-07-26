@@ -25,16 +25,8 @@
 	<!-- Dev: t4-host serves cleartext ws:// on the tailnet. Remove once the host offers wss. -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<key>NSExceptionDomains</key>
-		<dict>
-			<key>macbookpro.tail871e8b.ts.net</key>
-			<dict>
-				<key>NSIncludesSubdomains</key>
-				<true/>
-				<key>NSExceptionAllowsInsecureHTTPLoads</key>
-				<true/>
-			</dict>
-		</dict>
+		<key>NSAllowsArbitraryLoadsForWebSockets</key>
+		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Scan a T4 Code pairing code to connect a host.</string>
