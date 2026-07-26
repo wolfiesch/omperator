@@ -19,7 +19,7 @@ struct T4AgentsPane: View {
 
     var body: some View {
         NavigationStack {
-            Group {
+            VStack(spacing: 0) {
                 if agents.isEmpty {
                     Spacer()
                     VStack(spacing: 10) {

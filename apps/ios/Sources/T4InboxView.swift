@@ -17,7 +17,7 @@ struct T4InboxView: View {
 
     var body: some View {
         NavigationStack {
-            Group {
+            VStack(spacing: 0) {
                 if store.attentionSessions.isEmpty {
                     Spacer()
                     VStack(spacing: 10) {
