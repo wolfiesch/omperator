@@ -45,11 +45,19 @@ public final class URLSessionHostWireTransport: HostWireTransport {
 
     public func receive() async throws -> Data {
         guard let task else { throw HostClientError.transport("socket not open") }
-        let message = try await task.receive()
-        switch message {
-        case .data(let data): return data
-        case .string(let text): return Data(text.utf8)
-        @unknown default: throw HostClientError.transport("unknown websocket message")
+        do {
+            let message = try await task.receive()
+            switch message {
+            case .data(let data): return data
+            case .string(let text): return Data(text.utf8)
+            @unknown default: throw HostClientError.transport("unknown websocket message")
+            }
+        } catch {
+            // Surface the server's close code — policy denials (1008) vs
+            // transport faults look identical otherwise.
+            let code = task.closeCode
+            let reason = task.closeReason.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            throw HostClientError.transport("closed by host: \(code.rawValue) \(reason)")
         }
     }
 
