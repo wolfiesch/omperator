@@ -140,7 +140,7 @@ struct T4WorkspaceView: View {
     private var workspace: some View {
         NavigationStack {
             Group {
-                if !store.hasLiveInventory && store.hasSavedConnection {
+                if !store.hasLiveInventory && !T4SessionStore.demoMode && store.hasSavedConnection {
                     bootSplash
                 } else if !store.hasLiveInventory && !T4SessionStore.demoMode {
                     onboarding
