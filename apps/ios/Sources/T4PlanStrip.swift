@@ -31,19 +31,11 @@ struct T4PlanStrip: View {
     }
 
     var body: some View {
-        // One glass object: the plan unfolds INSIDE the card above the pill,
-        // height-animated, clipped by the card. No GlassEffectContainer (its
-        // shape morph was the jump), nothing floating.
+        // One glass object, pill on TOP: the plan unfolds below it, so the
+        // pill is anchored and never displaced (it was cargo below the
+        // growing panel before — the jiggle). The card stretches toward the
+        // pinned composer in one motion.
         VStack(spacing: 0) {
-            ScrollView { planBody.padding(.horizontal, 13).padding(.top, 12).padding(.bottom, 8) }
-                .scrollDisabled(!expanded)
-                .frame(maxHeight: expanded ? 260 : 0)
-                .opacity(expanded ? 1 : 0)
-                .allowsHitTesting(expanded)
-                .accessibilityHidden(!expanded)
-            if expanded {
-                Rectangle().frame(height: 0.5).foregroundStyle(t.lineFaint)
-            }
             Button { expanded.toggle() } label: {
                 HStack(spacing: 7) {
                     Image(systemName: "checklist").font(.system(size: 12)).foregroundStyle(t.accent)
@@ -64,6 +56,15 @@ struct T4PlanStrip: View {
                 .padding(.horizontal, 13).padding(.vertical, 10)
             }
             .buttonStyle(.plain)
+            if expanded {
+                Rectangle().frame(height: 0.5).foregroundStyle(t.lineFaint)
+            }
+            ScrollView { planBody.padding(.horizontal, 13).padding(.top, 8).padding(.bottom, 12) }
+                .scrollDisabled(!expanded)
+                .frame(maxHeight: expanded ? 260 : 0)
+                .opacity(expanded ? 1 : 0)
+                .allowsHitTesting(expanded)
+                .accessibilityHidden(!expanded)
         }
         .glass(t, 16, panel: true)
         .clipped()
