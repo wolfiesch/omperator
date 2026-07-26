@@ -384,8 +384,10 @@ So the rail is an accordion, and the numbers drive the breakpoints:
 - **Height 1220px or more.** Every group expands, because 38 rows × 28px plus chrome is 1220px and at
   that point the accordion only costs clicks. A large monitor gets the flat list.
 - **Width under 768px** (`apps/mobile` ships this exact bundle, so this is a shipping requirement, not
-  a courtesy). The rail becomes the root screen of a drill-down: choosing a page replaces the view and
-  a back affordance returns to the rail. Search stays pinned at the root.
+  a courtesy). The workspace already replaces the rail with a native `<select>` whose `<optgroup>`s
+  are the rail groups, and that now reflects the six manifest groups for free. Whether a grouped
+  select is adequate across 31 pages, or whether the drill-down this spec originally called for is
+  needed, is a question for the smoke below and not one to settle from the code's current shape.
 
 A user may pin a second group open by clicking its header directly rather than navigating into it.
 That is an explicit override: the rail then exceeds its slot budget and scrolls, and the set of pinned
