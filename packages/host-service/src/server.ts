@@ -1148,6 +1148,11 @@ export class LocalAppserver implements AppserverHandle {
 			...operationCapabilities(options.operationsAuthority),
 		]);
 		if (options.usageAuthority?.read) implemented.add("usage.read");
+		if (options.previewAuthority?.enabled === true) {
+			implemented.add("preview.read");
+			implemented.add("preview.control");
+			implemented.add("preview.input");
+		}
 		if (requested.some(capability => !implemented.has(capability)))
 			throw new Error("unsupported capability has no handler");
 		this.#supportedCapabilities = new Set(requested);
