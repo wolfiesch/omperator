@@ -27,9 +27,9 @@ struct T4CodeApp: App {
                 .preferredColorScheme(theme.preferredScheme)
         }
         #if os(macOS)
+        .commands { MacCommands() }
         .defaultSize(width: 1100, height: 720)
         .windowResizability(.contentMinSize)
-        .commands { MacCommands() }
         #endif
     }
 }
