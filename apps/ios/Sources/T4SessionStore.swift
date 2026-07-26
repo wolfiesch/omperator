@@ -712,11 +712,26 @@ final class T4SessionStore: ObservableObject {
         return entries.map { TranscriptEntry(from: $0) }
     }
 
+    /// Transport for an endpoint. `wss://` gets a pinning session (TOFU leaf
+    /// fingerprint in the Keychain); everything else uses the shared session.
+    private func makeTransport(endpoint: URL) -> URLSessionHostWireTransport {
+        guard endpoint.scheme == "wss",
+              let host = endpoint.host
+        else { return URLSessionHostWireTransport(endpoint: endpoint) }
+        let port = endpoint.port ?? 443
+        let session = URLSession(
+            configuration: .ephemeral,
+            delegate: T4CertPinner(host: host, port: port),
+            delegateQueue: nil
+        )
+        return URLSessionHostWireTransport(endpoint: endpoint, session: session)
+    }
+
     /// Connect to a t4-host over host-wire, handshake, and load the inventory.
     func connect(endpoint: URL, identity: ClientIdentity, authentication: DeviceAuthentication? = nil) async {
         connecting = true
         defer { connecting = false }
-        let transport = URLSessionHostWireTransport(endpoint: endpoint)
+        let transport = makeTransport(endpoint: endpoint)
         let c = HostClient(transport: transport, config: HostClient.Config(identity: identity, authentication: authentication))
         client = c
         do {
@@ -749,7 +764,7 @@ final class T4SessionStore: ObservableObject {
     func pairAndConnect(endpoint: URL, code: String, deviceName: String) async {
         connecting = true
         defer { connecting = false }
-        let transport = URLSessionHostWireTransport(endpoint: endpoint)
+        let transport = makeTransport(endpoint: endpoint)
         let identity = ClientIdentity(name: "t4-ios", version: "0.1", build: "dev", platform: "ios")
         let c = HostClient(transport: transport, config: HostClient.Config(identity: identity, authentication: nil))
         client = c
