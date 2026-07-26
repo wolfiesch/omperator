@@ -42,7 +42,6 @@ extension FocusedValues {
 /// macOS menu bar + keyboard shortcuts. Menus: Session, View, Host, Go to
 /// Session. Shortcuts: ⌘N new, ⌘B toggle sidebar, ⌘F focus search, ⌘1…⌘9
 /// select visible session by index, ⌘⌫ delete, Esc close sheet.
-@MainActor
 struct MacCommands: Commands {
     @FocusedValue(\.t4SessionStore) private var store: T4SessionStore?
     @FocusedValue(\.macCommands) private var commands: MacCommandsModel?
