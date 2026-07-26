@@ -728,10 +728,15 @@ async function runChallengedManagementCommandNow(
       if (typeof resumeCommand !== "string" || resumeCommand.length === 0) {
         throw new Error("The host returned an invalid terminal resume command.");
       }
-      await refreshSessionList(controller, address, (snapshot) => {
-        const next = sessionRefForAddress(snapshot, address);
-        return readSessionControl(next)?.mode === "released";
+      // The accepted release response is the authority for the terminal
+      // command. Refresh the inventory, but do not withhold that command while
+      // an older bridge projects the new ownership state conservatively.
+      const refresh = await controller.command(address.targetId, {
+        hostId: hostId(address.hostId),
+        command: "session.list",
+        args: {},
       });
+      assertAccepted(refresh, null);
       return resumeCommand;
     }
   } finally {

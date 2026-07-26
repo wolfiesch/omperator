@@ -26,6 +26,7 @@ import {
   deleteLiveSession,
   managementCommandSupport,
   projectRevealSupport,
+  releaseLiveSession,
   renameLiveSession,
   revealLiveProject,
   restoreLiveSession,
@@ -115,7 +116,7 @@ class FakeManagementController {
   inventoryTruncated = false;
   /** Test hook: runs right after a destructive challenge is issued. */
   onChallenge: (() => void) | null = null;
-  private pendingMutation: "rename" | "archive" | "restore" | "close" | "delete" | null = null;
+  private pendingMutation: "rename" | "archive" | "restore" | "close" | "release" | "delete" | null = null;
   private pendingName = "";
   private challengeGate: ReturnType<typeof Promise.withResolvers<void>> | null = null;
   private activeChallengedCommands = 0;
@@ -287,6 +288,28 @@ class FakeManagementController {
       }
       return { ...base, result: { closed: true } };
     }
+    if (intent.command === "session.release") {
+      this.pendingMutation = "release";
+      this.challengeGate = Promise.withResolvers<void>();
+      const current = this.sessionIndex.get(KEY);
+      this.emitFrame({
+        v: "omp-app/1",
+        type: "confirmation",
+        confirmationId: confirmationId("release-confirmation"),
+        commandId: commandId(base.commandId),
+        hostId: hostId(ADDRESS.hostId),
+        sessionId: sessionId(ADDRESS.sessionId),
+        commandHash: "sha256:release",
+        revision: current?.revision ?? revision("missing"),
+        expiresAt: "2999-01-01T00:00:00.000Z",
+        summary: "session.release",
+      });
+      await this.challengeGate.promise;
+      return {
+        ...base,
+        result: { released: true, resumeCommand: "t4-omp --resume session-1" },
+      };
+    }
     if (intent.command === "session.delete") {
       this.pendingMutation = "delete";
       this.challengeGate = Promise.withResolvers<void>();
@@ -412,6 +435,14 @@ class FakeManagementController {
               queuedMessageCount: 0,
               queuedMessages: [],
               liveState: { phase: "idle" },
+            }
+          : {}),
+        ...(this.pendingMutation === "release"
+          ? {
+              liveState: {
+                phase: "idle",
+                sessionControl: { mode: "unknown" },
+              },
             }
           : {}),
       } as SessionRef & { archivedAt?: string };
@@ -659,6 +690,26 @@ describe("session management authority helpers", () => {
     expect(managementCommandSupport(fake.getSnapshot(), ADDRESS, "session.archive")).toEqual({
       supported: true,
       reason: null,
+    });
+  });
+
+  it("returns the authoritative terminal command when a legacy list refresh stays conservative", async () => {
+    const fake = new FakeManagementController();
+    await expect(releaseLiveSession(controller(fake), ADDRESS)).resolves.toBe(
+      "t4-omp --resume session-1",
+    );
+    expect(fake.confirms).toEqual([
+      expect.objectContaining({
+        confirmationId: "release-confirmation",
+        decision: "approve",
+      }),
+    ]);
+    expect(fake.commands.map((intent) => intent.command)).toEqual([
+      "session.release",
+      "session.list",
+    ]);
+    expect(fake.getSnapshot().projection.sessionIndex.get(KEY)?.liveState?.sessionControl).toEqual({
+      mode: "unknown",
     });
   });
 
