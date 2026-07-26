@@ -70,11 +70,12 @@ final class T4CodeUITests: XCTestCase {
     func testComposerIsHonestWhenDisconnected() throws {
         let app = launch()
         XCTAssertTrue(app.staticTexts["iOS session rail"].waitForExistence(timeout: 5))
-        // The composer prompt is honest about needing a host (placeholder
-        // text is the field's own value, not a static label).
-        let field = app.textFields["Connect a host to message"].firstMatch
-        let fieldView = app.textViews["Connect a host to message"].firstMatch
-        XCTAssertTrue(field.waitForExistence(timeout: 10) || fieldView.waitForExistence(timeout: 3))
+        // The composer prompt is honest about needing a host (the field's
+        // placeholder value, however SwiftUI exposes it this build).
+        let composerField = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "placeholderValue CONTAINS[c] 'host'"))
+            .firstMatch
+        XCTAssertTrue(composerField.waitForExistence(timeout: 10))
         // Send is disabled with no host.
         XCTAssertFalse(app.buttons["Send message"].isEnabled)
     }
