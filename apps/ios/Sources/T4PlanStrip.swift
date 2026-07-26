@@ -32,9 +32,17 @@ struct T4PlanStrip: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Always in the hierarchy: animating maxHeight + opacity gives a
+            // smooth height tween; a conditional insert pops in mid-resize
+            // (the expand/collapse jitter).
+            ScrollView { planBody.padding(.horizontal, 13).padding(.top, 12).padding(.bottom, 8) }
+                .scrollDisabled(!expanded)
+                .frame(maxHeight: expanded ? 260 : 0)
+                .opacity(expanded ? 1 : 0)
+                .clipped()
+                .allowsHitTesting(expanded)
+                .accessibilityHidden(!expanded)
             if expanded {
-                ScrollView { planBody.padding(.horizontal, 13).padding(.top, 12).padding(.bottom, 8) }
-                    .frame(maxHeight: 260)
                 Rectangle().frame(height: 0.5).foregroundStyle(t.lineFaint)
             }
             Button { withAnimation(.easeInOut(duration: 0.22)) { expanded.toggle() } } label: {
