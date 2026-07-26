@@ -19,7 +19,7 @@ body:
     attributes:
       label: Omperator version
       description: Use the displayed Omperator version while the application rebrand is in progress.
-      placeholder: "0.2.0"
+      placeholder: "0.2.1"
   - type: dropdown
     id: platform
     attributes:

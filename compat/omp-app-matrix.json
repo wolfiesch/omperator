@@ -274,12 +274,12 @@
   },
   "t4Host": {
     "wirePackage": "@t4-code/host-wire",
-    "wirePackageVersion": "0.2.0",
+    "wirePackageVersion": "0.2.1",
     "wireSchemaVersion": "0.7.0",
     "servicePackage": "@t4-code/host-service",
-    "servicePackageVersion": "0.2.0",
+    "servicePackageVersion": "0.2.1",
     "daemonPackage": "@t4-code/host-daemon",
-    "daemonPackageVersion": "0.2.0",
+    "daemonPackageVersion": "0.2.1",
     "protocol": "omp-app/1",
     "authorityBridgeProtocol": "t4-omp-authority/1",
     "sourcePaths": [
@@ -299,6 +299,6 @@
   },
   "desktop": {
     "package": "@t4-code/protocol",
-    "version": "0.2.0"
+    "version": "0.2.1"
   }
 }

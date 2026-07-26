@@ -25,7 +25,7 @@ export const androidUpdateFixtures = Object.freeze({
     },
     {
       currentVersion: "0.1.22",
-      latestVersion: "0.2.0",
+      latestVersion: "0.2.1",
       checkedAt: 1_721_234_567_890,
       phase: "available",
       revision: 7,
@@ -33,7 +33,7 @@ export const androidUpdateFixtures = Object.freeze({
     },
     {
       currentVersion: "0.1.22",
-      latestVersion: "0.2.0",
+      latestVersion: "0.2.1",
       phase: "installer",
       revision: 8,
       message: "Installer opened.\nReview Android's prompt.",

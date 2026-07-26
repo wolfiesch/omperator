@@ -408,7 +408,7 @@ export class DesktopTargetManager {
       capabilities: requestedCapabilities,
       requestedFeatures: this.requestedFeatures,
       compatibilityRequestedFeatures: this.compatibilityRequestedFeatures,
-      client: { name: "Omperator", version: "0.2.0", build: "desktop", platform: process.platform },
+      client: { name: "Omperator", version: "0.2.1", build: "desktop", platform: process.platform },
       reconnect: { baseMs: 250, maxMs: 10_000 },
     };
     const client = createOmpClient(clientOptions);
