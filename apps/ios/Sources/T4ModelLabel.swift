@@ -15,8 +15,8 @@ func splitModelSelector(_ selector: String) -> (provider: String?, model: String
     return provider.isEmpty || model.isEmpty ? (nil, selector) : (provider, model)
 }
 
-/// Provider chip + model name. The chip uses the accent fill so the provider
-/// is the loudest element — that's the point.
+/// Provider in the terminal voice + model name. No chip, no capsule — the
+/// VT323 pixel face in the accent IS the label.
 struct T4ModelLabel: View {
     let selector: String
     let theme: Theme
@@ -29,13 +29,9 @@ struct T4ModelLabel: View {
                 .font(.system(size: size))
                 .foregroundStyle(theme.txtLabel)
             if let provider {
-                Text(provider.uppercased())
-                    .font(.system(size: size - 2, weight: .bold))
-                    .tracking(0.6)
-                    .foregroundStyle(theme.lockFg)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(theme.accent, in: Capsule())
+                Text(provider)
+                    .font(.term(size + 4))
+                    .foregroundStyle(theme.accent)
             }
             Text(model)
                 .font(.system(size: size))
