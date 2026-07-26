@@ -278,7 +278,7 @@ struct T4WorkspaceView: View {
                 .accessibilityLabel("Attention inbox")
             }
         }
-        .tint(t.accent)
+        .tint(t.interactiveAccent)
     }
 
     private var macEmptyState: some View {
@@ -336,7 +336,7 @@ struct T4WorkspaceView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(t.accent)
+                .tint(t.interactiveAccent)
                 .controlSize(.large)
                 .accessibilityLabel("Connect to a T4 Code host")
             }
@@ -424,7 +424,7 @@ struct T4WorkspaceView: View {
                 }
             }
         }
-        .tint(t.accent)
+        .tint(t.interactiveAccent)
     }
 
     /// Fresh device, nothing configured: honest onboarding, never fake data.
@@ -442,7 +442,7 @@ struct T4WorkspaceView: View {
                     .frame(maxWidth: 260)
             }
             .buttonStyle(.borderedProminent)
-            .tint(t.accent)
+            .tint(t.interactiveAccent)
             .controlSize(.large)
             .padding(.top, 8)
             Text("Run `t4-host pair` on your Mac and enter the 6-digit code.")
@@ -457,7 +457,7 @@ struct T4WorkspaceView: View {
     /// Boot state for saved-connection devices: connecting, never fake chat.
     private var bootSplash: some View {
         VStack(spacing: 16) {
-            ProgressView().scaleEffect(1.2).tint(t.accent)
+            ProgressView().scaleEffect(1.2).tint(t.interactiveAccent)
             Text("Connecting to your T4 host\u{2026}")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(t.txtBody)

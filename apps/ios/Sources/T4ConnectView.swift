@@ -64,7 +64,7 @@ struct T4ConnectView: View {
                         .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(t.accent)
+                    .tint(t.interactiveAccent)
                     .disabled(!pairValid || store.connecting)
                 } header: {
                     Text("Pair a new device")
@@ -94,7 +94,7 @@ struct T4ConnectView: View {
                         .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(t.accent)
+                    .tint(t.interactiveAccent)
                     .disabled(!endpointValid || store.connecting)
                     Text("Use raw endpoint + device credentials for an already-paired host. Credentials are optional for an open host.")
                         .font(.system(size: 12))

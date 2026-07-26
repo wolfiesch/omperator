@@ -474,7 +474,7 @@ struct T4SessionDetailView: View {
                     .accessibilityLabel("Attach an image")
                 }
                 TextField("", text: $draft, prompt: Text(placeholder).foregroundStyle(t.txtMuted), axis: .vertical)
-                    .font(.bodyF(14)).foregroundStyle(t.txt).tint(t.accent)
+                    .font(.bodyF(14)).foregroundStyle(t.txt).tint(t.interactiveAccent)
                     .lineLimit(1...5)
                     .focused($composerFocused)
                     .disabled(!store.connected)

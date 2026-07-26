@@ -53,6 +53,16 @@ struct Theme {
 
     // accent — ice blue-silver (dark, goth Frutiger Aero) / gold (light): the live/terminal voice
     var accent:     Color { dark ? Color(hex: 0xC8D6E5) : Color(hex: 0xEA9D34) }
+    /// Interactive accents (buttons, tints): brand accent on iOS, the USER'S
+    /// SYSTEM ACCENT on macOS — native Mac apps respect the system setting;
+    /// brand silver/gold buttons read as gaudy there.
+    var interactiveAccent: Color {
+        #if os(iOS)
+        accent
+        #else
+        Color(nsColor: .controlAccentColor)
+        #endif
+    }
     var accentDim:  Color { accent.opacity(dark ? 0.16 : 0.14) }
     var accentLine: Color { accent.opacity(dark ? 0.45 : 0.50) }
 
