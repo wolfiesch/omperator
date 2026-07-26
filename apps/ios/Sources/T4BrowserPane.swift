@@ -54,14 +54,16 @@ struct T4BrowserPane: View {
     @FocusState private var urlFieldFocused: Bool
     private var t: Theme { theme.t }
 
-    init(session: SessionRef, store: T4SessionStore, isPresented: Binding<Bool>) {
+    init(session: SessionRef, store: T4SessionStore, isPresented: Binding<Bool>, debugNoWebView: Bool = false) {
         self.session = session
         self.store = store
         self._isPresented = isPresented
+        self.debugNoWebView = debugNoWebView
         let initial = store.browserURL(for: session.sessionId)
         self._loadURL = State(initialValue: initial)
         self._urlField = State(initialValue: initial)
     }
+    private let debugNoWebView: Bool
     var body: some View {
         VStack(spacing: 0) {
             if showingCapture, let image = captureImage {
@@ -72,6 +74,9 @@ struct T4BrowserPane: View {
             } else {
                 toolbar
                 Rectangle().fill(t.line).frame(height: 0.5)
+                if debugNoWebView {
+                    Rectangle().fill(t.bg2).overlay(Text("webview disabled").foregroundStyle(t.txtGhost))
+                } else {
                 T4BrowserWebView(
                     loadURL: loadURL,
                     action: action,
@@ -82,6 +87,7 @@ struct T4BrowserPane: View {
                     onNavigated: { resolved in handleNavigated(resolved) }
                 )
                 .background(t.bg2)
+                }
             }
         }
         .background(t.bg)
