@@ -240,7 +240,7 @@ public actor HostClient {
 
     private func receiveNext() async throws -> Data { try await transport.receive() }
     private func sendPayload(_ data: Data) async throws {
-        t4wireLog.debug("out: \(String(decoding: data, as: UTF8.self), privacy: .public)")
+        t4wireLog.notice("out: \(String(decoding: data, as: UTF8.self), privacy: .public)")
         try await transport.send(data)
     }
 
