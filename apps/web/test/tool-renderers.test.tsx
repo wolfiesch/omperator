@@ -696,19 +696,19 @@ describe("OMP semantic tool renderers", () => {
   it("renders web-search sources as identifiable external links", () => {
     const rendered = renderTool({
       tool: "web_search",
-      args: { query: "T4 Code" },
+      args: { query: "Omperator" },
       result: {
         content: [],
         details: {
           response: {
-            sources: [{ title: "T4 Code docs", url: "https://example.test/docs" }],
+            sources: [{ title: "Omperator docs", url: "https://example.test/docs" }],
           },
         },
       },
     });
 
     expect(rendered.body).toContain('class="tv-link"');
-    expect(rendered.body).toContain('aria-label="T4 Code docs (opens in a new tab)"');
+    expect(rendered.body).toContain('aria-label="Omperator docs (opens in a new tab)"');
     expect(rendered.body).toContain('rel="noreferrer"');
   });
 

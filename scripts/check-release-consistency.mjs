@@ -766,7 +766,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     requireText(site, `"${filename}"`, "apps/site/src/release.ts", errors);
   }
   const siteAssetVersions = new Set(
-    [...site.matchAll(/T4-Code-(\d+\.\d+\.\d+)-(?:android|linux|mac)(?:\.|-)/gu)].map(
+    [...site.matchAll(/Omperator-(\d+\.\d+\.\d+)-(?:android|linux|mac)(?:\.|-)/gu)].map(
       (match) => match[1],
     ),
   );
@@ -787,7 +787,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   );
   requireText(
     readme,
-    `T4 Code ${expectedTag} was verified with OMP ${ompRuntimeVersion} built from [\`${String(ompRuntimeCommit).slice(0, 8)}\`](${ompRuntimeCommitUrl}), tagged [\`${ompRuntimeSourceTag}\`](${ompRuntimeSourceUrl}).`,
+    `Omperator ${expectedTag} was verified with OMP ${ompRuntimeVersion} built from [\`${String(ompRuntimeCommit).slice(0, 8)}\`](${ompRuntimeCommitUrl}), tagged [\`${ompRuntimeSourceTag}\`](${ompRuntimeSourceUrl}).`,
     "README.md",
     errors,
   );
@@ -799,13 +799,13 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   );
   requireText(
     readme,
-    `The official upstream ${ompUpstreamTag} tag has no \`appserver\` command, so it cannot host T4 Code.`,
+    `The official upstream ${ompUpstreamTag} tag has no \`appserver\` command, so it cannot host Omperator.`,
     "README.md",
     errors,
   );
   requireText(
     readme,
-    `T4 Code vendors \`@oh-my-pi/app-wire\` ${publishedAppWireVersion} from integration commit [\`${publishedAppWireSourceCommit.slice(0, 8)}\`](${OMP_APP_WIRE_SOURCE_REPOSITORY}/commit/${publishedAppWireSourceCommit}), source tree \`${publishedAppWireSourceTree}\`.`,
+    `Omperator vendors \`@oh-my-pi/app-wire\` ${publishedAppWireVersion} from integration commit [\`${publishedAppWireSourceCommit.slice(0, 8)}\`](${OMP_APP_WIRE_SOURCE_REPOSITORY}/commit/${publishedAppWireSourceCommit}), source tree \`${publishedAppWireSourceTree}\`.`,
     "README.md",
     errors,
   );
@@ -881,7 +881,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   requireText(siteDocs, "OMP_UPSTREAM_COMMIT", "apps/site/src/docs/content.ts", errors);
   requireText(
     siteDocs,
-    "Official upstream OMP v${OMP_RUNTIME_VERSION} does not ship the \\`appserver\\` command, so it cannot host T4 Code.",
+    "Official upstream OMP v${OMP_RUNTIME_VERSION} does not ship the \\`appserver\\` command, so it cannot host Omperator.",
     "apps/site/src/docs/content.ts",
     errors,
   );
@@ -1192,10 +1192,10 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     '--metadata "$metadata"',
     '--aapt "$build_tools/aapt"',
     '--apksigner "$build_tools/apksigner"',
-    "T4-Code-${VERSION}-android.apk",
+    "Omperator-${VERSION}-android.apk",
     "artifacts/latest-linux.yml",
     "artifacts/latest-mac.yml",
-    "artifacts/T4-Code-*.zip.blockmap",
+    "artifacts/Omperator-*.zip.blockmap",
     "needs: [verify, ci-authority, build-android, build-linux, build-macos]",
     'node scripts/reconcile-release-assets.mjs --mode prepare --version "$VERSION"',
     'node scripts/reconcile-release-assets.mjs --mode verify --version "$VERSION"',

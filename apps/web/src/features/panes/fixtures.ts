@@ -818,7 +818,7 @@ function fixtureController(api: InspectorStoreApi, clock: () => number): Inspect
         state.updateAgent(scope.agentId, {
           state: "aborted",
           progress: null,
-          evidence: "Cancelled from T4 Code.",
+          evidence: "Cancelled from Omperator.",
         });
       } else if (scope.action === "wake") {
         state.updateAgent(scope.agentId, {

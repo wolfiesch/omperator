@@ -44,7 +44,7 @@ test("product and ownership documents link the canonical architecture", () => {
   assert.match(ownership, /packages\/host-wire/u);
   assert.match(ownership, /packages\/host-service/u);
   assert.match(ownership, /T4_ARCHITECTURE\.html/u);
-  assert.match(architecture, /T4 Code local and managed architecture/u);
+  assert.match(architecture, /Omperator local and managed architecture/u);
 });
 
 test("generic host source has no private OMP source-tree dependency", () => {
@@ -85,7 +85,7 @@ test("compatibility metadata records the artifact-backed OMP bridge", () => {
   assert.equal(matrix.t4Host.deploymentState, "standalone-t4-host-thin-omp-bridge");
   assert.equal(matrix.t4Host.wireSchemaVersion, "0.7.0");
   assert.equal(matrix.t4Host.daemonPackage, "@t4-code/host-daemon");
-  assert.equal(matrix.t4Host.daemonPackageVersion, "0.1.35");
+  assert.equal(matrix.t4Host.daemonPackageVersion, "0.2.0");
   assert.equal(matrix.t4Host.authorityBridgeProtocol, "t4-omp-authority/1");
   assert.equal(matrix.verifiedRuntime.artifacts["darwin-arm64"].releaseCodeSignature, "adhoc");
   assert.equal(

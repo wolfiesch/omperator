@@ -277,7 +277,7 @@ function boundedDeviceName(value: string): string {
   let cleaned = "";
   for (const codePoint of value) cleaned += hasControlCodePoint(codePoint) ? " " : codePoint;
   cleaned = cleaned.trim().replace(/\s+/gu, " ").slice(0, 64);
-  return cleaned || "T4 Code Desktop";
+  return cleaned || "Omperator Desktop";
 }
 export function loadDeviceIdentity(store = new ElectronStore<{ deviceId?: string; deviceName?: string }>({ name: "device-identity", defaults: {} })): DeviceIdentity {
   const existing = store.get("deviceId");

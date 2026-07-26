@@ -1,6 +1,6 @@
 # Tailnet remote access
 
-T4 Code can be used from a phone or another computer on the same Tailscale
+Omperator can be used from a phone or another computer on the same Tailscale
 network. The remote path is intentionally small:
 
 ```text
@@ -31,7 +31,7 @@ for maintainers who need a custom gateway layout.
 - A running local T4 host connected to a compatible OMP bridge. Opening the T4 desktop app normally
   installs and starts it; the retained `omp appserver status --json` administrative command is a
   direct check of the stable service socket.
-- A T4 Code source checkout with dependencies installed only for manual setup.
+- A Omperator source checkout with dependencies installed only for manual setup.
 
 Do not use Tailscale Funnel for this. Funnel is the public-internet product;
 this setup is meant to remain tailnet-only. Tailscale documents the distinction
@@ -41,10 +41,10 @@ and current Serve syntax in its [Serve reference](https://tailscale.com/docs/ref
 
 1. Install and sign in to Tailscale on the Mac and phone.
    On iPhone, open the Tailscale profile menu, choose **VPN On Demand**, and
-   set both **Wi-Fi** and **Cellular** to **Always** if you want T4 Code to
+   set both **Wi-Fi** and **Cellular** to **Always** if you want Omperator to
    reconnect without opening Tailscale first. If another VPN uses On Demand,
    iOS allows only one of them to own that behavior at a time.
-2. Open T4 Code on the Mac and go to **Settings → Hosts**.
+2. Open Omperator on the Mac and go to **Settings → Hosts**.
 3. Choose **Set up phone access**.
 4. Scan the displayed QR code with the phone camera.
 5. In Safari, optionally choose **Add to Home Screen** for an app icon.
@@ -135,9 +135,9 @@ round-trip is.
 
 ## Install on a phone
 
-Open the Tailnet URL, then tap the download button in the T4 Code titlebar.
+Open the Tailnet URL, then tap the download button in the Omperator titlebar.
 
-- On Android or another Chromium browser, T4 Code opens the native install
+- On Android or another Chromium browser, Omperator opens the native install
   prompt when the browser makes it available. If it is not ready yet, the
   button shows where to find **Install app** or **Add to Home screen** in the
   browser menu.
@@ -145,10 +145,10 @@ Open the Tailnet URL, then tap the download button in the T4 Code titlebar.
   cannot open that system sheet directly, so the T4 button shows the steps.
 
 The installed web app opens in a standalone window. Its titlebar download
-button becomes **Reload T4 Code**, which reloads the live gateway UI without
+button becomes **Reload Omperator**, which reloads the live gateway UI without
 browser chrome.
 
-This is still a thin client, not an offline copy of T4 Code. The phone must be
+This is still a thin client, not an offline copy of Omperator. The phone must be
 connected to the tailnet, the host gateway must be running, and OMP remains the
 owner of every session. The web app deliberately does not cache transcripts,
 host configuration, or runtime state for offline use.
@@ -217,7 +217,7 @@ running process, so updated definitions and configuration take effect on both
 Linux and macOS. An intentionally stopped gateway stays stopped across login
 or reboot until one of those commands runs.
 
-After pulling a new T4 Code revision in the same checkout:
+After pulling a new Omperator revision in the same checkout:
 
 ```bash
 corepack pnpm install --frozen-lockfile

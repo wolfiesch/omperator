@@ -9,14 +9,14 @@ test("builds the five package, native updater, and checksum URLs for one release
   assert.deepEqual(
     releaseAssetUrls("0.1.17").map(({ filename }) => filename),
     [
-      "T4-Code-0.1.17-android.apk",
-      "T4-Code-0.1.17-linux-amd64.deb",
-      "T4-Code-0.1.17-linux-x86_64.AppImage",
-      "T4-Code-0.1.17-mac-arm64.dmg",
-      "T4-Code-0.1.17-mac-arm64.zip",
+      "Omperator-0.1.17-android.apk",
+      "Omperator-0.1.17-linux-amd64.deb",
+      "Omperator-0.1.17-linux-x86_64.AppImage",
+      "Omperator-0.1.17-mac-arm64.dmg",
+      "Omperator-0.1.17-mac-arm64.zip",
       "latest-linux.yml",
       "latest-mac.yml",
-      "T4-Code-0.1.17-mac-arm64.zip.blockmap",
+      "Omperator-0.1.17-mac-arm64.zip.blockmap",
       "SHA256SUMS.txt",
     ],
   );

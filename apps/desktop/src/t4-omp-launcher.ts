@@ -65,22 +65,22 @@ export class T4OmpLauncher {
     if (!(await exists(this.launcherPath))) {
       return state(
         "not-installed",
-        "Install t4-omp to start terminal sessions with the same OMP runtime as T4 Code.",
+        "Install t4-omp to start terminal sessions with the same OMP runtime as Omperator.",
       );
     }
     const entry = await lstat(this.launcherPath);
     if (!entry.isSymbolicLink()) {
-      return state("conflict", "A different file already uses ~/.local/bin/t4-omp. T4 Code left it untouched.");
+      return state("conflict", "A different file already uses ~/.local/bin/t4-omp. Omperator left it untouched.");
     }
     const rawTarget = await readlink(this.launcherPath);
     const target = resolve(dirname(this.launcherPath), rawTarget);
     if (target === runtime) {
-      return state("installed", "t4-omp uses the same verified OMP runtime as T4 Code.");
+      return state("installed", "t4-omp uses the same verified OMP runtime as Omperator.");
     }
     if (this.isOwnedRuntimeTarget(target)) {
-      return state("update-available", "Update t4-omp to use this version of T4 Code's OMP runtime.");
+      return state("update-available", "Update t4-omp to use this version of Omperator's OMP runtime.");
     }
-    return state("conflict", "A different command already owns ~/.local/bin/t4-omp. T4 Code left it untouched.");
+    return state("conflict", "A different command already owns ~/.local/bin/t4-omp. Omperator left it untouched.");
   }
 
   async install(): Promise<T4OmpLauncherState> {
@@ -114,11 +114,11 @@ export class T4OmpLauncher {
   private async currentRuntime(): Promise<string> {
     const runtime = await this.runtime();
     if (runtime === undefined || !this.isOwnedRuntimeTarget(runtime)) {
-      throw new Error("T4 Code's bundled OMP runtime is unavailable.");
+      throw new Error("Omperator's bundled OMP runtime is unavailable.");
     }
     const info = await lstat(runtime);
     if (!info.isFile() || info.isSymbolicLink() || (info.mode & 0o111) === 0) {
-      throw new Error("T4 Code's bundled OMP runtime is not executable.");
+      throw new Error("Omperator's bundled OMP runtime is not executable.");
     }
     return resolve(runtime);
   }
@@ -149,11 +149,11 @@ export class T4OmpLauncher {
 
   private async unlinkOwnedLink(): Promise<void> {
     const info = await lstat(this.launcherPath);
-    if (!info.isSymbolicLink()) throw new Error("The t4-omp command changed before T4 Code could update it.");
+    if (!info.isSymbolicLink()) throw new Error("The t4-omp command changed before Omperator could update it.");
     const rawTarget = await readlink(this.launcherPath);
     const target = resolve(dirname(this.launcherPath), rawTarget);
     if (!this.isOwnedRuntimeTarget(target)) {
-      throw new Error("The t4-omp command changed before T4 Code could update it.");
+      throw new Error("The t4-omp command changed before Omperator could update it.");
     }
     await unlink(this.launcherPath);
   }

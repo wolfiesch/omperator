@@ -139,14 +139,14 @@ class AppUpdateController {
       this.stopNativeState = shell.onUpdateState?.((state) => this.publish(fromDesktop(state))) ?? null;
       void shell.getUpdateState?.().then(
         (state) => this.publish(fromDesktop(state)),
-        () => this.fail("T4 Code could not read the updater state."),
+        () => this.fail("Omperator could not read the updater state."),
       );
       return;
     }
     if (this.snapshot.delivery === "android") {
       const plugin = nativeUpdatePlugin();
       if (plugin === null) {
-        this.fail("The Android update service is unavailable. Close T4 Code and open it again.");
+        this.fail("The Android update service is unavailable. Close Omperator and open it again.");
         return;
       }
       const generation = ++this.nativeListenerGeneration;
@@ -161,7 +161,7 @@ class AppUpdateController {
         try {
           this.publishAndroid(state);
         } catch {
-          this.fail("T4 Code received an invalid Android updater state.");
+          this.fail("Omperator received an invalid Android updater state.");
         }
       });
       if (!this.started || generation !== this.nativeListenerGeneration) {
@@ -182,7 +182,7 @@ class AppUpdateController {
       }
     } catch {
       if (this.started && generation === this.nativeListenerGeneration) {
-        this.fail("T4 Code could not read the Android updater state.");
+        this.fail("Omperator could not read the Android updater state.");
       }
     }
   }
@@ -235,7 +235,7 @@ class AppUpdateController {
       if (shell?.checkForUpdate === undefined) throw new Error("missing desktop updater");
       this.publish(fromDesktop(await shell.checkForUpdate()));
     } catch {
-      this.fail("T4 Code could not check for updates. Try again when you are online.");
+      this.fail("Omperator could not check for updates. Try again when you are online.");
     }
   }
 
@@ -251,8 +251,8 @@ class AppUpdateController {
     } catch {
       this.fail(
         this.snapshot.delivery === "android"
-          ? "T4 Code could not verify and open the Android update. Your current installation is unchanged."
-          : "T4 Code could not open the update. Your current installation is unchanged.",
+          ? "Omperator could not verify and open the Android update. Your current installation is unchanged."
+          : "Omperator could not open the update. Your current installation is unchanged.",
       );
     }
   }
@@ -263,7 +263,7 @@ class AppUpdateController {
       if (shell?.restartToUpdate === undefined) throw new Error("missing desktop updater");
       this.publish(fromDesktop(await shell.restartToUpdate()));
     } catch {
-      this.fail("T4 Code could not restart into the update. Your current installation is unchanged.");
+      this.fail("Omperator could not restart into the update. Your current installation is unchanged.");
     }
   }
 }

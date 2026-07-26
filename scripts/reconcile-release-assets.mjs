@@ -176,8 +176,8 @@ async function exactPublishedContentIsValid({ release, version, assets, token, f
       checksumsText: checksumsBytes.toString("utf8"),
       linuxMetadataText: metadataBytes.toString("utf8"),
     });
-    const zipName = `T4-Code-${version}-mac-arm64.zip`;
-    const dmgName = `T4-Code-${version}-mac-arm64.dmg`;
+    const zipName = `Omperator-${version}-mac-arm64.zip`;
+    const dmgName = `Omperator-${version}-mac-arm64.dmg`;
     validateMacUpdateMetadata(macMetadataBytes.toString("utf8"), {
       version,
       zipName,

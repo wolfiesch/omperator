@@ -39,7 +39,7 @@ export function performHostSwitch(
   try {
     io.select(endpointKey);
   } catch (cause) {
-    return cause instanceof Error ? cause.message : "T4 Code could not switch hosts.";
+    return cause instanceof Error ? cause.message : "Omperator could not switch hosts.";
   }
   io.restartAtHome();
   return null;
@@ -56,7 +56,7 @@ export async function performHostRemoval(
   try {
     await io.remove(endpointKey);
   } catch (cause) {
-    return cause instanceof Error ? cause.message : "T4 Code could not remove that host.";
+    return cause instanceof Error ? cause.message : "Omperator could not remove that host.";
   }
   io.reload();
   return null;
@@ -272,7 +272,7 @@ export function MobileConnectionAction() {
             <DialogHeader>
               <DialogTitle>Add a T4 host</DialogTitle>
               <DialogDescription>
-                T4 Code checks the address before saving it. Your current host stays saved either
+                Omperator checks the address before saving it. Your current host stays saved either
                 way.
               </DialogDescription>
             </DialogHeader>

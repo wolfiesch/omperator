@@ -246,7 +246,7 @@ function SectionRail({
                 )}
                 <span className="min-w-0 flex-1 truncate">{section.label}</span>
                 {section.id === UPDATE_SECTION_ID && updateAvailable && (
-                  <span aria-label="T4 Code update available" className="size-1.5 rounded-full bg-primary" />
+                  <span aria-label="Omperator update available" className="size-1.5 rounded-full bg-primary" />
                 )}
                 {dirtyCount > 0 && (
                   <Badge aria-label={`${dirtyCount} unsaved`} size="sm" variant="secondary">

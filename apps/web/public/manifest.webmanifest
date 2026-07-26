@@ -1,8 +1,8 @@
 {
   "id": "./",
-  "name": "T4 Code",
-  "short_name": "T4 Code",
-  "description": "A Tailnet client for T4 Code sessions running on your host.",
+  "name": "Omperator",
+  "short_name": "Omperator",
+  "description": "A Tailnet client for Omperator sessions running on your host.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

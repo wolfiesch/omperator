@@ -27,7 +27,7 @@ try {
 }
 
 if (!indexHtml.includes('<div id="root"></div>')) {
-  throw new Error("apps/web/dist/index.html is not a T4 Code web build");
+  throw new Error("apps/web/dist/index.html is not a Omperator web build");
 }
 if (indexHtml.includes('http-equiv="Content-Security-Policy"')) {
   throw new Error("apps/web/dist/index.html already contains a content security policy");

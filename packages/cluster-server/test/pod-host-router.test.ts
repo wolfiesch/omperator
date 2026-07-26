@@ -11,7 +11,7 @@ const welcome = {
 	hostId: "host-a",
 	ompVersion: "17.0.5",
 	ompBuild: "test",
-	appserverVersion: "0.1.35",
+	appserverVersion: "0.2.0",
 	appserverBuild: "cluster-session",
 	epoch: "pod-epoch",
 	grantedCapabilities: [],

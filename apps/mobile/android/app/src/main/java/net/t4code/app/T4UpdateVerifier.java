@@ -126,15 +126,15 @@ final class T4UpdateVerifier {
         String identity = platform + ":" + kind + ":" + arch;
         switch (identity) {
             case "android:apk:universal":
-                return "T4-Code-" + version + "-android.apk";
+                return "Omperator-" + version + "-android.apk";
             case "linux:deb:x86_64":
-                return "T4-Code-" + version + "-linux-amd64.deb";
+                return "Omperator-" + version + "-linux-amd64.deb";
             case "linux:appimage:x86_64":
-                return "T4-Code-" + version + "-linux-x86_64.AppImage";
+                return "Omperator-" + version + "-linux-x86_64.AppImage";
             case "mac:dmg:arm64":
-                return "T4-Code-" + version + "-mac-arm64.dmg";
+                return "Omperator-" + version + "-mac-arm64.dmg";
             case "mac:zip:arm64":
-                return "T4-Code-" + version + "-mac-arm64.zip";
+                return "Omperator-" + version + "-mac-arm64.zip";
             default:
                 throw new IllegalArgumentException("unknown release asset");
         }

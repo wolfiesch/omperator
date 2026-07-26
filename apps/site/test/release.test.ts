@@ -1,4 +1,4 @@
-// Release contract guard: exact v0.1.35 asset names and URLs, and the
+// Release contract guard: exact v0.2.0 asset names and URLs, and the
 // platform-detection rule the hero download button relies on.
 import { describe, expect, it } from "vite-plus/test";
 import {
@@ -20,13 +20,13 @@ import {
 } from "../src/release.ts";
 
 describe("release assets", () => {
-  it("carries the five contracted v0.1.35 filenames", () => {
+  it("carries the five contracted v0.2.0 filenames", () => {
     expect(RELEASE_ASSETS.map((a) => a.filename)).toEqual([
-      "T4-Code-0.1.35-android.apk",
-      "T4-Code-0.1.35-linux-amd64.deb",
-      "T4-Code-0.1.35-linux-x86_64.AppImage",
-      "T4-Code-0.1.35-mac-arm64.dmg",
-      "T4-Code-0.1.35-mac-arm64.zip",
+      "Omperator-0.2.0-android.apk",
+      "Omperator-0.2.0-linux-amd64.deb",
+      "Omperator-0.2.0-linux-x86_64.AppImage",
+      "Omperator-0.2.0-mac-arm64.dmg",
+      "Omperator-0.2.0-mac-arm64.zip",
     ]);
   });
 
@@ -38,8 +38,8 @@ describe("release assets", () => {
 
   it("targets the public Omperator repo", () => {
     expect(REPO_URL).toBe("https://github.com/wolfiesch/omperator");
-    expect(RELEASE_TAG).toBe("v0.1.35");
-    expect(RELEASE_VERSION).toBe("0.1.35");
+    expect(RELEASE_TAG).toBe("v0.2.0");
+    expect(RELEASE_VERSION).toBe("0.2.0");
     expect(RELEASE_MANIFEST_URL).toBe("https://t4code.net/releases/latest.json");
   });
 

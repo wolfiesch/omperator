@@ -194,7 +194,7 @@ export function renderSystemd(spec: ServiceSpec, _label: string): string {
     .join("\n");
   return [
     "[Unit]",
-    `Description=T4 Code host (${spec.profileId})`,
+    `Description=Omperator host (${spec.profileId})`,
     "Wants=network-online.target",
     "After=network-online.target",
     "",

@@ -5,11 +5,11 @@ This guide separates two useful development paths:
 - **UI and interaction work** can run against deterministic sample data. It does not need OMP.
 - **Live desktop and remote work** needs the verified OMP integration listed in
   `compat/omp-app-matrix.json`. An ordinary upstream OMP release without the authority bridge cannot
-  supply T4 Code's standalone host.
+  supply Omperator's standalone host.
 
 ## 1. Prepare the source toolchain
 
-T4 Code requires Node `^24.13.1` and pnpm `11.10.0`. Check the active versions before installing:
+Omperator requires Node `^24.13.1` and pnpm `11.10.0`. Check the active versions before installing:
 
 ```sh
 node --version

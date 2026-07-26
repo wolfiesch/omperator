@@ -20,7 +20,7 @@ export const CHECKSUMS_NAME = "SHA256SUMS.txt";
 
 export function macUpdateBlockmapName(version) {
   if (!VERSION_PATTERN.test(version)) throw new Error("version must be x.y.z");
-  return `T4-Code-${version}-mac-arm64.zip.blockmap`;
+  return `Omperator-${version}-mac-arm64.zip.blockmap`;
 }
 
 export function releasePackageDescriptors(version) {

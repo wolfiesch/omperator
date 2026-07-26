@@ -477,7 +477,7 @@ class T4Probe {
         (feature) => feature !== "prompt.images" && feature !== "transcript.images",
       ),
       client: {
-        name: "T4 Code",
+        name: "Omperator",
         version: "0.1.28",
         build: "legacy-bridge-continuity",
         platform: process.platform,
@@ -791,7 +791,7 @@ export async function runLegacyBridgeContinuity(argv = []) {
 
     progress("connecting production T4 client");
     let t4Primary = await new T4Probe(
-      "T4 Code primary",
+      "Omperator primary",
       primaryProcess.socket,
       wireJournal,
     ).connect();
@@ -848,7 +848,7 @@ export async function runLegacyBridgeContinuity(argv = []) {
       "real TUI session ownership",
       RECONNECT_TIMEOUT_MS,
     );
-    t4Primary = await new T4Probe("T4 Code observer", primaryProcess.socket, wireJournal).connect();
+    t4Primary = await new T4Probe("Omperator observer", primaryProcess.socket, wireJournal).connect();
     probes.push(t4Primary);
 
     const observerMark = t4Primary.mark();
@@ -873,7 +873,7 @@ export async function runLegacyBridgeContinuity(argv = []) {
     const lockedTarget = observerDelta.payload.upsert;
 
     const t4Second = await new T4Probe(
-      "T4 Code secondary",
+      "Omperator secondary",
       primaryProcess.socket,
       wireJournal,
     ).connect();
@@ -1105,7 +1105,7 @@ export async function runLegacyBridgeContinuity(argv = []) {
     assert((contextResponse.result?.rows?.length ?? 0) > 0, "transcript context returned no rows");
 
     const t4ProfileB = await new T4Probe(
-      "T4 Code profile B",
+      "Omperator profile B",
       secondaryProcess.socket,
       wireJournal,
     ).connect();
@@ -1143,12 +1143,12 @@ export async function runLegacyBridgeContinuity(argv = []) {
     assertCleanStatus(cleanupARepeat, "profile A idempotent cleanup");
 
     const cleanupProbeA = await new T4Probe(
-      "T4 Code cleanup profile A",
+      "Omperator cleanup profile A",
       restarted.socket,
       wireJournal,
     ).connect();
     const cleanupProbeB = await new T4Probe(
-      "T4 Code cleanup profile B",
+      "Omperator cleanup profile B",
       secondaryProcess.socket,
       wireJournal,
     ).connect();
@@ -1212,7 +1212,7 @@ export async function runLegacyBridgeContinuity(argv = []) {
         projects: 2,
         seededSessions: 27,
         largeHistoryEntries: profiles[0].history,
-        clients: ["real OMP TUI", "T4 Code primary", "T4 Code secondary", "T4 Code profile B"],
+        clients: ["real OMP TUI", "Omperator primary", "Omperator secondary", "Omperator profile B"],
         restart: true,
         reconnect: true,
         cleanup: true,

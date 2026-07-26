@@ -101,8 +101,8 @@ test("live Linux updater verification downloads the exact bounded public files",
         line.includes("\t-o\t"),
     );
   for (const [name, size] of [
-    ["T4-Code-1.2.3-linux-amd64.deb", mockDebSize],
-    ["T4-Code-1.2.3-linux-x86_64.AppImage", mockAssetSize],
+    ["Omperator-1.2.3-linux-amd64.deb", mockDebSize],
+    ["Omperator-1.2.3-linux-x86_64.AppImage", mockAssetSize],
   ]) {
     const line = downloads.find((candidate) => candidate.includes(`/${name}\t`));
     assert.ok(line, downloads.join("\n"));

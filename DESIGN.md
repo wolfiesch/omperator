@@ -1,5 +1,5 @@
 ---
-name: T4 Code
+name: Omperator
 description: Desktop observability and control surface for OMP sessions — precise, capable, calm.
 colors:
   background: "#ffffff"
@@ -113,13 +113,13 @@ components:
     rounded: "{rounded.2xl}"
 ---
 
-# Design System: T4 Code
+# Design System: Omperator
 
 ## 1. Overview
 
 **Creative North Star: "The Quiet Control Room"**
 
-T4 Code (powered by Oh My Pi) is the observability and control surface for a running agent runtime, and it looks like one: pure neutral light and dark surfaces, a strict two-tier Pi Pink identity, and semantic status hues that are never allowed to blur into brand. The interface carries the confidence of a mature developer tool — dense when the work demands it, quiet when it does not. Nothing decorates; every color, shadow, and motion token reports state. `packages/ui/src/tokens.css` is the only file allowed to contain raw color values; every component consumes tokens by CSS variable or Tailwind theme class. The product identity is the `BrandLockup`: the exact OMP pi/plugin mark beside the "T4 Code" wordmark, with the "Powered by Oh My Pi" byline reserved for onboarding, about, and the empty welcome.
+Omperator (powered by Oh My Pi) is the observability and control surface for a running agent runtime, and it looks like one: pure neutral light and dark surfaces, a strict two-tier Pi Pink identity, and semantic status hues that are never allowed to blur into brand. The interface carries the confidence of a mature developer tool — dense when the work demands it, quiet when it does not. Nothing decorates; every color, shadow, and motion token reports state. `packages/ui/src/tokens.css` is the only file allowed to contain raw color values; every component consumes tokens by CSS variable or Tailwind theme class. The product identity is the `BrandLockup`: the exact OMP pi/plugin mark beside the "Omperator" wordmark, with the "Powered by Oh My Pi" byline reserved for onboarding, about, and the empty welcome.
 
 The system explicitly rejects the generic AI dashboard: no oversized metric cards, no decorative agent graphs, no chat toys. It also deliberately overrides its own interaction reference (T3 Code): no turbulence/grain overlay, no warm cream or paper themes, no glass-card monoculture, no gradient text, no oversized rounding, no decorative side stripes. Surfaces are zero-chroma neutral; the Pi Pink accent appears only where identity or action genuinely lives.
 

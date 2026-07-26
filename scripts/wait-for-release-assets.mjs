@@ -16,7 +16,7 @@ export function releaseAssetUrls(version) {
     ...expectedReleaseAssetNames(version),
     "latest-linux.yml",
     "latest-mac.yml",
-    `T4-Code-${version}-mac-arm64.zip.blockmap`,
+    `Omperator-${version}-mac-arm64.zip.blockmap`,
     "SHA256SUMS.txt",
   ].map((filename) => ({
     filename,

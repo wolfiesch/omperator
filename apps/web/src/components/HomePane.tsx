@@ -193,7 +193,7 @@ function BrowserPairingPane({
           <EmptyTitle>Pair this browser with the host</EmptyTitle>
           <ToneBadge className="justify-center" label="Pairing required" tone="working" />
           <EmptyDescription>
-            This is the live T4 Code client. Enter the one-time code created on the host to load its
+            This is the live Omperator client. Enter the one-time code created on the host to load its
             real sessions and activity.
           </EmptyDescription>
         </EmptyHeader>
