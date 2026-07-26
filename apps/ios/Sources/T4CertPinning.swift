@@ -57,7 +57,6 @@ final class T4CertPinner: NSObject, URLSessionDelegate {
             completionHandler(.performDefaultHandling, nil)
             return
         }
-        t4pinLog.error("challenge for \(self.label, privacy: .public) fp=\(fingerprint, privacy: .public)")
         if let stored = Keychain.get(key) {
             if stored == fingerprint {
                 completionHandler(.useCredential, URLCredential(trust: trust))

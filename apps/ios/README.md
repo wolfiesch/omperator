@@ -18,6 +18,7 @@ interface.
 | Wire protocol | **Port `@t4-code/host-wire` (`omp-app/1`) to Swift** | The collab-guest `/collab` protocol Enclave uses is read-mostly and *cannot enumerate host sessions* — it can't back "the whole interface". The authoritative host-wire can. |
 | Combine mechanics | **Vendor Enclave sources into `apps/ios`** in this repo | Branch lives in omperator. |
 | First deliverable | **Branch + scaffold + start protocol port** | Foundation first; UI rework after the wire is real. |
+| Transport security | **ws:// inside the tailnet; optional wss via `--remote-tls-port 8788` with TOFU cert pinning** | WireGuard already encrypts tailnet traffic; the wss listener (per-profile self-signed cert, fingerprint on `/healthz` as `tlsFingerprint`) additionally authenticates the host against rogue tailnet peers. The app pins the leaf sha256 in the Keychain on first connect (`T4CertPinner`). Tailscale Serve is plan-gated on this tailnet, so TLS terminates on the host itself. ATS stays `NSAllowsArbitraryLoads`: iOS 26 honors no narrower key for `URLSessionWebSocketTask` (verified empirically). |
 
 iOS **cannot bundle a host**; it connects to an **existing** `t4-host` over the
 network (Tailnet address or pairing link), exactly like the Android client.
