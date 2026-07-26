@@ -492,13 +492,7 @@ struct T4SessionDetailView: View {
                 ComposerTips(t: t)
             }
         }
-        .glass(t, 16)
-        // Lift perceived translucency to match the plan pill: native glass
-        // over the empty bottom backdrop reads near-black without a fill.
-        .background(
-            (t.mode == .dark ? Color.white.opacity(0.10) : Color.black.opacity(0.06)),
-            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-        )
+        .glass(t, 16, panel: true)
         .onChange(of: pickerItems) { _, items in loadAttachments(items) }
         .onAppear { dictation.onText = { draft = $0 } }
     }
