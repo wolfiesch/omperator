@@ -54,16 +54,14 @@ struct T4BrowserPane: View {
     @FocusState private var urlFieldFocused: Bool
     private var t: Theme { theme.t }
 
-    init(session: SessionRef, store: T4SessionStore, isPresented: Binding<Bool>, debugNoWebView: Bool = false) {
+    init(session: SessionRef, store: T4SessionStore, isPresented: Binding<Bool>) {
         self.session = session
         self.store = store
         self._isPresented = isPresented
-        self.debugNoWebView = debugNoWebView
         let initial = store.browserURL(for: session.sessionId)
         self._loadURL = State(initialValue: initial)
         self._urlField = State(initialValue: initial)
     }
-    private let debugNoWebView: Bool
     var body: some View {
         VStack(spacing: 0) {
             if showingCapture, let image = captureImage {
@@ -74,9 +72,6 @@ struct T4BrowserPane: View {
             } else {
                 toolbar
                 Rectangle().fill(t.line).frame(height: 0.5)
-                if debugNoWebView {
-                    Rectangle().fill(t.bg2).overlay(Text("webview disabled").foregroundStyle(t.txtGhost))
-                } else {
                 T4BrowserWebView(
                     loadURL: loadURL,
                     action: action,
@@ -87,7 +82,6 @@ struct T4BrowserPane: View {
                     onNavigated: { resolved in handleNavigated(resolved) }
                 )
                 .background(t.bg2)
-                }
             }
         }
         .background(t.bg)
@@ -103,7 +97,7 @@ struct T4BrowserPane: View {
         #endif
         .task {
             // Opportunistic host preview launch — no-op when unsupported.
-            if !debugNoWebView { await store.openPreview(sessionId: session.sessionId, url: loadURL) }
+            await store.openPreview(sessionId: session.sessionId, url: loadURL)
         }
     }
 
@@ -380,6 +374,13 @@ final class T4BrowserCoordinator: NSObject, WKNavigationDelegate {
         webView.navigationDelegate = self
     }
 
+    /// Sync SwiftUI state from the webview. MUST be deferred: apply() runs
+    /// inside updateUIView, and publishing binding changes mid-update can
+    /// tear down the hosting sheet.
+    private func syncStateDeferred() {
+        DispatchQueue.main.async { [weak self] in self?.syncState() }
+    }
+
     /// Apply the latest load URL + action token. A new token runs the named
     /// action once; a changed loadURL loads the page once. Re-renders with
     /// unchanged inputs are no-ops.
@@ -396,7 +397,7 @@ final class T4BrowserCoordinator: NSObject, WKNavigationDelegate {
             lastLoadedURL = loadURL
             webView.load(URLRequest(url: target))
         }
-        syncState()
+        syncStateDeferred()
     }
 
     func syncState() {
