@@ -936,7 +936,7 @@ final class T4SessionStore: ObservableObject {
     }
 
     /// Extract a non-negative integer from a JSON number field (0 otherwise).
-    private static func intField(_ value: JSONValue) -> Int {
+    private static func intField(_ value: JSONValue?) -> Int {
         if case .number(let n) = value, n.isFinite, n >= 0 { return Int(n) }
         return 0
     }
