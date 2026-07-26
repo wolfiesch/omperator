@@ -66,16 +66,18 @@ struct T4SessionDetailView: View {
                         if let challenge = store.pendingConfirmation {
                             confirmationBanner(challenge)
                         }
-                        if let ask = store.pendingAsk, ask.sessionId == session.sessionId {
-                            T4AskCard(ask: ask, theme: t) { value in
-                                Task { await store.respondAsk(value: value) }
-                            }
-                        }
                         if showFacts { facts }
                         Divider().overlay(t.lineFaint)
                         T4TranscriptView(entries: store.transcript(for: session.sessionId),
                                          streamingText: store.streamingText[session.sessionId] ?? "",
                                          theme: t)
+                        // Live asks belong at the transcript's tail — the
+                        // newest thing demanding attention, always in view.
+                        if let ask = store.pendingAsk, ask.sessionId == session.sessionId {
+                            T4AskCard(ask: ask, theme: t) { value in
+                                Task { await store.respondAsk(value: value) }
+                            }
+                        }
                         Color.clear
                             .frame(height: 1)
                             .id("transcript-bottom")
