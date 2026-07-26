@@ -140,7 +140,9 @@ struct T4WorkspaceView: View {
     private var workspace: some View {
         NavigationStack {
             Group {
-                if let session = store.selectedSession {
+                if !store.hasLiveInventory && store.hasSavedConnection {
+                    bootSplash
+                } else if let session = store.selectedSession {
                     T4SessionDetailView(session: session, store: store)
                         .environmentObject(theme)
                 } else {
@@ -193,6 +195,22 @@ struct T4WorkspaceView: View {
             }
         }
         .tint(t.accent)
+    }
+
+    /// Boot state for saved-connection devices: connecting, never fake chat.
+    private var bootSplash: some View {
+        VStack(spacing: 16) {
+            ProgressView().scaleEffect(1.2).tint(t.accent)
+            Text("Connecting to your T4 host\u{2026}")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(t.txtBody)
+            if let error = store.lastError {
+                Text(error).font(.system(size: 12)).foregroundStyle(t.diffDel)
+                    .multilineTextAlignment(.center).padding(.horizontal, 32)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(t.bg)
     }
 
     private var emptyState: some View {

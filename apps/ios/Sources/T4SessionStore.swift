@@ -185,6 +185,17 @@ final class T4SessionStore: ObservableObject {
     /// first chunk (offset 0) is enough for inline text/patch previews.
     @Published private(set) var artifactChunks: [String: ArtifactReadChunk] = [:]
 
+    /// True once a live host has spoken (refresh or push). Drives the boot
+    /// splash: saved-connection devices see "Connecting…", not fake chat.
+    @Published private(set) var hasLiveInventory = false
+    /// True when a previous session's endpoint is persisted (restore will run).
+    var hasSavedConnection: Bool {
+        UserDefaults.standard.string(forKey: Self.savedEndpointKey) != nil
+    }
+
+    /// True once a live host has spoken; false while showing the offline sample.
+    private func markLive() { hasLiveInventory = true }
+
     /// Models from the catalog, in display order (supported first).
     var catalogModels: [CatalogItem] {
         catalog.filter { $0.kind == .model && $0.supported != false }
@@ -711,6 +722,7 @@ final class T4SessionStore: ObservableObject {
         do {
             let result = try await client.sendCommand(CommandIntent(hostId: hostId, command: "session.list"))
             sessions = try result.sessionListResult().sessions
+            markLive()
             reconcileSelection()
             attachSelectedIfNeeded()
         } catch {
@@ -1112,6 +1124,7 @@ final class T4SessionStore: ObservableObject {
             switch frame {
             case .sessions(let inventory):
                 sessions = inventory.sessions
+                markLive()
                 reconcileSelection()
             case .snapshot(let snapshot):
                 liveEntries[snapshot.sessionId] = snapshot.entries.map { TranscriptEntry(from: $0) }

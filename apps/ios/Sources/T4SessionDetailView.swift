@@ -106,10 +106,26 @@ struct T4SessionDetailView: View {
             }
             T4TerminalDrawer(session: session, store: store, isOpen: showTerminal)
                 .environmentObject(theme)
-            planStripSection
-            composer
         }
         .background(t.bg.ignoresSafeArea())
+        // Floating glass: plan strip + composer hover over the transcript,
+        // which scrolls underneath. No floor, no divider.
+        .safeAreaInset(edge: .bottom, spacing: 8) {
+            GlassEffectContainer(spacing: 8) {
+                VStack(spacing: 8) {
+                    planStripSection
+                    composer
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 6)
+        }
+        // Collapse the plan strip while typing so the keyboard never buries it.
+        .onChange(of: composerFocused) { _, focused in
+            if focused, planExpanded {
+                withAnimation(.easeInOut(duration: 0.22)) { planExpanded = false }
+            }
+        }
         .navigationTitle(session.title)
         .navigationBarTitleDisplayMode(.inline)
         .task(id: session.sessionId) { await store.attach(sessionId: session.sessionId) }
@@ -215,8 +231,6 @@ struct T4SessionDetailView: View {
         Group {
             if !store.todoPhases(for: session.sessionId).isEmpty {
                 T4PlanStrip(phases: store.todoPhases(for: session.sessionId), t: t, expanded: $planExpanded)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 4)
             }
         }
     }
@@ -481,9 +495,6 @@ struct T4SessionDetailView: View {
             }
         }
         .glass(t, 16)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(t.bg)
         .onChange(of: pickerItems) { _, items in loadAttachments(items) }
         .onAppear { dictation.onText = { draft = $0 } }
     }
