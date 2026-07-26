@@ -909,6 +909,21 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   ]) {
     requireText(woodpeckerWorkflow, expected, ".woodpecker.yml", errors);
   }
+  // The legacy lane must derive its SHA from provenance rather than hardcode
+  // one. A hardcoded copy silently drifted past the appserver `serve` removal,
+  // and the gate then failed for a reason unrelated to client continuity.
+  for (const expected of [
+    `sha="$(jq -er '.inputs.operationsContinuity' provenance/omp-host-migration.json)"`,
+    'git -C .continuity/omp fetch --depth=1 origin "$sha"',
+    'test "$(git -C .continuity/omp rev-parse HEAD)" = "$sha"',
+  ]) {
+    requireText(woodpeckerWorkflow, expected, ".woodpecker.yml", errors);
+  }
+  if (/\.continuity\/omp fetch --depth=1 origin [0-9a-f]{40}/u.test(woodpeckerWorkflow)) {
+    errors.push(
+      ".woodpecker.yml must resolve the legacy continuity pin from provenance, not a literal sha",
+    );
+  }
   if (woodpeckerWorkflow.includes("https://github.com/lyc-aon/oh-my-pi.git")) {
     errors.push(".woodpecker.yml must not use the retired Lycaon OMP integration fork");
   }
