@@ -157,7 +157,14 @@ const ARCHIVED_SESSION_COMMANDS = new Set([
 	"transcript.context",
 	"transcript.page",
 ]);
-const SESSION_LIFECYCLE_COMMANDS = new Set(["session.close", "session.archive", "session.restore", "session.delete"]);
+const SESSION_LIFECYCLE_COMMANDS = new Set([
+	"session.close",
+	"session.release",
+	"session.reclaim",
+	"session.archive",
+	"session.restore",
+	"session.delete",
+]);
 const IMAGE_UPLOAD_COMMANDS = new Set(["session.image.begin", "session.image.chunk", "session.image.discard"]);
 const DIRECT_SESSION_RPC_COMMANDS: ReadonlySet<string> = new Set([
 	"session.retry",
@@ -502,9 +509,19 @@ function safeProviderTransport(value: unknown): ProviderTransportState | undefin
 	}
 }
 const SESSION_UNVERIFIED_FEATURE = "session.unverified";
-function downgradeUnverifiedSessionControl(ref: SessionRef): SessionRef {
+const SESSION_TRANSFER_FEATURE = "session.transfer";
+function terminalResumeCommand(sessionId: SessionId): string {
+	const word = /^[A-Za-z0-9_./:@+-]+$/u.test(sessionId)
+		? sessionId
+		: `'${sessionId.replaceAll("'", "'\\''")}'`;
+	return `t4-omp --resume ${word}`;
+}
+function downgradeSessionControl(
+	ref: SessionRef,
+	mode: "unverified" | "released",
+): SessionRef {
 	const control = ref.liveState?.sessionControl;
-	if (control?.mode !== "unverified") return ref;
+	if (control?.mode !== mode) return ref;
 	return {
 		...ref,
 		liveState: {
@@ -513,11 +530,11 @@ function downgradeUnverifiedSessionControl(ref: SessionRef): SessionRef {
 		},
 	};
 }
-function downgradeUnverifiedSessionFrame(frame: ServerFrame): ServerFrame {
+function downgradeSessionFrame(frame: ServerFrame, mode: "unverified" | "released"): ServerFrame {
 	if (frame.type === "sessions")
-		return { ...frame, sessions: frame.sessions.map(downgradeUnverifiedSessionControl) };
+		return { ...frame, sessions: frame.sessions.map(ref => downgradeSessionControl(ref, mode)) };
 	if (frame.type === "session.delta" && frame.upsert)
-		return { ...frame, upsert: downgradeUnverifiedSessionControl(frame.upsert) };
+		return { ...frame, upsert: downgradeSessionControl(frame.upsert, mode) };
 	if (
 		frame.type === "response" &&
 		frame.ok &&
@@ -533,7 +550,7 @@ function downgradeUnverifiedSessionFrame(frame: ServerFrame): ServerFrame {
 			result: {
 				...result,
 				sessions: result.sessions.map(session =>
-					downgradeUnverifiedSessionControl(session as SessionRef)),
+					downgradeSessionControl(session as SessionRef, mode)),
 			},
 		} as ServerFrame;
 	}
@@ -825,6 +842,7 @@ export function appserverSupportedFeatures(
 		| "workspaceAuthority"
 		| "workspaceTargetPathForProject"
 		| "sessionAuthority"
+		| "sessionOwnershipPath"
 	> & { readonly remotePolicy?: AppserverOptions["remotePolicy"] },
 	includeRemotePolicy = false,
 ): string[] {
@@ -843,6 +861,7 @@ export function appserverSupportedFeatures(
 	// authority answers a fork without the transcript body, so without the loader
 	// the copy would open blank.
 	if (options.sessionAuthority?.fork && options.discovery?.load) implementedFeatures.add("session.fork");
+	if (options.sessionOwnershipPath) implementedFeatures.add("session.transfer");
 	if (includeRemotePolicy) {
 		implementedFeatures.add("controller.lease");
 		implementedFeatures.add("prompt.lease");
@@ -1120,6 +1139,10 @@ export class LocalAppserver implements AppserverHandle {
 		if (this.#projectRootForProject && this.#projectRevealer)
 			this.#handlers.register("project.reveal", command => this.handleProjectReveal(command));
 		this.#handlers.register("session.close", command => this.handleClose(command));
+		if (this.#sessionOwnership) {
+			this.#handlers.register("session.release", command => this.handleRelease(command));
+			this.#handlers.register("session.reclaim", command => this.handleReclaim(command));
+		}
 		this.#handlers.register("session.archive", command => this.handleArchive(command));
 		this.#handlers.register("session.restore", command => this.handleRestore(command));
 		this.#handlers.register("session.delete", command => this.handleDelete(command));
@@ -3084,6 +3107,134 @@ export class LocalAppserver implements AppserverHandle {
 			this.#lifecycleMutations.delete(sessionId);
 		}
 	}
+	private async handleRelease(command: CommandFrame): Promise<CommandOutcome> {
+		const sessionId = command.sessionId!;
+		const ownership = this.#sessionOwnership;
+		if (!ownership)
+			return this.lifecycleFailureOutcome(command, {
+				code: "unsupported",
+				message: "session transfer is unavailable",
+			});
+		if (this.#lifecycleMutations.has(sessionId))
+			return this.lifecycleBusyOutcome(command, "session lifecycle mutation is already in progress");
+		this.#lifecycleMutations.add(sessionId);
+		let releaseRecorded = false;
+		try {
+			const revisionFailure = this.lifecycleRevisionFailure(command);
+			if (revisionFailure) return this.lifecycleFailureOutcome(command, revisionFailure);
+			const record = this.#records.get(sessionId);
+			const projection = this.#projections.get(sessionId);
+			if (!record || !projection)
+				return this.lifecycleFailureOutcome(command, {
+					code: "unknown_session",
+					message: "session is not indexed",
+				});
+			if (record.runtime)
+				return this.lifecycleFailureOutcome(command, {
+					code: "unsupported",
+					message: "external runtime sessions cannot be transferred",
+				});
+			if (record.archivedAt)
+				return this.lifecycleFailureOutcome(command, {
+					code: "session_archived",
+					message: "archived sessions cannot be transferred",
+				});
+			if (!ownership.owns(sessionId, record.path))
+				return this.lifecycleFailureOutcome(command, {
+					code: "unsupported",
+					message: "only sessions owned by this host can be transferred",
+				});
+			if (projection.value.ref.liveState?.sessionControl !== undefined)
+				return this.lifecycleFailureOutcome(command, {
+					code: "session_locked",
+					message: "session control is already held outside Omperator",
+				});
+			if (this.sessionLifecycleBusy(sessionId, true))
+				return this.lifecycleBusyOutcome(command, "sessions with active or pending work cannot be transferred");
+			await ownership.release(sessionId, record.path);
+			releaseRecorded = true;
+			if (!(await this.quiesceSessionRuntime(sessionId)))
+				return this.lifecycleBusyOutcome(command, "session runtime did not stop cleanly");
+			this.cleanupObserverState(sessionId);
+			await this.enqueueExternalRefresh(sessionId);
+			this.startExternalObserver(sessionId);
+			return {
+				frame: response(this.hostId, command, true, {
+					released: true,
+					resumeCommand: terminalResumeCommand(sessionId),
+				}),
+			};
+		} catch {
+			return {
+				frame: response(this.hostId, command, false, undefined, {
+					code: "session_lifecycle_failed",
+					message: "session transfer failed",
+				}),
+			};
+		} finally {
+			if (
+				releaseRecorded &&
+				this.#projections.get(sessionId)?.value.ref.liveState?.sessionControl?.mode !== "released"
+			) {
+				const record = this.#records.get(sessionId);
+				if (record) await ownership.clearTransfer(sessionId, record.path).catch(() => undefined);
+			}
+			this.#lifecycleMutations.delete(sessionId);
+		}
+	}
+	private async handleReclaim(command: CommandFrame): Promise<CommandOutcome> {
+		const sessionId = command.sessionId!;
+		if (this.#lifecycleMutations.has(sessionId))
+			return this.lifecycleBusyOutcome(command, "session lifecycle mutation is already in progress");
+		this.#lifecycleMutations.add(sessionId);
+		const ownership = this.#sessionOwnership;
+		const record = this.#records.get(sessionId);
+		const projection = this.#projections.get(sessionId);
+		try {
+			if (!ownership || !record || !projection)
+				return this.lifecycleFailureOutcome(command, {
+					code: "unsupported",
+					message: "session transfer is unavailable",
+				});
+			const revisionFailure = this.lifecycleRevisionFailure(command);
+			if (revisionFailure) return this.lifecycleFailureOutcome(command, revisionFailure);
+			if (ownership.transfer(sessionId, record.path) !== "waiting")
+				return this.lifecycleFailureOutcome(command, {
+					code: "session_locked",
+					message: "the terminal has already claimed this session",
+				});
+			let status: SessionLockStatus;
+			try {
+				status = await this.#lockStatus(record);
+			} catch {
+				status = "malformed";
+			}
+			if (status !== "missing" && status !== "stale")
+				return this.lifecycleFailureOutcome(command, {
+					code: "session_locked",
+					message: "the terminal has already claimed this session",
+				});
+			await ownership.clearTransfer(sessionId, record.path);
+			const transcript = projection.value.ref.liveState?.sessionControl?.transcript ?? "snapshot";
+			const delta = projection.setSessionControl({ mode: "reconciling", transcript });
+			if (delta) await this.broadcastIndex(delta);
+			try {
+				await this.ensureSupervisor(sessionId, true);
+			} catch {
+				void this.enqueueExternalRefresh(sessionId).catch(() => undefined);
+				return this.lifecycleFailureOutcome(command, {
+					code: "session_lifecycle_failed",
+					message: "session could not return to Omperator",
+				});
+			}
+			const writable = projection.setSessionControl();
+			if (writable) await this.broadcastIndex(writable);
+			this.cleanupObserverState(sessionId);
+			return { frame: response(this.hostId, command, true, { reclaimed: true }) };
+		} finally {
+			this.#lifecycleMutations.delete(sessionId);
+		}
+	}
 	private async deletePreflight(
 		command: CommandFrame,
 		ignoreLifecycleFence = false,
@@ -3117,6 +3268,11 @@ export class LocalAppserver implements AppserverHandle {
 		if (!command.sessionId) return false;
 		if (this.#observerIndependentTerminalOperations && command.command === "term.open") return false;
 		if (this.#externalRuntimes.has(command.sessionId)) return false;
+		if (
+			command.command === "session.reclaim" &&
+			this.#projections.get(command.sessionId)?.value.ref.liveState?.sessionControl?.mode === "released"
+		)
+			return false;
 		if (command.command === "session.restore" && this.sessionArchived(command.sessionId)) {
 			const record = this.#records.get(command.sessionId);
 			if (!record) return true;
@@ -3710,18 +3866,22 @@ export class LocalAppserver implements AppserverHandle {
 	): void {
 		void this.refreshState(sessionId, supervisor, requestId, preserveProjectedStatus).catch(() => undefined);
 	}
-	private async ensureSupervisor(sessionId: SessionId): Promise<RpcChildSupervisor> {
+	private async ensureSupervisor(
+		sessionId: SessionId,
+		ignoreLifecycleFence = false,
+	): Promise<RpcChildSupervisor> {
 		if (this.#externalRuntimes.has(sessionId)) throw new ExternalRuntimeCommandError();
 		if (this.#draining) throw new Error("appserver is draining");
 		if (this.#stopping) throw new Error("appserver is stopping");
 		if (this.#closedSessions.has(sessionId)) throw new Error("session is closed");
-		if (this.#lifecycleMutations.has(sessionId)) throw new Error("session lifecycle mutation is in progress");
+		if (!ignoreLifecycleFence && this.#lifecycleMutations.has(sessionId))
+			throw new Error("session lifecycle mutation is in progress");
 		if (this.sessionArchived(sessionId)) throw new Error("session is archived");
 		const pending = this.#startPromises.get(sessionId);
 		if (pending) return pending;
 		const existing = this.#supervisors.get(sessionId);
 		if (existing) return existing;
-		const start = Promise.resolve().then(() => this.startSupervisor(sessionId));
+		const start = Promise.resolve().then(() => this.startSupervisor(sessionId, ignoreLifecycleFence));
 		this.#startPromises.set(sessionId, start);
 		try {
 			return await start;
@@ -3729,17 +3889,24 @@ export class LocalAppserver implements AppserverHandle {
 			this.#startPromises.delete(sessionId);
 		}
 	}
-	private async startSupervisor(sessionId: SessionId): Promise<RpcChildSupervisor> {
+	private async startSupervisor(
+		sessionId: SessionId,
+		ignoreLifecycleFence = false,
+	): Promise<RpcChildSupervisor> {
 		const existing = this.#supervisors.get(sessionId);
 		if (existing) return existing;
 		if (this.#stopping || this.#closedSessions.has(sessionId)) throw new Error("session is closed");
-		if (this.#lifecycleMutations.has(sessionId)) throw new Error("session lifecycle mutation is in progress");
+		if (!ignoreLifecycleFence && this.#lifecycleMutations.has(sessionId))
+			throw new Error("session lifecycle mutation is in progress");
 		const record = this.#records.get(sessionId);
 		if (!record) throw new Error("unknown session");
 		if (this.sessionArchived(sessionId)) throw new Error("session is archived");
 		await this.#lockCheck(record);
 		if (this.#stopping || this.#closedSessions.has(sessionId)) throw new Error("session is closed");
-		if (this.#lifecycleMutations.has(sessionId) || this.sessionArchived(sessionId))
+		if (
+			(!ignoreLifecycleFence && this.#lifecycleMutations.has(sessionId)) ||
+			this.sessionArchived(sessionId)
+		)
 			throw new Error("session lifecycle changed while starting");
 		const projection = this.#projections.get(sessionId)!;
 		const transcript = new TranscriptEventTranslator();
@@ -4386,9 +4553,12 @@ export class LocalAppserver implements AppserverHandle {
 		}
 	}
 	async #sendFrameNow(transport: AppWs, frame: ServerFrame): Promise<boolean> {
-		const compatibleFrame = this.#clientFeatures.get(transport)?.has(SESSION_UNVERIFIED_FEATURE)
+		const features = this.#clientFeatures.get(transport);
+		let compatibleFrame = features?.has(SESSION_UNVERIFIED_FEATURE)
 			? frame
-			: downgradeUnverifiedSessionFrame(frame);
+			: downgradeSessionFrame(frame, "unverified");
+		if (!features?.has(SESSION_TRANSFER_FEATURE))
+			compatibleFrame = downgradeSessionFrame(compatibleFrame, "released");
 		if (transport.remote) {
 			const connection = this.#remoteConnections.get(transport);
 			if (!connection || !this.#remotePolicy) return false;
@@ -4721,7 +4891,17 @@ export class LocalAppserver implements AppserverHandle {
 		const projection = this.#projections.get(sessionId);
 		if (!record || !projection) return;
 		// A local child owns the session. Never let external bytes rebase it.
-		if (this.#supervisors.has(sessionId)) return;
+		// A restart can start that child while the attach-time observer still
+		// projects "reconciling"; settle the projection back to writable once
+		// the exact durable ownership record proves this is our writer.
+		if (this.#supervisors.has(sessionId)) {
+			if (this.#sessionOwnership?.owns(sessionId, record.path)) {
+				const control = projection.setSessionControl();
+				if (control) await this.broadcastIndex(control);
+				this.cleanupObserverState(sessionId);
+			}
+			return;
+		}
 		let status: SessionLockStatus;
 		try {
 			status = await this.#lockStatus(record);
@@ -4729,6 +4909,8 @@ export class LocalAppserver implements AppserverHandle {
 			status = "malformed";
 		}
 		if (status === "live" || status === "suspect" || status === "malformed") {
+			if (status === "live" && this.#sessionOwnership?.transfer(sessionId, record.path) === "waiting")
+				await this.#sessionOwnership.observeReleasedWriter(sessionId, record.path).catch(() => undefined);
 			this.#promotionFailures.delete(sessionId);
 			let observer = this.#observers.get(sessionId);
 			if (!observer) {
@@ -4750,6 +4932,33 @@ export class LocalAppserver implements AppserverHandle {
 			return;
 		}
 		let observer = this.#observers.get(sessionId);
+		const transfer = this.#sessionOwnership?.transfer(sessionId, record.path);
+		if (transfer === "waiting") {
+			if (!observer) {
+				observer = new SessionTranscriptObserver(record.path, this.hostId);
+				this.#observers.set(sessionId, observer);
+			}
+			const poll = await observer.poll();
+			if (this.#supervisors.has(sessionId) || this.#startPromises.has(sessionId)) return;
+			if (!this.observerIsCurrent(sessionId, observer, record, projection)) return;
+			const pollRecordMatches = poll.record?.sessionId === sessionId;
+			if (pollRecordMatches) await this.applyObserverPoll(sessionId, projection, poll);
+			if (!this.observerIsCurrent(sessionId, observer, record, projection)) return;
+			const released = projection.setSessionControl({
+				mode: "released",
+				transcript: pollRecordMatches ? poll.transcript : "snapshot",
+				resumeCommand: terminalResumeCommand(sessionId),
+			});
+			if (released) await this.broadcastIndex(released);
+			return;
+		}
+		if (transfer === "observed") {
+			try {
+				await this.#sessionOwnership?.clearTransfer(sessionId, record.path);
+			} catch {
+				return;
+			}
+		}
 		const owned = this.#sessionOwnership?.owns(sessionId, record.path) === true;
 		const lockless =
 			!this.#claimLocklessSessions &&

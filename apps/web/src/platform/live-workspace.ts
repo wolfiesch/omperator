@@ -424,6 +424,7 @@ export function deriveWorkspaceData(snapshot: DesktopRuntimeSnapshot): Workspace
       lastActivity: "",
       ...(archivedAt === null ? {} : { archivedAt }),
       ...(controlKind === undefined ? {} : { control: controlKind }),
+      ...(control?.mode === "released" ? { terminalResumeCommand: control.resumeCommand } : {}),
       ...(clusterHostTarget(snapshot, hostId) === null || ref.liveState?.cluster === undefined
         ? {}
         : { cluster: ref.liveState.cluster }),

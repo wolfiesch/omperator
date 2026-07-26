@@ -244,10 +244,14 @@ const localSessions: DocTopic = {
       kind: "p",
       text: "Your draft message, scroll position, and open panels survive switching away and back.",
     },
-    { kind: "h2", id: "local-sessions-terminal", text: "Sessions started in the terminal" },
+    { kind: "h2", id: "local-sessions-terminal", text: "Move sessions between Omperator and the terminal" },
     {
       kind: "p",
-      text: "A session started with `t4-omp` appears in Omperator marked **Active elsewhere** while its terminal owns it. Omperator follows the durable transcript, and `/continue-in-t4` hands it over safely. A session started by an OMP build without the compatible handoff signal remains readable but is marked **Read-only · use t4-omp** instead of pretending a takeover is in progress.",
+      text: "Choose **Continue in terminal** on an idle writable session and Omperator safely stops its writer, then shows the exact `t4-omp --resume <session>` command. While that terminal owns the session, Omperator follows the durable transcript and automatically takes control back after the terminal exits. Before the terminal starts, **Bring back to Omperator** cancels the release.",
+    },
+    {
+      kind: "p",
+      text: "A session started with `t4-omp` appears in Omperator marked **Active elsewhere** while its terminal owns it. `/continue-in-t4` hands it over safely in the other direction. A session started by an OMP build without the compatible handoff signal remains readable but is marked **Read-only · use t4-omp** instead of pretending a takeover is in progress.",
     },
     {
       kind: "p",

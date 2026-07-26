@@ -27,6 +27,11 @@ export type SessionControlState =
     }
   | { readonly mode: "reconciling"; readonly transcript: ObserverTranscript }
   | { readonly mode: "unverified"; readonly transcript: ObserverTranscript }
+  | {
+      readonly mode: "released";
+      readonly transcript: ObserverTranscript;
+      readonly resumeCommand: string;
+    }
   | { readonly mode: "unknown" };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -36,6 +41,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const OBSERVER_KEYS: Record<string, true> = { mode: true, lockStatus: true, transcript: true };
 const RECONCILING_KEYS: Record<string, true> = { mode: true, transcript: true };
 const UNVERIFIED_KEYS: Record<string, true> = { mode: true, transcript: true };
+const RELEASED_KEYS: Record<string, true> = { mode: true, transcript: true, resumeCommand: true };
 
 /**
  * Strict reader for `liveState.sessionControl`. Only a truly absent
@@ -77,6 +83,17 @@ export function readSessionControl(ref: SessionRef | undefined): SessionControlS
     const { transcript } = raw;
     if (transcript !== "live" && transcript !== "snapshot") return { mode: "unknown" };
     return { mode: "unverified", transcript };
+  }
+  if (raw.mode === "released") {
+    if (Object.keys(raw).some((key) => RELEASED_KEYS[key] !== true)) {
+      return { mode: "unknown" };
+    }
+    const { resumeCommand, transcript } = raw;
+    if (transcript !== "live" && transcript !== "snapshot") return { mode: "unknown" };
+    if (typeof resumeCommand !== "string" || resumeCommand.length === 0 || resumeCommand.length > 1024) {
+      return { mode: "unknown" };
+    }
+    return { mode: "released", transcript, resumeCommand };
   }
   return { mode: "unknown" };
 }
@@ -265,6 +282,24 @@ export function presentSessionControl(state: SessionControlState): SessionContro
       announcement: "Read-only terminal session. Use t4-omp for future terminal handoff.",
     };
   }
+  if (state.mode === "released") {
+    return {
+      railLabel: "Ready for terminal",
+      bannerTitle: "Released to terminal",
+      bannerDetail:
+        "Omperator stopped its writer safely. Run the shown t4-omp resume command in a terminal, or bring the session back here.",
+      bannerBusy: false,
+      forkAction: null,
+      composerReason:
+        "This session is waiting for a terminal to resume it. Bring it back to Omperator to write here instead.",
+      cancelReason: "No Omperator runtime is running for this session.",
+      controlReason: "This session has been released to a terminal.",
+      slashReason: "Released to terminal",
+      managementReason:
+        "This session is waiting for a terminal. Bring it back to Omperator before managing it here.",
+      announcement: "Session released. It is ready to resume in a terminal.",
+    };
+  }
   return {
     ...UNCLEAR_PRESENTATION,
     bannerDetail: UNCLEAR_DETAIL,
@@ -280,11 +315,18 @@ export function presentSessionControl(state: SessionControlState): SessionContro
  * quiet lock reads as waiting, and a malformed lock or an unrecognized
  * shape stays an unclear read-only state that never names an owner.
  */
-export type SessionControlDisplayKind = "observer" | "suspect" | "reconciling" | "unverified" | "unclear";
+export type SessionControlDisplayKind =
+  | "observer"
+  | "suspect"
+  | "reconciling"
+  | "unverified"
+  | "released"
+  | "unclear";
 
 export function sessionControlDisplayKind(state: SessionControlState): SessionControlDisplayKind {
   if (state.mode === "reconciling") return "reconciling";
   if (state.mode === "unverified") return "unverified";
+  if (state.mode === "released") return "released";
   if (state.mode === "observer") {
     if (state.lockStatus === "live") return "observer";
     if (state.lockStatus === "suspect") return "suspect";
@@ -300,6 +342,7 @@ const DISPLAY_KIND_STATE: Record<SessionControlDisplayKind, SessionControlState>
   suspect: { mode: "observer", lockStatus: "suspect", transcript: "live" },
   reconciling: { mode: "reconciling", transcript: "live" },
   unverified: { mode: "unverified", transcript: "live" },
+  released: { mode: "released", transcript: "live", resumeCommand: "t4-omp --resume <session>" },
   unclear: { mode: "unknown" },
 };
 

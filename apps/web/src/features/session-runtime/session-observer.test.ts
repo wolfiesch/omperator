@@ -72,6 +72,24 @@ describe("readSessionControl", () => {
     }
   });
 
+  it("parses an exact released terminal-transfer shape", () => {
+    expect(
+      readSessionControl(
+        refWith({
+          sessionControl: {
+            mode: "released",
+            transcript: "live",
+            resumeCommand: "t4-omp --resume session-id",
+          },
+        }),
+      ),
+    ).toEqual({
+      mode: "released",
+      transcript: "live",
+      resumeCommand: "t4-omp --resume session-id",
+    });
+  });
+
   it("reads extra keys on a known mode as unknown (exact shapes only)", () => {
     expect(
       readSessionControl(
@@ -88,6 +106,18 @@ describe("readSessionControl", () => {
     expect(
       readSessionControl(
         refWith({ sessionControl: { mode: "unverified", transcript: "live", owner: "secret" } }),
+      ),
+    ).toEqual({ mode: "unknown" });
+    expect(
+      readSessionControl(
+        refWith({
+          sessionControl: {
+            mode: "released",
+            transcript: "live",
+            resumeCommand: "t4-omp --resume session-id",
+            path: "/secret",
+          },
+        }),
       ),
     ).toEqual({ mode: "unknown" });
   });
@@ -110,6 +140,8 @@ describe("readSessionControl", () => {
       { mode: "reconciling", transcript: "partial" },
       { mode: "unverified" },
       { mode: "unverified", transcript: "partial" },
+      { mode: "released", transcript: "live" },
+      { mode: "released", transcript: "live", resumeCommand: "" },
     ];
     for (const sessionControl of malformed) {
       expect(readSessionControl(refWith({ sessionControl }))).toEqual({ mode: "unknown" });
@@ -142,6 +174,8 @@ const EVERY_STATE: readonly SessionControlState[] = [
   { mode: "reconciling", transcript: "snapshot" },
   { mode: "unverified", transcript: "live" },
   { mode: "unverified", transcript: "snapshot" },
+  { mode: "released", transcript: "live", resumeCommand: "t4-omp --resume session-id" },
+  { mode: "released", transcript: "snapshot", resumeCommand: "t4-omp --resume session-id" },
   { mode: "unknown" },
 ];
 
@@ -167,7 +201,7 @@ describe("presentSessionControl", () => {
       expect(presentation.railLabel === "Active elsewhere", JSON.stringify(state)).toBe(
         state.mode === "observer" && state.lockStatus === "live",
       );
-      if (state.mode !== "unverified") {
+      if (state.mode !== "unverified" && state.mode !== "released") {
         expect(presentation.bannerDetail).not.toMatch(/TUI|terminal|CLI|lock|watermark|promot/i);
       }
     }
@@ -217,6 +251,17 @@ describe("presentSessionControl", () => {
     const presentation = presentSessionControl(OBSERVER_LIVE);
     expect(presentation.bannerDetail).toContain("/continue-in-t4");
     expect(presentation.composerReason).toContain("/continue-in-t4");
+  });
+
+  it("presents a released session as waiting for the terminal", () => {
+    const presentation = presentSessionControl({
+      mode: "released",
+      transcript: "live",
+      resumeCommand: "t4-omp --resume session-id",
+    });
+    expect(presentation.railLabel).toBe("Ready for terminal");
+    expect(presentation.bannerDetail).toContain("t4-omp");
+    expect(presentation.managementReason).toContain("Bring it back");
   });
 
   it("distinguishes lock states without naming internals", () => {

@@ -135,6 +135,14 @@ export function presentSessionState(session: WorkspaceSession): SessionStatePres
         busy: false,
       };
     }
+    if (session.control === "released") {
+      return {
+        label: "Ready for terminal",
+        detail: control.composerReason,
+        status: null,
+        busy: false,
+      };
+    }
     return {
       label: "Read-only",
       detail: control.composerReason,

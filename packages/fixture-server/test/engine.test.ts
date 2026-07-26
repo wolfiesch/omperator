@@ -72,11 +72,21 @@ describe("deterministic fixture engine", () => {
       "session.delete",
       "session.fast.set",
       "session.model.set",
+      "session.reclaim",
+      "session.release",
       "session.rename",
       "session.restore",
       "session.thinking.set",
       "usage.read",
     ]);
+    for (const item of fixtureCatalogItems()) {
+      if (item.name === "session.release" || item.name === "session.reclaim") {
+        expect(item).toMatchObject({
+          supported: false,
+          reason: "Session transfer is unavailable in deterministic fixtures",
+        });
+      }
+    }
   });
 
   it("decodes every handshake, snapshot, list, and ping frame for all ten seeds", () => {
