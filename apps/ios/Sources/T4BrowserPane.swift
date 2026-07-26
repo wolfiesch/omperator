@@ -103,7 +103,7 @@ struct T4BrowserPane: View {
         #endif
         .task {
             // Opportunistic host preview launch — no-op when unsupported.
-            await store.openPreview(sessionId: session.sessionId, url: loadURL)
+            if !debugNoWebView { await store.openPreview(sessionId: session.sessionId, url: loadURL) }
         }
     }
 
