@@ -1132,6 +1132,11 @@ final class T4SessionStore: ObservableObject {
                 }
             case .confirmation(let challenge):
                 pendingConfirmation = challenge
+                // UI-test seam: -T4AutoApprove auto-approves challenges (e.g.
+                // term.open) so headless runs can reach the surfaces behind them.
+                if ProcessInfo.processInfo.arguments.contains("-T4AutoApprove") {
+                    Task { await confirm(.approve) }
+                }
             case .event(let frame):
                 if frame.event.isAskResolved {
                     pendingAsk = nil
