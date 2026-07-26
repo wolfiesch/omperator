@@ -3605,6 +3605,7 @@ export class LocalAppserver implements AppserverHandle {
 		};
 	}
 	private async handlePreviewLaunch(command: CommandFrame): Promise<CommandOutcome> {
+		this.#log("preview.launch.start", { sessionId: command.sessionId });
 		try {
 			const args = decodeCommandArguments(command.command, command.args);
 			const snapshot = await this.#previewService!.launch({
@@ -3612,6 +3613,7 @@ export class LocalAppserver implements AppserverHandle {
 				url: args.url as string,
 				...(args.authorityId !== undefined ? { authorityId: args.authorityId as string } : {}),
 			});
+			this.#log("preview.launch.done", { sessionId: command.sessionId });
 			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
 		} catch (error) {
 			return this.previewError(command, error);
@@ -4821,8 +4823,10 @@ export class LocalAppserver implements AppserverHandle {
 		};
 		await this.#sendFrame(ws, welcome as ServerFrame);
 		if (decision?.authentication === "pairing-required") return;
+		console.error("[dbg] hello: welcome sent, refreshing sessions");
 		try {
 			await this.refreshSessions();
+			console.error("[dbg] hello: refreshSessions done");
 		} catch {
 			await this.#sendFrame(ws, {
 				v: "omp-app/1",
