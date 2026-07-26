@@ -65,6 +65,9 @@ struct T4WorkspaceView: View {
         .sheet(isPresented: $showConnect) {
             T4ConnectView(store: store, pendingPair: pendingPair)
                 .environmentObject(theme)
+                #if os(macOS)
+                .frame(minWidth: 520, minHeight: 480)
+                #endif
         }
         .sheet(isPresented: $showInbox) {
             T4InboxView(store: store, isPresented: $showInbox)

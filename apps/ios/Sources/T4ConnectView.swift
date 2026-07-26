@@ -107,6 +107,12 @@ struct T4ConnectView: View {
                     }
                 }
             }
+            .formStyle(.grouped)
+            // Proper margins everywhere: macOS Forms otherwise run edge-to-edge.
+            .frame(maxWidth: 460)
+            .padding(.horizontal, 24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(t.bg)
             .navigationTitle("Connect")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
