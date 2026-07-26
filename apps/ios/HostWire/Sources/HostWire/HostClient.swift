@@ -25,7 +25,7 @@ public actor HostClient {
         public init(
             identity: ClientIdentity,
             authentication: DeviceAuthentication? = nil,
-            requestedFeatures: [String] = ["resume", "prompt.lease", "controller.lease", "prompt.images", "transcript.page", "session.delta", "files.list"],
+            requestedFeatures: [String] = ["resume", "prompt.lease", "controller.lease", "prompt.images", "transcript.page", "session.delta", "files.list", "terminal.io"],
             capabilities: Capabilities? = Capabilities(client: [
                 "sessions.read", "sessions.prompt", "sessions.control", "sessions.manage",
                 "catalog.read", "files.list", "files.read",
