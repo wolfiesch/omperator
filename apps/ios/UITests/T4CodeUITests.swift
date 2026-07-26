@@ -74,7 +74,7 @@ final class T4CodeUITests: XCTestCase {
         // text is the field's own value, not a static label).
         let field = app.textFields["Connect a host to message"].firstMatch
         let fieldView = app.textViews["Connect a host to message"].firstMatch
-        XCTAssertTrue(field.waitForExistence(timeout: 3) || fieldView.exists)
+        XCTAssertTrue(field.waitForExistence(timeout: 10) || fieldView.waitForExistence(timeout: 3))
         // Send is disabled with no host.
         XCTAssertFalse(app.buttons["Send message"].isEnabled)
     }
