@@ -1781,9 +1781,6 @@ export async function createRunnerFixture(options = {}) {
         "omp-linux-arm64",
         "omp-linux-x64",
         "omp-windows-x64.exe",
-        "omp-native-addons.json",
-        "pi_natives.linux-x64-baseline.node",
-        "pi_natives.linux-x64-modern.node",
       ].map((name) => ({ name, size: 11, digest: `sha256:${mockDigest}` })),
     })}\n`,
   );
