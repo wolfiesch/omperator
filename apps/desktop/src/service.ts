@@ -52,7 +52,7 @@ export function createSafeServiceEnvironment(
 const APP_SERVER_PROBE_TIMEOUT_MS = 15_000;
 const APP_SERVER_PROBE_MAX_OUTPUT_BYTES = 16 * 1024;
 const AUTHORITY_BRIDGE_HELP_MARKERS = [
-  // Immutable appserver-18 compatibility marker. The public OMP runtime was
+  // Immutable integration-runtime compatibility marker. The public OMP runtime was
   // released before the v0.2 product-name cutover.
   "Expose the private OMP authority bridge used by T4 Code",
   "--stdio",

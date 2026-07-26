@@ -45,10 +45,10 @@ describe("T4 setup doctor", () => {
     const source = await readSourceContract();
 
     expect(source.ompVersion).toBe("17.0.5");
-    expect(source.ompTag).toBe("t4code-17.0.5-appserver-18");
+    expect(source.ompTag).toBe("t4code-17.0.5-appserver-19");
     expect(source.bunEngine).toBe(">=1.3.14");
     expect(source.ompUrl).toBe(
-      "https://github.com/wolfiesch/oh-my-pi/tree/t4code-17.0.5-appserver-18",
+      "https://github.com/wolfiesch/oh-my-pi/tree/t4code-17.0.5-appserver-19",
     );
   });
 
