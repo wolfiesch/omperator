@@ -228,6 +228,7 @@ public actor HostClient {
             while let self {
                 do {
                     let data = try await self.receiveNext()
+                    t4wireLog.notice("in: \(data.count) bytes \(String(decoding: data.prefix(80), as: UTF8.self), privacy: .public)")
                     try await self.ingest(data)
                 } catch {
                     t4wireLog.error("ingest failed: \(error)")
