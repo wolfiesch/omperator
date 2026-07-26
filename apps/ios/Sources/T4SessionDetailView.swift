@@ -90,7 +90,7 @@ struct T4SessionDetailView: View {
                 // Native iOS 26 scroll-edge fade at the bottom, like the nav
                 // bar's top-of-screen effect — lines dissolve under the
                 // floating composer instead of hard-clipping.
-                .scrollEdgeEffectStyle(.hard, for: .bottom)
+                .scrollEdgeEffectStyle(.soft, for: .bottom)
                 .onChange(of: store.transcript(for: session.sessionId).count) { _, _ in
                     // A page prepend increases the count too; suppress the
                     // scroll-to-bottom follow while the store is prepending
