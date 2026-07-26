@@ -151,3 +151,32 @@ package tests against.
 - [x] Desktop-parity workspace: session detail is the root surface; the rail is a slide-over drawer opened by swiping right from the left edge (or the sidebar button), closed by backdrop tap or swiping left — mirrors the desktop narrow-width Sheet overlay. Flat, no card stacking.
 - [x] Composer ported from Enclave: glass capsule, photo attachments (session.image.begin/chunk upload → session.prompt image refs), on-device dictation, send/stop (session.cancel), cycling tips.
 - [x] Transcript matches the desktop web renderer: user messages right-aligned bubbles, assistant messages full-width markdown with fenced-code cards, tool/review rows as accent-rail cards.
+
+## Current state (2026-07-26)
+
+**iOS + macOS native apps, one SwiftUI source tree.**
+
+| Surface | Status |
+|---|---|
+| Session rail (search, project groups, live status) | ✅ both platforms (drawer on iOS, split view on macOS) |
+| Live transcript (markdown, code cards, tool cards, token streaming) | ✅ both |
+| Composer (attachments, dictation, send/stop) | ✅ both |
+| Model/thinking/fast/plan-mode controls (provider-labeled) | ✅ both |
+| Plan mode (`session.mode.set`, prompt-shaped at host) | ✅ both — ahead of desktop web |
+| Ask/confirmation banners | ✅ both |
+| Plan strip (todoPhases over session.state.get) | ✅ both |
+| Attention inbox + agents pane | ✅ both |
+| Usage/review/artifacts/settings panes + Host info section | ✅ both |
+| Files pane (FilesAuthority on the standalone host) | ✅ both |
+| Terminal drawer (host PTY, 4 tabs/session) | ✅ both |
+| Browser pane (WKWebView, opportunistic preview.launch) | ✅ both |
+| Command palette (⌘K macOS, magnifier iOS) | ✅ both |
+| Pairing (code/QR/deep link), persisted creds, auto-reconnect | ✅ both |
+| Notifications (turn end, approvals) | ✅ both |
+| Prompt/controller leases, revision handling | ✅ both |
+| files.search + files.diff | ✅ both |
+| Preview captures | ⛔ host-side preview service needed (own milestone) |
+| Cluster operator | ⛔ deferred — needs protocol scoping |
+| Speech (wake-word) | ⛔ dropped (dictation ships instead) |
+
+**iOS**: XCUITest suite green (5/5). **macOS**: live-host verified. Demo data is opt-in (`-T4Demo`); fresh installs get real onboarding.
