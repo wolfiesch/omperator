@@ -206,6 +206,90 @@ class StatePhaseFactory implements RpcChildFactory {
 		return ["omp", "--mode", "rpc", "--session", path];
 	}
 }
+/**
+ * A child that answers prompt and get_state but never emits turn.end,
+ * prompt_result, or session_entry — reproducing the silent-supervisor wedge
+ * where OMP finishes the turn (isStreaming=false) yet the host never learns
+ * completion. SIGTERM is ignored (trapped), so only SIGKILL ends it.
+ */
+class SilentSupervisorChild implements ChildHandle {
+	#pending: Record<string, unknown>[] = [];
+	#drained = Promise.withResolvers<void>();
+	#finish = Promise.withResolvers<void>();
+	#finished = false;
+	#exited = Promise.withResolvers<number>();
+	#promptReceived = Promise.withResolvers<Record<string, unknown>>();
+	killed = false;
+	readonly promptReceived = this.#promptReceived.promise;
+	stdin = {
+		write: (data: string) => {
+			const frame = JSON.parse(data) as Record<string, unknown>;
+			this.#pending.push(frame);
+			if (frame.type === "prompt") this.#promptReceived.resolve(frame);
+			this.#drained.resolve();
+		},
+	};
+	stdout: AsyncIterable<string> = this.stream();
+	exited = this.#exited.promise;
+	private async *stream(): AsyncGenerator<string> {
+		yield `${JSON.stringify({ type: "ready" })}\n`;
+		for (;;) {
+			if (this.killed) return;
+			const frame = this.#pending.shift();
+			if (!frame) {
+				await Promise.race([this.#drained.promise, this.#finish.promise]);
+				this.#drained = Promise.withResolvers<void>();
+				continue;
+			}
+			if (frame.type === "prompt") {
+				yield `${JSON.stringify({
+					type: "response",
+					id: frame.id,
+					command: "prompt",
+					success: true,
+					data: { agentInvoked: true },
+				})}\n`;
+			} else if (frame.type === "get_state") {
+				yield `${JSON.stringify({
+					type: "response",
+					id: frame.id,
+					command: "get_state",
+					success: true,
+					data: {
+						isStreaming: false,
+						isCompacting: false,
+						isPaused: false,
+						messageCount: 0,
+						queuedMessageCount: 0,
+						steeringMode: "all",
+						followUpMode: "all",
+						interruptMode: "immediate",
+					},
+				})}\n`;
+			}
+			// Deliberately never emits turn.end / prompt_result / session_entry.
+		}
+	}
+	kill(signal?: string) {
+		// SIGTERM is trapped (the wedge); only SIGKILL ends the child.
+		if (signal !== "SIGKILL" || this.#finished) return;
+		this.killed = true;
+		this.#finished = true;
+		this.#finish.resolve();
+		this.#exited.resolve(0);
+	}
+}
+class SilentSupervisorFactory implements RpcChildFactory {
+	children: SilentSupervisorChild[] = [];
+	spawn() {
+		const child = new SilentSupervisorChild();
+		this.children.push(child);
+		return child;
+	}
+	argv(path: string) {
+		return ["omp", "--mode", "rpc", "--session", path];
+	}
+}
 class StaticDiscovery implements SessionDiscovery {
 	constructor(private readonly records: SessionRecord[]) {}
 	async list() {
@@ -2511,6 +2595,299 @@ describe("appserver lifecycle", () => {
 			expect(
 				noPhasesResult && typeof noPhasesResult === "object" && "todoPhases" in noPhasesResult,
 			).toBe(false);
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+	test("idle-supervisor watchdog SIGKILLs a silent child and releases the wedged prompt lifecycle", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-idle-supervisor-watchdog-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const sessionOwnershipPath = join(root, "profile", "owned-sessions.json");
+		const created = {
+			...record("silent-supervisor"),
+			path: join(root, "silent-supervisor.jsonl"),
+			cwd: root,
+			projectId: stableProjectId(root),
+		};
+		const sessionAuthority = {
+			create: async () => created,
+			list: async () => [],
+			archive: async () => {},
+			restore: async () => {},
+			delete: async () => {},
+		};
+		const factory = new SilentSupervisorFactory();
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "idle-supervisor-watchdog-test",
+			socketPath,
+			discovery: sessionAuthority,
+			sessionAuthority,
+			sessionOwnershipPath,
+			projectRootForProject: () => root,
+			childFactory: factory,
+			idleSupervisorGraceMs: 60,
+			idleSupervisorTickMs: 10,
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		const nextResponse = async (requestId: string) => {
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === requestId) return frame;
+			}
+		};
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "watchdog-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: [],
+				capabilities: { client: ["sessions.manage", "sessions.read", "sessions.prompt"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect((await client.nextServer()).type).toBe("sessions");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "create-watchdog",
+				commandId: "create-watchdog-command",
+				hostId: host,
+				command: "session.create",
+				args: { projectId: created.projectId },
+			});
+			expect(await nextResponse("create-watchdog")).toMatchObject({ ok: true });
+			const firstChild = factory.children[0];
+			if (!firstChild) throw new Error("created session did not start its writer");
+
+			// First prompt: the child accepts (agentInvoked=true) then goes mute,
+			// never emitting turn.end. The lifecycle stays pending.
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "prompt-watchdog-1",
+				commandId: "prompt-watchdog-1-command",
+				hostId: host,
+				sessionId: created.sessionId,
+				command: "session.prompt",
+				args: { message: "wedge me" },
+			});
+			await firstChild.promptReceived;
+			expect(await nextResponse("prompt-watchdog-1")).toMatchObject({ ok: true, result: { accepted: true } });
+
+			// A second prompt while the first lifecycle is wedged must be busy.
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "prompt-watchdog-busy",
+				commandId: "prompt-watchdog-busy-command",
+				hostId: host,
+				sessionId: created.sessionId,
+				command: "session.prompt",
+				args: { message: "still busy" },
+			});
+			expect(await nextResponse("prompt-watchdog-busy")).toMatchObject({
+				ok: false,
+				error: { code: "session_busy" },
+			});
+
+			// Wait for the watchdog to dispose the silent supervisor: the runtime
+			// is marked crashed then restartable (status settles to idle) and the
+			// child is SIGKILLed.
+			await Promise.race([
+				(async () => {
+					while (appserver.snapshot(created.sessionId)?.ref.status === "active") await Bun.sleep(5);
+				})(),
+				Bun.sleep(2_000).then(() => {
+					throw new Error("watchdog did not release the wedged session");
+				}),
+			]);
+			expect(firstChild.killed).toBe(true);
+
+			// After grace the session accepts a new prompt instead of session_busy.
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "prompt-watchdog-2",
+				commandId: "prompt-watchdog-2-command",
+				hostId: host,
+				sessionId: created.sessionId,
+				command: "session.prompt",
+				args: { message: "after grace" },
+			});
+			// The host processes the command asynchronously; wait for it to
+			// restart the supervisor (spawn a fresh child) and accept the prompt.
+			const secondChild = await Promise.race([
+				(async () => {
+					while (factory.children.at(-1) === undefined || factory.children.at(-1) === firstChild)
+						await Bun.sleep(5);
+					return factory.children.at(-1)!;
+				})(),
+				Bun.sleep(2_000).then(() => {
+					throw new Error("watchdog did not restart the supervisor");
+				}),
+			]);
+			await secondChild.promptReceived;
+			expect(await nextResponse("prompt-watchdog-2")).toMatchObject({ ok: true, result: { accepted: true } });
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+	test("state-refresh reconciliation releases a wedged prompt lifecycle without killing the child", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-state-refresh-reconcile-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const sessionOwnershipPath = join(root, "profile", "owned-sessions.json");
+		const created = {
+			...record("reconcile-supervisor"),
+			path: join(root, "reconcile-supervisor.jsonl"),
+			cwd: root,
+			projectId: stableProjectId(root),
+		};
+		const sessionAuthority = {
+			create: async () => created,
+			list: async () => [],
+			archive: async () => {},
+			restore: async () => {},
+			delete: async () => {},
+		};
+		const factory = new SilentSupervisorFactory();
+		// A grace window large enough that the watchdog never fires during the
+		// test: only the explicit state refresh reconciles the stale lifecycle.
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "state-refresh-reconcile-test",
+			socketPath,
+			discovery: sessionAuthority,
+			sessionAuthority,
+			sessionOwnershipPath,
+			projectRootForProject: () => root,
+			childFactory: factory,
+			idleSupervisorGraceMs: 60,
+			idleSupervisorTickMs: 10_000,
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		const nextResponse = async (requestId: string) => {
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === requestId) return frame;
+			}
+		};
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "reconcile-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: [],
+				capabilities: { client: ["sessions.manage", "sessions.read", "sessions.prompt"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect((await client.nextServer()).type).toBe("sessions");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "create-reconcile",
+				commandId: "create-reconcile-command",
+				hostId: host,
+				command: "session.create",
+				args: { projectId: created.projectId },
+			});
+			expect(await nextResponse("create-reconcile")).toMatchObject({ ok: true });
+			const child = factory.children[0];
+			if (!child) throw new Error("created session did not start its writer");
+
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "prompt-reconcile-1",
+				commandId: "prompt-reconcile-1-command",
+				hostId: host,
+				sessionId: created.sessionId,
+				command: "session.prompt",
+				args: { message: "wedge me" },
+			});
+			await child.promptReceived;
+			expect(await nextResponse("prompt-reconcile-1")).toMatchObject({ ok: true, result: { accepted: true } });
+
+			// Before grace, a state refresh sees isStreaming=false but the
+			// lifecycle is not yet stale, so it must stay pending (busy).
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "state-before-grace",
+				commandId: "state-before-grace-command",
+				hostId: host,
+				sessionId: created.sessionId,
+				command: "session.state.get",
+				args: {},
+			});
+			expect(await nextResponse("state-before-grace")).toMatchObject({ ok: true });
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "prompt-reconcile-busy",
+				commandId: "prompt-reconcile-busy-command",
+				hostId: host,
+				sessionId: created.sessionId,
+				command: "session.prompt",
+				args: { message: "still busy" },
+			});
+			expect(await nextResponse("prompt-reconcile-busy")).toMatchObject({
+				ok: false,
+				error: { code: "session_busy" },
+			});
+
+			// After grace, a state refresh reconciles the stale lifecycle: OMP
+			// finished (isStreaming=false) so the transient is released honestly
+			// and the session settles to idle — without killing the child.
+			// Cross the grace window on the real platform clock: the watchdog and
+			// lifecycle timestamps use Date.now/setInterval, so deterministic fake
+			// timers cannot drive them without rewiring the host clock injection.
+			await Bun.sleep(80);
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "state-after-grace",
+				commandId: "state-after-grace-command",
+				hostId: host,
+				sessionId: created.sessionId,
+				command: "session.state.get",
+				args: {},
+			});
+			expect(await nextResponse("state-after-grace")).toMatchObject({ ok: true });
+			expect(child.killed).toBe(false);
+			await Promise.race([
+				(async () => {
+					while (appserver.snapshot(created.sessionId)?.ref.status === "active") await Bun.sleep(5);
+				})(),
+				Bun.sleep(1_000).then(() => {
+					throw new Error("reconciliation did not settle the wedged session");
+				}),
+			]);
+
+			// The same child (still alive) now accepts a new prompt.
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "prompt-reconcile-2",
+				commandId: "prompt-reconcile-2-command",
+				hostId: host,
+				sessionId: created.sessionId,
+				command: "session.prompt",
+				args: { message: "after reconcile" },
+			});
+			await child.promptReceived;
+			expect(await nextResponse("prompt-reconcile-2")).toMatchObject({ ok: true, result: { accepted: true } });
 		} finally {
 			client.destroy();
 			await client.closed();

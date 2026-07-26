@@ -511,6 +511,7 @@ export class RpcChildSupervisor {
 	#supportsProtocolV2 = false;
 	#protocolV2 = false;
 	readonly #frameDecoder = new RpcChunkDecoder();
+	#lastActivityAt = Date.now();
 	#termination?: Promise<void>;
 	#operationCapabilities: OfficialOmpCapabilityAdapter;
 	#transcript: DurableJsonlReconciler;
@@ -540,6 +541,11 @@ export class RpcChildSupervisor {
 	}
 	hasPendingCalls(): boolean {
 		return this.#pending.size > 0;
+	}
+	/** Epoch-ms of the last inbound RPC frame from the child. Stale beyond the
+	 * host's grace window means the child went mute (e.g. trapped SIGTERM). */
+	lastActivityAt(): number {
+		return this.#lastActivityAt;
 	}
 	async start(): Promise<void> {
 		if (this.#child) throw new Error("child already started");
@@ -728,6 +734,7 @@ export class RpcChildSupervisor {
 				const decoded = this.#frameDecoder.push(parsed);
 				if (!decoded) continue;
 				const frame = decoded;
+				this.#lastActivityAt = Date.now();
 				if (frame.type === "ready") {
 					const versions = frame.supportedProtocolVersions;
 					const maxFrameBytes = frame.maxFrameBytes;

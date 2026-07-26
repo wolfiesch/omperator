@@ -579,6 +579,9 @@ interface PromptLifecycle {
 	cancelRequested?: true;
 	internalId?: string;
 	transientEntryId?: string;
+	/** Epoch-ms when the lifecycle was registered, for idle-supervisor
+	 * watchdog and state-refresh reconciliation of wedged turns. */
+	registeredAt: number;
 }
 type PromptDiscardReason = "rejected" | "local-only" | "failed" | "cancelled" | "completed-without-entry";
 interface ExternalRuntimeOwner {
@@ -907,6 +910,9 @@ export class LocalAppserver implements AppserverHandle {
 	#ringSize: number;
 	#lifecycleQuiesceTimeoutMs: number;
 	#usageReadTimeoutMs: number;
+	#idleSupervisorGraceMs: number;
+	#idleSupervisorTickMs: number;
+	#idleSupervisorTimer?: ReturnType<typeof setInterval>;
 	#handlers = new AppserverCommandHandlers();
 	#challenges = new Map<string, { command: CommandFrame; ws: AppWs; expiresAt: number; hash: string }>();
 	#records = new Map<SessionId, SessionRecord>();
@@ -1088,6 +1094,21 @@ export class LocalAppserver implements AppserverHandle {
 			this.#usageReadTimeoutMs > 60_000
 		)
 			throw new Error("usageReadTimeoutMs must be between 1 and 60000");
+		this.#idleSupervisorGraceMs = options.idleSupervisorGraceMs ?? 30_000;
+		this.#idleSupervisorTickMs =
+			options.idleSupervisorTickMs ?? Math.max(100, Math.floor(this.#idleSupervisorGraceMs / 4));
+		if (
+			!Number.isSafeInteger(this.#idleSupervisorGraceMs) ||
+			this.#idleSupervisorGraceMs <= 0 ||
+			this.#idleSupervisorGraceMs > 300_000
+		)
+			throw new Error("idleSupervisorGraceMs must be between 1 and 300000");
+		if (
+			!Number.isSafeInteger(this.#idleSupervisorTickMs) ||
+			this.#idleSupervisorTickMs <= 0 ||
+			this.#idleSupervisorTickMs > 300_000
+		)
+			throw new Error("idleSupervisorTickMs must be between 1 and 300000");
 		this.#ompVersion = options.ompVersion ?? "local";
 		this.#ompBuild = options.ompBuild ?? "local";
 		this.#rpcDialect = options.rpcDialect ?? "fork";
@@ -1312,6 +1333,7 @@ export class LocalAppserver implements AppserverHandle {
 			if (this.#stopping) throw new Error("appserver is stopping");
 			this.#runIdentity = { paths, record, marker: finalMarker };
 			this.#started = true;
+			this.#startIdleSupervisorWatchdog();
 			if (this.#remotePolicy && this.#remoteEndpoint) {
 				const listener =
 					this.#remoteListener ??
@@ -1392,6 +1414,10 @@ export class LocalAppserver implements AppserverHandle {
 				} catch (error) {
 					process.emitWarning(error instanceof Error ? error.message : String(error));
 				}
+			}
+			if (this.#idleSupervisorTimer) {
+				clearInterval(this.#idleSupervisorTimer);
+				this.#idleSupervisorTimer = undefined;
 			}
 			for (const timer of this.#observerTimers.values()) clearInterval(timer);
 			this.#observerTimers.clear();
@@ -1979,6 +2005,7 @@ export class LocalAppserver implements AppserverHandle {
 					commandId: command.commandId,
 					commandHash: payloadHash(command),
 					kind,
+					registeredAt: this.#clock.now().getTime(),
 				};
 				if (!this.#registerMessageLifecycle(command.sessionId!, lifecycle)) {
 					outcome = {
@@ -2118,6 +2145,7 @@ export class LocalAppserver implements AppserverHandle {
 							commandId: command.commandId,
 							commandHash: payloadHash(command),
 							kind: "prompt",
+							registeredAt: this.#clock.now().getTime(),
 						};
 						messageLifecycle = lifecycle;
 						if (!this.#registerMessageLifecycle(command.sessionId!, lifecycle))
@@ -2715,6 +2743,7 @@ export class LocalAppserver implements AppserverHandle {
 			commandId: command.commandId,
 			commandHash: payloadHash(command),
 			kind: "prompt",
+			registeredAt: this.#clock.now().getTime(),
 		};
 		if (!this.#registerMessageLifecycle(sessionId, lifecycle))
 			return {
@@ -3617,6 +3646,57 @@ export class LocalAppserver implements AppserverHandle {
 			if (this.#releaseMessageLifecycle(sessionId, lifecycle, reason)) released = true;
 		return released;
 	}
+	/** Prompt lifecycles registered before the idle-supervisor grace window
+	 * elapsed. A wedged turn keeps these pending past grace without ever
+	 * emitting the settling event the normal release path waits on. */
+	#stalePromptLifecycles(sessionId: SessionId): PromptLifecycle[] {
+		const now = this.#clock.now().getTime();
+		const lifecycles = this.#messageLifecycles.get(sessionId);
+		if (!lifecycles || lifecycles.length === 0) return [];
+		return lifecycles.filter(lifecycle => now - lifecycle.registeredAt >= this.#idleSupervisorGraceMs);
+	}
+	/** Reconcile wedged prompt lifecycles after a successful state refresh: OMP
+	 * finished the turn (isStreaming=false) but never emitted turn.end, so the
+	 * normal settling path never fired. Release the stale transients honestly. */
+	#reconcileStalePromptLifecycles(
+		sessionId: SessionId,
+		supervisor: RpcChildSupervisor,
+		isStreaming: boolean,
+		requestId: string,
+	): boolean {
+		if (isStreaming) return false;
+		const stale = this.#stalePromptLifecycles(sessionId);
+		if (stale.length === 0) return false;
+		for (const lifecycle of stale)
+			this.#releaseMessageLifecycle(sessionId, lifecycle, "completed-without-entry");
+		this.#projectTerminalStatus(sessionId, supervisor, `${requestId}:reconciled`);
+		return true;
+	}
+	/** Idle-supervisor watchdog: a child that trapped SIGTERM goes mute while
+	 * holding OMP's session lock and never emits turn.end. After the grace
+	 * window of RPC silence with prompt lifecycles still pending, SIGKILL the
+	 * child (SIGTERM is trapped by OMP) and run the crash cleanup so the session
+	 * accepts new prompts. */
+	#runIdleSupervisorWatchdog(): void {
+		if (this.#stopping || this.#draining) return;
+		const now = this.#clock.now().getTime();
+		for (const [sessionId, supervisor] of this.#supervisors) {
+			if (now - supervisor.lastActivityAt() < this.#idleSupervisorGraceMs) continue;
+			if (this.#stalePromptLifecycles(sessionId).length === 0) continue;
+			// Only dispose when the last state refresh reported the turn not
+			// streaming (the documented wedge: OMP finished but went mute). A
+			// session still marked streaming is left alone; unknown is fail-closed.
+			if (this.#projections.get(sessionId)?.value.ref.liveState?.isStreaming === true) continue;
+			if (this.#supervisors.get(sessionId) !== supervisor) continue;
+			this.markSupervisorCrashed(sessionId, supervisor);
+			supervisor.stop("SIGKILL");
+		}
+	}
+	#startIdleSupervisorWatchdog(): void {
+		clearInterval(this.#idleSupervisorTimer);
+		this.#idleSupervisorTimer = setInterval(() => this.#runIdleSupervisorWatchdog(), this.#idleSupervisorTickMs);
+		this.#idleSupervisorTimer.unref?.();
+	}
 	#projectTerminalStatus(
 		sessionId: SessionId,
 		supervisor = this.#supervisors.get(sessionId),
@@ -3719,6 +3799,10 @@ export class LocalAppserver implements AppserverHandle {
 		const projection = this.#projections.get(sessionId);
 		if (!projection) throw new Error("unknown session");
 		if (this.#stateRefreshGenerations.get(sessionId) !== generation) return state;
+		// Reconcile wedged prompt lifecycles before computing the status override
+		// so a session OMP finished (isStreaming=false) without emitting turn.end
+		// settles to idle instead of staying forever "active" / session_busy.
+		this.#reconcileStalePromptLifecycles(sessionId, supervisor, state.isStreaming, requestId);
 		const statusOverride = preserveProjectedStatus
 			? projection.value.ref.status
 			: this.#pendingMessageCount(sessionId) > 0

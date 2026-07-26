@@ -295,6 +295,12 @@ export interface AppserverOptions {
 	ringSize?: number;
 	/** Maximum time lifecycle mutations wait for terminal and child shutdown. */
 	lifecycleQuiesceTimeoutMs?: number;
+	/** Grace window before an RPC-silent supervisor with pending prompt
+	 * lifecycles is disposed (SIGKILL) and its stuck lifecycles released. */
+	idleSupervisorGraceMs?: number;
+	/** Interval between idle-supervisor watchdog sweeps. Defaults to a fraction
+	 * of the grace window; inject a small value for tests. */
+	idleSupervisorTickMs?: number;
 	now?: () => Date;
 	remoteEndpoint?: RemoteListenerConfig;
 	remotePolicy?: RemoteConnectionPolicy;
