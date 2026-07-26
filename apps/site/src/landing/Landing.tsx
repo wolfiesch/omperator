@@ -172,10 +172,10 @@ export function Landing() {
 
         <section className="section" aria-labelledby="handoff-title">
           <div className="container">
-            <h2 id="handoff-title">Start in the terminal, continue in Omperator</h2>
+            <h2 id="handoff-title">Move between Omperator and the terminal</h2>
             <p className="section-lede">
               {renderInline(
-                `A session started with the optional \`t4-omp\` terminal command shows up in Omperator read-only while the terminal owns it, following along as complete transcript records land on disk. Run \`/continue-in-t4\` there (or just exit it) and Omperator takes over. Your existing \`omp\` command stays untouched; sessions without the compatible handoff signal remain safely read-only.`,
+                `Choose **Continue in terminal** to stop Omperator's writer safely and resume the same session with the shown \`t4-omp\` command. Omperator follows along while the terminal owns it and takes control back after that terminal exits. Sessions that start in \`t4-omp\` still move the other way with \`/continue-in-t4\`. Your existing \`omp\` command stays untouched; sessions without the compatible handoff signal remain safely read-only.`,
               )}
             </p>
           </div>

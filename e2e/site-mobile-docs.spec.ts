@@ -136,7 +136,7 @@ test("offers the Android APK without hiding desktop downloads", async ({ page })
   await expect(page.getByRole("link", { name: /macOS/u }).first()).toBeVisible();
   await expect(page.getByText("TestFlight coming soon", { exact: true }).first()).toBeVisible();
   const handoffHeading = page.getByRole("heading", {
-    name: "Start in the terminal, continue in Omperator",
+    name: "Move between Omperator and the terminal",
   });
   await handoffHeading.scrollIntoViewIfNeeded();
   await expect(handoffHeading).toBeVisible();

@@ -391,6 +391,22 @@ export const COMMAND_DESCRIPTORS: Readonly<Record<string, CommandDescriptor>> = 
 		confirmation: "challenge",
 		desktopCatalog: true,
 	},
+	"session.release": {
+		capability: "sessions.manage",
+		scope: "session",
+		revision: "required",
+		revisionOwner: "session",
+		confirmation: "challenge",
+		desktopCatalog: true,
+	},
+	"session.reclaim": {
+		capability: "sessions.manage",
+		scope: "session",
+		revision: "required",
+		revisionOwner: "session",
+		confirmation: "none",
+		desktopCatalog: true,
+	},
 	"files.read": {
 		capability: "files.read",
 		scope: "session",
@@ -1730,6 +1746,8 @@ export const COMMAND_ARGUMENT_DECODERS: Readonly<Record<string, (value: unknown)
 	"session.ui.respond": decodeSessionUiResponse,
 	"session.cancel": value => leasedArgs(value, []),
 	"session.close": value => leasedArgs(value, []),
+	"session.release": value => leasedArgs(value, []),
+	"session.reclaim": noArgs,
 	"files.read": value => {
 		const x = args(value);
 		safeRelativePath(x.path);
@@ -1986,6 +2004,18 @@ export const COMMAND_RESULT_DECODERS: Readonly<Record<string, (value: unknown) =
 	"session.ui.respond": decodeAcceptedResult,
 	"session.cancel": value => boolField(value, "cancelled"),
 	"session.close": value => boolField(value, "closed"),
+	"session.release": value => {
+		const x = result(value);
+		if (
+			Object.keys(x).length !== 2 ||
+			x.released !== true ||
+			typeof x.resumeCommand !== "string"
+		)
+			fail("INVALID_FRAME", "invalid session release result", "result");
+		controlFree(x.resumeCommand, "result.resumeCommand", 1024);
+		return { released: true as const, resumeCommand: x.resumeCommand };
+	},
+	"session.reclaim": value => boolField(value, "reclaimed"),
 	"files.read": value => {
 		const x = result(value);
 		boundedText(x.content, "result.content", MAX_FILE_BYTES);

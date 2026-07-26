@@ -20,6 +20,7 @@ t4-host (T4 executable)
 
 - WebSocket framing, replay, capability negotiation, pairing, and remote policy
 - bounded session projections, attention, transcript search, and artifact reads
+- persistent release/reclaim state for transferring a writer between Omperator and `t4-omp`
 - backend-neutral ACP runtime adapters
 - Git repository and worktree lifecycle
 - deterministic host tests and release gates
@@ -47,7 +48,7 @@ There are no live users to migrate, so this is a replacement rather than a perio
 | Publish together       | Release the small OMP bridge build, pin its tag and hashes in T4, then ship T4 with both executables.                           | Packaging, signing, provenance, full CI, and release inspection pass.         |
 | Remove transition code | Delete code that exists only to run or preserve the old OMP-hosted appserver.                                                   | No public `omp appserver serve` or `ompd` launcher remains.                   |
 
-We intentionally skip dual-running hosts, mixed-version client support, live-session transfer, and an in-process runtime rollback system. Rollback remains a Git/release choice: install the previous known-good pair of T4 and OMP artifacts.
+We intentionally skip dual-running hosts, mixed-version client support, and an in-process runtime rollback system. Session transfer stays in the generic host: it quiesces its OMP RPC worker, persists the released state, and uses OMP's existing lock and resume contracts to observe the terminal writer and take control back safely. Rollback remains a Git/release choice: install the previous known-good pair of T4 and OMP artifacts.
 
 The simplified rollout does not weaken the hard boundaries. We retain strict protocol versioning, fail-closed lock behavior, secret redaction, process isolation, restart/reconnect tests, signed host packaging, exact artifact provenance, and protection for existing local development session files.
 

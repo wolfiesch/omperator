@@ -80,6 +80,8 @@ function catalog(): CatalogFrame {
       "session.archive",
       "session.restore",
       "session.close",
+      "session.release",
+      "session.reclaim",
       "session.delete",
     ].map((name) => ({
       id: `command-${name}` as never,
@@ -679,6 +681,8 @@ describe("session management authority helpers", () => {
       "session.archive",
       "session.restore",
       "session.close",
+      "session.release",
+      "session.reclaim",
       "session.delete",
     ] as const) {
       expect(managementCommandSupport(fake.getSnapshot(), ADDRESS, command)).toEqual({
@@ -694,6 +698,30 @@ describe("session management authority helpers", () => {
     expect(
       managementCommandSupport(reconciling.getSnapshot(), ADDRESS, "session.archive").supported,
     ).toBe(false);
+  });
+
+  it("offers only reclaim while a released session is waiting for its terminal", () => {
+    const released = new FakeManagementController({
+      ...ref(),
+      liveState: {
+        phase: "idle",
+        sessionControl: {
+          mode: "released",
+          transcript: "live",
+          resumeCommand: "t4-omp --resume session-1",
+        },
+      },
+    } as SessionRef);
+    expect(managementCommandSupport(released.getSnapshot(), ADDRESS, "session.reclaim")).toEqual({
+      supported: true,
+      reason: null,
+    });
+    expect(managementCommandSupport(released.getSnapshot(), ADDRESS, "session.release").supported).toBe(
+      false,
+    );
+    expect(managementCommandSupport(released.getSnapshot(), ADDRESS, "session.close").supported).toBe(
+      false,
+    );
   });
 
   it("keeps restore available when an archived row carries stale takeover state", () => {
@@ -730,6 +758,7 @@ describe("session management authority helpers", () => {
     "session.archive",
     "session.restore",
     "session.close",
+    "session.release",
     "session.delete",
   ] as const;
 
