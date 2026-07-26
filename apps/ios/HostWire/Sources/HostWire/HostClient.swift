@@ -162,6 +162,18 @@ public actor HostClient {
         try await sendPayload(try encodeFrame(frame))
     }
 
+    /// Send a raw additive client → host frame (e.g. `terminal.input`,
+    /// `terminal.resize`, `terminal.close`). These are not commands — they
+    /// carry no requestId and get no response — so they bypass the command
+    /// correlation machinery and are written directly to the transport.
+    /// Throws if the client is not ready.
+    public func sendFrame<T: Encodable>(_ frame: T) async throws {
+        guard state == .ready || state == .pairing else {
+            throw HostClientError.invalidState("client not ready")
+        }
+        try await sendPayload(try encodeFrame(frame))
+    }
+
     // MARK: - Close / reconnect
 
     public func close() {

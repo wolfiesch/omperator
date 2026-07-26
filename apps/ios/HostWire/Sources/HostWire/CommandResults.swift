@@ -779,6 +779,114 @@ public struct SessionStateGetResult: Decodable, Equatable, Sendable {
     }
 }
 
+// MARK: - Terminal open
+
+/// `term.open` result (command.ts `decodeTerminalResult`):
+/// `{ terminalId, ... }`. The host returns the opaque id of the newly opened
+/// pty; the rest of the result object is carried opaquely.
+public struct TerminalOpenResult: Decodable, Equatable, Sendable {
+    public let terminalId: TerminalId
+
+    private enum CodingKeys: String, CodingKey { case terminalId }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        terminalId = try IDs.opaque(try c.decode(String.self, forKey: .terminalId), path: "result.terminalId")
+    }
+}
+
+// MARK: - Artifact read
+
+/// `artifact.read` result (command.ts `decodeArtifactReadChunk`): one
+/// canonical base64 chunk of a session-retained artifact. `kind` is one of
+/// image/text/patch/binary; `content` is standard base64; `complete` agrees
+/// with `nextOffset == size`. The host bounds chunks to
+/// `Limits.artifactChunkBytes` and total size to `Limits.artifactMaxBytes`.
+public struct ArtifactReadChunk: Decodable, Equatable, Sendable {
+    public let artifactId: ArtifactId
+    public let kind: String
+    public let mediaType: String
+    public let size: Int
+    public let offset: Int
+    public let nextOffset: Int
+    public let complete: Bool
+    public let content: String
+
+    private enum CodingKeys: String, CodingKey {
+        case artifactId, kind, mediaType, size, offset, nextOffset, complete, content
+    }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        artifactId = try IDs.artifact(try c.decode(String.self, forKey: .artifactId))
+        kind = try Bounded.controlFree(try c.decode(String.self, forKey: .kind), path: "result.kind", maxBytes: 16)
+        mediaType = try Bounded.controlFree(try c.decode(String.self, forKey: .mediaType), path: "result.mediaType", maxBytes: 128)
+        size = try CR.count(try c.decode(Int.self, forKey: .size), path: "result.size", max: Limits.artifactMaxBytes)
+        offset = try CR.count(try c.decode(Int.self, forKey: .offset), path: "result.offset", max: Limits.artifactMaxBytes)
+        nextOffset = try CR.count(try c.decode(Int.self, forKey: .nextOffset), path: "result.nextOffset", max: Limits.artifactMaxBytes)
+        complete = try c.decode(Bool.self, forKey: .complete)
+        content = try Bounded.controlFree(try c.decode(String.self, forKey: .content), path: "result.content", maxBytes: Limits.artifactChunkBytes * 2)
+    }
+
+    /// Decode the base64 `content` into raw bytes. Returns nil if the content
+    /// is not canonical base64 (defensive — the host validates this, but the
+    /// client may be paired with an older host).
+    public var decodedBytes: Data? {
+        Data(base64Encoded: content)
+    }
+}
+
+// MARK: - Review read
+
+/// `review.read` result (command.ts: the decoder is the generic `result`, so
+/// the body is the review object itself). Mirrors the additive `ReviewFrame`
+/// shape: `reviewId`, `status`, optional `path`, and `findings` (opaque
+/// objects). Findings are carried as `JSONValue` until a typed per-finding
+/// decoder is ported; the UI reads `severity`/`message`/`line` opaquely.
+public struct ReviewReadResult: Decodable, Equatable, Sendable {
+    public let reviewId: String
+    public let status: String
+    public let path: String?
+    public let findings: [JSONValue]
+
+    private enum CodingKeys: String, CodingKey { case reviewId, status, path, findings }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        reviewId = try Bounded.controlFree(try c.decode(String.self, forKey: .reviewId), path: "result.reviewId", maxBytes: 256)
+        status = try Bounded.controlFree(try c.decode(String.self, forKey: .status), path: "result.status", maxBytes: 64)
+        path = try c.decodeIfPresent(String.self, forKey: .path).map { try Bounded.controlFree($0, path: "result.path", maxBytes: 4096) }
+        let findingValues = try c.decode([JSONValue].self, forKey: .findings)
+        if findingValues.count > Limits.maxArrayItems {
+            throw T4WireError.bounds(path: "result.findings", reason: "review findings exceed bounded array")
+        }
+        for (i, finding) in findingValues.enumerated() {
+            guard case .object = finding else {
+                throw T4WireError.invalidFrame(path: "result.findings[\(i)]", reason: "finding must be an object")
+            }
+        }
+        findings = findingValues
+    }
+}
+
+// MARK: - Settings read
+
+/// `settings.read` result (command.ts `decodeSettingsResult`): `{ revision,
+/// settings }` where `settings` is a bounded settings map. The map is carried
+/// opaquely; the UI renders key/value rows.
+public struct SettingsReadResult: Decodable, Equatable, Sendable {
+    public let revision: Revision
+    public let settings: [String: JSONValue]
+
+    private enum CodingKeys: String, CodingKey { case revision, settings }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        revision = try IDs.opaque(try c.decode(String.self, forKey: .revision), path: "result.revision")
+        let s = try c.decode(JSONValue.self, forKey: .settings)
+        guard case .object(let obj) = s else {
+            throw T4WireError.invalidFrame(path: "result.settings", reason: "settings must be an object")
+        }
+        settings = obj
+    }
+}
+
 // MARK: - CommandResult dispatch
 
 /// A typed command result. One case per result shape; the command name selects
@@ -804,6 +912,17 @@ public enum CommandResult: Equatable, Sendable {
     case hostWatch(HostWatchResult)
     /// `session.state.get`.
     case sessionState(SessionStateGetResult)
+    /// `term.open`.
+    case termOpen(TerminalOpenResult)
+    /// `artifact.read`.
+    case artifactRead(ArtifactReadChunk)
+    /// `review.read`.
+    case reviewRead(ReviewReadResult)
+    /// `settings.read`.
+    case settingsRead(SettingsReadResult)
+    /// `settings.write` — opaque metadata map (boundedMetadata), carried as
+    /// an object so the UI can confirm the written values.
+    case settingsWrite([String: JSONValue])
     /// `{ accepted: Bool }` — `session.steer`, `session.followUp`,
     /// `session.model.set`, `session.thinking.set`, `session.fast.set`,
     /// `session.ui.respond`, `session.prompt`.
@@ -836,8 +955,22 @@ public enum CommandResult: Equatable, Sendable {
             return .usageRead(try decoder.decode(UsageReadResult.self, from: data))
         case "host.watch", "session.watch":
             return .hostWatch(try decoder.decode(HostWatchResult.self, from: data))
+        case "term.open":
+            return .termOpen(try decoder.decode(TerminalOpenResult.self, from: data))
         case "session.state.get":
             return .sessionState(try decoder.decode(SessionStateGetResult.self, from: data))
+        case "artifact.read":
+            return .artifactRead(try decoder.decode(ArtifactReadChunk.self, from: data))
+        case "review.read":
+            return .reviewRead(try decoder.decode(ReviewReadResult.self, from: data))
+        case "settings.read":
+            return .settingsRead(try decoder.decode(SettingsReadResult.self, from: data))
+        case "settings.write":
+            let value = try decoder.decode(JSONValue.self, from: data)
+            guard case .object(let obj) = value else {
+                throw T4WireError.invalidFrame(path: "result", reason: "settings.write result must be an object")
+            }
+            return .settingsWrite(obj)
         case "session.steer", "session.followUp", "session.model.set", "session.thinking.set",
              "session.fast.set", "session.ui.respond", "session.prompt":
             return .accepted(try decodeBooleanField(data, key: "accepted"))

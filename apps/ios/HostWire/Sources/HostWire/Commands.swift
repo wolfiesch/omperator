@@ -77,6 +77,11 @@ public enum Commands {
         "catalog.get":          .init(capability: .catalogRead,   scope: .host,    revision: .none,     confirmation: .none),
         "files.list":           .init(capability: .filesList,     scope: .session, revision: .optional, confirmation: .none),
         "files.read":           .init(capability: .filesRead,     scope: .session, revision: .optional, confirmation: .none),
+        // Panes: usage / review / settings (artifact.read is already above).
+        "usage.read":           .init(capability: .usageRead,     scope: .host,    revision: .none,     confirmation: .none),
+        "review.read":          .init(capability: .filesRead,     scope: .session, revision: .optional, confirmation: .none),
+        "settings.read":        .init(capability: .configRead,    scope: .host,    revision: .none,     confirmation: .none),
+        "settings.write":       .init(capability: .configWrite,   scope: .host,    revision: .required, confirmation: .challenge),
     ]
 
     public static func descriptor(for command: String) -> CommandDescriptor? {
@@ -283,6 +288,65 @@ extension ResultFrame {
         let data = try JSONEncoder().encode(result)
         let body = try JSONDecoder().decode(FilesReadResultBody.self, from: data)
         return (body.content, body.revision)
+    }
+
+    /// Decode a `term.open` result body: `{ terminalId, ... }`. Used by the
+    /// store's `openTerminal` to surface the newly opened pty's id.
+    public func termOpenResult() throws -> TerminalId {
+        guard ok, let result else {
+            throw T4WireError.invalidFrame(path: "result", reason: "response has no result")
+        }
+        let data = try JSONEncoder().encode(result)
+        return try JSONDecoder().decode(TerminalOpenResult.self, from: data).terminalId
+    }
+
+    /// Decode a `usage.read` result body (UsageReadResult).
+    public func usageReadResult() throws -> UsageReadResult {
+        guard ok, let result else {
+            throw T4WireError.invalidFrame(path: "result", reason: "response has no result")
+        }
+        let data = try JSONEncoder().encode(result)
+        return try JSONDecoder().decode(UsageReadResult.self, from: data)
+    }
+
+    /// Decode a `review.read` result body (ReviewReadResult).
+    public func reviewReadResult() throws -> ReviewReadResult {
+        guard ok, let result else {
+            throw T4WireError.invalidFrame(path: "result", reason: "response has no result")
+        }
+        let data = try JSONEncoder().encode(result)
+        return try JSONDecoder().decode(ReviewReadResult.self, from: data)
+    }
+
+    /// Decode an `artifact.read` result body (one ArtifactReadChunk).
+    public func artifactReadResult() throws -> ArtifactReadChunk {
+        guard ok, let result else {
+            throw T4WireError.invalidFrame(path: "result", reason: "response has no result")
+        }
+        let data = try JSONEncoder().encode(result)
+        return try JSONDecoder().decode(ArtifactReadChunk.self, from: data)
+    }
+
+    /// Decode a `settings.read` result body (SettingsReadResult).
+    public func settingsReadResult() throws -> SettingsReadResult {
+        guard ok, let result else {
+            throw T4WireError.invalidFrame(path: "result", reason: "response has no result")
+        }
+        let data = try JSONEncoder().encode(result)
+        return try JSONDecoder().decode(SettingsReadResult.self, from: data)
+    }
+
+    /// Decode a `settings.write` result body — the opaque metadata object the
+    /// host echoes back. Returns nil if the response carried no result.
+    public func settingsWriteResult() throws -> [String: JSONValue]? {
+        guard ok else {
+            throw T4WireError.invalidFrame(path: "result", reason: "response is not ok")
+        }
+        guard let result else { return nil }
+        guard case .object(let obj) = result else {
+            throw T4WireError.invalidFrame(path: "result", reason: "settings.write result must be an object")
+        }
+        return obj
     }
 }
 

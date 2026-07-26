@@ -65,3 +65,43 @@ public struct DurableEntryFrame: Decodable, Equatable, Sendable {
         }
     }
 }
+
+// MARK: - Artifact descriptor
+
+/// One session-retained artifact descriptor (host-wire/src/entry.ts
+/// `ArtifactDescriptor`), carried on a durable entry's `data.artifacts` list.
+/// `artifactId` is a numeric opaque id; `kind` is image/text/patch/binary;
+/// `disposition` is inline/attachment; `retention` is always "session".
+/// `size`/`sha256`/`name` are optional. Built from an opaque `JSONValue`
+/// object (already validated by the host on ingest); unknown keys are
+/// tolerated on the client to stay forward-compatible.
+public struct ArtifactDescriptor: Equatable, Sendable {
+    public let artifactId: ArtifactId
+    public let kind: String
+    public let mediaType: String
+    public let size: Int?
+    public let sha256: String?
+    public let name: String?
+    public let disposition: String
+
+    /// Best-effort build from an opaque object. Returns nil if the required
+    /// fields (artifactId, kind, mediaType, disposition) are missing or not
+    /// strings. The host validates these on ingest, so a nil here means the
+    /// client received a shape it doesn't recognize — skip it rather than
+    /// crash.
+    public init?(from value: JSONValue) {
+        guard case .object(let obj) = value,
+              case .string(let aid) = obj["artifactId"] ?? .null,
+              case .string(let k) = obj["kind"] ?? .null,
+              case .string(let mt) = obj["mediaType"] ?? .null,
+              case .string(let disp) = obj["disposition"] ?? .null
+        else { return nil }
+        artifactId = aid
+        kind = k
+        mediaType = mt
+        disposition = disp
+        if case .number(let n) = obj["size"] ?? .null { size = Int(n) } else { size = nil }
+        if case .string(let s) = obj["sha256"] ?? .null { sha256 = s } else { sha256 = nil }
+        if case .string(let nm) = obj["name"] ?? .null { name = nm } else { name = nil }
+    }
+}

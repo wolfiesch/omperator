@@ -12,7 +12,7 @@ public enum TerminalStream: String, Codable, Equatable, Sendable {
 }
 
 /// terminal.input — raw bytes/utf8 to feed a pty.
-public struct TerminalInputFrame: Decodable, Equatable, Sendable {
+public struct TerminalInputFrame: Codable, Equatable, Sendable {
     public let v: String, type: String, hostId: HostId, sessionId: SessionId, terminalId: TerminalId
     public let data: String
     public let encoding: String?
@@ -27,6 +27,22 @@ public struct TerminalInputFrame: Decodable, Equatable, Sendable {
         let enc = try c.decodeIfPresent(String.self, forKey: .encoding)
         encoding = try enc.map { try Terminals.validateEncoding($0, path: "encoding") }
         data = try Terminals.data(try c.decode(String.self, forKey: .data), path: "data", encoding: encoding)
+    }
+    /// Construct a client → host `terminal.input` frame for sending.
+    public init(hostId: HostId, sessionId: SessionId, terminalId: TerminalId, data: String, encoding: String? = nil) {
+        self.v = Wire.protocolVersion; self.type = "terminal.input"
+        self.hostId = hostId; self.sessionId = sessionId; self.terminalId = terminalId
+        self.data = data; self.encoding = encoding
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(v, forKey: .v)
+        try c.encode(type, forKey: .type)
+        try c.encode(hostId, forKey: .hostId)
+        try c.encode(sessionId, forKey: .sessionId)
+        try c.encode(terminalId, forKey: .terminalId)
+        try c.encode(data, forKey: .data)
+        try c.encodeIfPresent(encoding, forKey: .encoding)
     }
 }
 
@@ -52,7 +68,7 @@ public struct TerminalOutputFrame: Decodable, Equatable, Sendable {
 }
 
 /// terminal.resize — a pty dimension change (cols 1..1000, rows 1..500).
-public struct TerminalResizeFrame: Decodable, Equatable, Sendable {
+public struct TerminalResizeFrame: Codable, Equatable, Sendable {
     public let v: String, type: String, hostId: HostId, sessionId: SessionId, terminalId: TerminalId
     public let cols: Int, rows: Int
 
@@ -66,10 +82,26 @@ public struct TerminalResizeFrame: Decodable, Equatable, Sendable {
         cols = try Terminals.dimension(try c.decode(Int.self, forKey: .cols), path: "cols")
         rows = try Terminals.dimension(try c.decode(Int.self, forKey: .rows), path: "rows")
     }
+    /// Construct a client → host `terminal.resize` frame for sending.
+    public init(hostId: HostId, sessionId: SessionId, terminalId: TerminalId, cols: Int, rows: Int) {
+        self.v = Wire.protocolVersion; self.type = "terminal.resize"
+        self.hostId = hostId; self.sessionId = sessionId; self.terminalId = terminalId
+        self.cols = cols; self.rows = rows
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(v, forKey: .v)
+        try c.encode(type, forKey: .type)
+        try c.encode(hostId, forKey: .hostId)
+        try c.encode(sessionId, forKey: .sessionId)
+        try c.encode(terminalId, forKey: .terminalId)
+        try c.encode(cols, forKey: .cols)
+        try c.encode(rows, forKey: .rows)
+    }
 }
 
 /// terminal.close — request a pty be closed with an optional reason.
-public struct TerminalCloseFrame: Decodable, Equatable, Sendable {
+public struct TerminalCloseFrame: Codable, Equatable, Sendable {
     public let v: String, type: String, hostId: HostId, sessionId: SessionId, terminalId: TerminalId
     public let reason: String?
 
@@ -83,6 +115,21 @@ public struct TerminalCloseFrame: Decodable, Equatable, Sendable {
         if let r = try c.decodeIfPresent(String.self, forKey: .reason) {
             reason = try Bounded.controlFree(r, path: "reason", maxBytes: 256)
         } else { reason = nil }
+    }
+    /// Construct a client → host `terminal.close` frame for sending.
+    public init(hostId: HostId, sessionId: SessionId, terminalId: TerminalId, reason: String? = nil) {
+        self.v = Wire.protocolVersion; self.type = "terminal.close"
+        self.hostId = hostId; self.sessionId = sessionId; self.terminalId = terminalId
+        self.reason = reason
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(v, forKey: .v)
+        try c.encode(type, forKey: .type)
+        try c.encode(hostId, forKey: .hostId)
+        try c.encode(sessionId, forKey: .sessionId)
+        try c.encode(terminalId, forKey: .terminalId)
+        try c.encodeIfPresent(reason, forKey: .reason)
     }
 }
 

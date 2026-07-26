@@ -22,6 +22,7 @@ struct T4WorkspaceView: View {
     /// Prefilled pair from a t4-code://pair/... deep link; handed to the
     /// connect sheet when it opens.
     @State private var pendingPair: PendingPair?
+    @State private var showInbox = false
     private var t: Theme { theme.t }
 
     private var railOpen: Bool { railProgress > 0.5 }
@@ -63,6 +64,10 @@ struct T4WorkspaceView: View {
         .background(t.bg.ignoresSafeArea())
         .sheet(isPresented: $showConnect) {
             T4ConnectView(store: store, pendingPair: pendingPair)
+                .environmentObject(theme)
+        }
+        .sheet(isPresented: $showInbox) {
+            T4InboxView(store: store, isPresented: $showInbox)
                 .environmentObject(theme)
         }
         .onOpenURL { url in handleDeepLink(url) }
@@ -161,6 +166,27 @@ struct T4WorkspaceView: View {
                         }
                         .accessibilityLabel("Model and session controls")
                     }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showInbox = true } label: {
+                        ZStack(alignment: .topTrailing) {
+                            Image(systemName: "bell")
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundStyle(t.txt)
+                                .frame(width: 38, height: 38)
+                            if !store.attentionSessions.isEmpty {
+                                Text("\(store.attentionSessions.count)")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(t.bg)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1)
+                                    .background(t.cAdvisor, in: Capsule())
+                                    .offset(x: 4, y: 2)
+                            }
+                        }
+                    }
+                    .press()
+                    .accessibilityLabel("Attention inbox")
                 }
             }
         }

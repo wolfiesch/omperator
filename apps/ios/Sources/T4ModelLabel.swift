@@ -15,8 +15,8 @@ func splitModelSelector(_ selector: String) -> (provider: String?, model: String
     return provider.isEmpty || model.isEmpty ? (nil, selector) : (provider, model)
 }
 
-/// Provider in the terminal voice + model name. No chip, no capsule — the
-/// VT323 pixel face in the accent IS the label.
+/// One compact `provider/model` string — provider in the terminal voice,
+/// the model right after it. No chip, no capsule, minimal width.
 struct T4ModelLabel: View {
     let selector: String
     let theme: Theme
@@ -24,16 +24,13 @@ struct T4ModelLabel: View {
 
     var body: some View {
         let (provider, model) = splitModelSelector(selector)
-        HStack(spacing: 6) {
-            Image(systemName: "cpu")
-                .font(.system(size: size))
-                .foregroundStyle(theme.txtLabel)
+        HStack(spacing: 0) {
             if let provider {
                 Text(provider)
                     .font(.term(size + 4))
                     .foregroundStyle(theme.accent)
             }
-            Text(model)
+            Text(provider != nil ? "/\(model)" : model)
                 .font(.system(size: size))
                 .foregroundStyle(theme.txtMuted)
                 .lineLimit(1)

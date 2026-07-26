@@ -40,6 +40,12 @@ struct T4SessionDetailView: View {
     @State private var sending = false
     @State private var showFacts = false
     @State private var showFiles = false
+    @State private var showAgents = false
+    @State private var showTerminal = false
+    @State private var showUsage = false
+    @State private var showReview = false
+    @State private var showArtifacts = false
+    @State private var showSettings = false
     @State private var attachments: [ComposerAttachment] = []
     @State private var pickerItems: [PhotosPickerItem] = []
     @State private var askDraft = ""
@@ -64,7 +70,9 @@ struct T4SessionDetailView: View {
                         }
                         if showFacts { facts }
                         Divider().overlay(t.lineFaint)
-                        T4TranscriptView(entries: store.transcript(for: session.sessionId), theme: t)
+                        T4TranscriptView(entries: store.transcript(for: session.sessionId),
+                                         streamingText: store.streamingText[session.sessionId] ?? "",
+                                         theme: t)
                         Color.clear
                             .frame(height: 1)
                             .id("transcript-bottom")
@@ -81,7 +89,16 @@ struct T4SessionDetailView: View {
                         proxy.scrollTo("transcript-bottom", anchor: .bottom)
                     }
                 }
+                .onChange(of: store.streamingText[session.sessionId] ?? "") { _, _ in
+                    // Keep the live streaming tail in view as tokens arrive.
+                    guard store.prependingSession != session.sessionId else { return }
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo("transcript-bottom", anchor: .bottom)
+                    }
+                }
             }
+            T4TerminalDrawer(session: session, store: store, isOpen: showTerminal)
+                .environmentObject(theme)
             composer
         }
         .background(t.bg.ignoresSafeArea())
@@ -97,6 +114,26 @@ struct T4SessionDetailView: View {
         }
         .sheet(isPresented: $showFiles) {
             T4FilesPane(session: session, store: store, isPresented: $showFiles)
+                .environmentObject(theme)
+        }
+        .sheet(isPresented: $showAgents) {
+            T4AgentsPane(session: session, store: store, isPresented: $showAgents)
+                .environmentObject(theme)
+        }
+        .sheet(isPresented: $showUsage) {
+            T4UsagePane(store: store, isPresented: $showUsage)
+                .environmentObject(theme)
+        }
+        .sheet(isPresented: $showReview) {
+            T4ReviewPane(session: session, store: store, isPresented: $showReview)
+                .environmentObject(theme)
+        }
+        .sheet(isPresented: $showArtifacts) {
+            T4ArtifactsPane(session: session, store: store, isPresented: $showArtifacts)
+                .environmentObject(theme)
+        }
+        .sheet(isPresented: $showSettings) {
+            T4SettingsPane(store: store, isPresented: $showSettings)
                 .environmentObject(theme)
         }
     }
@@ -291,6 +328,32 @@ struct T4SessionDetailView: View {
                 } label: {
                     Label("New Session in Project", systemImage: "plus.square")
                 }
+                Button {
+                    showAgents = true
+                } label: {
+                    Label("Agents", systemImage: "person.3.sequence")
+                }
+                Divider()
+                Button {
+                    showUsage = true
+                } label: {
+                    Label("Usage", systemImage: "chart.bar.xaxis")
+                }
+                Button {
+                    showReview = true
+                } label: {
+                    Label("Review", systemImage: "checkmark.shield")
+                }
+                Button {
+                    showArtifacts = true
+                } label: {
+                    Label("Artifacts", systemImage: "paperclip")
+                }
+                Button {
+                    showSettings = true
+                } label: {
+                    Label("Settings", systemImage: "gearshape")
+                }
             } label: {
                 Image(systemName: "ellipsis.circle")
                     .font(.system(size: 16))
@@ -316,6 +379,14 @@ struct T4SessionDetailView: View {
             }
             .press()
             .accessibilityLabel("Browse files")
+            Button { withAnimation(.easeInOut(duration: 0.2)) { showTerminal.toggle() } } label: {
+                Image(systemName: showTerminal ? "terminal.fill" : "terminal")
+                    .font(.system(size: 16))
+                    .foregroundStyle(showTerminal ? t.cBash : t.txtMuted)
+                    .frame(width: 34, height: 34)
+            }
+            .press()
+            .accessibilityLabel("Toggle terminal")
         }
     }
 

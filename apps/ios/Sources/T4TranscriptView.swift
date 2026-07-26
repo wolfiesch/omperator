@@ -9,6 +9,9 @@ import HostWire
 
 struct T4TranscriptView: View {
     let entries: [TranscriptEntry]
+    /// In-progress assistant text (store.streamingText[sessionId]); when
+    /// non-empty, rendered as a live tail row after the durable entries.
+    var streamingText: String = ""
     let theme: Theme
 
     var body: some View {
@@ -22,6 +25,9 @@ struct T4TranscriptView: View {
                 default:
                     T4TranscriptRow(entry: entry, theme: theme)
                 }
+            }
+            if !streamingText.isEmpty {
+                T4StreamingMessage(text: streamingText, theme: theme)
             }
         }
     }
@@ -95,5 +101,34 @@ struct T4TranscriptRow: View {
                 Text(entry.timestamp).font(.system(size: 9)).foregroundStyle(theme.txtLabel)
             }
         }
+    }
+}
+
+/// Live tail row: in-progress assistant text mirrored from `message.update`
+/// events, rendered with the same T4Markdown treatment as a settled assistant
+/// message plus a subtle pulsing cursor dot to signal the turn is streaming.
+struct T4StreamingMessage: View {
+    let text: String
+    let theme: Theme
+
+    @State private var pulse = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            T4Markdown(text: text, theme: theme)
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(theme.accent)
+                    .frame(width: 6, height: 6)
+                    .opacity(pulse ? 0.9 : 0.25)
+                    .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulse)
+                Text("streaming")
+                    .font(.system(size: 9))
+                    .foregroundStyle(theme.txtLabel)
+            }
+        }
+        .padding(.top, 6)
+        .accessibilityLabel("Assistant is typing: \(text)")
+        .onAppear { pulse = true }
     }
 }

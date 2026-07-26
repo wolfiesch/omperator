@@ -6,6 +6,9 @@ options:
 packages:
   HostWire:
     path: HostWire
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm
+    from: "1.15.0"
 targets:
   T4Code:
     type: application
@@ -16,6 +19,7 @@ targets:
       - Resources
     dependencies:
       - package: HostWire
+      - package: SwiftTerm
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: sh.t4code.ios

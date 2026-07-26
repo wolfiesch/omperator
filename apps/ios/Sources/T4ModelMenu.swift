@@ -46,15 +46,17 @@ struct T4ModelMenuButton<Content: View>: View {
 
     @ViewBuilder private var modelContent: some View {
         ForEach(providers) { group in
-            Section(group.name.uppercased()) {
+            Menu {
                 ForEach(group.models, id: \.id) { item in
                     Button {
                         Task { await store.setModel(sessionId: session.sessionId, selector: item.id) }
                     } label: {
                         Label(splitModelSelector(item.id).model,
                               systemImage: item.id == session.model ? "checkmark" : "circle")
-                                                }
+                    }
                 }
+            } label: {
+                Label(group.name, systemImage: "chevron.right")
             }
         }
         if store.catalogModels.isEmpty {
