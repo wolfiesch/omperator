@@ -20,7 +20,8 @@ function catalogWith(...settings: SettingMetadata[]) {
     revision: "rev-1",
     hostId: "host-1",
     hostLabel: "test-host",
-    sections: [{ id: "general", label: "General", summary: "Test section." }],
+    groups: [{ id: "fixture", label: "Fixture", summary: "Test group." }],
+    sections: [{ id: "general", label: "General", summary: "Test section.", group: "fixture", groups: ["Basics"] }],
     settings,
   };
 }
@@ -70,6 +71,7 @@ describe("schema mapping", () => {
       catalogWith({
         id: "broken.enum",
         section: "general",
+        sectionGroup: "Basics",
         label: "Broken enum",
         help: "Options are missing.",
         control: { kind: "enum" },
@@ -142,6 +144,7 @@ describe("secret safety", () => {
         catalogWith({
           id: "provider.test.apiKey",
           section: "general",
+          sectionGroup: "Basics",
           label: "Key",
           help: "Help.",
           control: { kind: "secret-reference" },
@@ -157,6 +160,7 @@ describe("secret safety", () => {
         catalogWith({
           id: "general.pin",
           section: "general",
+          sectionGroup: "Basics",
           label: "PIN",
           help: "Help.",
           control: { kind: "text" },
@@ -173,6 +177,7 @@ describe("secret safety", () => {
         catalogWith({
           id: "provider.custom.apiKey",
           section: "general",
+          sectionGroup: "Basics",
           label: "Key",
           help: "Help.",
           control: { kind: "text" },
@@ -190,6 +195,7 @@ describe("unsafe metadata rejection", () => {
         catalogWith({
           id: "general.a",
           section: "general",
+          sectionGroup: "Basics",
           label: "Bad\u0007label",
           help: "Help.",
           control: { kind: "boolean" },
@@ -202,6 +208,7 @@ describe("unsafe metadata rejection", () => {
     const row: SettingMetadata = {
       id: "general.a",
       section: "general",
+      sectionGroup: "Basics",
       label: "A",
       help: "Help.",
       control: { kind: "boolean" },
@@ -215,6 +222,7 @@ describe("unsafe metadata rejection", () => {
         catalogWith({
           id: "general.a",
           section: "ghost",
+          sectionGroup: "Basics",
           label: "A",
           help: "Help.",
           control: { kind: "boolean" },
@@ -227,6 +235,7 @@ describe("unsafe metadata rejection", () => {
     const leaf: SettingMetadata = {
       id: "n.leaf",
       section: "general",
+      sectionGroup: "Basics",
       label: "Leaf",
       help: "Help.",
       control: { kind: "boolean" },
@@ -234,6 +243,7 @@ describe("unsafe metadata rejection", () => {
     const nest = (id: string, children: SettingMetadata[]): SettingMetadata => ({
       id,
       section: "general",
+      sectionGroup: "Basics",
       label: id,
       help: "Help.",
       control: { kind: "nested", children },

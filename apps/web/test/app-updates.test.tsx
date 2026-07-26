@@ -139,12 +139,15 @@ describe("application update view model", () => {
     ).toThrow(/revision/i);
   });
 
-  it("inserts the app-owned Updates section directly before Diagnostics", () => {
+  it("keeps the manifest's Updates page in the rail", () => {
+    // Updates is a real page in the coverage manifest, so the rail projects it
+    // like any other. It is no longer spliced in next to Diagnostics by hand.
     const sections = buildSettingsRailSections([
-      { id: "appearance", label: "Appearance", summary: "Colors", rows: [] },
-      { id: "diagnostics", label: "Diagnostics", summary: "Logs", rows: [] },
+      { id: "appearance", label: "Appearance", summary: "Colors", group: "fixture", groups: [], hidden: false, rows: [] },
+      { id: UPDATE_SECTION_ID, label: "Updates", summary: "", group: "system", groups: [], hidden: false, rows: [] },
+      { id: "system/diagnostics", label: "Diagnostics", summary: "Logs", group: "fixture", groups: [], hidden: false, rows: [] },
     ]);
-    expect(sections.map(({ id }) => id)).toEqual(["appearance", UPDATE_SECTION_ID, "diagnostics"]);
+    expect(sections.map(({ id }) => id)).toEqual(["appearance", UPDATE_SECTION_ID, "system/diagnostics"]);
   });
 });
 

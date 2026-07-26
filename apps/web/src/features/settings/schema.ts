@@ -94,8 +94,10 @@ export interface SettingLayerMetadata {
 export interface SettingMetadata {
   /** Stable dot-path id, e.g. `terminal.scrollback`. */
   readonly id: string;
-  /** Section id; must exist in the catalog's section list. */
+  /** Page id from the route map, e.g. `agent/models`; must exist in the catalog's section list. */
   readonly section: string;
+  /** Heading this row sits under inside its page, e.g. `Roles`. */
+  readonly sectionGroup: string;
   readonly label: string;
   readonly help: string;
   readonly control: ControlMetadata | { readonly kind: string };
@@ -111,7 +113,26 @@ export interface SettingMetadata {
   readonly invalid?: { readonly message: string };
 }
 
+/** One page in the rail. Ordering and grouping come from the route map, not the host. */
 export interface SettingsSectionMetadata {
+  readonly id: string;
+  readonly label: string;
+  readonly summary: string;
+  /** Rail group this page belongs to, e.g. `agent`. */
+  readonly group: string;
+  /** Ordered heading labels for this page; rows carry a matching `sectionGroup`. */
+  readonly groups: readonly string[];
+  /** Named runtime predicate gating this page's appearance in the rail. */
+  readonly visibleWhen?: string;
+  /**
+   * The predicate is currently false. The page stays in the catalog so search
+   * can reach it; only the rail's normal presentation drops it.
+   */
+  readonly hidden?: boolean;
+}
+
+/** One rail group heading. */
+export interface SettingsGroupMetadata {
   readonly id: string;
   readonly label: string;
   readonly summary: string;
@@ -123,6 +144,7 @@ export interface SettingsCatalogMetadata {
   readonly hostId: string;
   /** Display name for the host, used in conflict copy. */
   readonly hostLabel: string;
+  readonly groups: readonly SettingsGroupMetadata[];
   readonly sections: readonly SettingsSectionMetadata[];
   readonly settings: readonly SettingMetadata[];
 }

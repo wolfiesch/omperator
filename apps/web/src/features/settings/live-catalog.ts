@@ -16,6 +16,7 @@ import type {
   SettingsSectionMetadata,
   SettingValue,
 } from "./schema.ts";
+import { SETTINGS_GROUPS, SETTINGS_PAGES, routeForSetting } from "./route-map.ts";
 
 // ─── The wire contract this adapter accepts ─────────────────────────────────
 
@@ -51,11 +52,27 @@ const KNOWN_ITEM_KEYS: ReadonlySet<string> = new Set([
   "sensitive",
   "tab",
   "group",
+  // Phase 0 bridge metadata. These must be listed even though the renderer
+  // does not read `condition` per row: an unlisted key degrades the whole row
+  // to read-only, so omitting them would make every setting uneditable the
+  // moment the runtime pin advances to a bridge that forwards them.
+  "condition",
+  "ordered",
+  "secret",
 ]);
 
-/** Keys the per-path SettingsFrame record may carry (schema keys minus UI). */
+/**
+ * Keys the per-path SettingsFrame record may carry.
+ *
+ * Not simply "schema keys minus UI": the bridge's `controlMetadata()` mixes
+ * UI-derived fields into the value record, and `#revisionData` spreads that
+ * result, so `options`, `min`, `max`, `unit`, `ordered`, and `secret` all
+ * arrive on the value side. Only `condition` is item-only, because the bridge
+ * attaches it to the catalog item rather than through `controlMetadata`.
+ * Getting this split wrong degrades every affected row to read-only.
+ */
 const KNOWN_VALUE_KEYS: ReadonlySet<string> = new Set(
-  [...KNOWN_ITEM_KEYS].filter((key) => !["path", "label", "description", "tab", "group"].includes(key)),
+  [...KNOWN_ITEM_KEYS].filter((key) => !["path", "label", "description", "tab", "group", "condition"].includes(key)),
 );
 
 /**
@@ -81,27 +98,19 @@ const CONTROL_CHARS = /\p{Cc}/u;
 const MAX_TEXT = 4096;
 const MAX_PATH = 128;
 
-/** Section presentation for the tabs the OMP settings schema declares. */
-const TAB_SECTIONS: Readonly<Record<string, { readonly label: string; readonly summary: string }>> = {
-  general: { label: "General", summary: "Settings that don't belong to a more specific area." },
-  appearance: { label: "Appearance", summary: "How the runtime presents itself." },
-  interaction: { label: "Interaction", summary: "How prompts, confirmations, and input behave." },
-  model: { label: "Model", summary: "Which model runs and how it is called." },
-  providers: { label: "Providers", summary: "Model and service providers this host can reach." },
-  context: { label: "Context", summary: "What the runtime loads into a session's context." },
-  memory: { label: "Memory", summary: "Long-term memory and recall behavior." },
-  files: { label: "Files", summary: "How the runtime reads, writes, and watches files." },
-  shell: { label: "Shell", summary: "Shell and command execution behavior." },
-  tools: { label: "Tools", summary: "Which tools are available and how they run." },
-  tasks: { label: "Tasks", summary: "Background tasks and delegated agents." },
-};
-
-/** Where host settings without a curated tab land, kept out of General so
- * raw host keys never shadow the schema-organized sections. Always last. */
-const ADVANCED_SECTION_ID = "advanced";
-const ADVANCED_SECTION = {
-  label: "Advanced",
-  summary: "Host settings without a curated home yet, shown with their raw keys.",
+/**
+ * Where a host setting lands when the route map has never seen it.
+ *
+ * This is a mismatched-host diagnostic, not a curation escape hatch: the
+ * coverage check fails in CI for any path the manifest does not claim, so a
+ * row only reaches here when the connected runtime is newer than this build.
+ */
+const UNRECOGNIZED_SECTION_ID = "unrecognized";
+const UNRECOGNIZED_SECTION = {
+  label: "Unrecognized",
+  summary: "Settings this build has no home for. The connected runtime is newer than this app.",
+  group: "system",
+  groups: ["Unrecognized"],
 };
 
 /** Acronyms kept uppercase when a raw setting key is humanized for display. */
@@ -243,10 +252,10 @@ interface WireSetting {
  * deliberate non-editor kind so the view model renders its unsupported
  * fallback; nothing about the value is shown because nothing was understood.
  */
-function refusedRow(id: string, section: string, label: string, help: string): SettingMetadata {
+function refusedRow(id: string, route: SettingRoute, label: string, help: string): SettingMetadata {
   return {
     id,
-    section,
+    ...route,
     label,
     help,
     control: { kind: "unvalidated-metadata" },
@@ -288,7 +297,7 @@ function controlFor(meta: Record<string, unknown>): ControlMetadata | { readonly
   }
 }
 
-function settingRowFrom(wire: WireSetting, section: string, issues: string[]): SettingMetadata {
+function settingRowFrom(wire: WireSetting, route: SettingRoute, issues: string[]): SettingMetadata {
   const { path, meta } = wire;
   const hostLabel = safeText(meta.label, 200);
   // Old hosts sent no label (or echoed the raw key). Humanize for display
@@ -300,14 +309,14 @@ function settingRowFrom(wire: WireSetting, section: string, issues: string[]): S
   const unknownKeys = Object.keys(meta).filter((key) => !KNOWN_ITEM_KEYS.has(key));
   if (unknownKeys.length > 0) {
     issues.push(`${path}: unrecognized metadata (${unknownKeys.join(", ")})`);
-    return refusedRow(path, section, label, help);
+    return refusedRow(path, route, label, help);
   }
   const valueRecord = wire.values;
   if (valueRecord !== undefined) {
     const unknownValueKeys = Object.keys(valueRecord).filter((key) => !KNOWN_VALUE_KEYS.has(key));
     if (unknownValueKeys.length > 0) {
       issues.push(`${path}: unrecognized value metadata (${unknownValueKeys.join(", ")})`);
-      return refusedRow(path, section, label, help);
+      return refusedRow(path, route, label, help);
     }
   }
 
@@ -327,11 +336,11 @@ function settingRowFrom(wire: WireSetting, section: string, issues: string[]): S
     // entirely so the value never reaches the render tree.
     if (meta.default !== undefined || meta.effective !== undefined || valueRecord?.default !== undefined || valueRecord?.effective !== undefined) {
       issues.push(`${path}: sensitive setting arrived with a value`);
-      return refusedRow(path, section, label, help);
+      return refusedRow(path, route, label, help);
     }
     return {
       id: path,
-      section,
+      ...route,
       label,
       help,
       control: { kind: "secret-reference" },
@@ -354,7 +363,7 @@ function settingRowFrom(wire: WireSetting, section: string, issues: string[]): S
   const defaultValue = source.default === undefined ? undefined : asSettingValue(source.default);
   if (source.default !== undefined && defaultValue === undefined) {
     issues.push(`${path}: default value has a shape this app cannot edit`);
-    return refusedRow(path, section, label, help);
+    return refusedRow(path, route, label, help);
   }
 
   // Effective value + provenance. Unknown sources are refused, not guessed.
@@ -364,19 +373,19 @@ function settingRowFrom(wire: WireSetting, section: string, issues: string[]): S
     const layer = typeof wireSource === "string" ? WIRE_SOURCE_TO_LAYER[wireSource] : undefined;
     if (layer === undefined) {
       issues.push(`${path}: unrecognized effective source ${String(wireSource)}`);
-      return refusedRow(path, section, label, help);
+      return refusedRow(path, route, label, help);
     }
     const effective = asSettingValue(source.effective);
     if (effective === undefined) {
       issues.push(`${path}: effective value has a shape this app cannot edit`);
-      return refusedRow(path, section, label, help);
+      return refusedRow(path, route, label, help);
     }
     if (layer !== "default") layers[layer] = { value: effective };
   }
 
   return {
     id: path,
-    section,
+    ...route,
     label,
     help,
     control,
@@ -389,12 +398,24 @@ function settingRowFrom(wire: WireSetting, section: string, issues: string[]): S
 
 // ─── Entry point ────────────────────────────────────────────────────────────
 
-function sectionFor(tab: string): SettingsSectionMetadata {
-  if (tab === ADVANCED_SECTION_ID) return { id: tab, ...ADVANCED_SECTION };
-  const known = TAB_SECTIONS[tab];
-  if (known !== undefined) return { id: tab, ...known };
-  const label = tab.charAt(0).toUpperCase() + tab.slice(1);
-  return { id: tab, label, summary: `Settings the host groups under “${label}”.` };
+/** Where one row renders: its page, and the heading inside that page. */
+interface SettingRoute {
+  readonly section: string;
+  readonly sectionGroup: string;
+}
+
+/**
+ * Resolve a setting path to its page and heading.
+ *
+ * The route map owns this, not the host's `ui.tab`. OMP declares a tab for
+ * only part of its schema, so deriving sections from the wire left every
+ * untabbed key in one unlabelled bucket and discarded the section headings
+ * OMP does declare.
+ */
+function routeFor(path: string): SettingRoute {
+  const route = routeForSetting(path);
+  if (route === undefined) return { section: UNRECOGNIZED_SECTION_ID, sectionGroup: UNRECOGNIZED_SECTION.groups[0] ?? "" };
+  return { section: route.page.id, sectionGroup: route.section.label };
 }
 
 function wireSettingFrom(item: CatalogItem, settings: SettingsFrame, issues: string[]): WireSetting | null {
@@ -411,6 +432,34 @@ function wireSettingFrom(item: CatalogItem, settings: SettingsFrame, issues: str
   const valueRecord = settings.settings[path];
   return { path, meta, values: isRecord(valueRecord) ? valueRecord : undefined };
 }
+/**
+ * Evaluate a page's `visibleWhen` predicate against the host's effective values.
+ *
+ * OMP names these conditions in its schema (`mnemopiActive`, `hindsightActive`,
+ * `advisorEnabled`) but does not publish their truth, only the name. The
+ * mapping from name to the setting that decides it lives here, so a page whose
+ * backend is switched off leaves the rail instead of showing dead tuning knobs.
+ * An unknown predicate resolves visible: hiding a page because this build has
+ * not learned a new condition name would be worse than showing it.
+ */
+const VISIBILITY_PREDICATES: Record<string, { readonly path: string; readonly equals: unknown }> = {
+  mnemopiActive: { path: "memory.backend", equals: "mnemopi" },
+  hindsightActive: { path: "memory.backend", equals: "hindsight" },
+  advisorEnabled: { path: "advisor.enabled", equals: true },
+  autolearnActive: { path: "autolearn.enabled", equals: true },
+  planModeEnabled: { path: "plan.enabled", equals: true },
+};
+
+function pageVisibility(settings: SettingsFrame): (condition: string) => boolean {
+  return (condition) => {
+    const predicate = VISIBILITY_PREDICATES[condition];
+    if (predicate === undefined) return true;
+    const record = settings.settings[predicate.path];
+    if (!isRecord(record)) return true;
+    return record.effective === predicate.equals;
+  };
+}
+
 
 /**
  * Build the renderer catalog from live frames. Never throws for content the
@@ -419,13 +468,12 @@ function wireSettingFrom(item: CatalogItem, settings: SettingsFrame, issues: str
  */
 export function buildLiveSettingsCatalog(input: LiveSettingsCatalogInput): LiveSettingsCatalog {
   const issues: string[] = [];
-  const rows: SettingMetadata[] = [];
   const seen = new Set<string>();
-  const tabs = new Set<string>();
   const scopeUnion = new Set<string>();
+  const present = new Set<string>();
 
   const items = input.catalog.items.filter((item) => item.kind === "setting");
-  const ordered: Array<{ wire: WireSetting; tab: string; group: string }> = [];
+  const ordered: Array<{ wire: WireSetting; route: SettingRoute }> = [];
   for (const item of items) {
     const wire = wireSettingFrom(item, input.settings, issues);
     if (wire === null) continue;
@@ -434,27 +482,65 @@ export function buildLiveSettingsCatalog(input: LiveSettingsCatalogInput): LiveS
       continue;
     }
     seen.add(wire.path);
-    const tab = safeText(wire.meta.tab, 64) ?? ADVANCED_SECTION_ID;
-    const group = safeText(wire.meta.group, 64) ?? "";
-    tabs.add(tab);
-    ordered.push({ wire, tab, group });
+    const route = routeFor(wire.path);
+    if (route.section === UNRECOGNIZED_SECTION_ID) issues.push(`${wire.path}: no page claims this path`);
+    present.add(route.section);
+    ordered.push({ wire, route });
     const scopes = wire.meta.scopes;
     if (Array.isArray(scopes)) for (const scope of scopes) if (typeof scope === "string") scopeUnion.add(scope);
   }
 
-  // Stable order: section, then the host's group, then path.
-  ordered.sort(
-    (a, b) => a.tab.localeCompare(b.tab) || a.group.localeCompare(b.group) || a.wire.path.localeCompare(b.wire.path),
+  // Row order is the manifest's order: page, then heading within the page,
+  // then the page's own key order. Alphabetizing here would undo curation.
+  const pageRank = new Map<string, number>(SETTINGS_PAGES.map((page, index) => [page.id, index]));
+  const groupRank = new Map<string, number>(
+    SETTINGS_PAGES.flatMap((page) =>
+      page.sections.map((section, index): [string, number] => [`${page.id}\u0000${section.label}`, index]),
+    ),
   );
-  for (const entry of ordered) rows.push(settingRowFrom(entry.wire, entry.tab, issues));
-
-  const sectionIds = [...tabs].sort((a, b) => {
-    if (a === b) return 0;
-    if (a === "general" || b === ADVANCED_SECTION_ID) return -1;
-    if (b === "general" || a === ADVANCED_SECTION_ID) return 1;
-    return a.localeCompare(b);
+  const keyRank = new Map<string, number>(
+    SETTINGS_PAGES.flatMap((page) =>
+      page.sections.flatMap((section) => section.keys.map((key, index): [string, number] => [key, index])),
+    ),
+  );
+  const LAST = Number.MAX_SAFE_INTEGER;
+  const rank = (entry: { wire: WireSetting; route: SettingRoute }): readonly [number, number, number] => [
+    pageRank.get(entry.route.section) ?? LAST,
+    groupRank.get(`${entry.route.section}\u0000${entry.route.sectionGroup}`) ?? LAST,
+    keyRank.get(entry.wire.path) ?? LAST,
+  ];
+  ordered.sort((a, b) => {
+    const [pageA, groupA, keyA] = rank(a);
+    const [pageB, groupB, keyB] = rank(b);
+    return pageA - pageB || groupA - groupB || keyA - keyB || a.wire.path.localeCompare(b.wire.path);
   });
-  const sections = sectionIds.map(sectionFor);
+  const rows = ordered.map((entry) => settingRowFrom(entry.wire, entry.route, issues));
+
+  // A page with no declared sections is a pure collection or action
+  // destination (the model catalog, keybindings, profiles, updates). It has no
+  // settings rows by design and must stay in the rail. A page that does
+  // declare sections only appears once this host actually populated one, so a
+  // runtime predating the page does not show an empty form.
+  //
+  // A page whose `visibleWhen` is false stays in the catalog and is marked
+  // hidden. Only the rail drops it; search still reaches it. Filtering here
+  // would make a page whose backend is switched off unreachable rather than
+  // merely out of the way.
+  const visible = pageVisibility(input.settings);
+  const sections: SettingsSectionMetadata[] = SETTINGS_PAGES.filter(
+    (page) => page.sections.length === 0 || present.has(page.id),
+  ).map((page) => ({
+    id: page.id,
+    label: page.label,
+    summary: SETTINGS_GROUPS.find((group) => group.id === page.group)?.summary ?? "",
+    group: page.group,
+    groups: page.sections.map((section) => section.label),
+    ...(page.visibleWhen ? { visibleWhen: page.visibleWhen, hidden: !visible(page.visibleWhen) } : {}),
+  }));
+  if (present.has(UNRECOGNIZED_SECTION_ID)) sections.push({ id: UNRECOGNIZED_SECTION_ID, ...UNRECOGNIZED_SECTION });
+
+  const usedGroups = new Set(sections.map((section) => section.group));
+  const groups = SETTINGS_GROUPS.filter((group) => usedGroups.has(group.id));
 
   const editableScopes = WIRE_WRITABLE_SCOPES.filter(
     (scope) => scopeUnion.size === 0 || scopeUnion.has(scope),
@@ -465,6 +551,7 @@ export function buildLiveSettingsCatalog(input: LiveSettingsCatalogInput): LiveS
       revision: String(input.settings.revision),
       hostId: String(input.settings.hostId),
       hostLabel: input.hostLabel,
+      groups,
       sections,
       settings: rows,
     },

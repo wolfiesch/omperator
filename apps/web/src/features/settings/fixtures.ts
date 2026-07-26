@@ -14,22 +14,22 @@ import type {
 } from "./schema.ts";
 
 export const SETTINGS_SECTIONS_FIXTURE = [
-  { id: "general", label: "General", summary: "Startup, sessions, and everyday behavior." },
-  { id: "appearance", label: "Appearance", summary: "Theme, type size, and motion." },
-  { id: "models", label: "Models & Providers", summary: "Model routing and provider credentials." },
-  { id: "roles", label: "Roles", summary: "Which model handles each kind of work." },
-  { id: "tools", label: "Tools & Discovery", summary: "Tool access, timeouts, and lookup." },
-  { id: "mcp", label: "MCP", summary: "Model Context Protocol servers." },
-  { id: "extensions", label: "Extensions", summary: "Installed extensions and how they update." },
-  { id: "agents", label: "Agents & Skills", summary: "Subagent limits and skill loading." },
-  { id: "memory", label: "Memory", summary: "Long-term memory storage and retention." },
-  { id: "keybindings", label: "Keybindings", summary: "Shortcut profiles and custom bindings." },
-  { id: "notifications", label: "Notifications", summary: "When and how the app interrupts you." },
-  { id: "speech", label: "Speech", summary: "Voice input and read-aloud output." },
-  { id: "browser", label: "Browser", summary: "The browser OMP drives for web tasks." },
-  { id: "terminal", label: "Terminal", summary: "Your terminal inside sessions." },
-  { id: "remote-hosts", label: "Remote Hosts", summary: "Machines this app can pair with." },
-  { id: "diagnostics", label: "Diagnostics", summary: "Logs, health checks, and exports." },
+  { id: "general", label: "General", summary: "Startup, sessions, and everyday behavior.", group: "fixture", groups: ["Basics", "More"] },
+  { id: "appearance", label: "Appearance", summary: "Theme, type size, and motion.", group: "fixture", groups: ["Basics", "More"] },
+  { id: "models", label: "Models & Providers", summary: "Model routing and provider credentials.", group: "fixture", groups: ["Basics", "More"] },
+  { id: "roles", label: "Roles", summary: "Which model handles each kind of work.", group: "fixture", groups: ["Basics", "More"] },
+  { id: "tools", label: "Tools & Discovery", summary: "Tool access, timeouts, and lookup.", group: "fixture", groups: ["Basics", "More"] },
+  { id: "mcp", label: "MCP", summary: "Model Context Protocol servers.", group: "fixture", groups: ["Basics", "More"] },
+  { id: "extensions", label: "Extensions", summary: "Installed extensions and how they update.", group: "fixture", groups: ["Basics", "More"] },
+  { id: "agents", label: "Agents & Skills", summary: "Subagent limits and skill loading.", group: "fixture", groups: ["Basics", "More"] },
+  { id: "memory", label: "Memory", summary: "Long-term memory storage and retention.", group: "fixture", groups: ["Basics", "More"] },
+  { id: "keybindings", label: "Keybindings", summary: "Shortcut profiles and custom bindings.", group: "fixture", groups: ["Basics", "More"] },
+  { id: "notifications", label: "Notifications", summary: "When and how the app interrupts you.", group: "fixture", groups: ["Basics", "More"] },
+  { id: "speech", label: "Speech", summary: "Voice input and read-aloud output.", group: "fixture", groups: ["Basics", "More"] },
+  { id: "browser", label: "Browser", summary: "The browser OMP drives for web tasks.", group: "fixture", groups: ["Basics", "More"] },
+  { id: "terminal", label: "Terminal", summary: "Your terminal inside sessions.", group: "fixture", groups: ["Basics", "More"] },
+  { id: "remote-hosts", label: "Remote Hosts", summary: "Machines this app can pair with.", group: "fixture", groups: ["Basics", "More"] },
+  { id: "diagnostics", label: "Diagnostics", summary: "Logs, health checks, and exports.", group: "fixture", groups: ["Basics", "More"] },
 ] as const;
 
 const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
@@ -37,6 +37,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "session.autoResume",
     section: "general",
+    sectionGroup: "Basics",
     label: "Resume last session",
     help: "Reopen the most recent session for a project when you return to it, instead of starting fresh.",
     control: { kind: "boolean" },
@@ -45,6 +46,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "editor.command",
     section: "general",
+    sectionGroup: "More",
     label: "External editor",
     help: "Command used to open files outside the app. The file path is appended to whatever you enter here.",
     control: { kind: "text", placeholder: "code --wait" },
@@ -57,6 +59,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "power.sleepPrevention",
     section: "general",
+    sectionGroup: "Basics",
     label: "Keep the machine awake",
     help: "Stop the computer from sleeping while a session is running. Each level includes the ones before it.",
     control: {
@@ -75,6 +78,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "appearance.theme",
     section: "appearance",
+    sectionGroup: "Basics",
     label: "Theme",
     help: "Follow the system, or pin the app to light or dark.",
     control: {
@@ -91,6 +95,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "appearance.fontSize",
     section: "appearance",
+    sectionGroup: "More",
     label: "Interface text size",
     help: "Base size in pixels for interface text. Transcript and terminal text scale with it.",
     control: { kind: "number", min: 12, max: 20, step: 1, unit: "px" },
@@ -99,6 +104,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "statusLine.preset",
     section: "appearance",
+    sectionGroup: "Basics",
     label: "Status line layout",
     help: "What the status line under the composer shows.",
     control: {
@@ -115,6 +121,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "model.default",
     section: "models",
+    sectionGroup: "Basics",
     label: "Default model",
     help: "The model new sessions start with. Sessions can switch at any time without changing this.",
     control: {
@@ -130,6 +137,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "model.thinkingEffort",
     section: "models",
+    sectionGroup: "More",
     label: "Thinking effort",
     help: "How much reasoning the model spends before answering. Higher levels are slower and cost more.",
     control: {
@@ -146,6 +154,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "provider.openai.apiKey",
     section: "models",
+    sectionGroup: "Basics",
     label: "OpenAI API key",
     help: "Read from your keychain when a request needs it.",
     control: { kind: "secret-reference" },
@@ -159,6 +168,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "provider.anthropic.apiKey",
     section: "models",
+    sectionGroup: "More",
     label: "Anthropic API key",
     help: "No key is configured. Add one with `omp auth login anthropic` in a terminal.",
     control: { kind: "secret-reference" },
@@ -172,6 +182,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "role.smol",
     section: "roles",
+    sectionGroup: "Basics",
     label: "Quick-task model",
     help: "Handles small, fast work: titles, summaries, and short lookups.",
     control: {
@@ -190,6 +201,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "role.reviewer",
     section: "roles",
+    sectionGroup: "More",
     label: "Review model",
     help: "Runs independent review passes over finished work.",
     control: {
@@ -205,6 +217,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "tools.allowlist",
     section: "tools",
+    sectionGroup: "Basics",
     label: "Always-allowed commands",
     help: "Commands that run without asking. One entry per command name; everything else still prompts.",
     control: { kind: "list", itemLabel: "command", maxItems: 64 },
@@ -214,6 +227,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "tools.discovery",
     section: "tools",
+    sectionGroup: "More",
     label: "Discover project tools",
     help: "Scan the project for runnable scripts and test commands when a session starts.",
     control: { kind: "boolean" },
@@ -223,6 +237,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "bash.timeout",
     section: "tools",
+    sectionGroup: "Basics",
     label: "Command timeout",
     help: "How long a shell command may run before it is stopped.",
     control: { kind: "duration", unit: "s", min: 10, max: 3600 },
@@ -232,6 +247,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "mcp.registry",
     section: "mcp",
+    sectionGroup: "Basics",
     label: "Server registry",
     help: "Where the app looks up available MCP servers.",
     control: { kind: "text", placeholder: "https://…" },
@@ -242,6 +258,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "mcp.autostart",
     section: "mcp",
+    sectionGroup: "More",
     label: "Start servers with sessions",
     help: "Launch configured MCP servers automatically when a session that uses them opens.",
     control: { kind: "boolean" },
@@ -251,6 +268,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "extensions.dir",
     section: "extensions",
+    sectionGroup: "Basics",
     label: "Extensions folder",
     help: "Where installed extensions live on this machine.",
     control: { kind: "path", target: "directory" },
@@ -259,6 +277,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "extensions.autoUpdate",
     section: "extensions",
+    sectionGroup: "More",
     label: "Update extensions automatically",
     help: "Check for extension updates daily and install them in the background.",
     control: { kind: "boolean" },
@@ -268,6 +287,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "agents.maxConcurrent",
     section: "agents",
+    sectionGroup: "Basics",
     label: "Parallel subagents",
     help: "The most subagents one session may run at the same time.",
     control: { kind: "number", min: 1, max: 16, step: 1 },
@@ -276,6 +296,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "agents.defaults",
     section: "agents",
+    sectionGroup: "More",
     label: "Subagent defaults",
     help: "Starting configuration for every spawned subagent. Individual tasks can still override these.",
     control: {
@@ -284,6 +305,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
         {
           id: "agents.defaults.model",
           section: "agents",
+          sectionGroup: "Basics",
           label: "Model",
           help: "Model subagents start with unless the task names one.",
           control: {
@@ -298,6 +320,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
         {
           id: "agents.defaults.timeout",
           section: "agents",
+          sectionGroup: "More",
           label: "Time limit",
           help: "A subagent past this limit is asked to wrap up.",
           control: { kind: "duration", unit: "m", min: 1, max: 240 },
@@ -309,6 +332,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "skills.autoload",
     section: "agents",
+    sectionGroup: "Basics",
     label: "Load matching skills",
     help: "When a task matches an installed skill, load it without asking.",
     control: { kind: "boolean" },
@@ -318,6 +342,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "memory.enabled",
     section: "memory",
+    sectionGroup: "Basics",
     label: "Long-term memory",
     help: "Keep durable facts, decisions, and preferences across sessions.",
     control: { kind: "boolean" },
@@ -330,6 +355,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "memory.dbPath",
     section: "memory",
+    sectionGroup: "More",
     label: "Memory database",
     help: "File that stores long-term memory for this machine.",
     control: { kind: "path", target: "file" },
@@ -338,6 +364,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "memory.retention",
     section: "memory",
+    sectionGroup: "Basics",
     label: "Keep unused memories for",
     help: "Memories not recalled within this window are archived.",
     control: { kind: "duration", unit: "m", min: 1440, max: 525600 },
@@ -347,6 +374,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "keybindings.profile",
     section: "keybindings",
+    sectionGroup: "Basics",
     label: "Shortcut profile",
     help: "The base set of keyboard shortcuts. Custom bindings below win over the profile.",
     control: {
@@ -362,6 +390,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "keybindings.custom",
     section: "keybindings",
+    sectionGroup: "More",
     label: "Custom bindings",
     help: "Action names paired with the shortcut that triggers them.",
     control: { kind: "map", keyLabel: "action", valueLabel: "shortcut" },
@@ -374,6 +403,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "notifications.level",
     section: "notifications",
+    sectionGroup: "Basics",
     label: "Notify me about",
     help: "Which events raise a system notification when the window is in the background.",
     control: {
@@ -389,6 +419,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "notifications.sound",
     section: "notifications",
+    sectionGroup: "More",
     label: "Play a sound",
     help: "A short tone alongside each notification.",
     control: { kind: "boolean" },
@@ -398,6 +429,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "speech.voiceInput",
     section: "speech",
+    sectionGroup: "Basics",
     label: "Voice input",
     help: "Hold the microphone shortcut to dictate into the composer.",
     control: { kind: "boolean" },
@@ -406,6 +438,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "speech.voice",
     section: "speech",
+    sectionGroup: "More",
     label: "Read-aloud voice",
     help: "Kokoro voice used when replies are read aloud. Sound plays on the computer running the session.",
     control: {
@@ -423,6 +456,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "speech.xai.apiKey",
     section: "speech",
+    sectionGroup: "Basics",
     label: "xAI API key",
     help: "Used by Grok Voice speech synthesis. The stored key has expired; run `omp auth login xai` in a terminal to refresh it.",
     control: { kind: "secret-reference" },
@@ -437,6 +471,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "browser.executable",
     section: "browser",
+    sectionGroup: "Basics",
     label: "Browser binary",
     help: "The browser OMP launches for web tasks. Leave empty to use the bundled one.",
     control: { kind: "path", target: "file" },
@@ -445,6 +480,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "browser.headless",
     section: "browser",
+    sectionGroup: "More",
     label: "Run without a window",
     help: "Keep browser work invisible. Turn this off to watch pages as the agent drives them.",
     control: { kind: "boolean" },
@@ -457,6 +493,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "terminal.scrollback",
     section: "terminal",
+    sectionGroup: "Basics",
     label: "Scrollback lines",
     help: "Lines each terminal keeps in memory. Larger values use more memory per open terminal.",
     control: { kind: "number", min: 1000, max: 100000, step: 1000 },
@@ -466,6 +503,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "terminal.shell",
     section: "terminal",
+    sectionGroup: "More",
     label: "Shell",
     help: "Shell for new terminals. Leave empty to use your login shell.",
     control: { kind: "text", placeholder: "/bin/bash" },
@@ -474,6 +512,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "terminal.env",
     section: "terminal",
+    sectionGroup: "Basics",
     label: "Extra environment",
     help: "Variables added to every terminal this app opens.",
     control: { kind: "map", keyLabel: "variable", valueLabel: "value" },
@@ -484,6 +523,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "remote.connectTimeout",
     section: "remote-hosts",
+    sectionGroup: "Basics",
     label: "Connection timeout",
     help: "How long to wait for a host before reporting it unreachable.",
     control: { kind: "duration", unit: "s", min: 5, max: 120 },
@@ -492,6 +532,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "remote.knownHosts",
     section: "remote-hosts",
+    sectionGroup: "More",
     label: "Known hosts",
     help: "Hosts this app has paired with. Remove one to require pairing again.",
     control: { kind: "list", itemLabel: "host", maxItems: 32 },
@@ -502,6 +543,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "diagnostics.verboseLogs",
     section: "diagnostics",
+    sectionGroup: "Basics",
     label: "Verbose logging",
     help: "Write detailed logs for troubleshooting. Slows things down slightly; leave off unless asked.",
     control: { kind: "boolean" },
@@ -510,6 +552,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "diagnostics.logDir",
     section: "diagnostics",
+    sectionGroup: "More",
     label: "Log folder",
     help: "Where log files are written on this machine.",
     control: { kind: "path", target: "directory" },
@@ -518,6 +561,7 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
   {
     id: "diagnostics.samplingMatrix",
     section: "diagnostics",
+    sectionGroup: "Basics",
     label: "Sampling matrix",
     help: "Arrived from a newer OMP release. You can manage it with `omp config` in a terminal.",
     control: { kind: "sampling-matrix" },
@@ -528,6 +572,7 @@ export const SETTINGS_CATALOG_FIXTURE: SettingsCatalogMetadata = {
   revision: "rev-7",
   hostId: "host-build-linux",
   hostLabel: "build-linux",
+  groups: [{ id: "fixture", label: "Fixture", summary: "Deterministic catalog used by tests and the dev harness." }],
   sections: SETTINGS_SECTIONS_FIXTURE,
   settings: SETTINGS_FIXTURE_ROWS,
 };

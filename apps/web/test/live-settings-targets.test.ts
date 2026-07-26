@@ -89,7 +89,7 @@ function build(
 describe("live settings catalog adapter", () => {
   it("maps every supported control type onto an editor", () => {
     const { catalog, issues } = build([
-      settingItem("appearance.compact", {
+      settingItem("colorBlindMode", {
         label: "Compact",
         controlType: "boolean",
         default: false,
@@ -99,7 +99,7 @@ describe("live settings catalog adapter", () => {
         sensitive: false,
         tab: "appearance",
       }),
-      settingItem("terminal.scrollback", {
+      settingItem("read.defaultLimit", {
         label: "Scrollback",
         controlType: "number",
         min: 100,
@@ -110,7 +110,7 @@ describe("live settings catalog adapter", () => {
         sensitive: false,
         tab: "shell",
       }),
-      settingItem("appearance.theme", {
+      settingItem("symbolPreset", {
         label: "Theme",
         controlType: "enum",
         options: ["dark", "light"],
@@ -120,7 +120,7 @@ describe("live settings catalog adapter", () => {
         sensitive: false,
         tab: "appearance",
       }),
-      settingItem("editor.command", {
+      settingItem("shellPath", {
         label: "Editor",
         controlType: "string",
         effectiveSource: "default",
@@ -147,15 +147,15 @@ describe("live settings catalog adapter", () => {
     ]);
     expect(issues).toEqual([]);
     const kinds = [
-      "appearance.compact",
-      "terminal.scrollback",
-      "appearance.theme",
-      "editor.command",
+      "colorBlindMode",
+      "read.defaultLimit",
+      "symbolPreset",
+      "shellPath",
       "extensions",
       "modelRoles",
     ].map((id) => catalog.settings.find((row) => row.id === id)?.control.kind);
     expect(kinds).toEqual(["boolean", "number", "enum", "text", "list", "map"]);
-    const compact = catalog.settings.find((row) => row.id === "appearance.compact");
+    const compact = catalog.settings.find((row) => row.id === "colorBlindMode");
     expect(compact?.layers?.global?.value).toBe(true);
     expect(compact?.default).toBe(false);
   });
@@ -222,14 +222,17 @@ describe("live settings catalog adapter", () => {
     expect(catalog.settings.find((row) => row.id === "weird.source")?.control.kind).toBe(
       "unvalidated-metadata",
     );
-    // The unknown control kind needs no adapter issue — the view model
-    // renders its unsupported fallback; the other two are metadata refusals.
-    expect(issues).toHaveLength(2);
+    // These paths are deliberately invented, so each also draws an
+    // unclaimed-path diagnostic and lands in Unrecognized rather than being
+    // dropped. Two metadata refusals plus three unclaimed paths.
+    expect(new Set(catalog.settings.map((row) => row.section))).toEqual(new Set(["unrecognized"]));
+    expect(issues.filter((issue) => issue.includes("no page claims this path"))).toHaveLength(3);
+    expect(issues).toHaveLength(5);
   });
 
   it("shows sensitive settings as configured/unconfigured only, never a value", () => {
     const { catalog } = build([
-      settingItem("providers.apiKey", {
+      settingItem("hindsight.apiToken", {
         label: "API key",
         controlType: "string",
         effectiveSource: "global",
@@ -244,7 +247,7 @@ describe("live settings catalog adapter", () => {
         sensitive: true,
       }),
     ]);
-    const set = catalog.settings.find((row) => row.id === "providers.apiKey");
+    const set = catalog.settings.find((row) => row.id === "hindsight.apiToken");
     const missing = catalog.settings.find((row) => row.id === "providers.authToken");
     expect(set?.control).toEqual({ kind: "secret-reference" });
     expect(set?.layers?.global?.secret?.state).toBe("set");
@@ -254,7 +257,7 @@ describe("live settings catalog adapter", () => {
 
   it("refuses a sensitive setting that arrives with a value", () => {
     const { catalog, issues } = build([
-      settingItem("providers.apiKey", {
+      settingItem("hindsight.apiToken", {
         label: "API key",
         controlType: "string",
         effective: "sk-oops",
@@ -263,7 +266,7 @@ describe("live settings catalog adapter", () => {
         sensitive: true,
       }),
     ]);
-    const row = catalog.settings.find((entry) => entry.id === "providers.apiKey");
+    const row = catalog.settings.find((entry) => entry.id === "hindsight.apiToken");
     expect(row?.control.kind).toBe("unvalidated-metadata");
     expect(JSON.stringify(catalog)).not.toContain("sk-oops");
     expect(issues[0]).toMatch(/sensitive/);
@@ -285,19 +288,60 @@ describe("live settings catalog adapter", () => {
     expect(row?.unavailable?.reason).toBe("Not available on this computer.");
   });
 
-  it("groups rows by tab and restricts editable scopes to what the host writes", () => {
+  it("hides a gated page when its predicate is false, without losing it", () => {
+    const rows = [
+      settingItem("mnemopi.scoping", {
+        label: "Scoping",
+        controlType: "enum",
+        options: ["global", "per-project"],
+        effectiveSource: "default",
+        configured: false,
+        sensitive: false,
+      }),
+    ];
+    const backend = (effective: string) => ({
+      "mnemopi.scoping": { controlType: "enum", effectiveSource: "default", configured: false, sensitive: false },
+      "memory.backend": { controlType: "enum", effective, effectiveSource: "default", configured: false, sensitive: false },
+    });
+
+    const off = build(rows, backend("off"));
+    const hidden = off.catalog.sections.find((section) => section.id === "context/memory-mnemopi");
+    // Still present so search can reach it; marked hidden so the rail skips it.
+    expect(hidden).toBeDefined();
+    expect(hidden?.hidden).toBe(true);
+    expect(off.catalog.settings.some((row) => row.id === "mnemopi.scoping")).toBe(true);
+
+    const on = build(rows, backend("mnemopi"));
+    expect(on.catalog.sections.find((section) => section.id === "context/memory-mnemopi")?.hidden).toBe(false);
+    // A page with no predicate is never marked hidden.
+    expect(on.catalog.sections.find((section) => section.id === "tools/shell")?.hidden).toBeUndefined();
+  });
+
+  it("routes rows through the manifest, ignoring the host's own tab", () => {
     const result = build([
-      settingItem("appearance.compact", {
+      settingItem("colorBlindMode", {
         label: "Compact",
         controlType: "boolean",
         effectiveSource: "default",
         configured: false,
         sensitive: false,
+        // Deliberately wrong: the host says `appearance`, the manifest says
+        // `interface/terminal`. The manifest wins, because OMP tabs only a
+        // part of its schema and this app owns the information architecture.
         tab: "appearance",
         scopes: ["global", "session"],
       }),
     ]);
-    expect(result.catalog.sections.map((section) => section.id)).toEqual(["appearance"]);
+    const row = result.catalog.settings.find((entry) => entry.id === "colorBlindMode");
+    expect(row?.section).toBe("interface/terminal");
+    expect(row?.sectionGroup).toBe("Theme");
+    const ids = result.catalog.sections.map((section) => section.id);
+    expect(ids).toContain("interface/terminal");
+    expect(ids).not.toContain("appearance");
+    // Pages with no settings of their own are collection or action
+    // destinations and stay reachable even though this host sent one row.
+    expect(ids).toContain("system/profiles");
+    expect(result.catalog.groups.map((group) => group.id)).toContain("interface");
     expect(result.editableScopes).toEqual(["global", "session"]);
     expect(result.catalog.revision).toBe("rev-1");
     expect(result.catalog.hostId).toBe("host-1");
@@ -312,7 +356,7 @@ interface FakeRuntimeOptions {
 }
 
 const BASE_ITEMS = [
-  settingItem("appearance.compact", {
+  settingItem("colorBlindMode", {
     label: "Compact",
     controlType: "boolean",
     default: false,
@@ -457,7 +501,7 @@ describe("live settings.write", () => {
   it("sends exactly one settings.write with {edits, expectedRevision} and frame revision, then re-reads before clearing dirty", async () => {
     const runtime = new FakeRuntime({ write: "ok" });
     const store = liveStore(runtime);
-    store.getState().stageValue("appearance.compact", true);
+    store.getState().stageValue("colorBlindMode", true);
     await store.getState().save();
 
     const writes = runtime.commands.filter((intent) => intent.command === "settings.write");
@@ -467,7 +511,7 @@ describe("live settings.write", () => {
       command: "settings.write",
       expectedRevision: "rev-1",
       args: {
-        edits: [{ path: "appearance.compact", scope: "global", value: true }],
+        edits: [{ path: "colorBlindMode", scope: "global", value: true }],
         expectedRevision: "rev-1",
       },
     });
@@ -482,7 +526,7 @@ describe("live settings.write", () => {
   it("sends reset:true for a cleared layer value", async () => {
     const runtime = new FakeRuntime({ write: "ok" });
     const built = build([
-      settingItem("appearance.compact", {
+      settingItem("colorBlindMode", {
         label: "Compact",
         controlType: "boolean",
         default: false,
@@ -503,38 +547,38 @@ describe("live settings.write", () => {
         timeoutMs: 500,
       }),
     );
-    store.getState().stageClear("appearance.compact");
+    store.getState().stageClear("colorBlindMode");
     await store.getState().save();
     const write = runtime.commands.find((intent) => intent.command === "settings.write");
     expect(write?.args).toMatchObject({
-      edits: [{ path: "appearance.compact", scope: "global", reset: true }],
+      edits: [{ path: "colorBlindMode", scope: "global", reset: true }],
     });
   });
 
   it("preserves dirty values on a stale revision and raises the conflict", async () => {
     const runtime = new FakeRuntime({ write: "stale" });
     const store = liveStore(runtime);
-    store.getState().stageValue("appearance.compact", true);
+    store.getState().stageValue("colorBlindMode", true);
     await store.getState().save();
-    expect(store.getState().drafts["appearance.compact"]).toBeDefined();
+    expect(store.getState().drafts["colorBlindMode"]).toBeDefined();
     expect(store.getState().incoming?.revision).toBe("rev-2");
   });
 
   it("preserves dirty values on an unknown outcome and says so", async () => {
     const runtime = new FakeRuntime({ write: "outcome-unknown" });
     const store = liveStore(runtime);
-    store.getState().stageValue("appearance.compact", true);
+    store.getState().stageValue("colorBlindMode", true);
     await store.getState().save();
-    expect(store.getState().drafts["appearance.compact"]).toBeDefined();
+    expect(store.getState().drafts["colorBlindMode"]).toBeDefined();
     expect(store.getState().announcement).toMatch(/still staged/);
   });
 
   it("preserves dirty values on a host rejection with the host's reason", async () => {
     const runtime = new FakeRuntime({ write: "reject" });
     const store = liveStore(runtime);
-    store.getState().stageValue("appearance.compact", true);
+    store.getState().stageValue("colorBlindMode", true);
     await store.getState().save();
-    expect(store.getState().drafts["appearance.compact"]).toBeDefined();
+    expect(store.getState().drafts["colorBlindMode"]).toBeDefined();
     expect(store.getState().announcement).toMatch(/unknown setting path/);
   });
 
@@ -545,7 +589,7 @@ describe("live settings.write", () => {
       promptedSummary = "prompted";
       return "approve";
     });
-    store.getState().stageValue("appearance.compact", true);
+    store.getState().stageValue("colorBlindMode", true);
     await store.getState().save();
     expect(promptedSummary).toBe("prompted");
     expect(runtime.confirms).toHaveLength(1);

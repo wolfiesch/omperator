@@ -5,6 +5,7 @@
 // merely-unknown control kinds degrade to a visible unsupported row so new
 // OMP settings never silently disappear.
 import type {
+  SettingsGroupMetadata,
   ControlMetadata,
   EnumOptionMetadata,
   SecretStatusMetadata,
@@ -92,6 +93,8 @@ export interface LayerModel {
 export interface SettingRow {
   readonly id: string;
   readonly sectionId: string;
+  /** Heading this row sits under inside its page. */
+  readonly sectionGroup: string;
   readonly label: string;
   readonly help: string;
   readonly control: ControlModel;
@@ -111,6 +114,12 @@ export interface SettingsSection {
   readonly id: string;
   readonly label: string;
   readonly summary: string;
+  /** Rail group this page belongs to. */
+  readonly group: string;
+  /** Ordered heading labels inside this page. */
+  readonly groups: readonly string[];
+  /** Gated off by its `visibleWhen` predicate; reachable by search, not by the rail. */
+  readonly hidden: boolean;
   readonly rows: readonly SettingRow[];
 }
 
@@ -118,6 +127,7 @@ export interface SettingsViewModel {
   readonly revision: string;
   readonly hostId: string;
   readonly hostLabel: string;
+  readonly groups: readonly SettingsGroupMetadata[];
   readonly sections: readonly SettingsSection[];
   /** Flat index including nested children, keyed by id. */
   readonly rowsById: ReadonlyMap<string, SettingRow>;
@@ -323,6 +333,7 @@ function settingRow(
   if (context.seenIds.has(id)) fail("DUPLICATE_ID", `${path}.id`, `"${id}" appears twice`);
   context.seenIds.add(id);
   const sectionId = text(raw.section, `${path}.section`, MAX_ID_LENGTH);
+  const sectionGroup = text(raw.sectionGroup, `${path}.sectionGroup`, MAX_LABEL_LENGTH);
   if (!context.sectionIds.has(sectionId)) {
     fail("UNKNOWN_SECTION", `${path}.section`, `"${sectionId}" is not a declared section`);
   }
@@ -403,6 +414,7 @@ function settingRow(
   const row: SettingRow = {
     id,
     sectionId,
+    sectionGroup,
     label,
     help,
     control,
@@ -435,6 +447,20 @@ export function buildSettingsViewModel(input: unknown): SettingsViewModel {
       id: text(x.id, `catalog.sections[${index}].id`, MAX_ID_LENGTH),
       label: text(x.label, `catalog.sections[${index}].label`, MAX_LABEL_LENGTH),
       summary: text(x.summary, `catalog.sections[${index}].summary`, MAX_HELP_LENGTH),
+      group: text(x.group, `catalog.sections[${index}].group`, MAX_ID_LENGTH),
+      groups: (Array.isArray(x.groups) ? x.groups : []).map((label, groupIndex) =>
+        text(label, `catalog.sections[${index}].groups[${groupIndex}]`, MAX_LABEL_LENGTH),
+      ),
+      hidden: x.hidden === true,
+    };
+  });
+
+  const groupMeta: SettingsGroupMetadata[] = (Array.isArray(raw.groups) ? raw.groups : []).map((entry, index) => {
+    const x = record(entry, `catalog.groups[${index}]`);
+    return {
+      id: text(x.id, `catalog.groups[${index}].id`, MAX_ID_LENGTH),
+      label: text(x.label, `catalog.groups[${index}].label`, MAX_LABEL_LENGTH),
+      summary: text(x.summary, `catalog.groups[${index}].summary`, MAX_HELP_LENGTH),
     };
   });
   const sectionIds = new Set(sectionMeta.map((section) => section.id));
@@ -453,7 +479,7 @@ export function buildSettingsViewModel(input: unknown): SettingsViewModel {
     rows: rows.filter((row) => row.sectionId === section.id),
   }));
 
-  return { revision, hostId, hostLabel, sections, rowsById: context.rowsById };
+  return { revision, hostId, hostLabel, groups: groupMeta, sections, rowsById: context.rowsById };
 }
 
 // ─── Scope reading helpers ─────────────────────────────────────────────────

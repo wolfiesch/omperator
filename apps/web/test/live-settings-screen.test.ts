@@ -146,7 +146,7 @@ function attachedModel(runtime: FakeRuntime, publishTimeoutMs = 15_000) {
 }
 
 const BASE_ITEMS = [
-  settingItem("appearance.compact", {
+  settingItem("colorBlindMode", {
     label: "Compact",
     controlType: "boolean",
     default: false,
@@ -177,7 +177,7 @@ describe("live settings screen model", () => {
     expect(state.phase).toBe("ready");
     if (state.phase !== "ready") return;
     expect(state.active).toMatchObject({ targetId: "local", hostId: "host-1", isLocal: true });
-    expect(state.api.getState().viewModel.rowsById.get("appearance.compact")?.effective?.value).toBe(true);
+    expect(state.api.getState().viewModel.rowsById.get("colorBlindMode")?.effective?.value).toBe(true);
   });
 
   it("feeds newer revisions into the SAME store instead of rebuilding it", () => {
@@ -380,7 +380,7 @@ describe("defensive labels and advanced grouping", () => {
       ...extra,
     });
 
-  it("humanizes unlabeled dotted camel/kebab keys and files them under Advanced, last", () => {
+  it("humanizes unlabeled dotted camel/kebab keys and routes them by manifest, not by tab", () => {
     const vm = readyViewModel([
       ...BASE_ITEMS,
       bare("retry.baseDelayMs"),
@@ -393,13 +393,15 @@ describe("defensive labels and advanced grouping", () => {
     expect(vm.rowsById.get("tui.maxInlineImages")?.label).toBe("TUI · Max Inline Images");
     // Kebab segments.
     expect(vm.rowsById.get("web.search-provider")?.label).toBe("Web · Search Provider");
-    // Unlabeled host keys group under Advanced instead of shadowing schema tabs…
-    for (const id of ["retry.baseDelayMs", "tui.maxInlineImages", "web.search-provider"]) {
-      expect(vm.rowsById.get(id)?.sectionId).toBe("advanced");
-    }
-    // …and Advanced sits last, after the host's curated sections.
-    expect(vm.sections.map((section) => section.id)).toEqual(["appearance", "advanced"]);
-    expect(vm.sections.at(-1)?.label).toBe("Advanced");
+    // A missing host label says nothing about where a key belongs. Each of
+    // these lands on the page the manifest gives it, and only the invented
+    // path falls through to Unrecognized.
+    expect(vm.rowsById.get("retry.baseDelayMs")?.sectionId).toBe("agent/reliability");
+    expect(vm.rowsById.get("tui.maxInlineImages")?.sectionId).toBe("interface/terminal");
+    expect(vm.rowsById.get("web.search-provider")?.sectionId).toBe("unrecognized");
+    // Unrecognized sits last, after every curated page.
+    expect(vm.sections.at(-1)?.id).toBe("unrecognized");
+    expect(vm.sections.at(-1)?.label).toBe("Unrecognized");
     // The canonical dotted key stays the row id and stays searchable.
     const hits = filterSections(vm.sections, "retry.baseDelayMs");
     expect(hits.flatMap((section) => section.rows.map((row) => row.id))).toEqual(["retry.baseDelayMs"]);
@@ -425,7 +427,7 @@ describe("defensive labels and advanced grouping", () => {
     const row = vm.rowsById.get("ttsr.interruptMode");
     // The explicit label wins over any derived fallback.
     expect(row?.label).toBe("Stream Rules Interruptions");
-    expect(row?.sectionId).toBe("context");
+    expect(row?.sectionId).toBe("context/rules");
     if (row?.control.kind !== "enum") throw new Error("expected enum control");
     // Machine values stay as values — discoverable, never the primary label.
     expect(row.control.options).toEqual([
@@ -468,36 +470,79 @@ describe("defensive labels and advanced grouping", () => {
     expect(vm.rowsById.get("speech.enabled")?.help).toContain("computer running the session");
   });
 
-  it("keeps the canonical key visible as wrapped mono metadata and Advanced reachable when narrow", () => {
-    // The row renders its dotted key as muted mono metadata that wraps
-    // (break-all) so narrow layouts never overflow; the label stays primary.
-    const rowSource = readFileSync(join(SETTINGS_SRC, "SettingRow.tsx"), "utf8");
-    expect(rowSource).toMatch(/break-all font-mono[^"]*"[^>]*>\{row\.id\}/);
-    // The narrow-layout section picker is built from the same rail list; the
-    // Advanced section stays selectable there, after every curated section.
+  it("keeps the rail in manifest order without inventing entries", () => {
+    // The rail used to splice an Updates entry in by hand. Updates is a real
+    // manifest page now, so the rail is a faithful projection of what it is
+    // given and adds nothing.
     const rail = buildSettingsRailSections([
-      { id: "appearance", label: "Appearance", summary: "", rows: [] },
-      { id: "advanced", label: "Advanced", summary: "", rows: [] },
+      { id: "interface/terminal", label: "OMP terminal", summary: "", group: "interface", groups: [], hidden: false, rows: [] },
+      { id: "system/updates", label: "Updates", summary: "", group: "system", groups: [], hidden: false, rows: [] },
+      { id: "system/diagnostics", label: "Diagnostics", summary: "", group: "system", groups: [], hidden: false, rows: [] },
     ]);
-    expect(rail.map((entry) => entry.id)).toEqual(["appearance", "advanced", UPDATE_SECTION_ID]);
+    expect(rail.map((entry) => entry.id)).toEqual(["interface/terminal", UPDATE_SECTION_ID, "system/diagnostics"]);
   });
 
-  it("groups familiar settings while keeping unknown host sections honest and reachable", () => {
-    const groups = buildSettingsRailGroups([
-      { id: "general", label: "General", summary: "", rows: [] },
-      { id: "models", label: "Models", summary: "", rows: [] },
-      { id: "mcp", label: "MCP", summary: "", rows: [] },
-      { id: "vendor-runtime", label: "Vendor runtime", summary: "", rows: [] },
-      { id: "diagnostics", label: "Diagnostics", summary: "", rows: [] },
+  it("groups the rail by the catalog's own groups and keeps unknown pages reachable", () => {
+    const page = (id: string, label: string, group: string, hidden = false) => ({
+      id,
+      label,
+      summary: "",
+      group,
+      groups: [],
+      hidden,
+      rows: [],
+    });
+    const groups = buildSettingsRailGroups(
+      [
+        page("agent/models", "Models", "agent"),
+        page("tools/shell", "Shell and runtimes", "tools"),
+        page("system/profiles", "Profiles", "system"),
+        page("system/updates", "Updates", "system"),
+        page("system/diagnostics", "Diagnostics", "system"),
+        page("vendor-runtime", "Vendor runtime", "nonexistent-group"),
+        page("context/memory-mnemopi", "Memory: Mnemopi", "context", true),
+      ],
+      [
+        { id: "agent", label: "Agent", summary: "" },
+        { id: "tools", label: "Tools", summary: "" },
+        { id: "context", label: "Context", summary: "" },
+        { id: "system", label: "System", summary: "" },
+      ],
+    );
+    // Omperator's own entries join the manifest's `system` group rather than
+    // forming a second one, and a page whose group the catalog never declared
+    // stays reachable under Host settings instead of vanishing.
+    expect(groups.map((group) => [group.id, group.sections.map((section) => section.id)])).toEqual([
+      ["agent", ["agent/models"]],
+      ["tools", ["tools/shell"]],
+      ["system", ["system/profiles", UPDATE_SECTION_ID, "system/diagnostics"]],
+      ["host", ["vendor-runtime"]],
     ]);
-    expect(groups.map((group) => [group.label, group.sections.map((section) => section.id)])).toEqual([
-      ["Personal", ["general"]],
-      ["AI & agents", ["models"]],
-      ["Integrations", ["mcp"]],
-      ["Host settings", ["vendor-runtime"]],
-      ["System", [UPDATE_SECTION_ID, "diagnostics"]],
-    ]);
-    expect(groups.flatMap((group) => group.sections).map((section) => section.id)).toHaveLength(6);
+    // The gated page is absent from the rail...
+    expect(groups.flatMap((group) => group.sections).map((section) => section.id)).not.toContain(
+      "context/memory-mnemopi",
+    );
+  });
+
+  it("reveals a gated page in the rail when search matches it", () => {
+    const gated = {
+      id: "context/memory-mnemopi",
+      label: "Memory: Mnemopi",
+      summary: "",
+      group: "context",
+      groups: [],
+      hidden: true,
+      rows: [],
+    };
+    const catalogGroups = [{ id: "context", label: "Context", summary: "" }];
+    const hidden = buildSettingsRailGroups([gated], catalogGroups);
+    expect(hidden.flatMap((group) => group.sections).map((section) => section.id)).not.toContain(
+      "context/memory-mnemopi",
+    );
+    const revealed = buildSettingsRailGroups([gated], catalogGroups, new Set(["context/memory-mnemopi"]));
+    expect(revealed.flatMap((group) => group.sections).map((section) => section.id)).toContain(
+      "context/memory-mnemopi",
+    );
   });
 });
 

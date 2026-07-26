@@ -32,7 +32,8 @@ import type { SettingsStoreApi } from "./settings-store.ts";
 import { useSettings } from "./settings-store.ts";
 import { SettingRowView } from "./SettingRow.tsx";
 import { DISABLED_SETTING_ID, OVERRIDES_SETTING_ID, TaskAgentsBlock } from "./TaskAgentsBlock.tsx";
-import { filterSections, type SettingsSection } from "./view-model.ts";
+import { filterSections, type SettingRow, type SettingsSection } from "./view-model.ts";
+import type { SettingsGroupMetadata } from "./schema.ts";
 
 /** The wire "session" scope is a host-process runtime override, not a
  * per-session setting. The tab says what it really is: this run of OMP. */
@@ -42,7 +43,9 @@ export const SCOPE_TAB_LABEL: Record<EditableScope, string> = {
   session: "This run",
 };
 
-export const UPDATE_SECTION_ID = "t4-updates";
+export const UPDATE_SECTION_ID = "system/updates";
+/** Page id the route map assigns to the Omperator-owned diagnostics action. */
+export const DIAGNOSTICS_SECTION_ID = "system/diagnostics";
 
 interface SettingsRailEntry {
   readonly id: string;
@@ -55,75 +58,41 @@ export interface SettingsRailGroup {
   readonly sections: readonly SettingsRailEntry[];
 }
 
-const SETTINGS_RAIL_GROUPS = [
-  {
-    id: "personal",
-    label: "Personal",
-    sectionIds: ["general", "appearance", "interaction", "keybindings", "notifications", "speech"],
-  },
-  {
-    id: "intelligence",
-    label: "AI & agents",
-    sectionIds: ["model", "models", "providers", "roles", "context", "tasks", "agents", "memory"],
-  },
-  {
-    id: "tools",
-    label: "Tools",
-    sectionIds: ["files", "shell", "tools", "browser", "terminal"],
-  },
-  {
-    id: "integrations",
-    label: "Integrations",
-    sectionIds: ["mcp", "extensions", "remote-hosts"],
-  },
-] as const;
-
 export function buildSettingsRailSections(sections: readonly SettingsSection[]): readonly SettingsRailEntry[] {
-  const entries = sections.map(({ id, label }) => ({ id, label }));
-  const diagnostics = entries.findIndex((section) => section.id === "diagnostics");
-  const index = diagnostics < 0 ? entries.length : diagnostics;
-  return [
-    ...entries.slice(0, index),
-    { id: UPDATE_SECTION_ID, label: "Updates" },
-    ...entries.slice(index),
-  ];
+  return sections.map(({ id, label }) => ({ id, label }));
 }
 
+/**
+ * Group the rail from the catalog's own groups.
+ *
+ * The previous version matched a hardcoded list of section ids against the
+ * host's `ui.tab` values. Twelve of those twenty-two ids never matched
+ * anything OMP publishes, so their rail entries silently never rendered and
+ * the Integrations group never appeared at all. Grouping now comes from the
+ * route map, which is the same artifact CI checks for total coverage. \*/
 export function buildSettingsRailGroups(
   sections: readonly SettingsSection[],
+  groups: readonly SettingsGroupMetadata[] = [],
+  revealed: ReadonlySet<string> | null = null,
 ): readonly SettingsRailGroup[] {
-  return groupSettingsRailEntries(buildSettingsRailSections(sections));
-}
+  // A gated page stays in the catalog so search can reach it. It joins the
+  // rail only when its predicate holds, or when the active search matched it.
+  const shown = sections.filter((section) => !section.hidden || revealed?.has(section.id) === true);
+  const entries = buildSettingsRailSections(shown);
+  const groupOf = new Map(sections.map((section) => [section.id, section.group]));
+  const rail: SettingsRailGroup[] = [];
 
-function groupSettingsRailEntries(
-  entries: readonly SettingsRailEntry[],
-): readonly SettingsRailGroup[] {
-  const entryById = new Map(entries.map((entry) => [entry.id, entry]));
-  const used = new Set<string>();
-  const groups: SettingsRailGroup[] = [];
-
-  for (const definition of SETTINGS_RAIL_GROUPS) {
-    const grouped = definition.sectionIds.flatMap((id) => {
-      const entry = entryById.get(id);
-      if (entry === undefined) return [];
-      used.add(id);
-      return [entry];
-    });
-    if (grouped.length > 0) {
-      groups.push({ id: definition.id, label: definition.label, sections: grouped });
-    }
+  for (const group of groups) {
+    const members = entries.filter((entry) => groupOf.get(entry.id) === group.id);
+    if (members.length > 0) rail.push({ id: group.id, label: group.label, sections: members });
   }
 
-  const systemIds = new Set([UPDATE_SECTION_ID, "diagnostics"]);
-  const hostSections = entries.filter((entry) => !used.has(entry.id) && !systemIds.has(entry.id));
-  if (hostSections.length > 0) {
-    groups.push({ id: "host", label: "Host settings", sections: hostSections });
-  }
-  const systemSections = entries.filter((entry) => systemIds.has(entry.id));
-  if (systemSections.length > 0) {
-    groups.push({ id: "system", label: "System", sections: systemSections });
-  }
-  return groups;
+  // A page whose group the catalog never declared stays reachable rather than
+  // vanishing, which is how the previous rail lost twelve entries.
+  const claimed = new Set(rail.flatMap((group) => group.sections.map((entry) => entry.id)));
+  const unclaimed = entries.filter((entry) => !claimed.has(entry.id));
+  if (unclaimed.length > 0) rail.push({ id: "host", label: "Host settings", sections: unclaimed });
+  return rail;
 }
 
 function ScopeTabs({
@@ -163,14 +132,14 @@ function ScopeTabs({
 
 function SectionRail({
   api,
-  sections,
+  groups,
   activeSectionId,
   onSelect,
   matchedIds,
   updateAvailable,
 }: {
   readonly api: SettingsStoreApi;
-  readonly sections: readonly SettingsRailEntry[];
+  readonly groups: readonly SettingsRailGroup[];
   readonly activeSectionId: string;
   readonly onSelect: (id: string) => void;
   readonly matchedIds: ReadonlySet<string> | null;
@@ -178,7 +147,6 @@ function SectionRail({
 }) {
   const drafts = useSettings(api, (state) => state.drafts);
   const itemRefs = useRef(new Map<string, HTMLButtonElement>());
-  const groups = useMemo(() => groupSettingsRailEntries(sections), [sections]);
   const orderedSections = groups.flatMap((group) => group.sections);
 
   const dirtyBySection = useMemo(() => {
@@ -273,12 +241,54 @@ function SectionRows({
   readonly section: SettingsSection;
   readonly hiddenIds: ReadonlySet<string>;
 }) {
+  const rows = section.rows.filter((row) => !hiddenIds.has(row.id));
+  if (rows.length === 0) return null;
+
+  // Headings come from the manifest and are the reason a 40-row page reads as
+  // a few short lists. Order follows the page's declared heading order; a row
+  // whose heading this build does not know renders last under its own name.
+  const byHeading = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const heading = row.sectionGroup;
+    const bucket = byHeading.get(heading);
+    if (bucket === undefined) byHeading.set(heading, [row]);
+    else bucket.push(row);
+  }
+  const declared = section.groups.filter((heading) => byHeading.has(heading));
+  const extra = [...byHeading.keys()].filter((heading) => !section.groups.includes(heading));
+  const headings = [...declared, ...extra];
+  const single = headings.length <= 1;
+
+  return (
+    <div className="flex flex-col gap-5">
+      {headings.map((heading) => (
+        <section key={heading}>
+          {!single && (
+            <h3 className="sticky top-0 z-1 mb-1.5 bg-background/95 py-1 font-medium text-muted-foreground text-xs uppercase tracking-wide backdrop-blur-sm">
+              {heading}
+              <span className="ml-2 font-normal normal-case tabular-nums opacity-60">
+                {byHeading.get(heading)?.length}
+              </span>
+            </h3>
+          )}
+          <SectionRowList api={api} rows={byHeading.get(heading) ?? []} />
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function SectionRowList({
+  api,
+  rows,
+}: {
+  readonly api: SettingsStoreApi;
+  readonly rows: readonly SettingRow[];
+}) {
   const editScope = useSettings(api, (state) => state.editScope);
   const drafts = useSettings(api, (state) => state.drafts);
   const draftErrors = useSettings(api, (state) => state.draftErrors);
   const state = api.getState();
-  const rows = section.rows.filter((row) => !hiddenIds.has(row.id));
-  if (rows.length === 0) return null;
   return (
     <div className="divide-y divide-border rounded-xl border border-border bg-card">
       {rows.map((row) =>
@@ -466,8 +476,10 @@ export function SettingsWorkspace({
     matchedSections ?? (appSectionActive || activeSection === undefined ? [] : [activeSection]);
   const shownUpdate = searching ? updateMatches : appSectionActive;
   const selectedSectionId = appSectionActive ? UPDATE_SECTION_ID : activeSectionId;
-  const sectionsForRail = useMemo(() => buildSettingsRailSections(viewModel.sections), [viewModel.sections]);
-  const railGroups = useMemo(() => buildSettingsRailGroups(viewModel.sections), [viewModel.sections]);
+  const railGroups = useMemo(
+    () => buildSettingsRailGroups(viewModel.sections, viewModel.groups, matchedIds),
+    [viewModel.sections, viewModel.groups, matchedIds],
+  );
 
   const dirtyCount = Object.keys(drafts).length;
   const errorCount = Object.keys(draftErrors).length;
@@ -577,7 +589,7 @@ export function SettingsWorkspace({
             api={api}
             matchedIds={matchedIds}
             onSelect={selectSection}
-            sections={sectionsForRail}
+            groups={railGroups}
             updateAvailable={updateIsAvailable(update.phase)}
           />
         )}
@@ -691,7 +703,7 @@ export function SettingsWorkspace({
                       <AccentRow />
                     </div>
                   )}
-                  {section.id === "diagnostics" && (
+                  {section.id === DIAGNOSTICS_SECTION_ID && (
                     <div className="mt-3">
                       <DiagnosticsActions api={api} />
                     </div>

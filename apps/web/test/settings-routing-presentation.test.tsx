@@ -266,18 +266,18 @@ describe("settings search over friendly and raw routing forms", () => {
   };
 
   it("matches friendly model, provider, alias, role, and agent names", () => {
-    expect(search("Claude Fable")).toContain("model");
-    expect(search("Anthropic")).toContain("model");
-    expect(search("@default")).toContain("model");
-    expect(search("Reviewer")).toContain("model");
-    expect(search("Gemini Executor")).toContain("tasks");
+    expect(search("Claude Fable")).toContain("agent/models");
+    expect(search("Anthropic")).toContain("agent/models");
+    expect(search("@default")).toContain("agent/models");
+    expect(search("Reviewer")).toContain("agent/models");
+    expect(search("Gemini Executor")).toContain("agent/subagents");
   });
 
   it("still matches the raw stored forms", () => {
-    expect(search("anthropic/claude-fable-5")).toContain("model");
-    expect(search("pi/default")).toContain("model");
-    expect(search("gemini-executor")).toContain("tasks");
-    expect(search("google/gemini-3-pro")).toContain("tasks");
+    expect(search("anthropic/claude-fable-5")).toContain("agent/models");
+    expect(search("pi/default")).toContain("agent/models");
+    expect(search("gemini-executor")).toContain("agent/subagents");
+    expect(search("google/gemini-3-pro")).toContain("agent/subagents");
   });
 
   it("does not match nonsense", () => {
