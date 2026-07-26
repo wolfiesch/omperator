@@ -29,16 +29,19 @@
     "currentBaseTagObject": null,
     "currentBaseCommitAccessible": true,
     "productBranch": "t4code/main",
-    "productCommit": "675499f428ada2d116088b6a6ceae6586aba137a",
-    "integrationTag": "t4code-17.0.5-appserver-16",
-    "integrationCommit": "675499f428ada2d116088b6a6ceae6586aba137a",
-    "integrationTagObject": "be1c2a3e349094940aadfcc67e06674469346218"
+    "productCommit": "c0308ffb97f72c0e7ac5ffca80955f8cc9c7172b",
+    "integrationTag": "t4code-17.0.5-appserver-17",
+    "integrationCommit": "c0308ffb97f72c0e7ac5ffca80955f8cc9c7172b",
+    "integrationTagObject": "8822aa956cf48163e06077801e0dab3600de0b29"
   },
   "releaseAssets": [
-    {"name":"omp-darwin-arm64","size":120893008,"digest":"sha256:60ce5193eadc2884a4313289ff1166b6a1daae97f3a3ec66dc260ea5c5713756"},
-    {"name":"omp-darwin-x64","size":126353216,"digest":"sha256:713a4ea2293704fd1958e8cdc91786af292323a9af1169b2013c2498c62d808c"},
-    {"name":"omp-linux-arm64","size":150513808,"digest":"sha256:46d29f223a7481d42b3f7219e71afe389604c2b61f7d309369397a8932837770"},
-    {"name":"omp-linux-x64","size":175376512,"digest":"sha256:ef66a95a45185c35a19ed997b68f62f86de5497414f6a9b939c4f228a52471b8"},
-    {"name":"omp-windows-x64.exe","size":154444800,"digest":"sha256:fc09b7f3f167478095570a8fed367a76f7ad8d9d4c48e0db8bdadbcb1cbe9fea"}
+    {"name":"omp-darwin-arm64","size":120975568,"digest":"sha256:b097fe5511d90876f6031c6c042d26da86555763619bf9ada0aef569f2516647"},
+    {"name":"omp-darwin-x64","size":126435776,"digest":"sha256:70cc0cf7cda48cce6df3ff1d6c195b24566567e4903f169762bf9f5410a39235"},
+    {"name":"omp-linux-arm64","size":150579344,"digest":"sha256:0961226f6659731aea20b2c6bab9616adabdee5c28ee5745044fdb8635063dc3"},
+    {"name":"omp-linux-x64","size":175450240,"digest":"sha256:762b0ec254295ba83d1ab630619305298177728b9f140b6e25cd27d7ad97cf21"},
+    {"name":"omp-native-addons.json","size":588,"digest":"sha256:321030b4653b293c57677025d26400e5bd3e7f1c17ef2532d27f3164ffd7ba03"},
+    {"name":"omp-windows-x64.exe","size":154521600,"digest":"sha256:9c32bac1638fa022ae362ddefe4f09738e843a76dfa1c057ef18b757edc8ce92"},
+    {"name":"pi_natives.linux-x64-baseline.node","size":140727896,"digest":"sha256:a7d8ce4ff685d304908bae3ff78d7e12ae005030a12dd17c1f96045fc9129bbe"},
+    {"name":"pi_natives.linux-x64-modern.node","size":140823240,"digest":"sha256:bfcc81a9bb76c5c4432c8e6be85ee57d86802da18a370c313fed4c662b9ccfbf"}
   ]
 }

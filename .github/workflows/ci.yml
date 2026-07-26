@@ -387,21 +387,30 @@ jobs:
           ref: ${{ steps.current-authority.outputs.sha }}
           path: .current-continuity/omp
 
-      - name: Restore the current OMP native addon
+      - name: Install current OMP authority dependencies
+        working-directory: .current-continuity/omp
+        run: bun install --frozen-lockfile
+
+      - name: Restore the release-proven native addon
+        id: release-native
+        run: |
+          node scripts/fetch-omp-release-native.mjs \
+            --matrix compat/omp-app-matrix.json \
+            --source-dir .current-continuity/omp
+
+      - name: Restore the current OMP native addon cache
+        if: ${{ steps.release-native.outputs.restored != 'true' }}
         id: current-native-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .current-continuity/omp/packages/natives/native
           key: omp-native-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.current-authority.outputs.sha }}
 
-      - name: Install current OMP authority dependencies
-        working-directory: .current-continuity/omp
-        run: bun install --frozen-lockfile
-
       # A pinned commit and a fixed runner platform produce a byte-identical
-      # addon, so a hit skips a ~7 minute cold Rust build (fat-LTO workspace).
+      # addon. Older OMP releases lack the public provenance manifest, so retain
+      # the exact-commit Actions cache as their migration fallback.
       - name: Build current OMP native addon
-        if: ${{ steps.current-native-cache.outputs.cache-hit != 'true' }}
+        if: ${{ steps.release-native.outputs.restored != 'true' && steps.current-native-cache.outputs.cache-hit != 'true' }}
         working-directory: .current-continuity/omp
         run: bun run build:native
 
@@ -418,7 +427,7 @@ jobs:
       # already satisfied the bridge contract this job exists to prove. Bump the
       # key salt to force a rebuild.
       - name: Save the proven current OMP native addon
-        if: ${{ steps.current-native-cache.outputs.cache-hit != 'true' }}
+        if: ${{ steps.release-native.outputs.restored != 'true' && steps.current-native-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .current-continuity/omp/packages/natives/native
