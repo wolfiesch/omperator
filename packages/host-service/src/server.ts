@@ -926,7 +926,6 @@ export class LocalAppserver implements AppserverHandle {
 	#observerTimers = new Map<SessionId, ReturnType<typeof setInterval>>();
 	#observerRefreshes = new Map<SessionId, { promise: Promise<void>; rerun: boolean }>();
 	#promotionFailures = new Map<SessionId, string>();
-	#locklessObservers = new WeakSet<SessionTranscriptObserver>();
 	#locklessObserverBaselines = new WeakSet<SessionTranscriptObserver>();
 	#sessionRefresh?: Promise<void>;
 	#sessionLoads = new Map<SessionId, Promise<void>>();
@@ -4751,19 +4750,15 @@ export class LocalAppserver implements AppserverHandle {
 			return;
 		}
 		let observer = this.#observers.get(sessionId);
+		const owned = this.#sessionOwnership?.owns(sessionId, record.path) === true;
+		const lockless =
+			!this.#claimLocklessSessions &&
+			!owned &&
+			record.authorityProtocol !== OMP_AUTHORITY_BRIDGE_PROTOCOL;
 		if (!observer) {
-			const owned = this.#sessionOwnership?.owns(sessionId, record.path) === true;
-			const lockless =
-				!this.#claimLocklessSessions &&
-				!owned &&
-				record.authorityProtocol !== OMP_AUTHORITY_BRIDGE_PROTOCOL &&
-				status === "missing" &&
-				!projection.value.ref.liveState?.sessionControl;
 			observer = new SessionTranscriptObserver(record.path, this.hostId);
 			this.#observers.set(sessionId, observer);
-			if (lockless) this.#locklessObservers.add(observer);
 		}
-		const lockless = this.#locklessObservers.has(observer);
 		const establishingLocklessBaseline = lockless && !this.#locklessObserverBaselines.has(observer);
 		const poll = await observer.poll();
 		if (this.#supervisors.has(sessionId) || this.#startPromises.has(sessionId)) return;
@@ -5160,8 +5155,7 @@ export class LocalAppserver implements AppserverHandle {
 	 * Without the claim the host reads its own seeded transcript as a foreign
 	 * lockless session and never promotes it to a writable projection.
 	 * This runs before any client can attach to a freshly seeded session, and
-	 * the lockless decision is made when attach builds the observer, so the
-	 * ledger is already current by the time it is read.
+	 * the lockless decision reads the ledger on every observer refresh.
 	 *
 	 * A session that is still missing from the inventory cannot be claimed and
 	 * would surface later as an unowned foreign transcript, so it fails the

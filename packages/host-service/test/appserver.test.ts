@@ -1592,7 +1592,15 @@ describe("appserver lifecycle", () => {
 		const timestamp = "2026-07-23T00:00:00.000Z";
 		await writeFile(
 			transcriptPath,
-			`${JSON.stringify({ type: "session", version: 3, id: sid, cwd: root, timestamp, title: "Promoted session" })}\n`,
+			`${JSON.stringify({
+				type: "session",
+				version: 3,
+				id: sid,
+				cwd: root,
+				timestamp,
+				title: "Promoted session",
+				authorityProtocol: "t4-omp-authority/1",
+			})}\n`,
 		);
 		let lockStatus: "live" | "missing" = "live";
 		const factory = new DeferredPromptFactory();
@@ -1670,6 +1678,86 @@ describe("appserver lifecycle", () => {
 			const ownership = new SessionOwnershipStore(sessionOwnershipPath);
 			await ownership.load();
 			expect(ownership.owns(sid, transcriptPath)).toBe(true);
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+	test("does not promote an unmarked session after its live lock disappears", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-unmarked-live-session-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const transcriptPath = join(root, "unmarked-session.jsonl");
+		const sid = sessionId("unmarked-live-session");
+		const timestamp = "2026-07-25T00:00:00.000Z";
+		await writeFile(
+			transcriptPath,
+			`${JSON.stringify({ type: "session", version: 3, id: sid, cwd: root, timestamp, title: "Unmarked session" })}\n`,
+		);
+		let lockStatus: "live" | "missing" = "live";
+		const factory = new FakeFactory();
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "unmarked-live-session-test",
+			socketPath,
+			discovery: new FileSessionDiscovery(root, realFs, host, true),
+			childFactory: factory,
+			lockStatus: () => lockStatus,
+			lockCheck: async () => {},
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "unmarked-live-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: ["session.observer", "session.unverified"],
+				capabilities: { client: ["sessions.read"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect((await client.nextServer()).type).toBe("sessions");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "attach-unmarked-live",
+				commandId: "attach-unmarked-live-command",
+				hostId: host,
+				sessionId: sid,
+				command: "session.attach",
+				args: {},
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "attach-unmarked-live") break;
+			}
+			await Promise.race([
+				(async () => {
+					while (appserver.snapshot(sid)?.ref.liveState?.sessionControl?.mode !== "observer") {
+						await Bun.sleep(10);
+					}
+				})(),
+				Bun.sleep(1_000).then(() => {
+					throw new Error("unmarked live session did not enter observer mode");
+				}),
+			]);
+
+			lockStatus = "missing";
+			await Promise.race([
+				(async () => {
+					while (appserver.snapshot(sid)?.ref.liveState?.sessionControl?.mode !== "unverified") {
+						await Bun.sleep(10);
+					}
+				})(),
+				Bun.sleep(1_000).then(() => {
+					throw new Error("unmarked session did not become unverified after its lock disappeared");
+				}),
+			]);
+			await Bun.sleep(100);
+			expect(factory.children).toHaveLength(0);
 		} finally {
 			client.destroy();
 			await client.closed();
