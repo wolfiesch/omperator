@@ -107,7 +107,7 @@ struct T4AskCard: View {
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity).padding(.vertical, 10)
         }
-        .buttonStyle(.glassProminent)
+        .buttonStyle(.borderedProminent)
         .tint(t.accent)
         .disabled(textSent || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }

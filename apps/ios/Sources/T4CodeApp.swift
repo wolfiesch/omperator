@@ -16,8 +16,7 @@ struct T4CodeApp: App {
                 .preferredColorScheme(theme.preferredScheme)
         }
         #if os(macOS)
-        .windowDefaultSize(width: 1100, height: 720)
-        .windowResizability(.contentSize)
+        .defaultSize(width: 1100, height: 720)
         #endif
     }
 }
