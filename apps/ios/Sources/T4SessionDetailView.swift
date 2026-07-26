@@ -118,7 +118,11 @@ struct T4SessionDetailView: View {
             if args.contains("-T4ShowAgents") { showAgents = true }
             if args.contains("-T4ShowTerminal") { showTerminal = true }
             if args.contains("-T4ShowPlan") { planExpanded = true }
-            if args.contains("-T4ShowAsk") {
+        }
+        .task(id: session.sessionId) {
+            // -T4ShowAsk: demo ask pinned to whatever session is current (the
+            // selection swaps from sample to live after connect).
+            if ProcessInfo.processInfo.arguments.contains("-T4ShowAsk") {
                 store.pendingAsk = T4SessionStore.PendingAsk(
                     sessionId: session.sessionId,
                     request: AskRequest(askId: "demo-ask", question: "Apply the plan and make these changes?",
