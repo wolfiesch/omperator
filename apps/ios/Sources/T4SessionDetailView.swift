@@ -109,6 +109,22 @@ struct T4SessionDetailView: View {
         .navigationTitle(session.title)
         .navigationBarTitleDisplayMode(.inline)
         .task(id: session.sessionId) { await store.attach(sessionId: session.sessionId) }
+        .onAppear {
+            // UI-test seams: boot with a pane/drawer/card visible for screenshots.
+            let args = ProcessInfo.processInfo.arguments
+            if args.contains("-T4ShowFiles") { showFiles = true }
+            if args.contains("-T4ShowAgents") { showAgents = true }
+            if args.contains("-T4ShowTerminal") { showTerminal = true }
+            if args.contains("-T4ShowPlan") { planExpanded = true }
+            if args.contains("-T4ShowAsk") {
+                store.pendingAsk = T4SessionStore.PendingAsk(
+                    sessionId: session.sessionId,
+                    request: AskRequest(askId: "demo-ask", question: "Apply the plan and make these changes?",
+                                        options: [AskOption(id: "yes", label: "Yes, apply the plan"),
+                                                  AskOption(id: "edit", label: "Edit the plan first"),
+                                                  AskOption(id: "no", label: "Cancel")]))
+            }
+        }
         .alert("Rename Session", isPresented: $renaming) {
             TextField("Session name", text: $renameText)
             Button("Rename", action: submitRename)

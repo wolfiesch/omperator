@@ -75,6 +75,8 @@ struct T4WorkspaceView: View {
             if store.selectedSession == nil { store.select(store.sessions.first) }
             // UI-test seam: launch with -T4RailOpen to boot with the rail open.
             if ProcessInfo.processInfo.arguments.contains("-T4RailOpen") { railProgress = 1 }
+            // UI-test seam: launch with -T4ShowInbox to boot with the inbox open.
+            if ProcessInfo.processInfo.arguments.contains("-T4ShowInbox") { showInbox = true }
         }
         .task { await store.restore() }
         .task {
