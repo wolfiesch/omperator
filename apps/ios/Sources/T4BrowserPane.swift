@@ -374,6 +374,13 @@ final class T4BrowserCoordinator: NSObject, WKNavigationDelegate {
         webView.navigationDelegate = self
     }
 
+    /// Sync SwiftUI state from the webview. MUST be deferred: apply() runs
+    /// inside updateUIView, and publishing binding changes mid-update can
+    /// tear down the hosting sheet.
+    private func syncStateDeferred() {
+        DispatchQueue.main.async { [weak self] in self?.syncState() }
+    }
+
     /// Apply the latest load URL + action token. A new token runs the named
     /// action once; a changed loadURL loads the page once. Re-renders with
     /// unchanged inputs are no-ops.
@@ -390,7 +397,7 @@ final class T4BrowserCoordinator: NSObject, WKNavigationDelegate {
             lastLoadedURL = loadURL
             webView.load(URLRequest(url: target))
         }
-        syncState()
+        syncStateDeferred()
     }
 
     func syncState() {

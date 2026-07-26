@@ -1006,6 +1006,8 @@ export class LocalAppserver implements AppserverHandle {
 	#remoteConnections = new Map<AppWs, RemoteConnection>();
 	#remoteDecisions = new Map<AppWs, RemoteHelloDecision>();
 	#remoteListener?: BunRemoteListener;
+	#remoteListenerTls?: BunRemoteListener;
+	#remoteEndpointTls?: RemoteListenerConfig;
 	#remotePolicy?: RemoteConnectionPolicy;
 	#admin?: AppserverOptions["admin"];
 	#testControl?: AppserverOptions["testControl"];
@@ -1071,6 +1073,7 @@ export class LocalAppserver implements AppserverHandle {
 		this.#admin = options.admin;
 		this.#testControl = options.testControl;
 		this.#remoteListener = options.remoteListener;
+		this.#remoteEndpointTls = options.remoteEndpointTls;
 		this.#clock = options.clock ?? clock;
 		this.#idempotency = new IdempotencyStore({ now: () => this.#clock.now().getTime() });
 		this.#authority = options.sessionAuthority;
@@ -1428,6 +1431,28 @@ export class LocalAppserver implements AppserverHandle {
 					throw error;
 				}
 			}
+			if (this.#remotePolicy && this.#remoteEndpointTls) {
+				const tlsEndpoint = this.#remoteEndpointTls;
+				const tlsListener = new BunRemoteListener(
+					createListenerPlan(tlsEndpoint),
+					{
+						connected: connection => this.#remoteConnected(connection),
+						message: (connection, message) => this.#remoteMessage(connection, message),
+						disconnected: connection => this.#remoteDisconnected(connection),
+					},
+					tlsEndpoint,
+					this.#remoteResolver,
+					() => this.#healthSnapshot(),
+				);
+				try {
+					tlsListener.start();
+				} catch (error) {
+					await this.#remoteListener?.stop().catch(() => undefined);
+					this.#remoteListener = undefined;
+					throw error;
+				}
+				this.#remoteListenerTls = tlsListener;
+			}
 		} catch (error) {
 			try {
 				await this.cleanupPartial();
@@ -1454,6 +1479,8 @@ export class LocalAppserver implements AppserverHandle {
 		try {
 			await this.#remoteListener?.stop();
 			this.#remoteListener = undefined;
+			await this.#remoteListenerTls?.stop();
+			this.#remoteListenerTls = undefined;
 			await Promise.all(
 				[...this.#clients].map(async ws => {
 					for (const controller of this.#abortControllers.get(ws) ?? []) controller.abort();
