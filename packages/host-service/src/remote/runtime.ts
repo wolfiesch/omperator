@@ -15,7 +15,6 @@ const DEFAULT_WHOIS_OUTPUT = 256 * 1024;
 export interface RemoteAppserverOptions {
 	readonly stateDir: string;
 	readonly remoteEndpoint: RemoteListenerConfig;
-	readonly remoteEndpointTls?: RemoteListenerConfig;
 	readonly appserver?: Omit<AppserverOptions, "remoteEndpoint" | "remotePolicy" | "remoteResolver" | "admin">;
 	readonly processRunner?: ProcessRunner;
 	readonly tailscaleExecutable?: string;
@@ -181,7 +180,6 @@ export async function createRemoteAppserver(options: RemoteAppserverOptions): Pr
 		const inner = createAppserver({
 			...options.appserver,
 			remoteEndpoint: endpoint,
-			...(options.remoteEndpointTls ? { remoteEndpointTls: options.remoteEndpointTls } : {}),
 			remotePolicy: policy,
 			...(resolver ? { remoteResolver: resolver } : undefined),
 			admin: {

@@ -135,14 +135,10 @@ export class BunRemoteListener {
 		run.server = Bun.serve<SocketData>({
 			hostname: this.plan.address,
 			port: this.plan.port,
-			...(this.config.tls ? { tls: { cert: this.config.tls.cert, key: this.config.tls.key } } : {}),
 			fetch: async (request, server) => {
 				const url = new URL(request.url);
 				if (url.pathname === "/healthz" && request.method === "GET")
-					return Response.json({
-						...(this.health ? this.health() : { ok: true }),
-						...(this.config.tlsFingerprint ? { tlsFingerprint: this.config.tlsFingerprint } : {}),
-					});
+					return Response.json(this.health ? this.health() : { ok: true });
 				if (url.pathname !== this.plan.path) return new Response("Not Found", { status: 404 });
 				if (!originAllowed(request.headers.get("origin"), this.config.originAllowlist))
 					return new Response("Forbidden", { status: 403 });
