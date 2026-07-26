@@ -1637,7 +1637,7 @@ final class T4SessionStore: ObservableObject {
                        case .string(let text) = frame.event.fields["text"] {
                         streamingText[sid] = text
                     }
-                case "message.settled", "message.discarded", "turn.end":
+                case "message.settled", "message.discarded":
                     streamingText.removeValue(forKey: sid)
                 default:
                     break

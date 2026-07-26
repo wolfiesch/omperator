@@ -175,6 +175,7 @@ package tests against.
 | Cluster operator | ⛔ deferred — needs protocol scoping |
 | Speech (wake-word) | ⛔ dropped (dictation ships instead) |
 
-The branch previously passed five XCUITest cases and a macOS live-host check.
-Those results are historical until rerun on the current integrated head. Demo
+`node scripts/verify-ios.mjs` compiles the current integrated head and passes all
+five XCUITest cases on a compatible simulator. A prior branch head also passed a
+macOS live-host check; that evidence still requires an exact-head rerun. Demo
 data is opt-in (`-T4Demo`); fresh installs get real onboarding.

@@ -289,7 +289,7 @@ extension ResultFrame {
     /// `encoding == "base64"`. Returns the (already-validated) content string
     /// plus the optional revision pin.
     public func filesReadResult() throws -> (content: String, revision: Revision?) {
-        guard ok, let result, case .object(let o) = result
+        guard ok, let result, case .object = result
         else {
             throw T4WireError.invalidFrame(path: "result", reason: "response has no files read result")
         }
