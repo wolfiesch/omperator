@@ -1279,7 +1279,7 @@ final class T4SessionStore: ObservableObject {
     }()
 
     /// Sample subagents — offline preview for the agents pane (one running,
-    one completed) so the sheet renders without a live host.
+    /// one completed) so the sheet renders without a live host.
     private static let sampleAgents: [AgentState] = [
         AgentState(agentId: "agent-scout", state: "running", progress: 0.62, detail: "Mapping the reconnect backoff"),
         AgentState(agentId: "agent-worker", state: "completed", progress: 1.0, detail: "Ported the lease acquire loop"),
