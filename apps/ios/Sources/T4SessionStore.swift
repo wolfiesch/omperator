@@ -211,7 +211,7 @@ final class T4SessionStore: ObservableObject {
     @Published private(set) var hasLiveInventory = false
     /// True when a previous session's endpoint is persisted (restore will run).
     var hasSavedConnection: Bool {
-        UserDefaults.standard.string(forKey: Self.savedEndpointKey) != nil
+        Keychain.get(Self.savedEndpointKey) != nil
     }
 
     /// True once a live host has spoken; false while showing the offline sample.
@@ -230,31 +230,55 @@ final class T4SessionStore: ObservableObject {
     /// the connection closed by the remote policy).
     private var grantedCapabilities: [String] = []
 
-    // Persisted connection (dev-grade: UserDefaults, not Keychain).
+    // Persisted connection credentials, stored in the device Keychain (see
+    // Keychain.swift). The account names are reused as the legacy
+    // UserDefaults keys so the one-time migration maps 1:1.
     private static let savedEndpointKey = "t4.endpoint"
     private static let savedDeviceIdKey = "t4.deviceId"
     private static let savedDeviceTokenKey = "t4.deviceToken"
+    /// UserDefaults flag set once the legacy plist credentials have been
+    /// copied into the Keychain and the plist entries deleted.
+    private static let keychainMigratedKey = "t4.keychainMigrated"
+
+    /// One-time migration of the prior dev-grade UserDefaults credentials
+    /// into the Keychain. Copies any legacy endpoint/deviceId/deviceToken
+    /// values across (only when the Keychain doesn't already hold them),
+    /// then deletes the UserDefaults entries and sets the migrated flag so
+    /// it never runs again. Called from `init()` so `hasSavedConnection`
+    /// reflects migrated state before the first view reads it.
+    private static func migrateCredentialsToKeychainIfNeeded() {
+        let defaults = UserDefaults.standard
+        if defaults.bool(forKey: keychainMigratedKey) { return }
+        for key in [savedEndpointKey, savedDeviceIdKey, savedDeviceTokenKey] {
+            if Keychain.get(key) == nil,
+               let value = defaults.string(forKey: key), !value.isEmpty {
+                Keychain.set(value, forKey: key)
+            }
+            defaults.removeObject(forKey: key)
+        }
+        defaults.set(true, forKey: keychainMigratedKey)
+    }
 
     /// Auto-reconnect on launch with the last successful connection, if any.
     func restore() async {
         // UI-test seam: -T4NoRestore forces the offline sample inventory.
         if ProcessInfo.processInfo.arguments.contains("-T4NoRestore") { return }
-        let defaults = UserDefaults.standard
         guard !connected, !connecting,
-              let endpointString = defaults.string(forKey: Self.savedEndpointKey),
+              let endpointString = Keychain.get(Self.savedEndpointKey),
               let endpoint = URL(string: endpointString) else { return }
-        let deviceId = defaults.string(forKey: Self.savedDeviceIdKey) ?? ""
-        let token = defaults.string(forKey: Self.savedDeviceTokenKey) ?? ""
+        let deviceId = Keychain.get(Self.savedDeviceIdKey) ?? ""
+        let token = Keychain.get(Self.savedDeviceTokenKey) ?? ""
         let auth: DeviceAuthentication? = (!deviceId.isEmpty && !token.isEmpty)
             ? DeviceAuthentication(deviceId: deviceId, deviceToken: token) : nil
         await connect(endpoint: endpoint, identity: ClientIdentity(name: "t4-ios", version: "0.1", build: "dev", platform: "ios"), authentication: auth)
     }
 
     private func persist(endpoint: URL, authentication: DeviceAuthentication?) {
-        let defaults = UserDefaults.standard
-        defaults.set(endpoint.absoluteString, forKey: Self.savedEndpointKey)
-        defaults.set(authentication?.deviceId, forKey: Self.savedDeviceIdKey)
-        defaults.set(authentication?.deviceToken, forKey: Self.savedDeviceTokenKey)
+        // nil/empty values clear the item, matching the prior UserDefaults
+        // semantics (an open host persists only the endpoint, no creds).
+        Keychain.set(endpoint.absoluteString, forKey: Self.savedEndpointKey)
+        Keychain.set(authentication?.deviceId, forKey: Self.savedDeviceIdKey)
+        Keychain.set(authentication?.deviceToken, forKey: Self.savedDeviceTokenKey)
     }
 
     /// Select a session (rail tap or auto-select of the most recent).
@@ -570,6 +594,7 @@ final class T4SessionStore: ObservableObject {
     static let demoMode = ProcessInfo.processInfo.arguments.contains("-T4Demo")
 
     init() {
+        Self.migrateCredentialsToKeychainIfNeeded()
         self.sessions = Self.demoMode ? Self.sample : []
     }
 
@@ -1508,10 +1533,9 @@ final class T4SessionStore: ObservableObject {
         openTerminalIds.removeAll()
         activeTerminalId.removeAll()
         terminalErrors.removeAll()
-        let defaults = UserDefaults.standard
-        defaults.removeObject(forKey: Self.savedEndpointKey)
-        defaults.removeObject(forKey: Self.savedDeviceIdKey)
-        defaults.removeObject(forKey: Self.savedDeviceTokenKey)
+        Keychain.remove(forKey: Self.savedEndpointKey)
+        Keychain.remove(forKey: Self.savedDeviceIdKey)
+        Keychain.remove(forKey: Self.savedDeviceTokenKey)
     }
 
     // MARK: - Sample inventory (simulator preview without a live host)

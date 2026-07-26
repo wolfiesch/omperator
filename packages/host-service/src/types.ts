@@ -24,6 +24,7 @@ import type {
 } from "@t4-code/host-wire";
 import type { DesktopOperationsAuthority, HostTraceSink } from "./operations/dispatcher.ts";
 import type { BunRemoteListener } from "./remote/listener.ts";
+import type { HostLogger } from "./remote/logging.ts";
 import type {
 	ListenerPeerContext,
 	RemoteConnection,
@@ -305,6 +306,8 @@ export interface AppserverOptions {
 	remoteEndpoint?: RemoteListenerConfig;
 	remotePolicy?: RemoteConnectionPolicy;
 	remoteResolver?: { resolve(address: string): Promise<RemotePeerIdentity> };
+	/** Optional structured host logger for connection/pair/denied/supervisor/watchdog events. */
+	logger?: HostLogger;
 	remoteListener?: BunRemoteListener;
 	admin?: AppserverAdminCallbacks;
 	/** Local-UDS-only deterministic integration control. Omitted outside explicit test mode. */

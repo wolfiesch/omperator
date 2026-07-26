@@ -48,6 +48,21 @@ export interface RemoteListenerConfig {
 	whoisTimeoutMs?: number;
 	whoisMaxOutputBytes?: number;
 }
+/** Snapshot returned by `GET /healthz` on the remote listener. */
+export interface HealthSnapshot {
+	readonly ok: boolean;
+	readonly hostId: string;
+	readonly epoch: string;
+	readonly draining: boolean;
+	readonly version: string;
+	readonly uptimeSec: number;
+	readonly sessions: number;
+	readonly supervisors: number;
+	readonly watchdog: { readonly graceMs: number; readonly actions: number };
+}
+/** Provider the listener calls on each `/healthz` request to enrich the
+ * response with live host state. Falls back to `{ ok: true }` when absent. */
+export type HealthProvider = () => HealthSnapshot;
 export interface ListenerPlan {
 	mode: "direct" | "serve";
 	address: string;

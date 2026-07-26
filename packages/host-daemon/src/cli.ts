@@ -5,18 +5,25 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import {
   createAppserver,
+  createHostLogger,
   createRemoteAppserver,
   OfficialOmpProfileAuthority,
+  OFFICIAL_OMP_OWNER_FILE,
   OmpAuthorityBridgeClient,
   profileSocketPath,
   FilesAuthority,
   ProjectFileSearchAuthority,
   PtyTerminalAuthority,
+  readOwnerMarkers,
+  reapBootState,
   SeedingTestControl,
   TranscriptSearchIndex,
   type AppserverHandle,
   type AppserverOptions,
   type DesktopOperationsAuthority,
+  type HostLogger,
+  type OwnerMarkerSpec,
+  type ReapLog,
   type SessionAuthority,
   type SessionDiscovery,
 } from "@t4-code/host-service";
@@ -240,6 +247,8 @@ export interface HostDaemonDependencies {
   readonly verifyOfficialRuntime?: (executable: string) => Promise<Pick<AppserverOptions, "ompVersion" | "ompBuild">>;
   readonly onSignal?: (signal: "SIGINT" | "SIGTERM", listener: () => void) => void;
   readonly removeSignal?: (signal: "SIGINT" | "SIGTERM", listener: () => void) => void;
+  /** Structured host logger for boot reaping and appserver events; constructed from profileStateRoot when omitted. */
+  readonly loggerHost?: HostLogger;
 }
 
 async function boundedProcessOutput(stream: ReadableStream<Uint8Array>, maxBytes: number): Promise<string> {
@@ -298,6 +307,27 @@ export async function runHostDaemon(
 ): Promise<void> {
   const paths = hostDaemonPaths(config);
   await mkdir(paths.profileStateRoot, { recursive: true, mode: 0o700 });
+  // One structured logger backs both boot reaping and the appserver's
+  // connection/pair/denied/supervisor/watchdog event log. It writes NDJSON to
+  // <profileStateRoot>/logs/host-<date>.ndjson with size-based rotation.
+  const hostLogger = dependencies.loggerHost ?? createHostLogger({ stateRoot: paths.profileStateRoot });
+  // Reap state a previous host incarnation left behind before any authority or
+  // appserver touches the same marker files. The appserver reclaims its own
+  // socket marker via recoverStale; the reaper only kills orphaned omp children
+  // from the dead host's process group and clears the official exclusive lock.
+  const reapLog: ReapLog = hostLogger.log;
+  const reapSpecs: OwnerMarkerSpec[] = [
+    { path: `${paths.socketPath}.owner`, source: "appserver", clearLock: false },
+  ];
+  if (config.authorityMode === "official" && config.ompSessionsRoot) {
+    reapSpecs.push({
+      path: join(config.ompSessionsRoot, OFFICIAL_OMP_OWNER_FILE),
+      source: "official",
+      clearLock: true,
+    });
+  }
+  const reapMarkers = await readOwnerMarkers({ specs: reapSpecs, log: reapLog });
+  if (reapMarkers.length > 0) await reapBootState({ markers: reapMarkers, log: reapLog });
   let bridge: OmpAuthorityBridgeClient | undefined;
   let terminals: PtyTerminalAuthority | undefined;
   let officialAuthority: OfficialOmpProfileAuthority | undefined;
@@ -393,6 +423,7 @@ export async function runHostDaemon(
       sessionOwnershipPath: paths.sessionOwnershipPath,
       sessionAuthority,
       discovery,
+      logger: hostLogger,
       operationsAuthority: {
         ...operationsAuthority,
         ...projectFileSearchAuthority.operations(),
@@ -469,6 +500,9 @@ export async function runHostDaemon(
     terminals?.closeAll();
     await bridge?.stop();
     await officialAuthority?.close();
+    // Flush queued log writes (rotation + appserver events) before exit. The
+    // injected logger is owned by the caller; only close one we constructed.
+    if (!dependencies.loggerHost) await hostLogger.close();
   }
 }
 

@@ -98,7 +98,8 @@ import {
 import { OfficialOmpCapabilityAdapter, OfficialOmpOperationError } from "./official-omp-capabilities.ts";
 import { SessionProjection } from "./projection.ts";
 import { BunRemoteListener, createInternalListenerPlan, createListenerPlan, createServeProxyPlan } from "./remote/listener.ts";
-import type { RemoteConnection, RemoteListenerConfig } from "./remote/types.ts";
+import type { HostLogger } from "./remote/logging.ts";
+import type { HealthSnapshot, RemoteConnection, RemoteListenerConfig } from "./remote/types.ts";
 import { BunRpcChildFactory, RpcChildSupervisor } from "./rpc-child.ts";
 import type {
 	RuntimeAdapterRegistry,
@@ -913,6 +914,8 @@ export class LocalAppserver implements AppserverHandle {
 	#idleSupervisorGraceMs: number;
 	#idleSupervisorTickMs: number;
 	#idleSupervisorTimer?: ReturnType<typeof setInterval>;
+	#watchdogActions = 0;
+	#startedAt = 0;
 	#handlers = new AppserverCommandHandlers();
 	#challenges = new Map<string, { command: CommandFrame; ws: AppWs; expiresAt: number; hash: string }>();
 	#records = new Map<SessionId, SessionRecord>();
@@ -1001,6 +1004,7 @@ export class LocalAppserver implements AppserverHandle {
 	#runtimeAdapters?: RuntimeAdapterRegistry;
 	#workspaceAuthority?: WorkspaceAuthority;
 	#workspaceTargetPathForProject?: AppserverOptions["workspaceTargetPathForProject"];
+	#logger?: HostLogger;
 	#onOwnerAcquired?: AppserverOptions["onOwnerAcquired"];
 	#trace?: HostTraceSink;
 	constructor(options: AppserverOptions = {}) {
@@ -1066,6 +1070,7 @@ export class LocalAppserver implements AppserverHandle {
 		this.#workspaceAuthority = options.workspaceAuthority;
 		this.#workspaceTargetPathForProject = options.workspaceTargetPathForProject;
 		this.#onOwnerAcquired = options.onOwnerAcquired;
+		this.#logger = options.logger;
 		this.#discovery = options.discovery ?? options.sessionAuthority ?? { list: async () => [] };
 		this.#imageUploads = new ImageUploadStore({ root: `${this.socketPath}.images` });
 		this.#transcriptImages = options.transcriptImageRoot
@@ -1150,6 +1155,14 @@ export class LocalAppserver implements AppserverHandle {
 		this.#handlers.register("session.restore", command => this.handleRestore(command));
 		this.#handlers.register("session.delete", command => this.handleDelete(command));
 		this.#handlers.register("session.mode.set", command => this.handleModeSet(command));
+	}
+	/** Structured event sink; no-op when no logger is configured. Never throws. */
+	#log(event: string, fields?: Record<string, unknown>): void {
+		try {
+			this.#logger?.log(event, fields);
+		} catch {
+			/* logging must never disrupt the request path */
+		}
 	}
 	hasDesktopCatalogCommandHandler(command: string): boolean {
 		if (command === "usage.read") return this.#usageAuthority !== undefined;
@@ -1333,6 +1346,7 @@ export class LocalAppserver implements AppserverHandle {
 			if (this.#stopping) throw new Error("appserver is stopping");
 			this.#runIdentity = { paths, record, marker: finalMarker };
 			this.#started = true;
+			this.#startedAt = this.#clock.now().getTime();
 			this.#startIdleSupervisorWatchdog();
 			if (this.#remotePolicy && this.#remoteEndpoint) {
 				const listener =
@@ -1350,7 +1364,8 @@ export class LocalAppserver implements AppserverHandle {
 						},
 						this.#remoteEndpoint,
 						this.#remoteResolver,
-					);
+						() => this.#healthSnapshot(),
+				);
 				this.#remoteListener = listener;
 				try {
 					listener.start();
@@ -1456,7 +1471,8 @@ export class LocalAppserver implements AppserverHandle {
 		} finally {
 			this.#transcriptImages?.clear();
 			await this.#transcriptSearch?.close();
-			await this.#imageUploads.stop();
+		await this.#imageUploads.stop();
+		await this.#logger?.flush().catch(() => undefined);
 		}
 	}
 	/**
@@ -3143,7 +3159,8 @@ export class LocalAppserver implements AppserverHandle {
 		if (!external && !this.#supervisors.has(sessionId)) {
 			try {
 				await this.#lockCheck(record);
-			} catch {
+			} catch (error) {
+				this.#log("lockCheck.failed", { sessionId, where: "deletePreflight", error: error instanceof Error ? error.message : String(error) });
 				return { code: "session_locked", message: "session is locked by another process" };
 			}
 		}
@@ -3269,6 +3286,7 @@ export class LocalAppserver implements AppserverHandle {
 	private releaseSupervisorAfterExit(sessionId: SessionId, supervisor: RpcChildSupervisor): void {
 		const release = () => {
 			if (this.#supervisors.get(sessionId) !== supervisor) return;
+			this.#log("supervisor.exit", { sessionId });
 			this.#supervisors.delete(sessionId);
 			if (this.#stopping || this.#closedSessions.has(sessionId)) return;
 			this.#transcripts.delete(sessionId);
@@ -3373,7 +3391,8 @@ export class LocalAppserver implements AppserverHandle {
 				return this.lifecycleBusyOutcome(command, "session runtime did not stop cleanly");
 			try {
 				await this.#lockCheck(record);
-			} catch {
+			} catch (error) {
+				this.#log("lockCheck.failed", { sessionId, where: "archive", error: error instanceof Error ? error.message : String(error) });
 				return {
 					frame: response(this.hostId, command, false, undefined, {
 						code: "session_locked",
@@ -3688,14 +3707,31 @@ export class LocalAppserver implements AppserverHandle {
 			// session still marked streaming is left alone; unknown is fail-closed.
 			if (this.#projections.get(sessionId)?.value.ref.liveState?.isStreaming === true) continue;
 			if (this.#supervisors.get(sessionId) !== supervisor) continue;
-			this.markSupervisorCrashed(sessionId, supervisor);
-			supervisor.stop("SIGKILL");
+		this.markSupervisorCrashed(sessionId, supervisor);
+		supervisor.stop("SIGKILL");
+		this.#watchdogActions++;
+		this.#log("watchdog.action", { sessionId, action: "sigkill", graceMs: this.#idleSupervisorGraceMs });
+		this.#log("supervisor.killed", { sessionId, signal: "SIGKILL", reason: "watchdog" });
 		}
 	}
 	#startIdleSupervisorWatchdog(): void {
 		clearInterval(this.#idleSupervisorTimer);
 		this.#idleSupervisorTimer = setInterval(() => this.#runIdleSupervisorWatchdog(), this.#idleSupervisorTickMs);
 		this.#idleSupervisorTimer.unref?.();
+	}
+	#healthSnapshot(): HealthSnapshot {
+		const now = this.#clock.now().getTime();
+		return {
+			ok: true,
+			hostId: this.hostId,
+			epoch: this.epoch,
+			draining: this.#draining,
+			version: this.#appserverVersion,
+			uptimeSec: this.#startedAt > 0 ? Math.max(0, Math.floor((now - this.#startedAt) / 1000)) : 0,
+			sessions: this.#projections.size,
+			supervisors: this.#supervisors.size,
+			watchdog: { graceMs: this.#idleSupervisorGraceMs, actions: this.#watchdogActions },
+		};
 	}
 	#projectTerminalStatus(
 		sessionId: SessionId,
@@ -3852,7 +3888,12 @@ export class LocalAppserver implements AppserverHandle {
 		const record = this.#records.get(sessionId);
 		if (!record) throw new Error("unknown session");
 		if (this.sessionArchived(sessionId)) throw new Error("session is archived");
-		await this.#lockCheck(record);
+		try {
+			await this.#lockCheck(record);
+		} catch (error) {
+			this.#log("lockCheck.failed", { sessionId, where: "startSupervisor", error: error instanceof Error ? error.message : String(error) });
+			throw error;
+		}
 		if (this.#stopping || this.#closedSessions.has(sessionId)) throw new Error("session is closed");
 		if (this.#lifecycleMutations.has(sessionId) || this.sessionArchived(sessionId))
 			throw new Error("session lifecycle changed while starting");
@@ -3994,10 +4035,11 @@ export class LocalAppserver implements AppserverHandle {
 		);
 		this.#supervisors.set(sessionId, supervisor);
 		try {
-			await supervisor.start();
-			if (this.#supervisors.get(sessionId) !== supervisor) throw new Error("rpc child exited during startup");
-			this.releaseSupervisorAfterExit(sessionId, supervisor);
-			return supervisor;
+		await supervisor.start();
+		if (this.#supervisors.get(sessionId) !== supervisor) throw new Error("rpc child exited during startup");
+		this.releaseSupervisorAfterExit(sessionId, supervisor);
+		this.#log("supervisor.spawn", { sessionId });
+		return supervisor;
 		} catch (error) {
 			if (this.#supervisors.get(sessionId) === supervisor) this.#supervisors.delete(sessionId);
 			this.#releaseAllMessageLifecycles(sessionId, "failed");
@@ -4006,16 +4048,17 @@ export class LocalAppserver implements AppserverHandle {
 			// Await the process, not just the supervisor. `stop()` signals and
 			// returns, so a caller that cleans up the session's files immediately
 			// would race a child still holding — and able to rewrite — its lock.
-			const child = supervisor.child();
-			supervisor.stop("SIGTERM");
-			if (child && !(await this.childExitedWithinLifecycleTimeout(child))) {
-				supervisor.stop("SIGKILL");
-				if (!(await this.childExitedWithinLifecycleTimeout(child)))
-					// A child that survives SIGKILL still owns its lock and can
-					// rewrite the file, so its session must not be deleted.
-					throw new SessionRuntimeStuckError(error);
-			}
-			throw error;
+		const child = supervisor.child();
+		supervisor.stop("SIGTERM");
+		if (child && !(await this.childExitedWithinLifecycleTimeout(child))) {
+			supervisor.stop("SIGKILL");
+			this.#log("supervisor.killed", { sessionId, signal: "SIGKILL" });
+			if (!(await this.childExitedWithinLifecycleTimeout(child)))
+				// A child that survives SIGKILL still owns its lock and can
+				// rewrite the file, so its session must not be deleted.
+				throw new SessionRuntimeStuckError(error);
+		}
+		throw error;
 		}
 	}
 	private async message(ws: AppWs, raw: string | Uint8Array): Promise<void> {
@@ -4040,6 +4083,7 @@ export class LocalAppserver implements AppserverHandle {
 					if (!connection || !this.#remotePolicy) throw new Error("remote connection is unavailable");
 					decision = await this.#remotePolicy.authenticate(connection, frame);
 					if (!decision.authenticated && decision.authentication !== "pairing-required") {
+						this.#log("pair.denied", { connectionId: ws.connectionId, reason: "authentication", authentication: decision.authentication });
 						ws.close(1008, "remote authentication denied");
 						return;
 					}
@@ -4055,6 +4099,7 @@ export class LocalAppserver implements AppserverHandle {
 				if (!connection || !this.#remotePolicy?.pairStart) throw new Error("pairing unavailable");
 				const result = await this.#remotePolicy.pairStart(connection, frame);
 				if (!result) {
+					this.#log("pair.denied", { connectionId: ws.connectionId, reason: "pairStart", requestId: frame.requestId });
 					await this.#sendFrame(ws, {
 						v: "omp-app/1",
 						type: "pair.error",
@@ -4064,6 +4109,7 @@ export class LocalAppserver implements AppserverHandle {
 					});
 					return;
 				}
+				this.#log("pair.ok", { connectionId: ws.connectionId, requestId: frame.requestId });
 				await this.#sendFrame(ws, result);
 				return;
 			}
@@ -4084,6 +4130,7 @@ export class LocalAppserver implements AppserverHandle {
 					...(remoteProjection ? { sessionRevision: remoteProjection.value.revision } : {}),
 				});
 				if (!allowed) {
+					this.#log("command.denied", { connectionId: ws.connectionId, frame: frame.type, ...(frame.type === "command" ? { command: frame.command } : {}) });
 					if (!this.#remotePolicy.isClosed?.(connection)) ws.close(1008, "remote policy denied");
 					return;
 				}
@@ -4471,6 +4518,7 @@ export class LocalAppserver implements AppserverHandle {
 		this.#deviceIds.set(transport, transport.deviceId);
 		this.#abortControllers.set(transport, new Set());
 		this.#connectionIdempotency.set(transport, new IdempotencyStore());
+		this.#log("connection.open", { connectionId: connection.connectionId, peer: connection.peer.identity.nodeId, source: connection.peer.source });
 	}
 	async #remoteMessage(connection: RemoteConnection, message: string | Uint8Array): Promise<void> {
 		const transport = this.#remoteTransports.get(connection.connectionId);
@@ -4482,6 +4530,7 @@ export class LocalAppserver implements AppserverHandle {
 			const transport = this.#remoteTransports.get(connection.connectionId);
 			if (transport) await this.disconnectClient(transport);
 			if (this.#remotePolicy?.disconnected) await this.#remotePolicy.disconnected(connection);
+		this.#log("connection.close", { connectionId: connection.connectionId, peer: connection.peer.identity.nodeId });
 		} finally {
 			this.#inflightLifecycleMutations -= 1;
 		}
