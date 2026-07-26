@@ -52,7 +52,6 @@ struct MacCommands: SwiftUI.Commands {
     private var flatSessions: [SessionRef] { store?.groups.flatMap(\.sessions) ?? [] }
 
     var body: some SwiftUI.Commands {
-        CommandGroup {}
         CommandMenu("Session") {
             Button("New Session") { Task { await newSession() } }
                 .keyboardShortcut("n", modifiers: .command)
