@@ -332,7 +332,7 @@ final class T4SessionStore: ObservableObject {
     /// snapshot frame (full log at a cursor) and then live entry frames;
     /// `observe()` routes both into `liveEntries`. Safe to repeat.
     func attach(sessionId: String) async {
-        t4log.notice("attach entry \(sessionId, privacy: .public) state=\(String(describing: self.client?.state))")
+        t4log.notice("attach entry \(sessionId, privacy: .public)")
         guard let client, connected, !hostId.isEmpty else { return }
         do {
             _ = try await client.sendCommand(CommandIntent(
