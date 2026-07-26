@@ -12,22 +12,14 @@ import HostWire
 /// One picked photo, kept as a downscaled JPEG ready for session.image upload.
 struct ComposerAttachment: Identifiable {
     let id = UUID()
-    let image: UIImage
+    let image: PlatformImage
     let jpeg: Data
 
-    init?(source: UIImage, maxBytes: Int = 20 * 1024 * 1024) {
+    init?(source: PlatformImage, maxBytes: Int = 20 * 1024 * 1024) {
         // Downscale until the JPEG fits the wire's per-image limit.
-        var scale: CGFloat = 1
-        var candidate = source
-        while true {
-            if let jpeg = candidate.jpegData(compressionQuality: 0.85), jpeg.count <= maxBytes {
-                self.image = candidate; self.jpeg = jpeg; return
-            }
-            scale *= 0.5
-            let size = CGSize(width: source.size.width * scale, height: source.size.height * scale)
-            guard size.width > 32, let resized = source.preparingThumbnail(of: size) else { return nil }
-            candidate = resized
-        }
+        guard let result = platformJPEGFitting(source, maxBytes: maxBytes) else { return nil }
+        self.image = result.image
+        self.jpeg = result.jpeg
     }
 }
 
@@ -129,7 +121,9 @@ struct T4SessionDetailView: View {
             }
         }
         .navigationTitle(session.title)
+        #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+        #endif
         .task(id: session.sessionId) { await store.attach(sessionId: session.sessionId) }
         .onAppear {
             // UI-test seams: boot with a pane/drawer/card visible for screenshots.
@@ -532,7 +526,7 @@ struct T4SessionDetailView: View {
                 HStack(spacing: 8) {
                     ForEach(attachments) { a in
                         ZStack(alignment: .topTrailing) {
-                            Image(uiImage: a.image).resizable().scaledToFill()
+                            Image(platformImage: a.image).resizable().scaledToFill()
                                 .frame(width: 54, height: 54)
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
                             Button { attachments.removeAll { $0.id == a.id } } label: {
@@ -557,7 +551,7 @@ struct T4SessionDetailView: View {
         Task {
             for item in items {
                 if let data = try? await item.loadTransferable(type: Data.self),
-                   let image = UIImage(data: data),
+                   let image = platformImage(data: data),
                    let attachment = ComposerAttachment(source: image) {
                     attachments.append(attachment)
                 }

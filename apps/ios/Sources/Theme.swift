@@ -125,11 +125,33 @@ struct GlassBG: ViewModifier {
         // flat/panel/border are kept for backward compatibility; native Liquid Glass
         // does not expose equivalent variants and renders its own edge.
         let isInteractive = interactive ?? active
-        let glass: Glass = active
-            ? .regular.tint(t.accent.opacity(0.15)).interactive(isInteractive)
-            : .regular
-        content
-            .glassEffect(glass, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+        Group {
+            if #available(iOS 26.0, macOS 26.0, *) {
+                // Native Liquid Glass (iOS 26 / macOS 26).
+                content
+                    .glassEffect(
+                        active
+                            ? .regular.tint(t.accent.opacity(0.15)).interactive(isInteractive)
+                            : .regular,
+                        in: RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    )
+            } else {
+                // macOS 15 / iOS <26 fallback: a material card with a hairline
+                // stroke approximating the glass look without the Liquid Glass API.
+                content
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+                    .background {
+                        if active {
+                            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                                .fill(t.accent.opacity(0.15))
+                        }
+                    }
+                    .overlay {
+                        RoundedRectangle(cornerRadius: radius, style: .continuous)
+                            .stroke(t.glassBorder.opacity(0.6), lineWidth: 0.5)
+                    }
+            }
+        }
     }
 }
 

@@ -48,7 +48,9 @@ struct T4AgentsPane: View {
             }
             .background(t.bg.ignoresSafeArea())
             .navigationTitle("Agents")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { isPresented = false }

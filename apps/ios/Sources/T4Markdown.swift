@@ -84,7 +84,7 @@ struct T4CodeBlock: View {
                     .foregroundStyle(theme.txtLabel)
                 Spacer()
                 Button {
-                    UIPasteboard.general.string = code
+                    platformCopy(code)
                     copied = true
                     Task { try? await Task.sleep(for: .seconds(1.5)); copied = false }
                 } label: {

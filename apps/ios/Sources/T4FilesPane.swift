@@ -156,17 +156,26 @@ struct T4FilesPane: View {
             }
             .background(t.bg.ignoresSafeArea())
             .navigationTitle("Files")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { isPresented = false }
                         .font(.system(size: 14, weight: .semibold))
                 }
             }
+            #if os(iOS)
             .fullScreenCover(item: $viewedFile) { target in
                 FileViewer(session: session, store: store, path: target.path)
                     .environmentObject(theme)
             }
+            #else
+            .sheet(item: $viewedFile) { target in
+                FileViewer(session: session, store: store, path: target.path)
+                    .environmentObject(theme)
+            }
+            #endif
         }
         .task(id: currentPath) { await load() }
         // The sheet can open before the host connection lands — retry then.

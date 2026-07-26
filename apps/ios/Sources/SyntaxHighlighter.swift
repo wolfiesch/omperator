@@ -5,7 +5,6 @@
 //  unknown languages get a light comment/string/number pass.
 
 import Foundation
-import UIKit
 import SwiftUI
 
 enum SyntaxToken { case comment, string, number, keyword, type, function, attribute }
@@ -50,10 +49,10 @@ enum SyntaxHighlighter {
 
     private static func color(_ code: String, spec: LangSpec, theme t: Theme, baseColor: Color? = nil, fontSize: CGFloat? = 12.5) -> NSAttributedString {
         var base: [NSAttributedString.Key: Any] = [
-            .foregroundColor: UIColor(baseColor ?? t.txtBody)
+            .foregroundColor: PlatformColor(baseColor ?? t.txtBody)
         ]
         if let fontSize {
-            base[.font] = UIFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+            base[.font] = PlatformFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         }
         let mut = NSMutableAttributedString(string: code, attributes: base)
         let regex = compiled(spec)
@@ -63,7 +62,7 @@ enum SyntaxHighlighter {
             for i in 0..<spec.rules.count {
                 let r = m.range(at: i + 1)
                 if r.location != NSNotFound {
-                    mut.addAttribute(.foregroundColor, value: UIColor(tokenColor(spec.rules[i].0, t)), range: r)
+                    mut.addAttribute(.foregroundColor, value: PlatformColor(tokenColor(spec.rules[i].0, t)), range: r)
                     break
                 }
             }
@@ -92,7 +91,7 @@ enum SyntaxHighlighter {
 
         for (i, body) in lines.enumerated() {
             var fg: Color = defaultFG
-            var bg: UIColor?
+            var bg: PlatformColor?
             var gutter: String
             var content: String
             var isHunk = false
@@ -105,15 +104,15 @@ enum SyntaxHighlighter {
                 let lineNum = (body as NSString).substring(with: match.range(at: 2))
                 content = (body as NSString).substring(with: match.range(at: 3))
                 gutter = "\(prefix)\(lineNum)|"
-                if prefix == "+" { fg = t.diffAdd; bg = UIColor(t.diffAddBG) }
-                else if prefix == "-" { fg = t.diffDel; bg = UIColor(t.diffDelBG) }
+                if prefix == "+" { fg = t.diffAdd; bg = PlatformColor(t.diffAddBG) }
+                else if prefix == "-" { fg = t.diffDel; bg = PlatformColor(t.diffDelBG) }
             } else if let sepIdx = body.firstIndex(of: Character(codeFrameSep)) {
                 let g = String(body[..<sepIdx])
                 gutter = g + codeFrameSep
                 content = String(body[body.index(after: sepIdx)...])
                 let marker = g.trimmingCharacters(in: .whitespaces).first
-                if marker == "+" { fg = t.diffAdd; bg = UIColor(t.diffAddBG) }
-                else if marker == "-" { fg = t.diffDel; bg = UIColor(t.diffDelBG) }
+                if marker == "+" { fg = t.diffAdd; bg = PlatformColor(t.diffAddBG) }
+                else if marker == "-" { fg = t.diffDel; bg = PlatformColor(t.diffDelBG) }
                 else if marker == "*" { fg = t.synKeyword; bg = nil }
             } else if body.hasPrefix("@@") {
                 gutter = body
@@ -124,12 +123,12 @@ enum SyntaxHighlighter {
                 gutter = "+"
                 content = String(body.dropFirst())
                 if content.hasPrefix(" ") { content = String(content.dropFirst()) }
-                fg = t.diffAdd; bg = UIColor(t.diffAddBG)
+                fg = t.diffAdd; bg = PlatformColor(t.diffAddBG)
             } else if body.hasPrefix("-") && !body.hasPrefix("---") {
                 gutter = "-"
                 content = String(body.dropFirst())
                 if content.hasPrefix(" ") { content = String(content.dropFirst()) }
-                fg = t.diffDel; bg = UIColor(t.diffDelBG)
+                fg = t.diffDel; bg = PlatformColor(t.diffDelBG)
             } else if body.hasPrefix(" ") {
                 gutter = " "
                 content = String(body.dropFirst())
@@ -141,10 +140,10 @@ enum SyntaxHighlighter {
 
             let lineStart = mut.length
             var gutterAttrs: [NSAttributedString.Key: Any] = [
-                .foregroundColor: UIColor(fg)
+                .foregroundColor: PlatformColor(fg)
             ]
             if let fontSize {
-                gutterAttrs[.font] = UIFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+                gutterAttrs[.font] = PlatformFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
             }
             mut.append(NSAttributedString(string: gutter, attributes: gutterAttrs))
 
@@ -155,10 +154,10 @@ enum SyntaxHighlighter {
                     mut.append(highlighted)
                 } else {
                     var contentAttrs: [NSAttributedString.Key: Any] = [
-                        .foregroundColor: UIColor(fg)
+                        .foregroundColor: PlatformColor(fg)
                     ]
                     if let fontSize {
-                        contentAttrs[.font] = UIFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+                        contentAttrs[.font] = PlatformFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
                     }
                     mut.append(NSAttributedString(string: content, attributes: contentAttrs))
                 }

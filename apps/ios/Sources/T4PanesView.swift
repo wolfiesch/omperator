@@ -60,7 +60,9 @@ struct T4UsagePane: View {
             }
             .background(t.bg.ignoresSafeArea())
             .navigationTitle("Usage")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { isPresented = false }
@@ -117,7 +119,11 @@ struct T4UsagePane: View {
                 }
             }
         }
+        #if os(iOS)
         .listStyle(.insetGrouped)
+        #else
+        .listStyle(.inset)
+        #endif
         .scrollContentBackground(.hidden)
     }
 
@@ -265,7 +271,9 @@ struct T4ReviewPane: View {
             }
             .background(t.bg.ignoresSafeArea())
             .navigationTitle("Review")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { isPresented = false }
@@ -307,7 +315,11 @@ struct T4ReviewPane: View {
                 }
             }
         }
+        #if os(iOS)
         .listStyle(.insetGrouped)
+        #else
+        .listStyle(.inset)
+        #endif
         .scrollContentBackground(.hidden)
     }
 
@@ -415,7 +427,11 @@ struct T4ArtifactsPane: View {
                             artifactRow(descriptor)
                         }
                     }
+                    #if os(iOS)
                     .listStyle(.insetGrouped)
+                    #else
+                    .listStyle(.inset)
+                    #endif
                     .scrollContentBackground(.hidden)
                 }
                 if let error {
@@ -425,7 +441,9 @@ struct T4ArtifactsPane: View {
             }
             .background(t.bg.ignoresSafeArea())
             .navigationTitle("Artifacts")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { isPresented = false }
@@ -503,8 +521,8 @@ struct T4ArtifactsPane: View {
                     .foregroundStyle(t.txtMuted)
             }
         case "image":
-            if let bytes = chunk.decodedBytes, let img = UIImage(data: bytes) {
-                Image(uiImage: img)
+            if let bytes = chunk.decodedBytes, let img = platformImage(data: bytes) {
+                Image(platformImage: img)
                     .resizable()
                     .scaledToFit()
                     .frame(maxHeight: 240)
@@ -606,7 +624,9 @@ struct T4SettingsPane: View {
             }
             .background(t.bg.ignoresSafeArea())
             .navigationTitle("Settings")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { isPresented = false }
@@ -631,7 +651,11 @@ struct T4SettingsPane: View {
                 settingRow(key, settings[key] ?? .null)
             }
         }
+        #if os(iOS)
         .listStyle(.insetGrouped)
+        #else
+        .listStyle(.inset)
+        #endif
         .scrollContentBackground(.hidden)
     }
 

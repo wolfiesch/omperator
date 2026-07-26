@@ -141,7 +141,7 @@ struct T4TerminalDrawer: View {
 /// (only the newly appended tail each update), forwards keystrokes via
 /// `onInput`, and reports pixel→cell resizes via `onResize`. The underlying
 /// `TerminalView` is created once and reused across updates.
-struct T4TerminalSurface: UIViewRepresentable {
+struct T4TerminalSurface: View {
     let terminalId: String
     let output: String
     let exited: Int?
@@ -149,81 +149,138 @@ struct T4TerminalSurface: UIViewRepresentable {
     let onInput: (String) -> Void
     let onResize: (Int, Int) -> Void
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onInput: onInput, onResize: onResize)
+    var body: some View {
+        #if os(iOS)
+        return UIKitTerminalSurface(
+            terminalId: terminalId, output: output, exited: exited,
+            theme: theme, onInput: onInput, onResize: onResize)
+        #else
+        return AppKitTerminalSurface(
+            terminalId: terminalId, output: output, exited: exited,
+            theme: theme, onInput: onInput, onResize: onResize)
+        #endif
+    }
+}
+
+// MARK: - Shared coordinator
+
+/// SwiftTerm's `TerminalViewDelegate` protocol is identical on iOS and macOS,
+/// so one coordinator serves both bridges.
+final class T4TerminalCoordinator: NSObject, TerminalViewDelegate {
+    let onInput: (String) -> Void
+    let onResize: (Int, Int) -> Void
+    var lastFedLength: Int = 0
+
+    init(onInput: @escaping (String) -> Void, onResize: @escaping (Int, Int) -> Void) {
+        self.onInput = onInput
+        self.onResize = onResize
+    }
+
+    func send(source: TerminalView, data: ArraySlice<UInt8>) {
+        let bytes = Array(data)
+        if let s = String(bytes: bytes, encoding: .utf8) { onInput(s) }
+    }
+
+    func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
+        onResize(newCols, newRows)
+    }
+
+    func setTerminalTitle(source: TerminalView, title: String) {}
+    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+    func scrolled(source: TerminalView, position: Double) {}
+    func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {}
+    func bell(source: TerminalView) {}
+    func clipboardCopy(source: TerminalView, content: Data) {}
+    func clipboardRead(source: TerminalView) -> Data? { nil }
+    func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {}
+    func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
+}
+
+/// Feed only the bytes appended since the last feed (the store buffer is
+/// append-only until the ~200KB cap trims the oldest half, at which point
+/// `output.count` shrinks below `lastFedLength` and we re-seed from zero).
+private func feedTail(_ tv: TerminalView, output: String, coordinator: T4TerminalCoordinator) {
+    let count = output.utf8.count
+    if count < coordinator.lastFedLength {
+        // Buffer was trimmed from the head — re-seed by feeding the whole
+        // buffer into a fresh terminal view. SwiftTerm has no public
+        // "clear" API, so feed the current buffer as-is; the visual jump
+        // is acceptable for a bounded-buffer trim (rare on interactive
+        // sessions).
+        coordinator.lastFedLength = 0
+    }
+    guard count > coordinator.lastFedLength else { return }
+    let start = output.utf8.index(output.startIndex, offsetBy: coordinator.lastFedLength)
+    let tail = String(Substring(output.utf8[start...]))
+    tv.feed(text: tail)
+    coordinator.lastFedLength = count
+}
+
+#if os(iOS)
+import UIKit
+
+/// SwiftUI bridge to SwiftTerm's UIKit `TerminalView`.
+struct UIKitTerminalSurface: UIViewRepresentable {
+    let terminalId: String
+    let output: String
+    let exited: Int?
+    let theme: Theme
+    let onInput: (String) -> Void
+    let onResize: (Int, Int) -> Void
+
+    func makeCoordinator() -> T4TerminalCoordinator {
+        T4TerminalCoordinator(onInput: onInput, onResize: onResize)
     }
 
     func makeUIView(context: Context) -> TerminalView {
         let tv = TerminalView(frame: .zero, font: UIFont.monospacedSystemFont(ofSize: 12, weight: .regular))
         tv.terminalDelegate = context.coordinator
-        tv.backgroundColor = uiColor(theme.bg2)
+        tv.backgroundColor = UIColor(theme.bg2)
         // Keep the surface non-interactive once the pty has exited.
         tv.isUserInteractionEnabled = exited == nil
-        // Track the last fed length so we only feed the appended tail.
         context.coordinator.lastFedLength = 0
-        // Seed any output already buffered before the view existed.
-        feedTail(tv: tv, coordinator: context.coordinator)
+        feedTail(tv, output: output, coordinator: context.coordinator)
         return tv
     }
 
     func updateUIView(_ tv: TerminalView, context: Context) {
-        feedTail(tv: tv, coordinator: context.coordinator)
+        feedTail(tv, output: output, coordinator: context.coordinator)
         tv.isUserInteractionEnabled = exited == nil
-        // Reflect theme background on appearance changes.
-        tv.backgroundColor = uiColor(theme.bg2)
-    }
-
-    /// Feed only the bytes appended since the last feed (the store buffer is
-    /// append-only until the ~200KB cap trims the oldest half, at which point
-    /// `output.count` shrinks below `lastFedLength` and we re-seed from zero).
-    private func feedTail(tv: TerminalView, coordinator: Coordinator) {
-        let count = output.utf8.count
-        if count < coordinator.lastFedLength {
-            // Buffer was trimmed from the head — re-seed by feeding the whole
-            // buffer into a fresh terminal view. SwiftTerm has no public
-            // "clear" API, so feed the current buffer as-is; the visual jump
-            // is acceptable for a bounded-buffer trim (rare on interactive
-            // sessions).
-            coordinator.lastFedLength = 0
-        }
-        guard count > coordinator.lastFedLength else { return }
-        let start = output.utf8.index(output.startIndex, offsetBy: coordinator.lastFedLength)
-        let tail = String(Substring(output.utf8[start...]))
-        tv.feed(text: tail)
-        coordinator.lastFedLength = count
-    }
-
-    private func uiColor(_ c: SwiftUI.Color) -> UIColor {
-        UIColor(c)
-    }
-
-    final class Coordinator: NSObject, TerminalViewDelegate {
-        let onInput: (String) -> Void
-        let onResize: (Int, Int) -> Void
-        var lastFedLength: Int = 0
-
-        init(onInput: @escaping (String) -> Void, onResize: @escaping (Int, Int) -> Void) {
-            self.onInput = onInput
-            self.onResize = onResize
-        }
-
-        func send(source: TerminalView, data: ArraySlice<UInt8>) {
-            let bytes = Array(data)
-            if let s = String(bytes: bytes, encoding: .utf8) { onInput(s) }
-        }
-
-        func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
-            onResize(newCols, newRows)
-        }
-
-        func setTerminalTitle(source: TerminalView, title: String) {}
-        func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
-        func scrolled(source: TerminalView, position: Double) {}
-        func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {}
-        func bell(source: TerminalView) {}
-        func clipboardCopy(source: TerminalView, content: Data) {}
-        func clipboardRead(source: TerminalView) -> Data? { nil }
-        func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {}
-        func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
+        tv.backgroundColor = UIColor(theme.bg2)
     }
 }
+#else
+import AppKit
+
+/// SwiftUI bridge to SwiftTerm's AppKit `TerminalView`. The macOS view uses
+/// `nativeBackgroundColor` (there is no plain `backgroundColor` property) and
+/// has no `isUserInteractionEnabled` flag — interactivity is gated by the
+/// delegate/first-responder chain instead, so we simply stop forwarding input
+/// after exit via the coordinator's `onInput` closure upstream.
+struct AppKitTerminalSurface: NSViewRepresentable {
+    let terminalId: String
+    let output: String
+    let exited: Int?
+    let theme: Theme
+    let onInput: (String) -> Void
+    let onResize: (Int, Int) -> Void
+
+    func makeCoordinator() -> T4TerminalCoordinator {
+        T4TerminalCoordinator(onInput: onInput, onResize: onResize)
+    }
+
+    func makeNSView(context: Context) -> TerminalView {
+        let tv = TerminalView(frame: .zero, font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular))
+        tv.terminalDelegate = context.coordinator
+        tv.nativeBackgroundColor = NSColor(theme.bg2)
+        context.coordinator.lastFedLength = 0
+        feedTail(tv, output: output, coordinator: context.coordinator)
+        return tv
+    }
+
+    func updateNSView(_ tv: TerminalView, context: Context) {
+        feedTail(tv, output: output, coordinator: context.coordinator)
+        tv.nativeBackgroundColor = NSColor(theme.bg2)
+    }
+}
+#endif

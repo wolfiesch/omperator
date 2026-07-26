@@ -54,7 +54,9 @@ struct T4InboxView: View {
             }
             .background(t.bg.ignoresSafeArea())
             .navigationTitle("Inbox")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { isPresented = false }

@@ -9,7 +9,6 @@
 
 import SwiftUI
 import HostWire
-import UIKit
 
 struct T4ConnectView: View {
     @EnvironmentObject var theme: ThemeStore
@@ -44,13 +43,17 @@ struct T4ConnectView: View {
             Form {
                 Section {
                     TextField("Host (e.g. macbookpro.my-tailnet.ts.net)", text: $pairHost)
-                        .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                    TextField("6-digit code", text: $pairCode)
-                        .keyboardType(.numberPad)
+                        #if os(iOS)
                         .textInputAutocapitalization(.never)
+                        #endif
+                    TextField("6-digit code", text: $pairCode)
                         .autocorrectionDisabled()
                         .font(.system(.body, design: .monospaced))
+                        #if os(iOS)
+                        .keyboardType(.numberPad)
+                        .textInputAutocapitalization(.never)
+                        #endif
                     Button {
                         Task { await pairAndConnect() }
                     } label: {
@@ -71,11 +74,15 @@ struct T4ConnectView: View {
 
                 DisclosureGroup("Advanced", isExpanded: $showAdvanced) {
                     TextField("wss://host:port/v1/ws", text: $endpoint)
-                        .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        #endif
                     TextField("Device ID", text: $deviceId)
-                        .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        #endif
                     SecureField("Device token", text: $deviceToken)
                     Button {
                         Task { await connectRaw() }
@@ -130,7 +137,7 @@ struct T4ConnectView: View {
 
     private func pairAndConnect() async {
         guard let url = pairEndpoint() else { return }
-        let name = UIDevice.current.name
+        let name = platformDeviceName()
         await store.pairAndConnect(endpoint: url, code: trimmedCode, deviceName: name)
         if store.connected { dismiss() }
     }

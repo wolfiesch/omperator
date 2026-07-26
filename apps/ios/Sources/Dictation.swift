@@ -31,11 +31,13 @@ final class Dictation: ObservableObject {
 
     private func begin() {
         guard let recognizer, recognizer.isAvailable else { return }
+        #if os(iOS)
         let session = AVAudioSession.sharedInstance()
         do {
             try session.setCategory(.record, mode: .measurement, options: .duckOthers)
             try session.setActive(true, options: .notifyOthersOnDeactivation)
         } catch { return }
+        #endif
 
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
@@ -70,7 +72,9 @@ final class Dictation: ObservableObject {
         task = nil
         request = nil
         recording = false
+        #if os(iOS)
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        #endif
     }
 
     private func teardown() {

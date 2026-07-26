@@ -152,7 +152,9 @@ struct T4WorkspaceView: View {
                 }
             }
             .navigationTitle(store.selectedSession?.title ?? "T4 Code")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button { toggleRail() } label: {
@@ -270,8 +272,12 @@ struct T4WorkspaceView: View {
                     closeRail()
                 }
                 .navigationTitle("T4 Code")
+                #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
                 .searchable(text: $store.query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search sessions")
+                #else
+                .searchable(text: $store.query, placement: .toolbar, prompt: "Search sessions")
+                #endif
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
                         Button { theme.toggle() } label: {
