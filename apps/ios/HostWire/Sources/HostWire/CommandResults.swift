@@ -834,6 +834,63 @@ public struct ArtifactReadChunk: Decodable, Equatable, Sendable {
     }
 }
 
+// MARK: - Preview capture read
+
+/// `preview.capture.read` result (command.ts `decodePreviewCaptureReadResult`):
+/// one canonical base64 chunk of a preview capture's bytes. `content` is
+/// standard base64; `complete` agrees with `nextOffset == size`; while
+/// incomplete the read must advance (`nextOffset > offset`). The host bounds
+/// chunks to `Limits.previewCaptureChunkBytes` and total size to
+/// `Limits.previewCaptureMaxBytes`. The caller concatenates chunks in offset
+/// order and sha256-verifies against the `PreviewCaptureMetadata`.
+public struct PreviewCaptureReadResult: Decodable, Equatable, Sendable {
+    public let previewId: PreviewId
+    public let captureId: PreviewCaptureId
+    public let size: Int
+    public let offset: Int
+    public let nextOffset: Int
+    public let complete: Bool
+    public let content: String
+
+    private enum CodingKeys: String, CodingKey {
+        case previewId, captureId, size, offset, nextOffset, complete, content
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        previewId = try IDs.opaque(try c.decode(String.self, forKey: .previewId), path: "result.previewId")
+        captureId = try IDs.opaque(try c.decode(String.self, forKey: .captureId), path: "result.captureId")
+        let s = try Bounded.seq(try c.decode(Int.self, forKey: .size), path: "result.size")
+        if s == 0 || s > Limits.previewCaptureMaxBytes {
+            throw T4WireError.bounds(path: "result.size", reason: "preview capture size exceeds limit")
+        }
+        size = s
+        let off = try Bounded.seq(try c.decode(Int.self, forKey: .offset), path: "result.offset")
+        let next = try Bounded.seq(try c.decode(Int.self, forKey: .nextOffset), path: "result.nextOffset")
+        if off > next || next > s {
+            throw T4WireError.invalidFrame(path: "result", reason: "preview capture offsets are invalid")
+        }
+        offset = off
+        nextOffset = next
+        let comp = try c.decode(Bool.self, forKey: .complete)
+        if comp != (next == s) {
+            throw T4WireError.invalidFrame(path: "result.complete", reason: "preview capture completion disagrees with offsets")
+        }
+        if !comp && next == off {
+            throw T4WireError.invalidFrame(path: "result.nextOffset", reason: "preview capture read must advance while incomplete")
+        }
+        complete = comp
+        content = try Bounded.controlFree(try c.decode(String.self, forKey: .content), path: "result.content", maxBytes: Limits.previewCaptureChunkBytes * 2)
+    }
+
+    /// Decode the base64 `content` into raw bytes. Returns nil if the content
+    /// is not canonical base64 (defensive — the host validates this, but the
+    /// client may be paired with an older host).
+    public var decodedBytes: Data? {
+        Data(base64Encoded: content)
+    }
+}
+
 // MARK: - Review read
 
 /// `review.read` result (command.ts: the decoder is the generic `result`, so

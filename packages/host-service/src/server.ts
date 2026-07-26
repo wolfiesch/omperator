@@ -33,6 +33,12 @@ import {
 	projectId,
 	type ProjectId,
 	type ResultFrame,
+	type PreviewAction,
+	type PreviewCaptureId,
+	type PreviewId,
+	type PreviewSnapshot,
+	previewCaptureId,
+	previewId,
 	requiredCapability,
 	revision as wireRevision,
 	type ServerFrame,
@@ -140,6 +146,8 @@ import type {
 	SessionLockStatus,
 	SessionRecord,
 } from "./types.ts";
+import { PreviewService, createPreviewChromiumResolver } from "./preview/index.ts";
+import { PreviewServiceError } from "./preview/types.ts";
 import { type WorkspaceAuthority, WorkspaceAuthorityError, type WorkspaceRecord } from "./workspace-authority.ts";
 
 const clock: Clock = { now: () => new Date() };
@@ -833,6 +841,7 @@ export function appserverSupportedFeatures(
 		| "workspaceAuthority"
 		| "workspaceTargetPathForProject"
 		| "sessionAuthority"
+		| "previewAuthority"
 	> & { readonly remotePolicy?: AppserverOptions["remotePolicy"] },
 	includeRemotePolicy = false,
 ): string[] {
@@ -864,6 +873,7 @@ export function appserverSupportedFeatures(
 	if (options.transcriptSearchAuthority) implementedFeatures.add("transcript.search");
 	if (!includeRemotePolicy && options.projectRootForProject && options.projectRevealer)
 		implementedFeatures.add("project.reveal");
+	if (options.previewAuthority?.enabled === true) implementedFeatures.add("preview.control");
 	if (authority?.catalogGet) implementedFeatures.add("catalog.metadata");
 	if (authority?.settingsRead) implementedFeatures.add("settings.metadata");
 	if (authority?.termOpen && authority.terminalInput && authority.terminalResize && authority.terminalClose)
@@ -877,7 +887,7 @@ export function appserverSupportedFeatures(
 	);
 }
 export function appserverSupportedCapabilities(
-	options: Pick<AppserverOptions, "operationsAuthority" | "supportedCapabilities" | "usageAuthority">,
+	options: Pick<AppserverOptions, "operationsAuthority" | "supportedCapabilities" | "usageAuthority" | "previewAuthority">,
 ): string[] {
 	const implemented = new Set([
 		"sessions.read",
@@ -888,6 +898,11 @@ export function appserverSupportedCapabilities(
 		...operationCapabilities(options.operationsAuthority),
 	]);
 	if (options.usageAuthority?.read) implemented.add("usage.read");
+	if (options.previewAuthority?.enabled === true) {
+		implemented.add("preview.read");
+		implemented.add("preview.control");
+		implemented.add("preview.input");
+	}
 	return [...(options.supportedCapabilities ?? implemented)];
 }
 export class LocalAppserver implements AppserverHandle {
@@ -906,6 +921,7 @@ export class LocalAppserver implements AppserverHandle {
 	#imageUploads: ImageUploadStore;
 	#transcriptImages?: TranscriptImageReader;
 	#artifacts = new ArtifactReader();
+	#previewService?: PreviewService;
 	#lockCheck: LockCheckHook;
 	#observerIndependentTerminalOperations: boolean;
 	#ringSize: number;
@@ -1155,6 +1171,18 @@ export class LocalAppserver implements AppserverHandle {
 		this.#handlers.register("session.restore", command => this.handleRestore(command));
 		this.#handlers.register("session.delete", command => this.handleDelete(command));
 		this.#handlers.register("session.mode.set", command => this.handleModeSet(command));
+		if (options.previewAuthority?.enabled === true) {
+			this.#previewService = new PreviewService({
+				chromiumResolver: options.previewAuthority?.chromiumResolver ?? createPreviewChromiumResolver(),
+				...(options.previewAuthority?.maxConcurrent !== undefined
+					? { maxConcurrent: options.previewAuthority.maxConcurrent }
+					: {}),
+				...(options.previewAuthority?.idleTimeoutMs !== undefined
+					? { idleTimeoutMs: options.previewAuthority.idleTimeoutMs }
+					: {}),
+			});
+			this.registerPreviewHandlers();
+		}
 	}
 	/** Structured event sink; no-op when no logger is configured. Never throws. */
 	#log(event: string, fields?: Record<string, unknown>): void {
@@ -1472,6 +1500,7 @@ export class LocalAppserver implements AppserverHandle {
 			this.#transcriptImages?.clear();
 			await this.#transcriptSearch?.close();
 		await this.#imageUploads.stop();
+		await this.#previewService?.stop().catch(() => undefined);
 		await this.#logger?.flush().catch(() => undefined);
 		}
 	}
@@ -3112,6 +3141,7 @@ export class LocalAppserver implements AppserverHandle {
 			this.#closedSessions.add(sessionId);
 			await this.#imageUploads.cleanupSession(sessionId);
 			const pending = this.#startPromises.get(sessionId);
+			await this.#previewService?.closeSession(sessionId).catch(() => undefined);
 			if (pending) await pending.catch(() => undefined);
 			supervisor = this.#supervisors.get(sessionId);
 			if (!(await this.quiesceSessionRuntime(sessionId))) {
@@ -3529,6 +3559,340 @@ export class LocalAppserver implements AppserverHandle {
 			};
 		} finally {
 			this.#lifecycleMutations.delete(sessionId);
+		}
+	}
+	private registerPreviewHandlers(): void {
+		const svc = this.#previewService!;
+		this.#handlers.register("preview.launch", command => this.handlePreviewLaunch(command));
+		this.#handlers.register("preview.state", command => this.handlePreviewState(command));
+		this.#handlers.register("preview.activate", command => this.handlePreviewActivate(command));
+		this.#handlers.register("preview.navigate", command => this.handlePreviewNavigate(command));
+		this.#handlers.register("preview.back", command => this.handlePreviewBack(command));
+		this.#handlers.register("preview.forward", command => this.handlePreviewForward(command));
+		this.#handlers.register("preview.reload", command => this.handlePreviewReload(command));
+		this.#handlers.register("preview.close", command => this.handlePreviewClose(command));
+		this.#handlers.register("preview.capture", command => this.handlePreviewCapture(command));
+		this.#handlers.register("preview.capture.read", command => this.handlePreviewCaptureRead(command));
+		this.#handlers.register("preview.click", command => this.handlePreviewClick(command));
+		this.#handlers.register("preview.fill", command => this.handlePreviewFill(command));
+		this.#handlers.register("preview.scroll", command => this.handlePreviewScroll(command));
+		this.#handlers.register("preview.type", command => this.handlePreviewType(command));
+		this.#handlers.register("preview.select", command => this.handlePreviewSelect(command));
+		this.#handlers.register("preview.press", command => this.handlePreviewPress(command));
+		this.#handlers.register("preview.upload", command => this.handlePreviewUpload(command));
+		this.#handlers.register("preview.policy.check", command => this.handlePreviewPolicyCheck(command));
+		this.#handlers.register("preview.lease.acquire", command => this.handlePreviewLeaseAcquire(command));
+		this.#handlers.register("preview.lease.renew", command => this.handlePreviewLeaseRenew(command));
+		this.#handlers.register("preview.lease.release", command => this.handlePreviewLeaseRelease(command));
+		this.#handlers.register("preview.handoff", command => this.handlePreviewHandoff(command));
+		void svc;
+	}
+	private previewError(command: CommandFrame, error: unknown): CommandOutcome {
+		if (error instanceof PreviewServiceError)
+			return {
+				frame: response(this.hostId, command, false, undefined, { code: error.code, message: error.message }),
+			};
+		return {
+			frame: response(this.hostId, command, false, undefined, {
+				code: "preview_failed",
+				message: error instanceof Error ? error.message : "preview operation failed",
+			}),
+		};
+	}
+	private async handlePreviewLaunch(command: CommandFrame): Promise<CommandOutcome> {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const snapshot = await this.#previewService!.launch({
+				sessionId: command.sessionId!,
+				url: args.url as string,
+				...(args.authorityId !== undefined ? { authorityId: args.authorityId as string } : {}),
+			});
+			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private async handlePreviewState(command: CommandFrame): Promise<CommandOutcome> {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const result = await this.#previewService!.state({
+				sessionId: command.sessionId!,
+				...(args.previewId !== undefined ? { previewId: previewId(args.previewId) } : {}),
+			});
+			return { frame: response(this.hostId, command, true, result) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private async handlePreviewActivate(command: CommandFrame): Promise<CommandOutcome> {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const snapshot = await this.#previewService!.activate({
+				sessionId: command.sessionId!,
+				previewId: previewId(args.previewId),
+				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
+			});
+			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private async handlePreviewNavigate(command: CommandFrame): Promise<CommandOutcome> {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const snapshot = await this.#previewService!.navigate({
+				sessionId: command.sessionId!,
+				previewId: previewId(args.previewId),
+				url: args.url as string,
+				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
+			});
+			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private async handlePreviewBack(command: CommandFrame): Promise<CommandOutcome> {
+		return this.handlePreviewNavigation(command, (args, sessionId) =>
+			this.#previewService!.back({
+				sessionId,
+				previewId: previewId(args.previewId),
+				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
+			}),
+		);
+	}
+	private async handlePreviewForward(command: CommandFrame): Promise<CommandOutcome> {
+		return this.handlePreviewNavigation(command, (args, sessionId) =>
+			this.#previewService!.forward({
+				sessionId,
+				previewId: previewId(args.previewId),
+				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
+			}),
+		);
+	}
+	private async handlePreviewReload(command: CommandFrame): Promise<CommandOutcome> {
+		return this.handlePreviewNavigation(command, (args, sessionId) =>
+			this.#previewService!.reload({
+				sessionId,
+				previewId: previewId(args.previewId),
+				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
+			}),
+		);
+	}
+	private async handlePreviewClose(command: CommandFrame): Promise<CommandOutcome> {
+		return this.handlePreviewNavigation(command, (args, sessionId) =>
+			this.#previewService!.close({
+				sessionId,
+				previewId: previewId(args.previewId),
+				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
+			}),
+		);
+	}
+	private async handlePreviewCapture(command: CommandFrame): Promise<CommandOutcome> {
+		return this.handlePreviewNavigation(command, (args, sessionId) =>
+			this.#previewService!.capture({
+				sessionId,
+				previewId: previewId(args.previewId),
+				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
+			}),
+		);
+	}
+	private handlePreviewCaptureRead(command: CommandFrame): CommandOutcome {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const result = this.#previewService!.captureRead({
+				sessionId: command.sessionId!,
+				previewId: previewId(args.previewId),
+				captureId: previewCaptureId(args.captureId),
+				offset: args.offset as number,
+			});
+			return { frame: response(this.hostId, command, true, result) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private async handlePreviewClick(command: CommandFrame): Promise<CommandOutcome> {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const snapshot = await this.#previewService!.click({
+				sessionId: command.sessionId!,
+				previewId: previewId(args.previewId),
+				...(args.selector !== undefined ? { selector: args.selector as string } : {}),
+				...(args.x !== undefined ? { x: args.x as number } : {}),
+				...(args.y !== undefined ? { y: args.y as number } : {}),
+				...(args.button !== undefined ? { button: args.button as "left" | "middle" | "right" } : {}),
+				...(args.clickCount !== undefined ? { clickCount: args.clickCount as number } : {}),
+				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
+			});
+			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private async handlePreviewFill(command: CommandFrame): Promise<CommandOutcome> {
+		return this.handlePreviewTextInput(command, (args, sessionId) =>
+			this.#previewService!.fill({
+				sessionId,
+				previewId: previewId(args.previewId),
+				selector: args.selector as string,
+				text: args.text as string,
+				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
+			}),
+		);
+	}
+	private async handlePreviewType(command: CommandFrame): Promise<CommandOutcome> {
+		return this.handlePreviewTextInput(command, (args, sessionId) =>
+			this.#previewService!.type({
+				sessionId,
+				previewId: previewId(args.previewId),
+				text: args.text as string,
+				...(args.selector !== undefined ? { selector: args.selector as string } : {}),
+				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
+			}),
+		);
+	}
+	private async handlePreviewScroll(command: CommandFrame): Promise<CommandOutcome> {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const snapshot = await this.#previewService!.scroll({
+				sessionId: command.sessionId!,
+				previewId: previewId(args.previewId),
+				deltaX: args.deltaX as number,
+				deltaY: args.deltaY as number,
+				...(args.selector !== undefined ? { selector: args.selector as string } : {}),
+				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
+			});
+			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private async handlePreviewSelect(command: CommandFrame): Promise<CommandOutcome> {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const snapshot = await this.#previewService!.selectOption({
+				sessionId: command.sessionId!,
+				previewId: previewId(args.previewId),
+				selector: args.selector as string,
+				value: args.value as string,
+				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
+			});
+			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private async handlePreviewPress(command: CommandFrame): Promise<CommandOutcome> {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const snapshot = await this.#previewService!.press({
+				sessionId: command.sessionId!,
+				previewId: previewId(args.previewId),
+				key: args.key as string,
+				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
+			});
+			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private async handlePreviewUpload(command: CommandFrame): Promise<CommandOutcome> {
+		return this.previewError(command, new PreviewServiceError("unsupported", "preview upload is not yet implemented"));
+	}
+	private handlePreviewPolicyCheck(command: CommandFrame): CommandOutcome {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const result = this.#previewService!.policyCheck({
+				action: args.action as PreviewAction,
+				...(args.previewId !== undefined ? { previewId: previewId(args.previewId) } : {}),
+				...(args.url !== undefined ? { url: args.url as string } : {}),
+				...(args.authorityId !== undefined ? { authorityId: args.authorityId as string } : {}),
+			});
+			return { frame: response(this.hostId, command, true, result) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private handlePreviewLeaseAcquire(command: CommandFrame): CommandOutcome {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const result = this.#previewService!.leaseAcquire({
+				sessionId: command.sessionId!,
+				previewId: previewId(args.previewId),
+				...(args.ttlMs !== undefined ? { ttlMs: args.ttlMs as number } : {}),
+			});
+			return { frame: response(this.hostId, command, true, result) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private handlePreviewLeaseRenew(command: CommandFrame): CommandOutcome {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const result = this.#previewService!.leaseRenew({
+				sessionId: command.sessionId!,
+				previewId: previewId(args.previewId),
+				leaseId: args.leaseId as never,
+				...(args.ttlMs !== undefined ? { ttlMs: args.ttlMs as number } : {}),
+			});
+			return { frame: response(this.hostId, command, true, result) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private handlePreviewLeaseRelease(command: CommandFrame): CommandOutcome {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const result = this.#previewService!.leaseRelease({
+				sessionId: command.sessionId!,
+				previewId: previewId(args.previewId),
+				leaseId: args.leaseId as never,
+			});
+			return { frame: response(this.hostId, command, true, result) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private async handlePreviewHandoff(command: CommandFrame): Promise<CommandOutcome> {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const snapshot = await this.#previewService!.handoff({
+				sessionId: command.sessionId!,
+				previewId: previewId(args.previewId),
+				message: args.message as string,
+				...(args.mode !== undefined ? { mode: args.mode as "manual" | "selector" | "url" | "text" } : {}),
+				...(args.selector !== undefined ? { selector: args.selector as string } : {}),
+				...(args.urlSubstring !== undefined ? { urlSubstring: args.urlSubstring as string } : {}),
+				...(args.text !== undefined ? { text: args.text as string } : {}),
+				...(args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs as number } : {}),
+				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
+			});
+			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private async handlePreviewNavigation(
+		command: CommandFrame,
+		action: (args: Record<string, unknown>, sessionId: SessionId) => Promise<PreviewSnapshot>,
+	): Promise<CommandOutcome> {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const snapshot = await action(args, command.sessionId!);
+			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private async handlePreviewTextInput(
+		command: CommandFrame,
+		action: (args: Record<string, unknown>, sessionId: SessionId) => Promise<PreviewSnapshot>,
+	): Promise<CommandOutcome> {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const snapshot = await action(args, command.sessionId!);
+			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
+		} catch (error) {
+			return this.previewError(command, error);
 		}
 	}
 	private finish(

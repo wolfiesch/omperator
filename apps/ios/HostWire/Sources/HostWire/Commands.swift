@@ -83,6 +83,13 @@ public enum Commands {
         "review.read":          .init(capability: .filesRead,     scope: .session, revision: .optional, confirmation: .none),
         "settings.read":        .init(capability: .configRead,    scope: .host,    revision: .none,     confirmation: .none),
         "settings.write":       .init(capability: .configWrite,   scope: .host,    revision: .required, confirmation: .challenge),
+        // Preview commands (host-wire/src/command.ts COMMAND_DESCRIPTORS).
+        // preview.launch is preview.control (start a preview for a URL);
+        // preview.capture triggers a screenshot (preview.read); preview.
+        // capture.read streams one base64 chunk of the capture bytes.
+        "preview.launch":       .init(capability: .previewControl, scope: .session, revision: .optional, confirmation: .none),
+        "preview.capture":      .init(capability: .previewRead,    scope: .session, revision: .optional, confirmation: .none),
+        "preview.capture.read": .init(capability: .previewRead,    scope: .session, revision: .none,     confirmation: .none),
     ]
 
     public static func descriptor(for command: String) -> CommandDescriptor? {
@@ -326,6 +333,34 @@ extension ResultFrame {
         }
         let data = try JSONEncoder().encode(result)
         return try JSONDecoder().decode(ArtifactReadChunk.self, from: data)
+    }
+
+    /// Decode a preview mutation result body (`{preview: PreviewSnapshot}`) —
+    /// the shape returned by `preview.launch`/`preview.capture`/`preview.
+    /// navigate`/`preview.back`/`preview.forward`/`preview.reload`/`preview.
+    /// close`/`preview.activate`. The snapshot carries the `previewId` and,
+    /// for `preview.capture`, the `capture` metadata the caller reassembles
+    /// via `preview.capture.read`.
+    public func previewMutationResult() throws -> PreviewSnapshot {
+        guard ok, let result else {
+            throw T4WireError.invalidFrame(path: "result", reason: "response has no result")
+        }
+        guard case .object(let o) = result, let preview = o["preview"] else {
+            throw T4WireError.invalidFrame(path: "result", reason: "response has no preview snapshot")
+        }
+        let data = try JSONEncoder().encode(preview)
+        return try JSONDecoder().decode(PreviewSnapshot.self, from: data)
+    }
+
+    /// Decode a `preview.capture.read` result body (one base64 chunk of the
+    /// capture bytes). The caller loops, advancing `offset` to `nextOffset`,
+    /// until `complete` is true.
+    public func previewCaptureReadResult() throws -> PreviewCaptureReadResult {
+        guard ok, let result else {
+            throw T4WireError.invalidFrame(path: "result", reason: "response has no result")
+        }
+        let data = try JSONEncoder().encode(result)
+        return try JSONDecoder().decode(PreviewCaptureReadResult.self, from: data)
     }
 
     /// Decode a `settings.read` result body (SettingsReadResult).

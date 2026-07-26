@@ -66,6 +66,30 @@ final class T4SessionStore: ObservableObject {
         var detail: String?
         var id: String { agentId }
     }
+    /// One host preview capture, surfaced as a transcript image row. `image`
+    /// is nil until the chunked `preview.capture.read` fetch resolves; the
+    /// browser pane and transcript render the row once it is set. Keyed by
+    /// `captureId` so re-arriving frames for the same capture update in place.
+    struct PreviewCaptureRow: Identifiable, Equatable {
+        let captureId: String
+        let previewId: String
+        let mimeType: String
+        let width: Int
+        let height: Int
+        let capturedAt: Int
+        var image: PlatformImage?
+        var id: String { captureId }
+
+        init(metadata: PreviewCaptureMetadata, previewId: String, image: PlatformImage? = nil) {
+            self.captureId = metadata.captureId
+            self.previewId = previewId
+            self.mimeType = metadata.mimeType.rawValue
+            self.width = metadata.width
+            self.height = metadata.height
+            self.capturedAt = metadata.capturedAt
+            self.image = image
+        }
+    }
     /// Host version/identity snapshot captured from the WelcomeFrame on
     /// connect (hostId, ompVersion, appserverVersion). Shown in the Settings
     /// pane's Host section; nil while disconnected.
@@ -205,6 +229,23 @@ final class T4SessionStore: ObservableObject {
     /// The artifacts pane taps a descriptor to load+preview content; the
     /// first chunk (offset 0) is enough for inline text/patch previews.
     @Published private(set) var artifactChunks: [String: ArtifactReadChunk] = [:]
+    /// Latest preview id per session, tracked from `preview.launch`/`state`/
+    /// `navigation`/`capture` push frames and the `preview.launch` command
+    /// result. `previewCapture(sessionId:previewId:)` uses this when no
+    /// explicit previewId is given; the browser pane's Capture button is
+    /// enabled while a preview is tracked.
+    @Published private(set) var previewIdBySession: [String: String] = [:]
+    /// Decoded capture images by captureId, populated by `previewCapture`
+    /// (the Capture button) and by the async fetch kicked off when a
+    /// `preview.capture` push frame arrives. The browser pane renders the
+    /// latest one full-fit; transcript capture rows look their image up here
+    /// by `data.captureId`.
+    @Published private(set) var previewCaptureImages: [String: PlatformImage] = [:]
+    /// Ordered capture rows per session — one per `preview.capture` push
+    /// frame or explicit `preview.capture` command. Each carries the capture
+    /// metadata plus the decoded image once the chunked fetch resolves. The
+    /// browser pane and transcript render these as image rows.
+    @Published private(set) var previewCaptureRowsBySession: [String: [PreviewCaptureRow]] = [:]
 
     /// True once a live host has spoken (refresh or push). Drives the boot
     /// splash: saved-connection devices see "Connecting…", not fake chat.
@@ -1103,10 +1144,14 @@ final class T4SessionStore: ObservableObject {
     // The browser pane (T4BrowserPane) renders any http(s) URL directly in a
     // WKWebView — it needs no host support. When the host DOES offer previews
     // (capability preview.control/preview.read), `openPreview` opportunistically
-    // fires `preview.launch {url}` via the controller-lease path so the host's
-    // own preview pipeline (captures, navigation state) tracks the same URL.
-    // If the host lacks preview support, `preview.launch` errors and we no-op
-    // gracefully — the pane keeps rendering the URL directly regardless.
+    // fires `preview.launch {url}` so the host's own preview pipeline (captures,
+    // navigation state) tracks the same URL, and records the returned previewId
+    // so the pane's Capture button can fire `preview.capture`. If the host lacks
+    // preview support, `preview.launch` errors and we no-op gracefully — the
+    // pane keeps rendering the URL directly regardless. `previewCapture`
+    // triggers a capture and reassembles its chunked bytes into a PlatformImage;
+    // `preview.capture` push frames (observe()) flow into the transcript as
+    // image rows and auto-fetch their bytes.
 
     /// The default URL a session's browser opens to when none is persisted.
     /// A dev server on localhost:3000 is the common case for T4 sessions.
@@ -1124,17 +1169,178 @@ final class T4SessionStore: ObservableObject {
     }
 
     /// Opportunistically ask the host to launch a preview for `url`
-    /// (preview.launch, controller lease). No-op when not connected or when
-    /// the host lacks preview support — the pane renders the URL directly in
-    /// WKWebView regardless of the outcome here. A failure is expected for
-    /// unsupported hosts and is swallowed (lastError is preserved) so an
-    /// unsupported preview never surfaces a spurious error to the user.
+    /// (preview.launch). No-op when not connected or when the host lacks
+    /// preview support — the pane renders the URL directly in WKWebView
+    /// regardless of the outcome here. A failure is expected for unsupported
+    /// hosts and is swallowed (lastError is preserved) so an unsupported
+    /// preview never surfaces a spurious error to the user. On success the
+    /// returned previewId is recorded in `previewIdBySession` so the Capture
+    /// button can target it.
     func openPreview(sessionId: String, url: String) async {
         guard let client, connected, !hostId.isEmpty else { return }
         let priorError = lastError
-        let ok = await control(sessionId: sessionId, command: "preview.launch",
-                               args: ["url": .string(url)])
-        if !ok { lastError = priorError }
+        do {
+            let result = try await client.sendCommand(CommandIntent(
+                hostId: hostId, command: "preview.launch",
+                args: ["url": .string(url)], sessionId: sessionId))
+            let snapshot = try result.previewMutationResult()
+            previewIdBySession[sessionId] = snapshot.previewId
+        } catch {
+            // Unsupported hosts (no preview.control capability) error here —
+            // swallow so the pane keeps rendering the URL directly. Preserve
+            // the prior error so a preview failure never surfaces a spurious
+            // error to the user.
+            lastError = priorError
+        }
+    }
+
+    /// Capture a preview screenshot and reassemble its bytes into a platform
+    /// image. Sends `preview.capture` (which triggers a capture and returns
+    /// the snapshot + capture metadata), then streams the bytes via repeated
+    /// `preview.capture.read` calls (≤256KiB base64 chunks, ordered by
+    /// offset) until `complete`. The reassembled bytes are sha256-verified
+    /// against the metadata, decoded to a `PlatformImage`, cached by
+    /// captureId, and appended as a transcript capture row. `previewId`
+    /// defaults to the session's latest tracked preview. Returns nil when not
+    /// connected, the host lacks preview support, or the bytes fail to decode
+    /// (lastError is set).
+    @discardableResult
+    func previewCapture(sessionId: String, previewId: String? = nil) async -> PlatformImage? {
+        guard let client, connected, !hostId.isEmpty else {
+            lastError = "Not connected to a host."
+            return nil
+        }
+        let pid = previewId ?? previewIdBySession[sessionId]
+        guard let pid else {
+            lastError = "No preview available for this session."
+            return nil
+        }
+        do {
+            let result = try await client.sendCommand(CommandIntent(
+                hostId: hostId, command: "preview.capture",
+                args: ["previewId": .string(pid)], sessionId: sessionId))
+            let snapshot = try result.previewMutationResult()
+            previewIdBySession[sessionId] = snapshot.previewId
+            guard let meta = snapshot.capture else {
+                lastError = "Preview returned no capture."
+                return nil
+            }
+            recordCapture(sessionId: sessionId, metadata: meta, previewId: snapshot.previewId)
+            return await fetchCaptureBytes(sessionId: sessionId, previewId: snapshot.previewId, metadata: meta)
+        } catch {
+            t4log.error("preview.capture failed: \(error)")
+            lastError = "\(error)"
+            return nil
+        }
+    }
+
+    /// The latest decoded capture image for a session (the browser pane's
+    /// Capture view renders this), or nil when no capture has resolved yet.
+    func latestCaptureImage(for sessionId: String) -> PlatformImage? {
+        guard let row = previewCaptureRowsBySession[sessionId]?.last else { return nil }
+        return row.image ?? previewCaptureImages[row.captureId]
+    }
+
+    /// Record a capture as it arrives: append a transcript image row (so
+    /// captures flow into the transcript) and a capture row (image pending).
+    /// Idempotent per captureId — re-arriving frames update in place.
+    private func recordCapture(sessionId: String, metadata: PreviewCaptureMetadata, previewId: String) {
+        upsertCaptureRow(sessionId: sessionId, metadata: metadata, previewId: previewId, image: nil)
+        appendCaptureTranscriptRow(sessionId: sessionId, metadata: metadata, previewId: previewId)
+    }
+
+    /// Insert or update the capture row for a session (keyed by captureId).
+    /// When the image resolves, the matching row's `image` is set so the
+    /// transcript / pane render pixels.
+    private func upsertCaptureRow(sessionId: String, metadata: PreviewCaptureMetadata, previewId: String, image: PlatformImage?) {
+        var rows = previewCaptureRowsBySession[sessionId] ?? []
+        if let index = rows.firstIndex(where: { $0.captureId == metadata.captureId }) {
+            rows[index].image = image
+        } else {
+            rows.append(PreviewCaptureRow(metadata: metadata, previewId: previewId, image: image))
+        }
+        previewCaptureRowsBySession[sessionId] = rows
+    }
+
+    /// Append a synthetic `preview-capture` transcript entry for a capture so
+    /// it flows into the transcript as an image row. The entry's `data`
+    /// carries `captureId`/`previewId`/`mimeType`/`width`/`height`; the
+    /// transcript view renders the image by looking up `data.captureId` in
+    /// `previewCaptureImages`. Idempotent per captureId (de-duped by id).
+    private func appendCaptureTranscriptRow(sessionId: String, metadata: PreviewCaptureMetadata, previewId: String) {
+        let entryId = metadata.captureId
+        let payload: JSONValue = .object([
+            "id": .string(entryId),
+            "hostId": .string(hostId),
+            "sessionId": .string(sessionId),
+            "kind": .string("preview-capture"),
+            "timestamp": .string("\(metadata.capturedAt)"),
+            "data": .object([
+                "captureId": .string(metadata.captureId),
+                "previewId": .string(previewId),
+                "mimeType": .string(metadata.mimeType.rawValue),
+                "width": .number(Double(metadata.width)),
+                "height": .number(Double(metadata.height)),
+            ]),
+        ])
+        guard let data = try? JSONEncoder().encode(payload),
+              let entry = try? TranscriptEntry.decode(data) else { return }
+        var entries = liveEntries[sessionId] ?? []
+        if !entries.contains(where: { $0.id == entryId }) {
+            entries.append(entry)
+            liveEntries[sessionId] = entries
+        }
+    }
+
+    /// Stream a capture's bytes via `preview.capture.read` (ordered chunks) and
+    /// reassemble into a `PlatformImage`. Verifies the sha256 digest, decodes
+    /// the bytes, caches the image by captureId, and updates the session's
+    /// capture row. Returns nil on a bounds/hash/decode mismatch (lastError
+    /// is set).
+    private func fetchCaptureBytes(sessionId: String, previewId: String, metadata: PreviewCaptureMetadata) async -> PlatformImage? {
+        guard let client else { return nil }
+        do {
+            var bytes = Data()
+            bytes.reserveCapacity(metadata.size)
+            var offset = 0
+            while offset < metadata.size {
+                let result = try await client.sendCommand(CommandIntent(
+                    hostId: hostId, command: "preview.capture.read",
+                    args: ["previewId": .string(previewId),
+                           "captureId": .string(metadata.captureId),
+                           "offset": .number(Double(offset))],
+                    sessionId: sessionId))
+                let chunk = try result.previewCaptureReadResult()
+                guard chunk.previewId == previewId, chunk.captureId == metadata.captureId,
+                      chunk.offset == offset, chunk.size == metadata.size else {
+                    throw T4WireError.invalidFrame(path: "result", reason: "preview capture chunk identity or offset mismatch")
+                }
+                guard let part = chunk.decodedBytes, part.count == chunk.nextOffset - offset else {
+                    throw T4WireError.invalidFrame(path: "result.content", reason: "preview capture chunk size mismatch")
+                }
+                bytes.append(part)
+                offset = chunk.nextOffset
+            }
+            guard bytes.count == metadata.size else {
+                throw T4WireError.bounds(path: "result", reason: "preview capture size mismatch")
+            }
+            let digest = SHA256.hash(data: bytes)
+            let hex = digest.map { String(format: "%02x", $0) }.joined()
+            guard hex == metadata.sha256 else {
+                throw T4WireError.invalidFrame(path: "capture.sha256", reason: "preview capture hash mismatch")
+            }
+            guard let image = platformImage(data: bytes) else {
+                lastError = "Preview capture bytes did not decode to an image."
+                return nil
+            }
+            previewCaptureImages[metadata.captureId] = image
+            upsertCaptureRow(sessionId: sessionId, metadata: metadata, previewId: previewId, image: image)
+            return image
+        } catch {
+            t4log.error("preview.capture.read failed: \(error)")
+            lastError = "\(error)"
+            return nil
+        }
     }
 
     // MARK: - Panes data
@@ -1490,6 +1696,22 @@ final class T4SessionStore: ObservableObject {
             // (reviewsBySession is declared in the Panes data MARK section.)
             case .review(let r):
                 reviewsBySession[r.sessionId, default: []].append(r)
+            // Preview frames: track the latest previewId per session from
+            // launch/state/navigation/capture, and on a capture frame record
+            // the capture (transcript image row + capture row) and kick off
+            // the chunked byte fetch so the image resolves asynchronously.
+            case .previewLaunch(let f):
+                previewIdBySession[f.sessionId] = f.previewId
+            case .previewState(let f):
+                previewIdBySession[f.sessionId] = f.previewId
+            case .previewNavigation(let f):
+                previewIdBySession[f.sessionId] = f.previewId
+            case .previewCapture(let f):
+                previewIdBySession[f.sessionId] = f.previewId
+                recordCapture(sessionId: f.sessionId, metadata: f.capture, previewId: f.previewId)
+                Task { await fetchCaptureBytes(sessionId: f.sessionId, previewId: f.previewId, metadata: f.capture) }
+            case .previewError(let f):
+                t4log.notice("preview error \(f.code, privacy: .public): \(f.message, privacy: .public)")
             default:
                 break
             }

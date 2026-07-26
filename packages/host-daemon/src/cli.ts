@@ -456,6 +456,7 @@ export async function runHostDaemon(
             },
           }
         : {}),
+      previewAuthority: { enabled: true },
     };
     let appserver: AppserverHandle;
     try {

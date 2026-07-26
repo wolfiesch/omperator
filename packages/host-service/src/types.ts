@@ -242,6 +242,18 @@ export interface AppserverTestControl {
 	cleanup(runId: string): Promise<AppserverTestControlStatus>;
 }
 
+/** Configuration for the host-side headless preview service. */
+export interface PreviewAuthority {
+	/** When false, the preview service is disabled. Defaults to true. */
+	readonly enabled?: boolean;
+	/** Maximum concurrent browser contexts. Defaults to 2. */
+	readonly maxConcurrent?: number;
+	/** Idle timeout in ms before a preview's browser is closed. Defaults to 10 min. */
+	readonly idleTimeoutMs?: number;
+	/** Override the chromium resolver (e.g. with a pre-staged path for tests). */
+	readonly chromiumResolver?: () => Promise<{ readonly path: string; readonly browserVersion: string }>;
+}
+
 export interface AppserverOptions {
 	hostId?: HostId;
 	/** Persistent host identity path. Omitted to preserve the default OMP identity location. */
@@ -312,6 +324,8 @@ export interface AppserverOptions {
 	admin?: AppserverAdminCallbacks;
 	/** Local-UDS-only deterministic integration control. Omitted outside explicit test mode. */
 	testControl?: AppserverTestControl;
+	/** When set, the host runs a headless Chromium preview service for remote clients. */
+	previewAuthority?: PreviewAuthority;
 }
 export interface AppserverDrainBusy {
 	readonly connections: number;

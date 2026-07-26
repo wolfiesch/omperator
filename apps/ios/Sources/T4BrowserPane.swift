@@ -46,6 +46,11 @@ struct T4BrowserPane: View {
     /// Incremented on each back/forward/reload tap; `action` names which.
     @State private var action: T4BrowserAction = .reload
     @State private var actionToken = 0
+    /// The latest decoded capture image (from `store.previewCapture`), shown
+    /// full-fit in place of the webview while `showingCapture` is true.
+    @State private var captureImage: PlatformImage?
+    /// Whether the capture view is presented over the webview.
+    @State private var showingCapture = false
     @FocusState private var urlFieldFocused: Bool
     private var t: Theme { theme.t }
 
@@ -57,21 +62,27 @@ struct T4BrowserPane: View {
         self._loadURL = State(initialValue: initial)
         self._urlField = State(initialValue: initial)
     }
-
     var body: some View {
         VStack(spacing: 0) {
-            toolbar
-            Rectangle().fill(t.line).frame(height: 0.5)
-            T4BrowserWebView(
-                loadURL: loadURL,
-                action: action,
-                actionToken: actionToken,
-                canGoBack: $canGoBack,
-                canGoForward: $canGoForward,
-                loading: $loading,
-                onNavigated: { resolved in handleNavigated(resolved) }
-            )
-            .background(t.bg2)
+            if showingCapture, let image = captureImage {
+                captureBar
+                Rectangle().fill(t.line).frame(height: 0.5)
+                ZoomableCaptureImage(image: image)
+                    .background(t.bg2)
+            } else {
+                toolbar
+                Rectangle().fill(t.line).frame(height: 0.5)
+                T4BrowserWebView(
+                    loadURL: loadURL,
+                    action: action,
+                    actionToken: actionToken,
+                    canGoBack: $canGoBack,
+                    canGoForward: $canGoForward,
+                    loading: $loading,
+                    onNavigated: { resolved in handleNavigated(resolved) }
+                )
+                .background(t.bg2)
+            }
         }
         .background(t.bg)
         .toolbar {
@@ -131,6 +142,7 @@ struct T4BrowserPane: View {
                 .overlay(RoundedRectangle(cornerRadius: 4).stroke(t.line, lineWidth: 0.5))
                 .focused($urlFieldFocused)
                 .onSubmit { submitURL() }
+            captureButton
             shareButton
         }
         .padding(.horizontal, 10)
@@ -196,6 +208,97 @@ struct T4BrowserPane: View {
         #else
         NSWorkspace.shared.open(url)
         #endif
+    }
+
+    /// Capture button — fires `preview.capture` via the store and presents the
+    /// reassembled image full-fit. Disabled when no preview is tracked for the
+    /// session (the host lacks preview support or hasn't launched one yet).
+    private var captureButton: some View {
+        Button { Task { await captureNow() } } label: {
+            Image(systemName: "camera.viewfinder")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(canCapture ? t.txt : t.txtGhost)
+                .frame(width: 28, height: 28)
+        }
+        .press()
+        .disabled(!canCapture)
+        .accessibilityLabel("Capture")
+    }
+
+    /// Whether a host preview is tracked for this session (gates the Capture
+    /// button). The pane still renders the URL directly when false.
+    private var canCapture: Bool {
+        store.previewIdBySession[session.sessionId] != nil
+    }
+
+    /// Capture bar shown in place of the toolbar while the capture view is
+    /// presented: a Back button returns to the webview.
+    private var captureBar: some View {
+        HStack(spacing: 6) {
+            Button { showingCapture = false } label: {
+                Image(systemName: "chevron.backward")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(t.txt)
+                    .frame(width: 28, height: 28)
+            }
+            .press()
+            .accessibilityLabel("Back")
+            Text("Capture")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(t.txt)
+            Spacer()
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(t.bg)
+    }
+
+    /// Trigger a preview capture and present the reassembled image. Falls
+    /// back to the latest already-fetched capture when the command fails.
+    private func captureNow() async {
+        var image = await store.previewCapture(sessionId: session.sessionId)
+        if image == nil { image = store.latestCaptureImage(for: session.sessionId) }
+        guard let image else { return }
+        captureImage = image
+        showingCapture = true
+    }
+}
+
+// MARK: - Capture view
+
+/// Pinch-zoomable, full-fit render of a decoded preview capture. The image is
+/// fit to the available space (aspectRatio .fit), then magnified [1, 8] and
+/// panned via simultaneous gestures. Works on iOS (touch pinch) and macOS
+/// (trackpad pinch + drag).
+struct ZoomableCaptureImage: View {
+    let image: PlatformImage
+    @State private var scale: CGFloat = 1
+    @State private var lastScale: CGFloat = 1
+    @State private var offset: CGSize = .zero
+    @State private var lastOffset: CGSize = .zero
+
+    var body: some View {
+        Image(platformImage: image)
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .scaleEffect(scale)
+            .offset(offset)
+            .gesture(
+                MagnificationGesture()
+                    .onChanged { scale = max(1, min(8, lastScale * $0)) }
+                    .onEnded { _ in
+                        lastScale = scale
+                        if scale <= 1 { offset = .zero; lastOffset = .zero }
+                    }
+            )
+            .simultaneousGesture(
+                DragGesture()
+                    .onChanged {
+                        offset = CGSize(width: lastOffset.width + $0.translation.width,
+                                        height: lastOffset.height + $0.translation.height)
+                    }
+                    .onEnded { _ in lastOffset = offset }
+            )
     }
 }
 

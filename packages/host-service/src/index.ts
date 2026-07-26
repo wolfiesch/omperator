@@ -12,6 +12,7 @@ export * from "./official-omp-profile-authority.ts";
 export * from "./project-file-search.ts";
 export * from "./operations/index.ts";
 export * from "./projection.ts";
+export * from "./preview/index.ts";
 export * from "./remote/index.ts";
 export * from "./remote/listener.ts";
 export * from "./remote/policy.ts";
