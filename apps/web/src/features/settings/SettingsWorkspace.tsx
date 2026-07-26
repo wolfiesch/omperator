@@ -130,6 +130,51 @@ function ScopeTabs({
   );
 }
 
+/**
+ * Height at which every rail group can be expanded at once.
+ *
+ * The rail holds three cross-cutting views, six group headers, and 31 pages:
+ * 40 rows. At a 28px row plus roughly 156px of chrome that needs 1220px. Below
+ * it the rail is an accordion showing one group at a time, which fits the 21
+ * rows a 768px window allows with room to spare.
+ */
+const RAIL_EXPAND_ALL_HEIGHT = 1220;
+
+function useFitsExpandedRail(): boolean {
+  const [fits, setFits] = useState(() =>
+    typeof window === "undefined" ? false : window.innerHeight >= RAIL_EXPAND_ALL_HEIGHT,
+  );
+  useEffect(() => {
+    const onResize = () => setFits(window.innerHeight >= RAIL_EXPAND_ALL_HEIGHT);
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  return fits;
+}
+
+/**
+ * Which rail groups are open.
+ *
+ * Exactly one by default, the one holding the active page, so the rail keeps
+ * its row budget. Clicking a group header pins it open as an explicit
+ * override; the rail may then scroll, and pins persist for the session.
+ * Navigation never pins, so the default stays single-expanded.
+ */
+export function expandedRailGroups(
+  groups: readonly SettingsRailGroup[],
+  activeSectionId: string,
+  pinned: ReadonlySet<string>,
+  fitsAll: boolean,
+): ReadonlySet<string> {
+  if (fitsAll) return new Set(groups.map((group) => group.id));
+  const active = groups.find((group) => group.sections.some((entry) => entry.id === activeSectionId));
+  const open = new Set(pinned);
+  if (active !== undefined) open.add(active.id);
+  if (open.size === 0 && groups[0] !== undefined) open.add(groups[0].id);
+  return open;
+}
+
 function SectionRail({
   api,
   groups,
@@ -147,7 +192,24 @@ function SectionRail({
 }) {
   const drafts = useSettings(api, (state) => state.drafts);
   const itemRefs = useRef(new Map<string, HTMLButtonElement>());
-  const orderedSections = groups.flatMap((group) => group.sections);
+  const [pinned, setPinned] = useState<ReadonlySet<string>>(() => new Set());
+  const fitsAll = useFitsExpandedRail();
+  const expandedGroups = expandedRailGroups(groups, activeSectionId, pinned, fitsAll);
+  const onTogglePin = (id: string) =>
+    setPinned((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  // A deep link must land somewhere visible. Opening the group is not
+  // enough: with several groups above it, the active page can still sit below
+  // the rail's scroll viewport on a short window.
+  useEffect(() => {
+    itemRefs.current.get(activeSectionId)?.scrollIntoView({ block: "nearest" });
+  }, [activeSectionId]);
+  // Keyboard traversal follows what is actually on screen.
+  const orderedSections = groups.filter((group) => expandedGroups.has(group.id)).flatMap((group) => group.sections);
 
   const dirtyBySection = useMemo(() => {
     const counts = new Map<string, number>();
@@ -161,12 +223,27 @@ function SectionRail({
 
   return (
     <nav aria-label="Settings sections" className="flex w-56 shrink-0 flex-col overflow-y-auto border-border border-e bg-(--sidebar-background)/40 px-2 py-3">
-      {groups.map((group, groupIndex) => (
+      {groups.map((group, groupIndex) => {
+        const expanded = expandedGroups.has(group.id);
+        const groupDirty = group.sections.reduce((total, entry) => total + (dirtyBySection.get(entry.id) ?? 0), 0);
+        return (
         <div className={cn(groupIndex > 0 && "mt-3")} key={group.id}>
-          <p className="px-2.5 pb-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-            {group.label}
-          </p>
-          <ul className="flex flex-col gap-px">
+          <button
+            aria-controls={`settings-rail-${group.id}`}
+            aria-expanded={expanded}
+            className="flex w-full cursor-pointer items-center gap-1.5 rounded-md px-2.5 pb-1 text-start font-medium text-[10px] text-muted-foreground uppercase tracking-wider outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => onTogglePin(group.id)}
+            type="button"
+          >
+            <span className="min-w-0 flex-1 truncate">{group.label}</span>
+            {/* A collapsed group must still admit that it holds unsaved work,
+                otherwise the accordion can hide dirty state. */}
+            {!expanded && groupDirty > 0 && (
+              <span aria-label={`${groupDirty} unsaved`} className="size-1.5 rounded-full bg-primary" />
+            )}
+            {!expanded && <span className="tabular-nums opacity-60">{group.sections.length}</span>}
+          </button>
+          <ul className={cn("flex flex-col gap-px", !expanded && "hidden")} id={`settings-rail-${group.id}`}>
             {group.sections.map((section) => {
           const active = section.id === activeSectionId;
           const dimmed = matchedIds !== null && !matchedIds.has(section.id);
@@ -227,7 +304,8 @@ function SectionRail({
             })}
           </ul>
         </div>
-      ))}
+        );
+      })}
     </nav>
   );
 }

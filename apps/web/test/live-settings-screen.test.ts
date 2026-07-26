@@ -27,6 +27,7 @@ import {
 import { SCOPE_LABEL } from "../src/features/settings/SettingRow.tsx";
 import {
   buildSettingsRailGroups,
+  expandedRailGroups,
   buildSettingsRailSections,
   SCOPE_TAB_LABEL,
   UPDATE_SECTION_ID,
@@ -566,5 +567,38 @@ describe("honest scope labels", () => {
       const text = readFileSync(join(SETTINGS_SRC, name), "utf8");
       expect(text, `${name} still says "this session"`).not.toMatch(/[Tt]his session/);
     }
+  });
+});
+
+describe("rail accordion", () => {
+  const group = (id: string, ...sectionIds: string[]) => ({
+    id,
+    label: id,
+    sections: sectionIds.map((sectionId) => ({ id: sectionId, label: sectionId })),
+  });
+  const groups = [group("agent", "agent/models", "agent/providers"), group("tools", "tools/shell"), group("system", "system/updates")];
+
+  it("opens only the group holding the active page when the window is short", () => {
+    const open = expandedRailGroups(groups, "tools/shell", new Set(), false);
+    expect([...open]).toEqual(["tools"]);
+  });
+
+  it("moves the open group as navigation moves, so the row budget holds", () => {
+    expect([...expandedRailGroups(groups, "agent/providers", new Set(), false)]).toEqual(["agent"]);
+    expect([...expandedRailGroups(groups, "system/updates", new Set(), false)]).toEqual(["system"]);
+  });
+
+  it("keeps an explicitly pinned group open alongside the active one", () => {
+    const open = expandedRailGroups(groups, "tools/shell", new Set(["agent"]), false);
+    expect([...open].sort()).toEqual(["agent", "tools"]);
+  });
+
+  it("expands every group once the window is tall enough to hold them", () => {
+    const open = expandedRailGroups(groups, "tools/shell", new Set(), true);
+    expect([...open].sort()).toEqual(["agent", "system", "tools"]);
+  });
+
+  it("falls back to the first group when nothing is active", () => {
+    expect([...expandedRailGroups(groups, "nonexistent", new Set(), false)]).toEqual(["agent"]);
   });
 });
