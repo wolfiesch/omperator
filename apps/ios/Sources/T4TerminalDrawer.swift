@@ -188,7 +188,7 @@ struct T4TerminalSurface: UIViewRepresentable {
         }
         guard count > coordinator.lastFedLength else { return }
         let start = output.utf8.index(output.startIndex, offsetBy: coordinator.lastFedLength)
-        let tail = String(output.utf8[start...])
+        let tail = String(Substring(output.utf8[start...]))
         tv.feed(text: tail)
         coordinator.lastFedLength = count
     }
