@@ -1373,7 +1373,7 @@ legacy_omp_authority_transfer_is_valid() {
       .publication.integrationTag == $integration_tag and
       .publication.integrationCommit == $integration_commit and
       .publication.integrationTagObject == $r.integration.tagObject and
-      (.releaseAssets | type == "array" and length == 8) and
+      (.releaseAssets | type == "array" and length == 5) and
       all(.releaseAssets[];
         (.name | type == "string") and
         (.size | type == "number" and floor == . and . > 0) and
@@ -1515,19 +1515,30 @@ omp_publication_workflow_succeeded() {
 }
 
 canonical_omp_release() {
-  local release_json=$1 integration_tag=$2 expected_url expected_download_prefix expected_names allow_mock
+  local release_json=$1 integration_tag=$2 legacy_release=${3:-false}
+  local expected_url expected_download_prefix expected_names allow_mock
   expected_url="https://github.com/$OMP_INTEGRATION_REPOSITORY/releases/tag/$integration_tag"
   expected_download_prefix="https://github.com/$OMP_INTEGRATION_REPOSITORY/releases/download/$integration_tag/"
-  expected_names=$($JQ -cn '[
-    "omp-linux-x64",
-    "omp-linux-arm64",
-    "omp-darwin-x64",
-    "omp-darwin-arm64",
-    "omp-windows-x64.exe",
-    "omp-native-addons.json",
-    "pi_natives.linux-x64-baseline.node",
-    "pi_natives.linux-x64-modern.node"
-  ]')
+  if [[ $legacy_release == true ]]; then
+    expected_names=$($JQ -cn '[
+      "omp-linux-x64",
+      "omp-linux-arm64",
+      "omp-darwin-x64",
+      "omp-darwin-arm64",
+      "omp-windows-x64.exe"
+    ]')
+  else
+    expected_names=$($JQ -cn '[
+      "omp-linux-x64",
+      "omp-linux-arm64",
+      "omp-darwin-x64",
+      "omp-darwin-arm64",
+      "omp-windows-x64.exe",
+      "pi_natives.linux-x64-baseline.node",
+      "pi_natives.linux-x64-modern.node",
+      "omp-native-addons.json"
+    ]')
+  fi
   if [[ ${T4_MAINTAINER_TEST_MODE:-0} == 1 ]]; then allow_mock=true; else allow_mock=false; fi
   printf '%s' "$release_json" | $JQ -ceS \
     --arg tag "$integration_tag" \
@@ -1537,7 +1548,7 @@ canonical_omp_release() {
     --argjson allow_mock "$allow_mock" '
       select(.tag_name == $tag and .html_url == $url and
         .draft == false and .prerelease == false) |
-      select((.assets | type) == "array" and (.assets | length) == 8) |
+      select((.assets | type) == "array" and (.assets | length) == ($expected | length)) |
       select((.assets | map(.name) | sort) == ($expected | sort)) |
       select(all(.assets[];
         .state == "uploaded" and
@@ -1558,9 +1569,15 @@ canonical_omp_release() {
 
 verify_omp_release_assets() {
   local result_file=$1 release_json=$2 integration_tag=$3 allow_stored_proof=${4:-false}
-  local canonical fingerprint stored
+  local canonical fingerprint stored legacy_release=false
   local download_dir asset name url expected_digest actual_digest temporary
-  canonical=$(canonical_omp_release "$release_json" "$integration_tag") || return 1
+  if $JQ -e \
+    --arg repository "$OMP_LEGACY_INTEGRATION_REPOSITORY" \
+    '.atomicPublication.forkRepository == $repository' \
+    "$result_file" >/dev/null 2>&1; then
+    legacy_release=true
+  fi
+  canonical=$(canonical_omp_release "$release_json" "$integration_tag" "$legacy_release") || return 1
   fingerprint=$(printf '%s' "$canonical" | $SHA256SUM | awk '{print "sha256:" $1}')
   [[ $fingerprint =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
   if [[ $allow_stored_proof == true ]] \

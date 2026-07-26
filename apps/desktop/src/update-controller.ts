@@ -361,8 +361,8 @@ export class DesktopUpdateController {
     this.clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle as NodeJS.Timeout));
     this.nativeEligible =
       options.isPackaged &&
-      options.platform === "linux" &&
-      options.nativeLinuxPackage !== undefined;
+      (options.platform === "darwin" ||
+        (options.platform === "linux" && options.nativeLinuxPackage !== undefined));
     this.state = decodeDesktopUpdateState({
       version: 1,
       currentVersion: options.currentVersion,

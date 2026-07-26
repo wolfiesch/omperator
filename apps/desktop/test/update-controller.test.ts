@@ -222,8 +222,25 @@ describe("desktop update controller", () => {
     instance.dispose();
   });
 
-  it("keeps unsigned mac builds manual without consulting native mac metadata", async () => {
-    const { instance, updater, opened } = controller({ platform: "darwin" });
+  it("uses the signed native update feed for packaged mac builds", async () => {
+    const updater = new FakeUpdater();
+    updater.checkResult = { isUpdateAvailable: true, updateInfo: { version: "0.1.18" } };
+    const { instance, opened } = controller({ platform: "darwin", updater });
+    expect(await instance.checkForUpdate()).toMatchObject({
+      phase: "available",
+      availableVersion: "0.1.18",
+    });
+    await instance.downloadUpdate();
+    instance.restartToUpdate();
+    expect(opened).toEqual([]);
+    expect(updater.checkCalls).toBe(1);
+    expect(updater.downloadCalls).toBe(1);
+    expect(updater.restartCalls).toBe(1);
+    instance.dispose();
+  });
+
+  it("keeps unpackaged mac builds on the verified manual download path", async () => {
+    const { instance, updater, opened } = controller({ platform: "darwin", isPackaged: false });
     expect((await instance.checkForUpdate()).phase).toBe("manual");
     await instance.downloadUpdate();
     expect(opened).toEqual([

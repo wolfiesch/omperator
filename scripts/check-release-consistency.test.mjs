@@ -100,8 +100,8 @@ test("rejects duplicate keys in JSON release contracts", () => {
 
 test("promotes the verified runtime into the product release", () => {
   const matrix = JSON.parse(files.get("compat/omp-app-matrix.json"));
-  assert.equal(matrix.verifiedRuntime.sourceTag, "t4code-17.0.5-appserver-17");
-  assert.equal(matrix.publishedRuntime.sourceTag, "t4code-17.0.5-appserver-17");
+  assert.equal(matrix.verifiedRuntime.sourceTag, "t4code-17.0.5-appserver-18");
+  assert.equal(matrix.publishedRuntime.sourceTag, "t4code-17.0.5-appserver-18");
   assert.deepEqual(matrix.publishedRuntime, matrix.verifiedRuntime);
 });
 
@@ -180,7 +180,7 @@ test("pins official OMP artifacts and the Gate 0 proof contract", () => {
 test("rejects a tag that differs from the package version", () => {
   assert.ok(
     collectReleaseConsistencyErrors(files, "v9.9.9").some((error) =>
-      error.includes("release tag v9.9.9 does not match v0.1.34"),
+      error.includes("release tag v9.9.9 does not match v0.1.35"),
     ),
   );
 });
@@ -209,7 +209,7 @@ test("tagged releases reject published provenance drift", () => {
   for (const [field, mutate] of appWireCases) {
     const drifted = changedRuntime("publishedAppWire", mutate);
     assert.ok(
-      collectReleaseConsistencyErrors(drifted, "v0.1.34").some((error) =>
+      collectReleaseConsistencyErrors(drifted, "v0.1.35").some((error) =>
         error.includes(
           `published app-wire ${field} must match current app-wire for tagged releases`,
         ),
@@ -252,7 +252,7 @@ test("tagged releases reject published provenance drift", () => {
   for (const [field, mutate] of runtimeCases) {
     const drifted = changedRuntime("publishedRuntime", mutate);
     assert.ok(
-      collectReleaseConsistencyErrors(drifted, "v0.1.34").some((error) =>
+      collectReleaseConsistencyErrors(drifted, "v0.1.35").some((error) =>
         error.includes(
           `published runtime ${field} must match current verified runtime for tagged releases`,
         ),
@@ -264,7 +264,7 @@ test("tagged releases reject published provenance drift", () => {
     runtime.artifactSha256 = "0".repeat(64);
   });
   assert.ok(
-    collectReleaseConsistencyErrors(extended, "v0.1.34").some((error) =>
+    collectReleaseConsistencyErrors(extended, "v0.1.35").some((error) =>
       error.includes(
         "published runtime must exactly match current verified runtime for tagged releases",
       ),
@@ -274,15 +274,15 @@ test("tagged releases reject published provenance drift", () => {
 
 test("rejects workspace, site, README, and runtime version drift", () => {
   const cases = [
-    ["apps/web/package.json", (text) => text.replace('"version": "0.1.34"', '"version": "0.1.3"')],
+    ["apps/web/package.json", (text) => text.replace('"version": "0.1.35"', '"version": "0.1.3"')],
     [
       "apps/site/src/release.ts",
-      (text) => text.replace('RELEASE_TAG = "v0.1.34"', 'RELEASE_TAG = "v0.1.3"'),
+      (text) => text.replace('RELEASE_TAG = "v0.1.35"', 'RELEASE_TAG = "v0.1.3"'),
     ],
-    ["README.md", (text) => text.replace("Download v0.1.34", "Download v0.1.3")],
+    ["README.md", (text) => text.replace("Download v0.1.35", "Download v0.1.3")],
     [
       "apps/desktop/src/target-manager.ts",
-      (text) => text.replace('version: "0.1.34"', 'version: "0.1.3"'),
+      (text) => text.replace('version: "0.1.35"', 'version: "0.1.3"'),
     ],
     [
       "apps/site/src/docs/content.ts",
@@ -318,7 +318,7 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       (text) =>
         text.replace("RELEASE_MANIFEST_SCHEMA_VERSION = 1", "RELEASE_MANIFEST_SCHEMA_VERSION = 2"),
     ],
-    ["scripts/wait-for-release-assets.mjs", (text) => text.replace(', "latest-linux.yml"', "")],
+    ["scripts/wait-for-release-assets.mjs", (text) => text.replace('"latest-linux.yml",', "")],
     [
       ".github/workflows/release.yml",
       (text) => text.replace("artifacts/latest-linux.yml", "artifacts/missing-linux.yml"),
@@ -611,7 +611,7 @@ test("rejects stale README release URLs while allowing historical prose", () => 
   const staleLink = changed("README.md", (text) => `${text}\n[Old release](${oldReleaseUrl})\n`);
   assert.ok(
     collectReleaseConsistencyErrors(staleLink).some((error) =>
-      error.includes("release URL for v0.1.3; expected v0.1.34"),
+      error.includes("release URL for v0.1.3; expected v0.1.35"),
     ),
   );
   assert.deepEqual(collectReleaseConsistencyErrors(files), []);

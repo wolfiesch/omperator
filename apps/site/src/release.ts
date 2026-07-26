@@ -6,15 +6,15 @@ export const DOCS_URL = `${SITE_URL}/docs`;
 export const REPO_URL = "https://github.com/wolfiesch/omperator";
 export const OMP_URL = "https://github.com/can1357/oh-my-pi";
 export const OMP_RUNTIME_VERSION = "17.0.5";
-export const OMP_RUNTIME_COMMIT = "c0308ffb97f72c0e7ac5ffca80955f8cc9c7172b";
-export const OMP_RUNTIME_TAG = "t4code-17.0.5-appserver-17";
+export const OMP_RUNTIME_COMMIT = "ccb86bb74f4c59ebacca67d42c4e16b65fd5c8ec";
+export const OMP_RUNTIME_TAG = "t4code-17.0.5-appserver-18";
 export const OMP_RUNTIME_URL = `https://github.com/wolfiesch/oh-my-pi/tree/${OMP_RUNTIME_TAG}`;
 export const OMP_UPSTREAM_TAG = "v17.0.5";
 export const OMP_UPSTREAM_COMMIT = "9fd6e97113f5ed3a847e66d346970efdf8afcad9";
 export const OMP_UPSTREAM_URL = `${OMP_URL}/tree/${OMP_UPSTREAM_TAG}`;
 export const APP_WIRE_VERSION = "0.7.0";
-export const RELEASE_TAG = "v0.1.34";
-export const RELEASE_VERSION = "0.1.34";
+export const RELEASE_TAG = "v0.1.35";
+export const RELEASE_VERSION = "0.1.35";
 export const RELEASES_URL = `${REPO_URL}/releases/tag/${RELEASE_TAG}`;
 export const RELEASE_MANIFEST_URL = `${SITE_URL}/releases/latest.json`;
 
@@ -49,11 +49,11 @@ function asset(
 }
 
 export const RELEASE_ASSETS: readonly ReleaseAsset[] = [
-  asset("android", "apk", "universal", "T4-Code-0.1.34-android.apk", "Android APK"),
-  asset("linux", "deb", "x86_64", "T4-Code-0.1.34-linux-amd64.deb", "Linux .deb"),
-  asset("linux", "appimage", "x86_64", "T4-Code-0.1.34-linux-x86_64.AppImage", "Linux AppImage"),
-  asset("mac", "dmg", "arm64", "T4-Code-0.1.34-mac-arm64.dmg", "macOS .dmg"),
-  asset("mac", "zip", "arm64", "T4-Code-0.1.34-mac-arm64.zip", "macOS .zip"),
+  asset("android", "apk", "universal", "T4-Code-0.1.35-android.apk", "Android APK"),
+  asset("linux", "deb", "x86_64", "T4-Code-0.1.35-linux-amd64.deb", "Linux .deb"),
+  asset("linux", "appimage", "x86_64", "T4-Code-0.1.35-linux-x86_64.AppImage", "Linux AppImage"),
+  asset("mac", "dmg", "arm64", "T4-Code-0.1.35-mac-arm64.dmg", "macOS .dmg"),
+  asset("mac", "zip", "arm64", "T4-Code-0.1.35-mac-arm64.zip", "macOS .zip"),
 ];
 
 export function assetsFor(platform: Platform): readonly ReleaseAsset[] {

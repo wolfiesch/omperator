@@ -1,6 +1,6 @@
 {
   "name": "@t4-code/t4-api-client",
-  "version": "0.1.34",
+  "version": "0.1.35",
   "private": true,
   "type": "module",
   "exports": {

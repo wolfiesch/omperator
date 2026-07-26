@@ -210,7 +210,7 @@ class OperatorWireFixture {
         selectedProtocol: "omp-app/1",
         hostId: HOST,
         ompVersion: "17.0.5",
-        ompBuild: "c0308ffb97f72c0e7ac5ffca80955f8cc9c7172b",
+        ompBuild: "ccb86bb74f4c59ebacca67d42c4e16b65fd5c8ec",
         appserverVersion: "cluster-fixture",
         appserverBuild: "redacted",
         epoch: "cluster-epoch-1",

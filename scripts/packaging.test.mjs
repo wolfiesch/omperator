@@ -94,7 +94,9 @@ test("builder config keeps release contract", () => {
     { provider: "github", owner: "wolfiesch", repo: "omperator", channel: "latest" },
   ]);
   assert.equal(config.mac.category, "public.app-category.developer-tools");
-  assert.deepEqual(config.mac.publish, []);
+  assert.deepEqual(config.mac.publish, [
+    { provider: "github", owner: "wolfiesch", repo: "omperator", channel: "latest" },
+  ]);
   assert.equal(config.mac.identity, null);
   assert.equal(config.mac.hardenedRuntime, false);
   assert.equal(config.mac.notarize, false);
@@ -115,7 +117,9 @@ test("signed macOS packaging is explicit, credentialed, and release-gated", asyn
     assert.equal(signedConfig.mac.entitlements, "apps/desktop/build/entitlements.mac.plist");
     assert.equal(signedConfig.mac.entitlementsInherit, "apps/desktop/build/entitlements.mac.plist");
     assert.equal(signedConfig.mac.sign, "scripts/sign-macos.mjs");
-    assert.deepEqual(signedConfig.mac.publish, []);
+    assert.deepEqual(signedConfig.mac.publish, [
+      { provider: "github", owner: "wolfiesch", repo: "omperator", channel: "latest" },
+    ]);
   } finally {
     if (previousSignedBuild === undefined) delete process.env.T4_MACOS_SIGNED_BUILD;
     else process.env.T4_MACOS_SIGNED_BUILD = previousSignedBuild;

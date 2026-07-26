@@ -56,26 +56,26 @@
     "package": "omp",
     "version": "17.0.5",
     "sourceRepository": "https://github.com/wolfiesch/oh-my-pi",
-    "sourceCommit": "c0308ffb97f72c0e7ac5ffca80955f8cc9c7172b",
-    "sourceUrl": "https://github.com/wolfiesch/oh-my-pi/commit/c0308ffb97f72c0e7ac5ffca80955f8cc9c7172b",
-    "sourceTag": "t4code-17.0.5-appserver-17",
+    "sourceCommit": "ccb86bb74f4c59ebacca67d42c4e16b65fd5c8ec",
+    "sourceUrl": "https://github.com/wolfiesch/oh-my-pi/commit/ccb86bb74f4c59ebacca67d42c4e16b65fd5c8ec",
+    "sourceTag": "t4code-17.0.5-appserver-18",
     "artifacts": {
       "darwin-arm64": {
         "name": "omp-darwin-arm64",
         "size": 120975568,
-        "sha256": "b097fe5511d90876f6031c6c042d26da86555763619bf9ada0aef569f2516647",
+        "sha256": "0d7e27c8c8bdbdc261cc6f886b8184f53ba08842a81c3e2eee22dabd940de011",
         "releaseCodeSignature": "adhoc",
         "distributionSigningBoundary": "t4-product-package"
       },
       "linux-arm64": {
         "name": "omp-linux-arm64",
         "size": 150579344,
-        "sha256": "0961226f6659731aea20b2c6bab9616adabdee5c28ee5745044fdb8635063dc3"
+        "sha256": "cf31cd1d2e9189458349a9373b69d041a423170f216c17eda30c2d5d0084d318"
       },
       "linux-x64": {
         "name": "omp-linux-x64",
         "size": 175450240,
-        "sha256": "762b0ec254295ba83d1ab630619305298177728b9f140b6e25cd27d7ad97cf21"
+        "sha256": "50c7c4faf8b1492845df1ccc261264e350290a88be24331500d3f9708bd63fda"
       }
     },
     "upstreamRepository": "https://github.com/can1357/oh-my-pi",
@@ -156,7 +156,9 @@
       "explicit-partial-authority-inventory",
       "stale-session-lock-lifecycle-recovery",
       "read-only-session-fork",
-      "caller-selected-session-fork-working-directory"
+      "caller-selected-session-fork-working-directory",
+      "durable-authority-protocol-marker",
+      "provenance-bound-native-release-assets"
     ],
     "upstreamTagContainsIntegrationPatches": false
   },
@@ -164,26 +166,26 @@
     "package": "omp",
     "version": "17.0.5",
     "sourceRepository": "https://github.com/wolfiesch/oh-my-pi",
-    "sourceCommit": "c0308ffb97f72c0e7ac5ffca80955f8cc9c7172b",
-    "sourceUrl": "https://github.com/wolfiesch/oh-my-pi/commit/c0308ffb97f72c0e7ac5ffca80955f8cc9c7172b",
-    "sourceTag": "t4code-17.0.5-appserver-17",
+    "sourceCommit": "ccb86bb74f4c59ebacca67d42c4e16b65fd5c8ec",
+    "sourceUrl": "https://github.com/wolfiesch/oh-my-pi/commit/ccb86bb74f4c59ebacca67d42c4e16b65fd5c8ec",
+    "sourceTag": "t4code-17.0.5-appserver-18",
     "artifacts": {
       "darwin-arm64": {
         "name": "omp-darwin-arm64",
         "size": 120975568,
-        "sha256": "b097fe5511d90876f6031c6c042d26da86555763619bf9ada0aef569f2516647",
+        "sha256": "0d7e27c8c8bdbdc261cc6f886b8184f53ba08842a81c3e2eee22dabd940de011",
         "releaseCodeSignature": "adhoc",
         "distributionSigningBoundary": "t4-product-package"
       },
       "linux-arm64": {
         "name": "omp-linux-arm64",
         "size": 150579344,
-        "sha256": "0961226f6659731aea20b2c6bab9616adabdee5c28ee5745044fdb8635063dc3"
+        "sha256": "cf31cd1d2e9189458349a9373b69d041a423170f216c17eda30c2d5d0084d318"
       },
       "linux-x64": {
         "name": "omp-linux-x64",
         "size": 175450240,
-        "sha256": "762b0ec254295ba83d1ab630619305298177728b9f140b6e25cd27d7ad97cf21"
+        "sha256": "50c7c4faf8b1492845df1ccc261264e350290a88be24331500d3f9708bd63fda"
       }
     },
     "upstreamRepository": "https://github.com/can1357/oh-my-pi",
@@ -264,18 +266,20 @@
       "explicit-partial-authority-inventory",
       "stale-session-lock-lifecycle-recovery",
       "read-only-session-fork",
-      "caller-selected-session-fork-working-directory"
+      "caller-selected-session-fork-working-directory",
+      "durable-authority-protocol-marker",
+      "provenance-bound-native-release-assets"
     ],
     "upstreamTagContainsIntegrationPatches": false
   },
   "t4Host": {
     "wirePackage": "@t4-code/host-wire",
-    "wirePackageVersion": "0.1.34",
+    "wirePackageVersion": "0.1.35",
     "wireSchemaVersion": "0.7.0",
     "servicePackage": "@t4-code/host-service",
-    "servicePackageVersion": "0.1.34",
+    "servicePackageVersion": "0.1.35",
     "daemonPackage": "@t4-code/host-daemon",
-    "daemonPackageVersion": "0.1.34",
+    "daemonPackageVersion": "0.1.35",
     "protocol": "omp-app/1",
     "authorityBridgeProtocol": "t4-omp-authority/1",
     "sourcePaths": [
@@ -295,6 +299,6 @@
   },
   "desktop": {
     "package": "@t4-code/protocol",
-    "version": "0.1.34"
+    "version": "0.1.35"
   }
 }

@@ -378,16 +378,15 @@ JSON
         digest="sha256:$omp_digest"
         [[ \${MOCK_OMP_ASSET_DIGESTLESS:-0} != 1 ]] || digest='null'
         [[ $digest == null ]] || digest='"'"$digest"'"'
+        native_assets=',{"name":"pi_natives.linux-x64-baseline.node","state":"uploaded","size":11,"digest":"sha256:'"$omp_digest"'","browser_download_url":"'"$omp_asset_prefix"'pi_natives.linux-x64-baseline.node"},{"name":"pi_natives.linux-x64-modern.node","state":"uploaded","size":11,"digest":"sha256:'"$omp_digest"'","browser_download_url":"'"$omp_asset_prefix"'pi_natives.linux-x64-modern.node"},{"name":"omp-native-addons.json","state":"uploaded","size":11,"digest":"sha256:'"$omp_digest"'","browser_download_url":"'"$omp_asset_prefix"'omp-native-addons.json"}'
+        [[ \${MOCK_OMP_LEGACY_RELEASE:-0} != 1 ]] || native_assets=''
         cat <<JSON
 {"tag_name":"t4code-1.2.3-appserver-1","html_url":"https://github.com/wolfiesch/oh-my-pi/releases/tag/t4code-1.2.3-appserver-1","draft":false,"prerelease":false,"assets":[
   $missing
   {"name":"omp-linux-arm64","state":"uploaded","size":$size,"digest":$digest,"browser_download_url":"\${omp_asset_prefix}omp-linux-arm64"},
   {"name":"omp-darwin-x64","state":"uploaded","size":11,"digest":"sha256:$omp_digest","browser_download_url":"\${omp_asset_prefix}omp-darwin-x64"},
   {"name":"omp-darwin-arm64","state":"uploaded","size":11,"digest":"sha256:$omp_digest","browser_download_url":"\${omp_asset_prefix}omp-darwin-arm64"},
-  {"name":"omp-windows-x64.exe","state":"uploaded","size":11,"digest":"sha256:$omp_digest","browser_download_url":"\${omp_asset_prefix}omp-windows-x64.exe"},
-  {"name":"omp-native-addons.json","state":"uploaded","size":11,"digest":"sha256:$omp_digest","browser_download_url":"\${omp_asset_prefix}omp-native-addons.json"},
-  {"name":"pi_natives.linux-x64-baseline.node","state":"uploaded","size":11,"digest":"sha256:$omp_digest","browser_download_url":"\${omp_asset_prefix}pi_natives.linux-x64-baseline.node"},
-  {"name":"pi_natives.linux-x64-modern.node","state":"uploaded","size":11,"digest":"sha256:$omp_digest","browser_download_url":"\${omp_asset_prefix}pi_natives.linux-x64-modern.node"}$extra
+  {"name":"omp-windows-x64.exe","state":"uploaded","size":11,"digest":"sha256:$omp_digest","browser_download_url":"\${omp_asset_prefix}omp-windows-x64.exe"}$native_assets$extra
 ]}
 JSON
         ;;
@@ -1113,9 +1112,9 @@ export function forgedOmpPublicProof() {
       "omp-darwin-x64",
       "omp-darwin-arm64",
       "omp-windows-x64.exe",
-      "omp-native-addons.json",
       "pi_natives.linux-x64-baseline.node",
       "pi_natives.linux-x64-modern.node",
+      "omp-native-addons.json",
     ]
       .sort()
       .map((name) => ({
@@ -1782,9 +1781,6 @@ export async function createRunnerFixture(options = {}) {
         "omp-linux-arm64",
         "omp-linux-x64",
         "omp-windows-x64.exe",
-        "omp-native-addons.json",
-        "pi_natives.linux-x64-baseline.node",
-        "pi_natives.linux-x64-modern.node",
       ].map((name) => ({ name, size: 11, digest: `sha256:${mockDigest}` })),
     })}\n`,
   );
@@ -1806,6 +1802,7 @@ export async function createRunnerFixture(options = {}) {
     ...(options.t4WorkflowWrongPath ? { MOCK_T4_WORKFLOW_WRONG_PATH: "1" } : {}),
     ...(options.ompWorkflowMissing ? { MOCK_OMP_WORKFLOW_MISSING: "1" } : {}),
     ...(options.ompWorkflowFailed ? { MOCK_OMP_WORKFLOW_FAILED: "1" } : {}),
+    ...(options.legacyAtomicReceipt ? { MOCK_OMP_LEGACY_RELEASE: "1" } : {}),
     ...(options.ompWorkflowWrongPath ? { MOCK_OMP_WORKFLOW_WRONG_PATH: "1" } : {}),
     ...(options.ompAssetMissing ? { MOCK_OMP_ASSET_MISSING: "1" } : {}),
     ...(options.ompAssetExtra ? { MOCK_OMP_ASSET_EXTRA: "1" } : {}),

@@ -774,7 +774,7 @@ test("fresh verification downloads OMP assets once across later convergence retr
     .filter(
       (line) =>
         line.startsWith("curl\t") &&
-        /mock:\/\/(?:omp-|pi_natives)/u.test(line) &&
+        (line.includes("mock://omp-") || line.includes("mock://pi_natives.")) &&
         line.includes("\t-o\t"),
     );
   assert.equal(downloads.length, 8, downloads.join("\n"));
