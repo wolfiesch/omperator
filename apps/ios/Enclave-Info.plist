@@ -25,7 +25,7 @@
 	<!-- Dev: t4-host serves cleartext ws:// on the tailnet. Remove once the host offers wss. -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<key>NSAllowsArbitraryLoadsForWebSockets</key>
+		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
