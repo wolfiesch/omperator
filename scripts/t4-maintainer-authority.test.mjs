@@ -226,7 +226,7 @@ test("nonexistent child roots behind /tmp symlink parents fail closed before out
   assert.doesNotMatch(calls, /^local-deploy\t/mu);
 });
 
-test("exact OMP CI and five-asset release failures block local deployment", async (t) => {
+test("exact OMP CI and eight-asset release failures block local deployment", async (t) => {
   const cases = [
     ["missing CI", { ompWorkflowMissing: true }],
     ["failed CI", { ompWorkflowFailed: true }],

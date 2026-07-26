@@ -384,7 +384,10 @@ JSON
   {"name":"omp-linux-arm64","state":"uploaded","size":$size,"digest":$digest,"browser_download_url":"\${omp_asset_prefix}omp-linux-arm64"},
   {"name":"omp-darwin-x64","state":"uploaded","size":11,"digest":"sha256:$omp_digest","browser_download_url":"\${omp_asset_prefix}omp-darwin-x64"},
   {"name":"omp-darwin-arm64","state":"uploaded","size":11,"digest":"sha256:$omp_digest","browser_download_url":"\${omp_asset_prefix}omp-darwin-arm64"},
-  {"name":"omp-windows-x64.exe","state":"uploaded","size":11,"digest":"sha256:$omp_digest","browser_download_url":"\${omp_asset_prefix}omp-windows-x64.exe"}$extra
+  {"name":"omp-windows-x64.exe","state":"uploaded","size":11,"digest":"sha256:$omp_digest","browser_download_url":"\${omp_asset_prefix}omp-windows-x64.exe"},
+  {"name":"omp-native-addons.json","state":"uploaded","size":11,"digest":"sha256:$omp_digest","browser_download_url":"\${omp_asset_prefix}omp-native-addons.json"},
+  {"name":"pi_natives.linux-x64-baseline.node","state":"uploaded","size":11,"digest":"sha256:$omp_digest","browser_download_url":"\${omp_asset_prefix}pi_natives.linux-x64-baseline.node"},
+  {"name":"pi_natives.linux-x64-modern.node","state":"uploaded","size":11,"digest":"sha256:$omp_digest","browser_download_url":"\${omp_asset_prefix}pi_natives.linux-x64-modern.node"}$extra
 ]}
 JSON
         ;;
@@ -1110,6 +1113,9 @@ export function forgedOmpPublicProof() {
       "omp-darwin-x64",
       "omp-darwin-arm64",
       "omp-windows-x64.exe",
+      "omp-native-addons.json",
+      "pi_natives.linux-x64-baseline.node",
+      "pi_natives.linux-x64-modern.node",
     ]
       .sort()
       .map((name) => ({
@@ -1776,6 +1782,9 @@ export async function createRunnerFixture(options = {}) {
         "omp-linux-arm64",
         "omp-linux-x64",
         "omp-windows-x64.exe",
+        "omp-native-addons.json",
+        "pi_natives.linux-x64-baseline.node",
+        "pi_natives.linux-x64-modern.node",
       ].map((name) => ({ name, size: 11, digest: `sha256:${mockDigest}` })),
     })}\n`,
   );

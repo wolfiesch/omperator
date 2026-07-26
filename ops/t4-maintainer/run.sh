@@ -1373,7 +1373,7 @@ legacy_omp_authority_transfer_is_valid() {
       .publication.integrationTag == $integration_tag and
       .publication.integrationCommit == $integration_commit and
       .publication.integrationTagObject == $r.integration.tagObject and
-      (.releaseAssets | type == "array" and length == 5) and
+      (.releaseAssets | type == "array" and length == 8) and
       all(.releaseAssets[];
         (.name | type == "string") and
         (.size | type == "number" and floor == . and . > 0) and
@@ -1523,7 +1523,10 @@ canonical_omp_release() {
     "omp-linux-arm64",
     "omp-darwin-x64",
     "omp-darwin-arm64",
-    "omp-windows-x64.exe"
+    "omp-windows-x64.exe",
+    "omp-native-addons.json",
+    "pi_natives.linux-x64-baseline.node",
+    "pi_natives.linux-x64-modern.node"
   ]')
   if [[ ${T4_MAINTAINER_TEST_MODE:-0} == 1 ]]; then allow_mock=true; else allow_mock=false; fi
   printf '%s' "$release_json" | $JQ -ceS \
@@ -1534,7 +1537,7 @@ canonical_omp_release() {
     --argjson allow_mock "$allow_mock" '
       select(.tag_name == $tag and .html_url == $url and
         .draft == false and .prerelease == false) |
-      select((.assets | type) == "array" and (.assets | length) == 5) |
+      select((.assets | type) == "array" and (.assets | length) == 8) |
       select((.assets | map(.name) | sort) == ($expected | sort)) |
       select(all(.assets[];
         .state == "uploaded" and
