@@ -204,6 +204,12 @@ struct T4SessionDetailView: View {
                 T4SearchPane(session: session, store: store, isPresented: sheetBinding(.searchDiff))
                     .environmentObject(theme)
             }
+            // iOS sheets size from the screen; macOS sheets size from content,
+            // which left panes (browser especially) as cramped little popovers.
+            // Give them a real floor on the Mac.
+            #if os(macOS)
+            .frame(minWidth: 720, idealWidth: 860, minHeight: 520, idealHeight: 640)
+            #endif
         }
     }
 
