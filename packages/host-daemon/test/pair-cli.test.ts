@@ -89,7 +89,7 @@ describe("t4-host pair", () => {
     expect(output).toContain("Expires in");
   });
 
-  test("requests the preview capabilities used by the paired native client", async () => {
+  test("requests the full capability set used by the paired native client", async () => {
     let capabilities: readonly string[] = [];
     await runPairAction(
       { socketPath: "/unused", ttlMs: 60_000 },
@@ -105,6 +105,11 @@ describe("t4-host pair", () => {
     );
     expect(capabilities).toContain("preview.read");
     expect(capabilities).toContain("preview.control");
+    expect(capabilities).toContain("files.diff");
+    expect(capabilities).toContain("usage.read");
+    expect(capabilities).toContain("agents.control");
+    expect(capabilities).toContain("audit.read");
+    expect(capabilities).toContain("config.read");
   });
 
   test("postPairTicket sends capabilities and ttlMs to the admin endpoint", async () => {
