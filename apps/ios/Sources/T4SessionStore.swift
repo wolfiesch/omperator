@@ -270,6 +270,15 @@ final class T4SessionStore: ObservableObject {
     /// (e.g. catalog.get needs catalog.read; an unauthorized command gets
     /// the connection closed by the remote policy).
     private var grantedCapabilities: [String] = []
+    /// Negotiated additive protocol features. Ownership UI uses these to
+    /// expose safe copy/adoption actions only when the host supports them.
+    private var grantedFeatures: Set<ProtocolFeature> = []
+
+    var canForkSessions: Bool {
+        connected
+            && grantedCapabilities.contains("sessions.manage")
+            && grantedFeatures.contains(.sessionFork)
+    }
 
     // Persisted connection credentials, stored in the device Keychain (see
     // Keychain.swift). The account names are reused as the legacy
@@ -603,6 +612,92 @@ final class T4SessionStore: ObservableObject {
         }
     }
 
+    /// Copy an observer/unverified session into a fresh session this app owns.
+    /// The source is read-only and never mutated by `session.fork`.
+    @discardableResult
+    func forkSession(sessionId: String, cwd: String? = nil) async -> SessionRef? {
+        guard let client, connected, !hostId.isEmpty, canForkSessions,
+              let source = sessions.first(where: { $0.sessionId == sessionId })
+        else { return nil }
+        switch source.sessionControl {
+        case .observer, .unverified:
+            break
+        default:
+            lastError = "This session does not need a read-only copy."
+            return nil
+        }
+        var args: [String: JSONValue] = [:]
+        if let cwd, !cwd.isEmpty { args["cwd"] = .string(cwd) }
+        do {
+            let result = try await client.sendCommand(CommandIntent(
+                hostId: hostId, command: "session.fork", args: args,
+                sessionId: sessionId))
+            let created = try result.sessionCreateResult()
+            await refresh()
+            let fresh = sessions.first(where: { $0.sessionId == created.sessionId }) ?? created
+            select(fresh)
+            return fresh
+        } catch {
+            t4log.error("forkSession failed: \(error)")
+            lastError = "\(error)"
+            return nil
+        }
+    }
+
+    /// Stop the app-owned writer and publish the terminal resume command.
+    /// The host issues a confirmation challenge before completing this call.
+    @discardableResult
+    func releaseSession(sessionId: String) async -> String? {
+        guard let client, connected, !hostId.isEmpty,
+              sessions.first(where: { $0.sessionId == sessionId })?.sessionControl == nil,
+              !activeTurns.contains(sessionId)
+        else { return nil }
+        var resumeCommand: String?
+        await withLease(sessionId: sessionId, kind: .controller) { leaseId in
+            guard let revision = revision(of: sessionId) else {
+                lastError = "session revision unknown"
+                return
+            }
+            do {
+                let result = try await client.sendCommand(CommandIntent(
+                    hostId: hostId, command: "session.release",
+                    args: ["leaseId": .string(leaseId)],
+                    sessionId: sessionId, expectedRevision: revision))
+                resumeCommand = try result.sessionReleaseResult()
+            } catch {
+                t4log.error("releaseSession failed: \(error)")
+                lastError = "\(error)"
+            }
+        }
+        if resumeCommand != nil { await refresh() }
+        return resumeCommand
+    }
+
+    /// Bring a released session back under appserver ownership.
+    func reclaimSession(sessionId: String) async {
+        guard let client, connected, !hostId.isEmpty,
+              case .released = sessions.first(where: { $0.sessionId == sessionId })?.sessionControl,
+              var revision = revision(of: sessionId)
+        else { return }
+        for attempt in 0...1 {
+            do {
+                let result = try await client.sendCommand(CommandIntent(
+                    hostId: hostId, command: "session.reclaim",
+                    sessionId: sessionId, expectedRevision: revision))
+                try result.sessionReclaimResult()
+                await refresh()
+                return
+            } catch {
+                if attempt == 0, let fresh = try? await refreshRevision(of: sessionId) {
+                    revision = fresh
+                    continue
+                }
+                t4log.error("reclaimSession failed: \(error)")
+                lastError = "\(error)"
+            }
+        }
+    }
+
     /// Rename a session (session.rename {name}). Confirmation none — the
     /// rename takes effect immediately under the controller lease.
     func renameSession(sessionId: String, name: String) async {
@@ -748,6 +843,7 @@ final class T4SessionStore: ObservableObject {
         "session.delta", "files.list", "terminal.io",
         "preview.control", "files.search", "transcript.search",
         "session.watch", "host.watch", "project.reveal",
+        "session.observer", "session.unverified", "session.fork",
     ]
 
     /// Transport for an endpoint. `wss://` gets a pinning session (TOFU leaf
@@ -777,6 +873,7 @@ final class T4SessionStore: ObservableObject {
             hostId = welcome.hostId
             hostInfo = HostInfo(hostId: welcome.hostId, ompVersion: welcome.ompVersion, appserverVersion: welcome.appserverVersion)
             grantedCapabilities = welcome.grantedCapabilities
+            grantedFeatures = Set(welcome.grantedFeatures)
             connected = welcome.authentication == .paired || welcome.authentication == .local
             if connected {
                 pairedEndpoint = endpoint.absoluteString
@@ -822,6 +919,8 @@ final class T4SessionStore: ObservableObject {
             hostInfo = HostInfo(hostId: welcome.hostId, ompVersion: welcome.ompVersion, appserverVersion: welcome.appserverVersion)
             if welcome.authentication == .paired || welcome.authentication == .local {
                 // Open host — no pairing round-trip needed.
+                grantedCapabilities = welcome.grantedCapabilities
+                grantedFeatures = Set(welcome.grantedFeatures)
                 connected = true
                 pairedEndpoint = endpoint.absoluteString
                 persist(endpoint: endpoint, authentication: nil)
@@ -1818,6 +1917,8 @@ final class T4SessionStore: ObservableObject {
         await client?.close()
         client = nil
         connected = false
+        grantedCapabilities = []
+        grantedFeatures = []
         pairedEndpoint = nil
         hostInfo = nil
         // Drop any open terminals — the transport is gone, no close frame.

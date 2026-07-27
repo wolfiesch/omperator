@@ -41,7 +41,7 @@ struct T4ModelMenuButton<Content: View>: View {
         } label: {
             label()
         }
-        .disabled(!store.connected)
+        .disabled(!store.connected || !session.t4IsWritable)
     }
 
     @ViewBuilder private var modelContent: some View {

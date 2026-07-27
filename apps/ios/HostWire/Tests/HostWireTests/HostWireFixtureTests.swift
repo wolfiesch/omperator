@@ -110,6 +110,8 @@ struct HostWireFixtureTests {
         #expect(inv.sessions.first?.project.name == "One")
         #expect(inv.totalCount == inv.sessions.count)
         #expect(inv.truncated == false)
+        #expect(inv.sessions.first?.sessionControl == .observer(lockStatus: .live, transcript: .live))
+        #expect(inv.sessions.dropFirst().first?.sessionControl == .reconciling(transcript: .snapshot))
 
         let cluster = try ServerFrame.decode(try data(for: "sessions-cluster"))
         guard case .sessions(let c) = cluster else { Issue.record("expected sessions frame"); return }
@@ -129,6 +131,25 @@ struct HostWireFixtureTests {
         #expect(throws: T4WireError.self) {
             _ = try CommandFrame(requestId: "r", commandId: "c", hostId: "h", command: "session.rename", sessionId: "s")
         }
+        #expect(throws: Never.self) {
+            _ = try CommandFrame(
+                requestId: "r", commandId: "c", hostId: "h",
+                command: "session.reclaim", sessionId: "s",
+                expectedRevision: "rev"
+            )
+        }
+    }
+
+    @Test("Unknown session ownership shapes stay read-only")
+    func unknownSessionControl() throws {
+        let data = Data("""
+        {"hostId":"h","sessionId":"s","project":{"projectId":"p"},"revision":"r",\
+        "title":"Legacy","status":"idle","updatedAt":"2026-07-27T00:00:00.000Z",\
+        "liveState":{"sessionControl":{"mode":"future","owner":"other"}}}
+        """.utf8)
+        let session = try JSONDecoder().decode(SessionRef.self, from: data)
+        #expect(session.sessionControl == .unknown)
+        #expect(session.sessionControl != nil)
     }
     @Test("Snapshot, entry, and gap frames decode; durable entry decodes standalone")
     func transcriptFrames() throws {

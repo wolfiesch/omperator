@@ -68,6 +68,8 @@ public enum Commands {
         "session.ui.respond":   .init(capability: .sessionsPrompt, scope: .session, revision: .optional, confirmation: .none),
         "session.cancel":       .init(capability: .sessionsControl, scope: .session, revision: .optional, confirmation: .challenge),
         "session.close":        .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .challenge),
+        "session.release":      .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .challenge),
+        "session.reclaim":      .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .none),
         "prompt.lease.acquire":      .init(capability: .sessionsPrompt, scope: .session, revision: .required, confirmation: .none),
         "prompt.lease.renew":        .init(capability: .sessionsPrompt, scope: .session, revision: .required, confirmation: .none),
         "prompt.lease.release":      .init(capability: .sessionsPrompt, scope: .session, revision: .required, confirmation: .none),
@@ -256,6 +258,30 @@ extension ResultFrame {
         }
         let data = try JSONEncoder().encode(result)
         return try JSONDecoder().decode(SessionCreateResult.self, from: data).session
+    }
+
+    /// Decode `session.release`: `{ released: true, resumeCommand }`.
+    public func sessionReleaseResult() throws -> String {
+        guard ok, case .object(let object) = result ?? .null,
+              Set(object.keys) == ["released", "resumeCommand"],
+              case .bool(true) = object["released"] ?? .null,
+              case .string(let resumeCommand) = object["resumeCommand"] ?? .null,
+              !resumeCommand.isEmpty,
+              (try? Bounded.controlFree(resumeCommand, path: "result.resumeCommand", maxBytes: 1024)) != nil
+        else {
+            throw T4WireError.invalidFrame(path: "result", reason: "response has no session release result")
+        }
+        return resumeCommand
+    }
+
+    /// Decode `session.reclaim`: `{ reclaimed: true }`.
+    public func sessionReclaimResult() throws {
+        guard ok, case .object(let object) = result ?? .null,
+              Set(object.keys) == ["reclaimed"],
+              case .bool(true) = object["reclaimed"] ?? .null
+        else {
+            throw T4WireError.invalidFrame(path: "result", reason: "response has no session reclaim result")
+        }
     }
 
     /// Decode a `transcript.page` result body: `{entries, nextCursor?,

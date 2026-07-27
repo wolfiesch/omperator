@@ -42,6 +42,7 @@ struct T4SessionDetailView: View {
     @State private var askDraft = ""
     @State private var renaming = false
     @State private var renameText = ""
+    @State private var ownershipBusy = false
     @FocusState private var composerFocused: Bool
     private var t: Theme { theme.t }
     private static let maxImages = 8   // PROMPT_IMAGE_MAX_COUNT on the wire
@@ -57,6 +58,7 @@ struct T4SessionDetailView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         loadEarlierSection
                         header
+                        ownershipBanner
                         if let challenge = store.pendingConfirmation {
                             confirmationBanner(challenge)
                         }
@@ -356,32 +358,61 @@ struct T4SessionDetailView: View {
                     .foregroundStyle(badge.color)
             }
             Menu {
-                Button {
-                    renameText = session.title
-                    renaming = true
-                } label: {
-                    Label("Rename", systemImage: "pencil")
-                }
-                Button {
-                    Task { await store.compactSession(sessionId: session.sessionId) }
-                } label: {
-                    Label("Compact", systemImage: "rectangle.compress.vertical")
-                }
-                Button {
-                    Task { await store.retrySession(sessionId: session.sessionId) }
-                } label: {
-                    Label("Retry", systemImage: "arrow.clockwise")
-                }
-                Button {
-                    Task { await store.closeSession(sessionId: session.sessionId) }
-                } label: {
-                    Label("Close", systemImage: "xmark.circle")
-                }
-                .disabled(session.status == "closed")
-                Button(role: .destructive) {
-                    Task { await store.deleteSession(sessionId: session.sessionId) }
-                } label: {
-                    Label("Delete", systemImage: "trash")
+                if let control = session.sessionControl {
+                    let presentation = control.t4Presentation
+                    Label(presentation.railLabel, systemImage: presentation.systemImage)
+                        .disabled(true)
+                    if presentation.canFork && store.canForkSessions {
+                        Button {
+                            runOwnershipAction { await store.forkSession(sessionId: session.sessionId) }
+                        } label: {
+                            Label("Continue in a Copy", systemImage: "doc.on.doc")
+                        }
+                    }
+                    if case .released = control {
+                        Button {
+                            runOwnershipAction {
+                                await store.reclaimSession(sessionId: session.sessionId)
+                                return ()
+                            }
+                        } label: {
+                            Label("Bring Back to App", systemImage: "arrow.uturn.backward")
+                        }
+                    }
+                } else {
+                    Button {
+                        renameText = session.title
+                        renaming = true
+                    } label: {
+                        Label("Rename", systemImage: "pencil")
+                    }
+                    Button {
+                        Task { await store.compactSession(sessionId: session.sessionId) }
+                    } label: {
+                        Label("Compact", systemImage: "rectangle.compress.vertical")
+                    }
+                    Button {
+                        Task { await store.retrySession(sessionId: session.sessionId) }
+                    } label: {
+                        Label("Retry", systemImage: "arrow.clockwise")
+                    }
+                    Button {
+                        Task { await store.releaseSession(sessionId: session.sessionId) }
+                    } label: {
+                        Label("Continue in Terminal", systemImage: "terminal")
+                    }
+                    .disabled(store.activeTurns.contains(session.sessionId) || session.status == "closed")
+                    Button {
+                        Task { await store.closeSession(sessionId: session.sessionId) }
+                    } label: {
+                        Label("Close", systemImage: "xmark.circle")
+                    }
+                    .disabled(session.status == "closed")
+                    Button(role: .destructive) {
+                        Task { await store.deleteSession(sessionId: session.sessionId) }
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
                 }
                 Divider()
                 Button {
@@ -464,6 +495,66 @@ struct T4SessionDetailView: View {
         }
     }
 
+    @ViewBuilder
+    private var ownershipBanner: some View {
+        if let control = session.sessionControl {
+            let presentation = control.t4Presentation
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: presentation.systemImage)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(t.cAdvisor)
+                    Text(presentation.title)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(t.txt)
+                    if ownershipBusy {
+                        Spacer()
+                        ProgressView().controlSize(.small)
+                    }
+                }
+                Text(presentation.detail)
+                    .font(.system(size: 13))
+                    .foregroundStyle(t.txtBody)
+                if let resumeCommand = control.t4ResumeCommand {
+                    Text(resumeCommand)
+                        .font(.term(12))
+                        .foregroundStyle(t.txt)
+                        .textSelection(.enabled)
+                        .padding(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(t.bg, in: RoundedRectangle(cornerRadius: 8))
+                }
+                if presentation.canFork && store.canForkSessions {
+                    Button {
+                        runOwnershipAction { await store.forkSession(sessionId: session.sessionId) }
+                    } label: {
+                        Label("Continue in a Copy", systemImage: "doc.on.doc")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(ownershipBusy)
+                }
+                if case .released = control {
+                    Button {
+                        runOwnershipAction {
+                            await store.reclaimSession(sessionId: session.sessionId)
+                            return ()
+                        }
+                    } label: {
+                        Label("Bring Back to App", systemImage: "arrow.uturn.backward")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(t.cTask)
+                    .disabled(ownershipBusy)
+                }
+            }
+            .padding(12)
+            .background(t.highlightBG, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .accessibilityElement(children: .contain)
+        }
+    }
+
     private var facts: some View {
         let rows: [(String, String)] = [
             ("Project", session.project.name ?? session.project.projectId),
@@ -492,7 +583,7 @@ struct T4SessionDetailView: View {
         VStack(spacing: 0) {
             if !attachments.isEmpty { attachmentStrip }
             HStack(spacing: 4) {
-                if store.connected {
+                if inputEnabled {
                     PhotosPicker(selection: $pickerItems, maxSelectionCount: Self.maxImages, matching: .images) {
                         Image(systemName: "paperclip").font(.system(size: 20))
                             .foregroundStyle(t.txtMuted).frame(width: 34, height: 34)
@@ -503,13 +594,13 @@ struct T4SessionDetailView: View {
                     .font(.bodyF(14)).foregroundStyle(t.txt).tint(t.interactiveAccent)
                     .lineLimit(1...5)
                     .focused($composerFocused)
-                    .disabled(!store.connected)
+                    .disabled(!inputEnabled)
                     .onSubmit(send)
                 Button { dictation.toggle() } label: {
                     Image(systemName: dictation.recording ? "mic.fill" : "mic").font(.system(size: 20))
                         .foregroundStyle(dictation.recording ? t.accent : t.txtMuted).frame(width: 34, height: 34)
                 }
-                .disabled(!store.connected)
+                .disabled(!inputEnabled)
                 .accessibilityLabel(dictation.recording ? "Stop dictation" : "Dictate")
                 sendOrStop
             }
@@ -525,12 +616,14 @@ struct T4SessionDetailView: View {
 
     private var placeholder: String {
         if !store.connected { return "Connect a host to message" }
+        if let control = session.sessionControl { return control.t4Presentation.railLabel }
+        if session.archivedAt != nil { return "Restore this session to message" }
         if dictation.recording { return "Listening\u{2026}" }
         return store.activeTurns.contains(session.sessionId) ? "Steer the turn\u{2026}" : "Message the agent\u{2026}"
     }
 
     @ViewBuilder private var sendOrStop: some View {
-        if store.connected && store.activeTurns.contains(session.sessionId) {
+        if inputEnabled && store.activeTurns.contains(session.sessionId) {
             Button { Task { await store.cancel(sessionId: session.sessionId) } } label: {
                 Image(systemName: "stop.fill").font(.system(size: 15)).foregroundStyle(t.txt)
                     .frame(width: 34, height: 34)
@@ -589,8 +682,12 @@ struct T4SessionDetailView: View {
     }
 
     private var canSend: Bool {
-        store.connected && !sending
+        inputEnabled && !sending
             && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
+    }
+
+    private var inputEnabled: Bool {
+        store.connected && session.t4IsWritable
     }
 
     private func send() {
@@ -603,6 +700,15 @@ struct T4SessionDetailView: View {
         Task {
             await store.sendPrompt(sessionId: session.sessionId, text: text, images: images)
             sending = false
+        }
+    }
+
+    private func runOwnershipAction<T>(_ operation: @escaping () async -> T) {
+        guard !ownershipBusy else { return }
+        ownershipBusy = true
+        Task {
+            _ = await operation()
+            ownershipBusy = false
         }
     }
 
