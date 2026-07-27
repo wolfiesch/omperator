@@ -104,6 +104,10 @@ final class T4SessionStore: ObservableObject {
     @Published private(set) var connecting = false
     @Published private(set) var connected = false
     @Published var lastError: String?
+    /// Composer prefill channel for cross-pane flows (e.g. browser "design
+    /// mode" annotation). The session detail composer observes this and
+    /// adopts the text into its draft, then clears it. Nil = nothing pending.
+    @Published var pendingComposerText: String?
     /// Human-readable endpoint the store is currently paired/connected to
     /// (e.g. "ws://macbookpro.my-tailnet.ts.net:8787/v1/ws"), for UI display.
     @Published private(set) var pairedEndpoint: String?
@@ -584,6 +588,34 @@ final class T4SessionStore: ObservableObject {
             return created
         } catch {
             t4log.error("createSession failed: \(error)")
+            lastError = "\(error)"
+            return nil
+        }
+    }
+
+    /// Fork a session (session.fork) — a full-history copy. Session-scoped,
+    /// no revision/lease/confirmation, capability sessions.manage; sent
+    /// directly like session.attach. The result is the same {session} shape
+    /// as session.create, so we reuse sessionCreateResult(). After the host
+    /// confirms, refresh() surfaces the fork in the rail and we select it.
+    @discardableResult
+    func forkSession(sessionId: String) async -> SessionRef? {
+        guard let client, connected, !hostId.isEmpty else { return nil }
+        // Gate on sessions.manage: an unauthorized command gets the
+        // connection closed by the remote policy.
+        guard grantedCapabilities.contains("sessions.manage") else {
+            lastError = "Fork requires the sessions.manage capability."
+            return nil
+        }
+        do {
+            let result = try await client.sendCommand(CommandIntent(
+                hostId: hostId, command: "session.fork", sessionId: sessionId))
+            let forked = try result.sessionCreateResult()
+            await refresh()
+            select(forked)
+            return forked
+        } catch {
+            t4log.error("forkSession failed: \(error)")
             lastError = "\(error)"
             return nil
         }

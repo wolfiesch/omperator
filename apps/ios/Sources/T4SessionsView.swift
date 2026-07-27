@@ -93,6 +93,11 @@ struct T4SessionsView: View {
             Label("Retry", systemImage: "arrow.clockwise")
         }
         Button {
+            Task { await store.forkSession(sessionId: session.sessionId) }
+        } label: {
+            Label("Fork", systemImage: "arrow.triangle.branch")
+        }
+        Button {
             Task { await store.closeSession(sessionId: session.sessionId) }
         } label: {
             Label("Close", systemImage: "xmark.circle")

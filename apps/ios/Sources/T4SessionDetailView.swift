@@ -122,6 +122,16 @@ struct T4SessionDetailView: View {
                 withAnimation(.easeInOut(duration: 0.22)) { planExpanded = false }
             }
         }
+        // Cross-pane prefill (browser design-mode annotation): adopt the
+        // pending text into the composer draft, then clear the channel. Append
+        // to existing draft so a half-typed message isn't clobbered.
+        .onChange(of: store.pendingComposerText) { _, pending in
+            guard let pending else { return }
+            let flat = pending.replacingOccurrences(of: "\n", with: " ")
+            draft = draft.isEmpty ? flat : "\(draft)\n\(flat)"
+            store.pendingComposerText = nil
+            composerFocused = true
+        }
         .navigationTitle(session.title)
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -371,6 +381,11 @@ struct T4SessionDetailView: View {
                     Task { await store.retrySession(sessionId: session.sessionId) }
                 } label: {
                     Label("Retry", systemImage: "arrow.clockwise")
+                }
+                Button {
+                    Task { await store.forkSession(sessionId: session.sessionId) }
+                } label: {
+                    Label("Fork", systemImage: "arrow.triangle.branch")
                 }
                 Button {
                     Task { await store.closeSession(sessionId: session.sessionId) }
