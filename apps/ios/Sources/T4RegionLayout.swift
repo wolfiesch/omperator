@@ -194,9 +194,11 @@ struct T4RightDockRegion: View {
                                 .onEnded { _ in onResize(liveWidth) }
                         )
                         .onHover { inside in
-                            // Resize cursor over the divider hit zone.
+                            // Resize cursor over the divider hit zone (macOS).
+                            #if os(macOS)
                             if inside { NSCursor.resizeLeftRight.set() }
                             else { NSCursor.arrow.set() }
+                            #endif
                         }
                 }
         }
