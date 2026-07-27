@@ -18,6 +18,7 @@ import {
 } from "@t4-code/host-wire";
 import { validatePreviewUrl } from "./url-policy.ts";
 import type {
+	BrowserContext,
 	PreviewCaptureRecord,
 	PreviewChromiumResolver,
 	PreviewClock,
@@ -66,6 +67,23 @@ function sha256(data: Uint8Array): string {
 
 function toBase64(bytes: Uint8Array): string {
 	return Buffer.from(bytes).toString("base64");
+}
+
+/**
+ * Enforce the preview destination policy for every browser request, including
+ * redirects, frames, scripts, images, and fetches initiated after launch.
+ */
+export async function installPreviewRequestPolicy(
+	context: Pick<BrowserContext, "route">,
+): Promise<void> {
+	await context.route("**/*", async route => {
+		try {
+			validatePreviewUrl(route.request().url());
+			await route.continue();
+		} catch {
+			await route.abort("blockedbyclient");
+		}
+	});
 }
 
 /**
@@ -211,7 +229,13 @@ export class PreviewService {
 		});
 		let context, page;
 		try {
-			context = await browser.newContext({ viewport: this.#viewport });
+			// Service-worker traffic bypasses Playwright routing, so previews
+			// disable it and keep every network destination on the route guard.
+			context = await browser.newContext({
+				viewport: this.#viewport,
+				serviceWorkers: "block",
+			});
+			await installPreviewRequestPolicy(context);
 			page = await context.newPage();
 			page.setDefaultTimeout(this.#actionTimeoutMs);
 		} catch (error) {

@@ -299,6 +299,8 @@ export interface AppserverOptions {
 	rpcChildInvocation?: RpcChildInvocation;
 	/** Bounded profile environment applied only to per-session OMP children. */
 	rpcChildEnvironment?: Readonly<Record<string, string>>;
+	/** Private durable ledger used to reap only identity-verified orphan RPC groups. */
+	rpcChildRegistryPath?: string;
 	/** Exact child RPC command dialect; official OMP intentionally exposes a narrower command set. */
 	rpcDialect?: "fork" | "official-17.0.9";
 	appserverVersion?: string;

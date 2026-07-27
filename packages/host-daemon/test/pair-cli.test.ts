@@ -89,6 +89,24 @@ describe("t4-host pair", () => {
     expect(output).toContain("Expires in");
   });
 
+  test("requests the preview capabilities used by the paired native client", async () => {
+    let capabilities: readonly string[] = [];
+    await runPairAction(
+      { socketPath: "/unused", ttlMs: 60_000 },
+      {
+        postTicket: async (_socketPath, requested) => {
+          capabilities = requested;
+          return { code: "123456", expiresAt: Date.now() + 60_000 };
+        },
+        resolveHostHint: async () => ({ hint: "localhost" }),
+        renderQr: async () => "",
+        out: () => undefined,
+      },
+    );
+    expect(capabilities).toContain("preview.read");
+    expect(capabilities).toContain("preview.control");
+  });
+
   test("postPairTicket sends capabilities and ttlMs to the admin endpoint", async () => {
     const dir = await mkdtemp(join(tmpdir(), "t4-pair-post-"));
     const socketPath = join(dir, "pair.sock");

@@ -8,22 +8,18 @@ import {
   createHostLogger,
   createRemoteAppserver,
   OfficialOmpProfileAuthority,
-  OFFICIAL_OMP_OWNER_FILE,
   OmpAuthorityBridgeClient,
   profileSocketPath,
   FilesAuthority,
   ProjectFileSearchAuthority,
   PtyTerminalAuthority,
-  readOwnerMarkers,
-  reapBootState,
+  RpcChildRegistry,
   SeedingTestControl,
   TranscriptSearchIndex,
   type AppserverHandle,
   type AppserverOptions,
   type DesktopOperationsAuthority,
   type HostLogger,
-  type OwnerMarkerSpec,
-  type ReapLog,
   type SessionAuthority,
   type SessionDiscovery,
 } from "@t4-code/host-service";
@@ -359,27 +355,16 @@ export async function runHostDaemon(
 ): Promise<void> {
   const paths = hostDaemonPaths(config);
   await mkdir(paths.profileStateRoot, { recursive: true, mode: 0o700 });
-  // One structured logger backs both boot reaping and the appserver's
+  // One structured logger backs boot reaping and the appserver's
   // connection/pair/denied/supervisor/watchdog event log. It writes NDJSON to
   // <profileStateRoot>/logs/host-<date>.ndjson with size-based rotation.
   const hostLogger = dependencies.loggerHost ?? createHostLogger({ stateRoot: paths.profileStateRoot });
-  // Reap state a previous host incarnation left behind before any authority or
-  // appserver touches the same marker files. The appserver reclaims its own
-  // socket marker via recoverStale; the reaper only kills orphaned omp children
-  // from the dead host's process group and clears the official exclusive lock.
-  const reapLog: ReapLog = hostLogger.log;
-  const reapSpecs: OwnerMarkerSpec[] = [
-    { path: `${paths.socketPath}.owner`, source: "appserver", clearLock: false },
-  ];
-  if (config.authorityMode === "official" && config.ompSessionsRoot) {
-    reapSpecs.push({
-      path: join(config.ompSessionsRoot, OFFICIAL_OMP_OWNER_FILE),
-      source: "official",
-      clearLock: true,
-    });
-  }
-  const reapMarkers = await readOwnerMarkers({ specs: reapSpecs, log: reapLog });
-  if (reapMarkers.length > 0) await reapBootState({ markers: reapMarkers, log: reapLog });
+  const rpcChildRegistryPath = join(paths.profileStateRoot, "rpc-children.json");
+  const reaped = new RpcChildRegistry(rpcChildRegistryPath).reap();
+  for (const pid of reaped.killed)
+    hostLogger.log("supervisor.killed", { pid, reason: "identity-verified orphan reaped at boot" });
+  for (const pid of reaped.skipped)
+    hostLogger.log("reap.skip", { pid, reason: "rpc child was not safe to reap", level: "warn" });
   let bridge: OmpAuthorityBridgeClient | undefined;
   let terminals: PtyTerminalAuthority | undefined;
   let officialAuthority: OfficialOmpProfileAuthority | undefined;
@@ -496,6 +481,7 @@ export async function runHostDaemon(
       ...(transcriptImageRoot ? { transcriptImageRoot } : {}),
       rpcChildInvocation: { executable: config.ompExecutable, prefixArgv: [] },
       rpcChildEnvironment: { OMP_PROFILE: config.profileId },
+      rpcChildRegistryPath,
       ...(config.authorityMode === "official" ? { rpcDialect: "official-17.0.9" as const } : {}),
       ...(process.platform === "darwin"
         ? {

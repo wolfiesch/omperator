@@ -1,4 +1,3 @@
-export * from "./boot-reaper.ts";
 export * from "./artifact-reader.ts";
 export * from "./acp-runtime-adapter.ts";
 export * from "./discovery.ts";
@@ -46,3 +45,4 @@ export * from "./transcript-page-reader.ts";
 export * from "./transcript-search-index.ts";
 export * from "./types.ts";
 export * from "./workspace-authority.ts";
+export * from "./rpc-child-registry.ts";

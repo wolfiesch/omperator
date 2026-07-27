@@ -106,6 +106,7 @@ import { BunRemoteListener, createInternalListenerPlan, createListenerPlan, crea
 import type { HostLogger } from "./remote/logging.ts";
 import type { HealthSnapshot, RemoteConnection, RemoteListenerConfig } from "./remote/types.ts";
 import { BunRpcChildFactory, RpcChildSupervisor } from "./rpc-child.ts";
+import { RpcChildRegistry } from "./rpc-child-registry.ts";
 import type {
 	RuntimeAdapterRegistry,
 	RuntimePermissionResponse,
@@ -1114,7 +1115,14 @@ export class LocalAppserver implements AppserverHandle {
 			: undefined;
 		this.#lockStatus = options.lockStatus ?? (() => "missing");
 		this.#factory = options.childFactory ??
-			new BunRpcChildFactory(options.rpcChildInvocation, this.#imageUploads.root, options.rpcChildEnvironment);
+			new BunRpcChildFactory(
+				options.rpcChildInvocation,
+				this.#imageUploads.root,
+				options.rpcChildEnvironment,
+				options.rpcChildRegistryPath
+					? new RpcChildRegistry(options.rpcChildRegistryPath)
+					: undefined,
+			);
 		this.#ringSize = options.ringSize ?? 256;
 		if (options.lockStatus && !options.lockCheck)
 			this.#lockCheck = () => {

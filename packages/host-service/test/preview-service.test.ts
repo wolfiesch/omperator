@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { validatePreviewUrl, previewUrlAllowed } from "../src/preview/url-policy.ts";
 import { PreviewServiceError } from "../src/preview/types.ts";
-import { PreviewService } from "../src/preview/preview-service.ts";
+import { installPreviewRequestPolicy, PreviewService } from "../src/preview/preview-service.ts";
 import { createPreviewChromiumResolver } from "../src/preview/chromium-resolver.ts";
 import type { PreviewChromiumResolver } from "../src/preview/types.ts";
 import type { SessionId } from "@t4-code/host-wire";
@@ -106,6 +106,40 @@ const fakeChromiumResolver: PreviewChromiumResolver = async () => ({
 // ---------------------------------------------------------------------------
 
 describe("PreviewService non-browser logic", () => {
+	describe("request policy", () => {
+		it("continues allowed requests and aborts redirects or subresources outside the policy", async () => {
+			let handler:
+				| ((route: {
+					request(): { url(): string };
+					continue(): Promise<void>;
+					abort(reason: "blockedbyclient"): Promise<void>;
+				}) => Promise<void>)
+				| undefined;
+			await installPreviewRequestPolicy({
+				route: async (
+					_pattern: string,
+					callback: NonNullable<typeof handler>,
+				) => {
+					handler = callback;
+				},
+			} as never);
+			const outcomes: string[] = [];
+			const route = (url: string) => ({
+				request: () => ({ url: () => url }),
+				continue: async () => {
+					outcomes.push("continue");
+				},
+				abort: async () => {
+					outcomes.push("abort");
+				},
+			});
+			await handler!(route("http://localhost:3000/app"));
+			await handler!(route("http://169.254.169.254/latest/meta-data"));
+			await handler!(route("https://example.com/script.js"));
+			expect(outcomes).toEqual(["continue", "abort", "abort"]);
+		});
+	});
+
 	describe("policyCheck", () => {
 			it("allows all PREVIEW_ACTIONS for localhost URLs", () => {
 				const svc = new PreviewService({
@@ -220,7 +254,9 @@ describe("PreviewService real chromium smoke", () => {
 			});
 			const url = `http://localhost:${server.port}`;
 			const svc = new PreviewService({
-				chromiumResolver: createPreviewChromiumResolver(),
+				chromiumResolver: createPreviewChromiumResolver({
+					artifactsRoot: join(import.meta.dirname, "../../..", ".artifacts", "preview-chromium"),
+				}),
 				actionTimeoutMs: 15_000,
 			});
 			try {
