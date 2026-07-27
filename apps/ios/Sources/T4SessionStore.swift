@@ -800,6 +800,11 @@ final class T4SessionStore: ObservableObject {
     /// pair.start with the 6-digit code and persists the granted device token
     /// on success, mirroring connect()'s post-connect refresh/catalog/observe.
     func pairAndConnect(endpoint: URL, code: String, deviceName: String) async {
+        // A restored macOS WindowGroup can render more than one RootView.
+        // Each view runs the launch-argument pairing task, but a pairing
+        // ticket is single-use. Serialize those tasks through the shared
+        // store so only the first view can claim the ticket.
+        guard !connecting, !connected else { return }
         connecting = true
         defer { connecting = false }
         let transport = makeTransport(endpoint: endpoint)
@@ -828,7 +833,10 @@ final class T4SessionStore: ObservableObject {
             let slug = Self.slugify(deviceName)
             let intent = PairStartIntent(
                 code: code,
-                deviceId: "\(platformDeviceIdPrefix)-\(slug)",
+                // Device IDs are registry primary keys. Include an install
+                // nonce so a fresh install can pair even when the host still
+                // retains an older token for a device with the same name.
+                deviceId: "\(platformDeviceIdPrefix)-\(slug)-\(UUID().uuidString.lowercased())",
                 deviceName: deviceName,
                 platform: platformClientPlatform,
                 requestedCapabilities: ["sessions.read", "sessions.prompt", "sessions.control", "sessions.manage", "catalog.read", "files.list", "files.read", "files.diff", "term.open", "term.input", "term.resize", "preview.control", "preview.read", "usage.read", "agents.control", "audit.read", "config.read"]
