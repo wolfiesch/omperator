@@ -304,6 +304,9 @@ final class T4SessionStore: ObservableObject {
     private static func migrateCredentialsToKeychainIfNeeded() {
         let defaults = UserDefaults.standard
         if defaults.bool(forKey: keychainMigratedKey) { return }
+        // Ephemeral-credential runs (-T4Endpoint + -T4DeviceId + -T4DeviceToken)
+        // never touch the Keychain, so skip the migration read/write too.
+        if ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("-T4DeviceToken=") }) { return }
         for key in [savedEndpointKey, savedDeviceIdKey, savedDeviceTokenKey] {
             if Keychain.get(key) == nil,
                let value = defaults.string(forKey: key), !value.isEmpty {
@@ -326,11 +329,23 @@ final class T4SessionStore: ObservableObject {
             Keychain.remove(forKey: Self.savedDeviceTokenKey)
             return
         }
-        // Dev seam: -T4Endpoint=wss://host:port/v1/ws overrides the saved
-        // endpoint (the one-time UserDefaults migration otherwise shadows
-        // `defaults write` tweaks between runs).
-        if let seam = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("-T4Endpoint=") }) {
-            Keychain.set(String(seam.dropFirst("-T4Endpoint=".count)), forKey: Self.savedEndpointKey)
+        // Dev seam: -T4Endpoint/-T4DeviceId/-T4DeviceToken supply ephemeral
+        // credentials that bypass the Keychain entirely. Unsigned macOS dev
+        // builds shift signatures, and the keychain consent dialog can block
+        // the main thread before first paint — harnesses use these instead.
+        let seamArg = { (name: String) -> String? in
+            ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("-\(name)=") })
+                .map { String($0.dropFirst(name.count + 2)) }
+        }
+        if let endpointSeam = seamArg("T4Endpoint"),
+           let seamDeviceId = seamArg("T4DeviceId"), let seamToken = seamArg("T4DeviceToken"),
+           let seamEndpoint = URL(string: endpointSeam), !connected, !connecting {
+            await connect(endpoint: seamEndpoint, identity: ClientIdentity(name: "t4-ios", version: "0.1", build: "dev", platform: "ios"),
+                          authentication: DeviceAuthentication(deviceId: seamDeviceId, deviceToken: seamToken))
+            return
+        }
+        if let seam = seamArg("T4Endpoint") {
+            Keychain.set(seam, forKey: Self.savedEndpointKey)
         }
         guard !connected, !connecting,
               let endpointString = Keychain.get(Self.savedEndpointKey),

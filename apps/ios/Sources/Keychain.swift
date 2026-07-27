@@ -53,6 +53,11 @@ enum Keychain {
             kSecAttrSynchronizable as String: false,
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecReturnData as String: true,
+            // Never pop the macOS consent dialog: unsigned/adhoc dev builds
+            // shift signatures, and the prompt blocks the main thread forever
+            // when the SecurityAgent UI can't appear. Failing fast (nil) lets
+            // callers fall back instead of hanging the app before first paint.
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
         ]
         var item: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
