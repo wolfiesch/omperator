@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { chmod, lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
@@ -12,6 +13,21 @@ export function parseSandboxName(value) {
     throw new Error("sandbox must match [a-z0-9][a-z0-9-]{0,39}");
   }
   return value;
+}
+
+
+/**
+ * A short absolute directory for the host's Unix socket. Keyed by uid and by a
+ * digest of the sandbox root so concurrent worktrees never collide, and kept
+ * short enough to stay connectable.
+ */
+export function shortHostRuntimeDirectory(sandboxRoot, platform = process.platform) {
+  const digest = createHash("sha256").update(sandboxRoot).digest("hex").slice(0, 10);
+  const uid = typeof process.getuid === "function" ? process.getuid() : 0;
+  // The socket path must contain no symlinked component: the host's own
+  // validation rejects one, and on darwin /tmp is a symlink to /private/tmp.
+  const base = platform === "darwin" ? "/private/tmp" : "/tmp";
+  return `${base}/t4-${uid}-${digest}`;
 }
 
 export function developmentSandboxPaths(name, root = repoRoot) {
@@ -38,6 +54,11 @@ export function developmentSandboxPaths(name, root = repoRoot) {
     processLogs: join(sandboxRoot, "logs", "processes"),
     hostLogs: join(sandboxRoot, "logs", "host"),
     manifest: join(sandboxRoot, "manifest.json"),
+    // The sandbox HOME is deep enough that "<home>/.omp/run/appserver.sock"
+    // resolves to a path connect(2) rejects with EINVAL. The host and the app
+    // both honor T4_HOST_RUNTIME_DIR, so the socket lives in a short per-user
+    // directory while every other sandbox path stays under .artifacts.
+    hostRuntime: shortHostRuntimeDirectory(sandboxRoot),
   });
 }
 
@@ -73,6 +94,7 @@ export async function prepareDevelopmentSandbox(name, root = repoRoot) {
     paths.hostState,
     paths.processLogs,
     paths.hostLogs,
+    paths.hostRuntime,
   ]) {
     await secureDirectory(path);
   }
@@ -102,6 +124,7 @@ export function sandboxEnvironment(paths, environment = process.env) {
     XDG_STATE_HOME: paths.state,
     XDG_CACHE_HOME: paths.cache,
     XDG_RUNTIME_DIR: paths.runtime,
+    T4_HOST_RUNTIME_DIR: paths.hostRuntime,
     TMPDIR: paths.temporary,
     T4_DEV_SANDBOX: paths.name,
     T4_DEV_SANDBOX_ROOT: paths.root,

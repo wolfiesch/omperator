@@ -265,7 +265,7 @@ export class ClusterGateway {
 				grantedFeatures = new Set(GATEWAY_FEATURES.filter(feature => requestedFeatures.has(feature) && (feature !== CLUSTER_OPERATOR_FEATURE || operatorEnabled)));
 				client.send({
 					v: "omp-app/1", type: "welcome", selectedProtocol: "omp-app/1", hostId: this.#projection.hostId,
-					ompVersion: "17.0.5", ompBuild: "d83b688817651d39bfab00676db6109a2d1ccec5",
+					ompVersion: "17.0.5", ompBuild: "7b8eb298b83fc85c36eb278c4ced2d249deaae17",
 					appserverVersion: this.#version, appserverBuild: this.#build, epoch: this.#projection.epoch,
 					grantedCapabilities: [...grantedCapabilities], grantedFeatures: [...grantedFeatures],
 					negotiatedLimits: { maxPayloadLength: 1_048_576, maxWorkspaces: 256, maxSessions: 1_000, workspaceReplayFrames: 512 },

@@ -15,11 +15,25 @@ export function createEpoch(value?: string): string {
 export function defaultHostIdPath(home = process.env.HOME || homedir()): string {
 	return join(home, ".omp", "agent", "appserver", "host-id");
 }
+/**
+ * A deep HOME (a development sandbox nested in a worktree) produced a socket
+ * path long enough that connect(2) failed with EINVAL on every attempt.
+ * T4_HOST_RUNTIME_DIR relocates the socket to a short absolute directory; the
+ * desktop app and the host service both honor it and must agree on the result.
+ */
+
 export function defaultSocketPath(
 	platform = process.platform,
 	home = homedir(),
 	runtime = process.env.XDG_RUNTIME_DIR,
+	// An explicit override is honored on every platform. A deep sandbox HOME
+	// cannot otherwise produce a socket path that fits.
+	override = process.env.T4_HOST_RUNTIME_DIR,
 ): string {
+	if (override !== undefined && override.length > 0) {
+		if (!override.startsWith("/")) throw new Error("T4_HOST_RUNTIME_DIR must be an absolute path");
+		return join(override, "appserver.sock");
+	}
 	return platform === "darwin"
 		? join(home, ".omp", "run", "appserver.sock")
 		: join(runtime || join(home, ".omp", "run"), "omp", "appserver.sock");

@@ -33,6 +33,11 @@ export function developmentSandboxServiceConfig(
     serviceLabel: `dev.oh-my-pi.appserver.development.${sandbox}`,
     environment: Object.freeze({
       HOME: homeDirectory,
+      // Supplied by the dev harness; the sandbox HOME is too deep to host a
+      // connectable socket path.
+      ...(process.env.T4_HOST_RUNTIME_DIR === undefined
+        ? {}
+        : { T4_HOST_RUNTIME_DIR: process.env.T4_HOST_RUNTIME_DIR }),
       TMPDIR: join(configuredRoot, "tmp"),
       XDG_CACHE_HOME: join(configuredRoot, "xdg", "cache"),
       XDG_CONFIG_HOME: join(configuredRoot, "xdg", "config"),

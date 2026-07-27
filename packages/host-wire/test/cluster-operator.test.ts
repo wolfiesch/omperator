@@ -49,7 +49,7 @@ describe("cluster operator wire contract", () => {
 				selectedProtocol: "omp-app/1",
 				hostId: "cluster-host-uid-1",
 				ompVersion: "17.0.5",
-				ompBuild: "d83b688817651d39bfab00676db6109a2d1ccec5",
+				ompBuild: "7b8eb298b83fc85c36eb278c4ced2d249deaae17",
 				appserverVersion: "0.2.1",
 				appserverBuild: "cluster",
 				epoch: "replica-pod-uid-1",

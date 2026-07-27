@@ -27,6 +27,9 @@ export const SERVICE_ENVIRONMENT_KEYS = [
   "XDG_STATE_HOME",
   "DBUS_SESSION_BUS_ADDRESS",
   "TMPDIR",
+  // Relocates the host socket to a short absolute directory. A deep sandbox
+  // HOME otherwise yields a path connect(2) rejects with EINVAL.
+  "T4_HOST_RUNTIME_DIR",
 ] as const;
 
 export type ServiceEnvironmentKey = (typeof SERVICE_ENVIRONMENT_KEYS)[number];

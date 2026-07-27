@@ -6,6 +6,9 @@ const MAX_ARGS = 128;
 const MAX_PROFILE = 64;
 const SAFE_ENV_KEYS: Record<string, true> = {
   HOME: true,
+  // Relocates the host socket to a short absolute directory; a deep sandbox
+  // HOME otherwise yields a path connect(2) rejects with EINVAL.
+  T4_HOST_RUNTIME_DIR: true,
   OMP_LOG_LEVEL: true,
   OMP_PROFILE: true,
   TMPDIR: true,
@@ -17,6 +20,7 @@ const SAFE_ENV_KEYS: Record<string, true> = {
 };
 const PATH_ENV_KEYS: Record<string, true> = {
   HOME: true,
+  T4_HOST_RUNTIME_DIR: true,
   TMPDIR: true,
   XDG_CACHE_HOME: true,
   XDG_CONFIG_HOME: true,

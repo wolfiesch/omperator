@@ -78,6 +78,8 @@ export interface OmpClientOptions {
   cursorStore?: CursorStore; projection?: ProjectionStore; clock?: Clock; timers?: TimerScheduler; ids?: IdFactory;
   random?: () => number; reconnect?: { baseMs?: number; maxMs?: number };
   heartbeat?: { intervalMs?: number; timeoutMs?: number }; handshakeTimeoutMs?: number; commandTimeoutMs?: number;
+  /** Ceiling on one connect() call, including retryable reconnect attempts. */
+  connectTimeoutMs?: number;
   /** Maximum inbound-idle time before a foreground wake replaces a possibly stale socket. */
   wakeStaleAfterMs?: number;
   maxPending?: number; privilegedPairResult?: (result: OmpPairOk) => void | Promise<void>;

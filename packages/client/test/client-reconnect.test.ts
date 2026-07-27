@@ -237,6 +237,53 @@ async function flushReconnect(clock: FakeClock): Promise<void> {
   await Promise.resolve();
 }
 
+describe("OmpClient connect boundedness", () => {
+  it("fails the attempt when a permanent transport errno cannot improve by retrying", async () => {
+    // An over-length socket path yields EINVAL on every attempt. Retrying it
+    // forever left connect() pending and the UI stuck on "connecting".
+    const clock = new FakeClock();
+    const permanent = Object.assign(new Error("local transport error (EINVAL)"), {
+      transportCode: "EINVAL",
+    });
+    const client = new OmpClient({
+      transport: () => {
+        throw permanent;
+      },
+      hostId: HOST,
+      clock,
+      timers: clock,
+      reconnect: { baseMs: 0, maxMs: 0 },
+    });
+    await expect(client.connect()).rejects.toThrow(/EINVAL/u);
+    expect(client.state).toBe("fatal");
+  });
+
+  it("bounds an attempt whose errno stays retryable, and reports it terminally", async () => {
+    // ENOENT is legitimately retryable while the host starts, but a caller
+    // awaiting connect() must not wait forever, and the client must not be
+    // left reconnecting or the desktop target reads "connecting" indefinitely.
+    const clock = new FakeClock();
+    const client = new OmpClient({
+      transport: () => {
+        throw Object.assign(new Error("local transport error (ENOENT)"), { transportCode: "ENOENT" });
+      },
+      hostId: HOST,
+      clock,
+      timers: clock,
+      connectTimeoutMs: 500,
+      reconnect: { baseMs: 0, maxMs: 0 },
+    });
+    const pending = client.connect();
+    const settled = pending.then(() => "resolved").catch(() => "rejected");
+    for (let i = 0; i < 12; i += 1) {
+      clock.advanceBy(100);
+      await Promise.resolve();
+    }
+    expect(await settled).toBe("rejected");
+    expect(client.state).toBe("fatal");
+  });
+});
+
 describe("OmpClient reconnect stability", () => {
   it("does not time out a heartbeat pong delivered synchronously from send", async () => {
     const clock = new FakeClock();

@@ -154,6 +154,22 @@ interface ConnectWaiter {
   resolve: () => void;
   reject: (error: OmpClientError) => void;
 }
+/**
+ * Socket-level errno values that never become true by retrying. An over-length
+ * or malformed socket path yields EINVAL on every attempt, and treating that as
+ * transient left connect() pending forever behind an endless reconnect loop
+ * with nothing surfaced. Startup-race codes (ENOENT, ECONNREFUSED) stay
+ * retryable: the host may simply not be listening yet.
+ */
+const PERMANENT_TRANSPORT_CODES: ReadonlySet<string> = new Set([
+  "EACCES",
+  "EAFNOSUPPORT",
+  "EINVAL",
+  "ENAMETOOLONG",
+  "EPERM",
+  "EPROTOTYPE",
+]);
+
 export class OmpClient {
   private readonly options: OmpClientOptions;
   private readonly protocol: OmpProtocolProvider;
@@ -346,9 +362,31 @@ export class OmpClient {
     await this.cursorJournal.load();
     if (this.stateValue === "ready") return;
     if (isTerminalState(this.stateValue)) throw this.error("closed", "client is closed");
-    const ready = new Promise<void>((resolve, reject) =>
-      this.connectWaiters.push({ resolve, reject }),
-    );
+    // Bound the attempt. Retryable failures (ENOENT while the host is still
+    // starting, ECONNREFUSED) legitimately reconnect forever, but a caller
+    // awaiting connect() must not wait forever with them: that is exactly how a
+    // dead socket presented as a permanent "Connecting to the host".
+    const ready = new Promise<void>((resolve, reject) => {
+      const waiter: ConnectWaiter = { resolve, reject };
+      const timer = this.schedule(() => {
+        if (this.connectWaiters.indexOf(waiter) === -1) return;
+        // Terminate the attempt rather than only rejecting this promise.
+        // Leaving the client reconnecting would keep the desktop target at
+        // "connecting" forever, which is the symptom this exists to remove.
+        // `fatal` settles every waiter and stops the reconnect loop; `wake()`
+        // revives a retryable transport failure when the caller retries.
+        this.fatal(this.error("transport", "connection did not become ready in time", true));
+      }, this.options.connectTimeoutMs ?? 30_000);
+      waiter.resolve = () => {
+        this.timerRegistry.clear(timer);
+        resolve();
+      };
+      waiter.reject = (error: unknown) => {
+        this.timerRegistry.clear(timer);
+        reject(error);
+      };
+      this.connectWaiters.push(waiter);
+    });
     this.closedByUser = false;
     if (this.stateValue === "idle") {
       // The transport factory may itself await a WebSocket/Unix-socket open.
@@ -1212,7 +1250,15 @@ export class OmpClient {
     this.scheduleReconnect();
   }
 
-  private handleTransportError(_error: unknown): void {
+  private handleTransportError(error: unknown): void {
+    const code =
+      typeof error === "object" && error !== null && "transportCode" in error
+        ? String((error as { transportCode: unknown }).transportCode)
+        : undefined;
+    if (code !== undefined && PERMANENT_TRANSPORT_CODES.has(code)) {
+      this.fatal(this.error("transport", `transport is unusable (${code})`, false));
+      return;
+    }
     this.emitError(this.error("transport", "transport error", true));
     this.handleDisconnect(undefined, "transport error");
   }

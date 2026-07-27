@@ -68,6 +68,12 @@ describe("desktop security boundaries", () => {
   it("uses only approved local socket locations", () => {
     expect(localSocketPath({ platform: "linux", runtimeDirectory: "/run/user/1000" })).toBe("/run/user/1000/omp/appserver.sock");
     expect(localSocketPath({ platform: "darwin", homeDirectory: "/Users/test" })).toBe("/Users/test/.omp/run/appserver.sock");
+    // A deep sandbox HOME cannot host a bindable socket, so the override
+    // relocates it to a short absolute directory.
+    const deepHome = `/Users/test/${"nested/".repeat(12)}home`;
+    expect(
+      localSocketPath({ platform: "darwin", homeDirectory: deepHome, overrideDirectory: "/tmp/t4-501-abc" }),
+    ).toBe("/tmp/t4-501-abc/appserver.sock");
   });
   it("rejects unsafe runtime socket fallbacks", () => {
     expect(() => localSocketPath({ platform: "linux", runtimeDirectory: "relative" })).toThrow();

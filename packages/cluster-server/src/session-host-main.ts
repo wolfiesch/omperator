@@ -14,7 +14,7 @@ import { ClusterInternalRemotePolicy, sessionHostConfigFromEnv, type SessionHost
 import { KubernetesTokenReviewer } from "./kubernetes-client.ts";
 
 const OMP_VERSION = "17.0.5";
-const OMP_COMMIT = "d83b688817651d39bfab00676db6109a2d1ccec5";
+const OMP_COMMIT = "7b8eb298b83fc85c36eb278c4ced2d249deaae17";
 
 export async function runSessionHost(
 	config: SessionHostConfig,

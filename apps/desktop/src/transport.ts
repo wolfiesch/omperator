@@ -87,6 +87,8 @@ export interface UnixWebSocketTransportOptions {
   readonly handshakeTimeoutMs?: number;
 }
 
+
+
 export class UnixWebSocketTransport implements OmpTransport {
   private readonly socketPath: string;
   private readonly shouldValidate: boolean;
@@ -130,12 +132,14 @@ export class UnixWebSocketTransport implements OmpTransport {
       clearTimeout(this.openTimer);
       this.openTimer = undefined;
     };
-    const fail = (message = "local transport unavailable"): void => {
+    const fail = (message = "local transport unavailable", code?: string): void => {
       if (settled) return;
       settled = true;
       clearOpenTimer();
       this.openReject = undefined;
-      reject(new Error(message));
+      const error = new Error(message);
+      if (code !== undefined) Object.assign(error, { transportCode: code });
+      reject(error);
     };
     this.openReject = () => fail("local transport closed");
     const succeed = (): void => {
@@ -171,8 +175,12 @@ export class UnixWebSocketTransport implements OmpTransport {
       // factory and only attaches its error listener afterwards, so a rejection
       // that dropped the code reported nothing at all for the failure that
       // matters most: the socket that was never reachable.
-      fail(message);
-      for (const listener of this.errors) listener(new Error(message));
+      fail(message, code);
+      // Carry the bounded errno as data. The client classifies retryability
+      // from it; parsing the sanitized message would couple the two.
+      const emitted = new Error(message);
+      if (code !== undefined) Object.assign(emitted, { transportCode: code });
+      for (const listener of this.errors) listener(emitted);
     });
     return promise;
   }
@@ -233,11 +241,16 @@ export function localTransportSocketPath(
 ): string {
   const development = developmentSandboxServiceConfig(environment);
   const runtimeDirectory = development?.environment.XDG_RUNTIME_DIR ?? environment.XDG_RUNTIME_DIR;
+  // Take the override from the caller's environment rather than the global
+  // process env, so a sandbox and the default host cannot disagree here.
+  const overrideDirectory =
+    development?.environment.T4_HOST_RUNTIME_DIR ?? environment.T4_HOST_RUNTIME_DIR;
   return localSocketPath({
     profileId,
     platform,
     ...(development === undefined ? {} : { homeDirectory: development.homeDirectory }),
     ...(runtimeDirectory === undefined ? {} : { runtimeDirectory }),
+    ...(overrideDirectory === undefined ? {} : { overrideDirectory }),
   });
 }
 
