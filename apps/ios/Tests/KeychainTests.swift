@@ -1,4 +1,5 @@
 import XCTest
+import HostWire
 @testable import T4Code
 
 final class KeychainTests: XCTestCase {
@@ -10,6 +11,32 @@ final class KeychainTests: XCTestCase {
 
     func testNormalLaunchKeepsPersistentKeychainEnabled() {
         XCTAssertTrue(Keychain.usesPersistentStore(arguments: ["T4Code"]))
+    }
+
+    func testPendingTranscriptQueueKeepsEveryAssistantEntry() throws {
+        var queue = PendingTranscriptQueue()
+
+        queue.enqueue(try transcriptEntry(id: "assistant-1", kind: "message"))
+        queue.enqueue(try transcriptEntry(id: "assistant-2", kind: "message"))
+
+        XCTAssertEqual(queue.entries.map(\.id), ["assistant-1", "assistant-2"])
+    }
+
+    func testPendingTranscriptQueueDrainsOnlyReadyOrderedPrefix() throws {
+        var queue = PendingTranscriptQueue()
+        queue.enqueue(try transcriptEntry(id: "assistant-1", kind: "message"))
+        queue.enqueue(try transcriptEntry(id: "tool-1", kind: "tool-use", toolCallId: "call-1"))
+        queue.enqueue(try transcriptEntry(id: "assistant-2", kind: "message"))
+
+        var ready: Set<String> = ["tool-1"]
+        XCTAssertTrue(queue.drainReadyPrefix { ready.contains($0.id) }.isEmpty)
+
+        ready.insert("assistant-1")
+        XCTAssertEqual(
+            queue.drainReadyPrefix { ready.contains($0.id) }.map(\.id),
+            ["assistant-1", "tool-1"]
+        )
+        XCTAssertEqual(queue.entries.map(\.id), ["assistant-2"])
     }
 
     @MainActor
@@ -31,5 +58,27 @@ final class KeychainTests: XCTestCase {
         XCTAssertEqual(defaults.string(forKey: "t4.deviceToken"), "device-token")
         let migrationMarkerKey = ["t4", "keychainMigrated"].joined(separator: ".")
         XCTAssertFalse(defaults.bool(forKey: migrationMarkerKey))
+    }
+
+    private func transcriptEntry(
+        id: String,
+        kind: String,
+        toolCallId: String? = nil
+    ) throws -> TranscriptEntry {
+        var entryData: [String: Any] = ["role": "assistant", "text": id]
+        if let toolCallId {
+            entryData = ["toolCallId": toolCallId, "tool": "write", "ok": true]
+        }
+        let payload: [String: Any] = [
+            "id": id,
+            "parentId": NSNull(),
+            "hostId": "host-1",
+            "sessionId": "session-1",
+            "turnId": "turn-1",
+            "kind": kind,
+            "timestamp": "2026-07-27T00:00:00.000Z",
+            "data": entryData,
+        ]
+        return try TranscriptEntry.decode(JSONSerialization.data(withJSONObject: payload))
     }
 }

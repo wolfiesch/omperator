@@ -924,6 +924,115 @@ export function appserverSupportedCapabilities(
 	}
 	return [...(options.supportedCapabilities ?? implemented)];
 }
+
+const ORDERED_STREAM_TEST_SCENARIO = "ordered-turn-v1";
+
+function accumulatedTestBlock(
+	entryId: string,
+	blockIndex: number,
+	blockKind: "text" | "thinking" | "tool-input",
+	content: string,
+	at: string,
+	options: { callId?: string; tool?: string } = {},
+): AppserverEvent[] {
+	const characters = [...content];
+	const stride = 3;
+	const events: AppserverEvent[] = [];
+	for (let length = stride; length < characters.length; length += stride) {
+		events.push({
+			type: "assistant.block.update",
+			entryId,
+			blockIndex,
+			blockKind,
+			content: characters.slice(0, length).join(""),
+			...options,
+			at,
+		});
+	}
+	events.push({
+		type: "assistant.block.update",
+		entryId,
+		blockIndex,
+		blockKind,
+		content,
+		...options,
+		at,
+	});
+	return events;
+}
+
+/**
+ * Fixed local-only visual fixture. Content is deliberately code-owned rather
+ * than caller-supplied so the test-control route cannot become an arbitrary
+ * transcript or notification injection surface.
+ */
+function orderedStreamTestEvents(at: string): AppserverEvent[] {
+	const entryId = "assistant:test-ordered-turn";
+	const primaryCallId = "test-write-primary";
+	const coverageCallId = "test-write-coverage";
+	return [
+		{ type: "turn.start", at },
+		...accumulatedTestBlock(
+			entryId,
+			0,
+			"thinking",
+			"I’ll preserve the provider’s block order, then stream both writes.",
+			at,
+		),
+		...accumulatedTestBlock(
+			entryId,
+			1,
+			"text",
+			"I’m updating the implementation first.",
+			at,
+		),
+		...accumulatedTestBlock(
+			entryId,
+			2,
+			"tool-input",
+			'{"path":"Sources/Streaming.swift","content":"struct StreamState {\\n    let isSmooth = true\\n}"}',
+			at,
+			{ callId: primaryCallId, tool: "write" },
+		),
+		{
+			type: "tool.start",
+			callId: primaryCallId,
+			tool: "write",
+			title: "Write implementation",
+			args: { path: "Sources/Streaming.swift" },
+			at,
+		},
+		...accumulatedTestBlock(
+			entryId,
+			3,
+			"thinking",
+			"The implementation is in place. I’ll add coverage without hiding the first tool.",
+			at,
+		),
+		...accumulatedTestBlock(
+			entryId,
+			4,
+			"tool-input",
+			'{"path":"Tests/StreamingTests.swift","content":"func testOrderedStreaming() {\\n    XCTAssertTrue(true)\\n}"}',
+			at,
+			{ callId: coverageCallId, tool: "write" },
+		),
+		{
+			type: "tool.start",
+			callId: coverageCallId,
+			tool: "write",
+			title: "Write coverage",
+			args: { path: "Tests/StreamingTests.swift" },
+			at,
+		},
+		{ type: "tool.progress", callId: primaryCallId, note: "formatting implementation", at },
+		{ type: "tool.progress", callId: coverageCallId, note: "running focused coverage", at },
+		{ type: "tool.result", callId: primaryCallId, ok: true, result: { bytes: 48 }, at },
+		{ type: "tool.result", callId: coverageCallId, ok: true, result: { tests: 1 }, at },
+		{ type: "turn.end", at },
+	];
+}
+
 export class LocalAppserver implements AppserverHandle {
 	hostId: HostId;
 	readonly epoch: string;
@@ -5815,6 +5924,7 @@ export class LocalAppserver implements AppserverHandle {
 		if (url.pathname === "/admin/revoke") return this.adminRevoke(request);
 		if (url.pathname === "/admin/test/seed") return this.#adminTestSeed(request);
 		if (url.pathname === "/admin/test/status") return this.#adminTestStatus(request);
+		if (url.pathname === "/admin/test/stream") return this.#adminTestStream(request);
 		if (url.pathname === "/admin/test/cleanup") return this.#adminTestCleanup(request);
 		if (
 			url.pathname !== "/ws" ||
@@ -6083,6 +6193,49 @@ export class LocalAppserver implements AppserverHandle {
 		} catch {
 			return this.adminError(500);
 		}
+	}
+	async #adminTestStream(request: Request): Promise<Response> {
+		const control = this.#authorizedTestControl(request);
+		if (!control) return this.adminError(404);
+		if (this.#draining || this.#stopping) return this.adminError(503);
+		const body = await this.adminJson(request, ["runId", "scenario", "stepMs"]);
+		if (body instanceof Response) return body;
+		if (
+			typeof body.runId !== "string" ||
+			body.runId.length === 0 ||
+			body.runId.length > 128 ||
+			body.scenario !== ORDERED_STREAM_TEST_SCENARIO ||
+			typeof body.stepMs !== "number" ||
+			!Number.isSafeInteger(body.stepMs) ||
+			body.stepMs < 0 ||
+			body.stepMs > 250
+		)
+			return this.adminError();
+		const runId = body.runId;
+		const stepMs = body.stepMs;
+		return this.#runTestControlMutation(async () => {
+			try {
+				const [target, ...extra] = await control.sessionIds(runId);
+				if (!target || extra.length > 0) return this.adminError();
+				await this.refreshInventoryAfterMutation();
+				const projection = this.#projections.get(target);
+				if (!projection) return this.adminError(409);
+				const events = orderedStreamTestEvents(this.#clock.now().toISOString());
+				for (const event of events) {
+					this.broadcast(target, projection.appendEvent(asAppWireEvent(event)));
+					if (stepMs > 0) await Bun.sleep(stepMs);
+				}
+				return Response.json({
+					v: 1,
+					runId,
+					scenario: ORDERED_STREAM_TEST_SCENARIO,
+					sessionId: target,
+					events: events.length,
+				});
+			} catch {
+				return this.adminError(500);
+			}
+		});
 	}
 	async #adminTestCleanup(request: Request): Promise<Response> {
 		const control = this.#authorizedTestControl(request);

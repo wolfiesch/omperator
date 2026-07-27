@@ -30,12 +30,29 @@ export type TranscriptMessageDiscardedEvent = {
 	reason: "rejected" | "local-only" | "failed" | "cancelled" | "completed-without-entry";
 	at: string;
 };
+export type TranscriptAssistantBlockUpdateEvent = {
+	type: "assistant.block.update";
+	entryId: string;
+	blockIndex: number;
+	blockKind: "text" | "thinking" | "tool-input";
+	content: string;
+	callId?: string;
+	tool?: string;
+	at: string;
+};
 export type TranscriptToolStartEvent = {
 	type: "tool.start";
 	callId: string;
 	tool: string;
 	title: string;
 	args: unknown;
+	at: string;
+};
+export type TranscriptToolInputUpdateEvent = {
+	type: "tool.input.update";
+	callId: string;
+	tool: string;
+	input: string;
 	at: string;
 };
 export type TranscriptToolProgressEvent = {
@@ -66,6 +83,8 @@ export type TranscriptEvent =
 	| TranscriptMessageEvent
 	| TranscriptMessageSettledEvent
 	| TranscriptMessageDiscardedEvent
+	| TranscriptAssistantBlockUpdateEvent
+	| TranscriptToolInputUpdateEvent
 	| TranscriptToolStartEvent
 	| TranscriptToolProgressEvent
 	| TranscriptToolResultEvent;
@@ -305,6 +324,12 @@ function safeOptionalDisplay(value: unknown, limit = MAX_EVENT_LABEL_BYTES): str
 	const output = safeDisplay(value, limit);
 	return output.length > 0 ? output : undefined;
 }
+function safeToolInput(value: string): string {
+	return cleanText(value, 65_536).replace(
+		/(["']?(?:access[_-]?token|authorization|client[_-]?secret|api[_-]?key|token|secret|password|credential)["']?\s*:\s*)(?:"(?:\\.|[^"\\])*"?|'(?:\\.|[^'\\])*'?|[^\s,}\]]+)/giu,
+		"$1[redacted]",
+	);
+}
 export function safeAttentionDisplay(value: unknown, limit: number, fallback: string): string {
 	const withoutUrls = typeof value === "string" ? value.replace(/\bhttps?:\/\/[^\s]+/giu, "[url]") : value;
 	const safe = safeDisplay(withoutUrls, limit);
@@ -364,6 +389,68 @@ function valueAt(value: unknown, fallback: () => string): string {
 function assistantSnapshot(message: unknown, fallback: () => string): MessageSnapshot | undefined {
 	if (!isRecord(message) || message.role !== "assistant") return undefined;
 	return { ...flattenParts(message.content), at: valueAt(message, fallback) };
+}
+function toolInputChunk(
+	frame: Record<string, unknown>,
+): { callId: string; tool: string; delta: string } | undefined {
+	const event = asFrame(frame.assistantMessageEvent);
+	if (event.type !== "toolcall_delta") return undefined;
+	const delta = asString(event.delta);
+	const contentIndex = asFiniteNumber(event.contentIndex);
+	const partial = asFrame(event.partial);
+	const content = Array.isArray(partial.content) ? partial.content : [];
+	const block = Number.isSafeInteger(contentIndex) ? asFrame(content[Number(contentIndex)]) : {};
+	const callId = safeOptionalDisplay(block.id, MAX_EVENT_LABEL_BYTES);
+	const tool = safeOptionalDisplay(block.name, MAX_EVENT_LABEL_BYTES);
+	if (!delta || callId === undefined || tool === undefined) return undefined;
+	return { callId, tool, delta };
+}
+function assistantBlockUpdate(
+	frame: Record<string, unknown>,
+	entryId: string,
+	at: string,
+	toolInput?: { callId: string; tool: string; content: string },
+): TranscriptAssistantBlockUpdateEvent | undefined {
+	const event = asFrame(frame.assistantMessageEvent);
+	const blockIndex = asFiniteNumber(event.contentIndex);
+	if (!Number.isSafeInteger(blockIndex) || blockIndex === undefined || blockIndex < 0 || blockIndex > MAX_EVENT_COUNT)
+		return undefined;
+	if (toolInput) {
+		return {
+			type: "assistant.block.update",
+			entryId,
+			blockIndex,
+			blockKind: "tool-input",
+			content: toolInput.content,
+			callId: toolInput.callId,
+			tool: toolInput.tool,
+			at,
+		};
+	}
+	const partial = asFrame(event.partial);
+	const content = Array.isArray(partial.content) ? partial.content : [];
+	const block = asFrame(content[blockIndex]);
+	if (event.type === "text_delta" && block.type === TEXT_BLOCK && typeof block.text === "string") {
+		return {
+			type: "assistant.block.update",
+			entryId,
+			blockIndex,
+			blockKind: "text",
+			content: cleanText(block.text, 65_536),
+			at,
+		};
+	}
+	if (event.type === "thinking_delta" && block.type === THINKING_BLOCK && typeof block.thinking === "string") {
+		return {
+			type: "assistant.block.update",
+			entryId,
+			blockIndex,
+			blockKind: "thinking",
+			content: cleanText(block.thinking, 65_536),
+			at,
+		};
+	}
+	return undefined;
 }
 function sourceId(message: unknown): string | undefined {
 	if (!isRecord(message)) return undefined;
@@ -646,6 +733,7 @@ export class TranscriptEventTranslator {
 	#messageCounter = 0;
 	#activeAssistant: ActiveAssistant | undefined;
 	#assistantStreams = new Map<string, ActiveAssistant>();
+	#toolInputs = new Map<string, string>();
 	#projectedMessageIds = new Map<string, string | null>();
 	#knownDurableEntryIds = new Set<string>();
 	#pendingSettlements = new Map<string, { streamId: string; at: string }>();
@@ -722,11 +810,13 @@ export class TranscriptEventTranslator {
 			case "turn_start":
 				this.#turnAt = this.#nowIso();
 				this.#activeAssistant = undefined;
+				this.#toolInputs.clear();
 				return [{ type: "turn.start", at: this.#turnAt }];
 			case "turn_end": {
 				const at = this.#nowIso();
 				this.#turnAt = undefined;
 				this.#activeAssistant = this.#activeAssistant?.ended ? undefined : this.#activeAssistant;
+				this.#toolInputs.clear();
 				const error = turnErrorEvent(frame, at);
 				return error ? [error, { type: "turn.end", at }] : [{ type: "turn.end", at }];
 			}
@@ -953,7 +1043,31 @@ export class TranscriptEventTranslator {
 		if (!snapshot) return [];
 		const correlated = this.correlatedAssistant(frame);
 		if (!correlated || correlated.active.ended) return [];
-		return this.emitMessage(snapshot);
+		const messageEvents = this.emitMessage(snapshot);
+		const chunk = toolInputChunk(frame);
+		if (chunk === undefined) {
+			const block = assistantBlockUpdate(frame, correlated.active.entryId, snapshot.at);
+			return block ? [...messageEvents, block] : messageEvents;
+		}
+		const raw = `${this.#toolInputs.get(chunk.callId) ?? ""}${chunk.delta}`.slice(0, 65_536);
+		this.#toolInputs.set(chunk.callId, raw);
+		const safeInput = safeToolInput(raw);
+		const block = assistantBlockUpdate(frame, correlated.active.entryId, snapshot.at, {
+			callId: chunk.callId,
+			tool: chunk.tool,
+			content: safeInput,
+		});
+		return [
+			...messageEvents,
+			...(block ? [block] : []),
+			{
+				type: "tool.input.update",
+				callId: chunk.callId,
+				tool: chunk.tool,
+				input: safeInput,
+				at: snapshot.at,
+			},
+		];
 	}
 	private messageEnd(frame: Record<string, unknown>): TranscriptEvent[] {
 		const message = frame.message;
@@ -1017,6 +1131,7 @@ export class TranscriptEventTranslator {
 	private toolStart(frame: Record<string, unknown>): TranscriptEvent[] {
 		const callId = asString(frame.toolCallId);
 		if (!callId || this.#toolStates.has(callId)) return [];
+		this.#toolInputs.delete(callId);
 		const at = valueAt(frame, this.#nowIso.bind(this));
 		const outerTool = asString(frame.toolName) ?? "tool";
 		const xdev = xdevWriteCall(outerTool, frame.args);

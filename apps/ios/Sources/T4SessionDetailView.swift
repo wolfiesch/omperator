@@ -65,7 +65,9 @@ struct T4SessionDetailView: View {
                         if showFacts { facts }
                         Divider().overlay(t.lineFaint)
                         T4TranscriptView(entries: store.transcript(for: session.sessionId),
-                                         streamingText: store.streamingText[session.sessionId] ?? "",
+                                         liveTurn: store.liveTurns[session.sessionId],
+                                         streamingMessage: store.streamingMessages[session.sessionId],
+                                         liveTools: store.liveTools[session.sessionId] ?? LiveToolProjection(),
                                          theme: t)
                         // Live asks belong at the transcript's tail — the
                         // newest thing demanding attention, always in view.
@@ -96,12 +98,17 @@ struct T4SessionDetailView: View {
                         proxy.scrollTo("transcript-bottom", anchor: .bottom)
                     }
                 }
-                .onChange(of: store.streamingText[session.sessionId] ?? "") { _, _ in
-                    // Keep the live streaming tail in view as tokens arrive.
+                .onChange(of: store.streamingMessages[session.sessionId]) { _, _ in
                     guard store.prependingSession != session.sessionId else { return }
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo("transcript-bottom", anchor: .bottom)
-                    }
+                    proxy.scrollTo("transcript-bottom", anchor: .bottom)
+                }
+                .onChange(of: store.liveTurns[session.sessionId]) { _, _ in
+                    guard store.prependingSession != session.sessionId else { return }
+                    proxy.scrollTo("transcript-bottom", anchor: .bottom)
+                }
+                .onChange(of: store.liveTools[session.sessionId]) { _, _ in
+                    guard store.prependingSession != session.sessionId else { return }
+                    proxy.scrollTo("transcript-bottom", anchor: .bottom)
                 }
             }
             T4TerminalDrawer(session: session, store: store, isOpen: showTerminal)

@@ -44,15 +44,18 @@ struct T4Markdown: View {
     static func blocks(in text: String) -> [Block] {
         var out: [Block] = []
         var prose = ""
-        var lines = text.components(separatedBy: "\n")
-        while !lines.isEmpty {
-            let line = lines.removeFirst()
+        let lines = text.components(separatedBy: "\n")
+        var index = 0
+        while index < lines.count {
+            let line = lines[index]
+            index += 1
             if line.hasPrefix("```") {
                 let language = String(line.dropFirst(3)).trimmingCharacters(in: .whitespaces)
                 var codeLines: [String] = []
                 var closed = false
-                while !lines.isEmpty {
-                    let codeLine = lines.removeFirst()
+                while index < lines.count {
+                    let codeLine = lines[index]
+                    index += 1
                     if codeLine.hasPrefix("```") { closed = true; break }
                     codeLines.append(codeLine)
                 }
