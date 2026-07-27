@@ -14,7 +14,7 @@ final class T4CodeUITests: XCTestCase {
     @MainActor
     private func launch(arguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
-        // Fresh state every run: no persisted endpoint/creds, no restores.
+        // Fresh state every run: no Keychain access and no restored connection.
         app.launchArguments = ["-T4NoRestore", "-T4Demo"] + arguments
         app.launch()
         return app

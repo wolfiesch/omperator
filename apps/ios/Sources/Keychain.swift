@@ -21,11 +21,22 @@ enum Keychain {
     /// `sh.t4code.ios` logger subsystem).
     static let service = "sh.t4code.ios"
 
+    /// `-T4NoRestore` is the app's fresh-state test seam. In that mode the
+    /// process must not touch the developer's real login Keychain: unsigned
+    /// and ad-hoc test builds have changing identities, so macOS otherwise
+    /// asks for permission to read credentials written by an earlier build.
+    static func usesPersistentStore(
+        arguments: [String] = ProcessInfo.processInfo.arguments
+    ) -> Bool {
+        !arguments.contains("-T4NoRestore")
+    }
+
     /// Store `value` under `key`. Replaces any existing item. A nil or empty
     /// value deletes the item, so callers can treat "clear" as "set nil".
     /// Returns true on success.
     @discardableResult
     static func set(_ value: String?, forKey key: String) -> Bool {
+        guard usesPersistentStore() else { return true }
         guard let value, !value.isEmpty else {
             return remove(forKey: key)
         }
@@ -46,6 +57,7 @@ enum Keychain {
 
     /// Read the string stored under `key`, or nil if absent/unreadable.
     static func get(_ key: String) -> String? {
+        guard usesPersistentStore() else { return nil }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -66,6 +78,7 @@ enum Keychain {
     /// or already absent); false only on an unexpected error.
     @discardableResult
     static func remove(forKey key: String) -> Bool {
+        guard usesPersistentStore() else { return true }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
