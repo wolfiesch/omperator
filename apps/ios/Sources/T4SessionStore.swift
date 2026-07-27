@@ -12,6 +12,34 @@ import os
 
 private let t4log = Logger(subsystem: "sh.t4code.ios", category: "store")
 
+struct PendingTranscriptQueue {
+    private(set) var entries: [TranscriptEntry] = []
+
+    var isEmpty: Bool { entries.isEmpty }
+
+    mutating func enqueue(_ entry: TranscriptEntry) {
+        if let index = entries.firstIndex(where: { $0.id == entry.id }) {
+            entries[index] = entry
+        } else {
+            entries.append(entry)
+        }
+    }
+
+    mutating func drainReadyPrefix(
+        while isReady: (TranscriptEntry) -> Bool
+    ) -> [TranscriptEntry] {
+        var drained: [TranscriptEntry] = []
+        while let first = entries.first, isReady(first) {
+            drained.append(entries.removeFirst())
+        }
+        return drained
+    }
+
+    mutating func removeAll(where shouldRemove: (TranscriptEntry) -> Bool) {
+        entries.removeAll(where: shouldRemove)
+    }
+}
+
 @MainActor
 final class T4SessionStore: ObservableObject {
     struct Group: Identifiable {
@@ -125,9 +153,9 @@ final class T4SessionStore: ObservableObject {
     /// Transient tool arguments, execution progress, and results by session.
     @Published private(set) var liveTools: [String: LiveToolProjection] = [:]
     /// Durable rows that arrived before their frame-paced live projection
-    /// finished. They replace the transient row only after its final frame.
-    private var pendingAssistantEntries: [String: TranscriptEntry] = [:]
-    private var pendingToolEntries: [String: [String: TranscriptEntry]] = [:]
+    /// finished. A per-session queue preserves wire order across assistant and
+    /// tool rows, and only drains a ready prefix.
+    private var pendingTranscriptEntries: [String: PendingTranscriptQueue] = [:]
     /// Sessions with a turn in flight, from turn.start/turn.end events — the
     /// composer's stop button keys off this (the ref's `status` sticks at
     /// "active" long after the turn actually ends).
@@ -323,7 +351,10 @@ final class T4SessionStore: ObservableObject {
     private func clearStreamingMessage(sessionId: String) {
         streamingTasks.removeValue(forKey: sessionId)?.cancel()
         streamingMessages.removeValue(forKey: sessionId)
-        pendingAssistantEntries.removeValue(forKey: sessionId)
+        guard var pending = pendingTranscriptEntries[sessionId] else { return }
+        pending.removeAll { $0.kind == .message && $0.role != "user" }
+        if pending.isEmpty { pendingTranscriptEntries.removeValue(forKey: sessionId) }
+        else { pendingTranscriptEntries[sessionId] = pending }
     }
 
     private func receiveLiveTurnBlock(sessionId: String, event: SessionEvent) {
@@ -364,36 +395,7 @@ final class T4SessionStore: ObservableObject {
     }
 
     private func finishPendingLiveTurnEntries(sessionId: String) {
-        guard var timeline = liveTurns[sessionId] else { return }
-        if let entry = pendingAssistantEntries[sessionId],
-           timeline.assistantIsCaughtUp() {
-            pendingAssistantEntries.removeValue(forKey: sessionId)
-            appendDurableEntry(entry, sessionId: sessionId)
-            timeline.removeAssistantBlocks()
-        }
-        if var pending = pendingToolEntries[sessionId] {
-            let finished = pending.values
-                .filter { entry in
-                    guard let callId = entry.toolCallId else { return false }
-                    return timeline.toolIsCaughtUp(callId: callId)
-                }
-                .sorted { $0.timestamp < $1.timestamp }
-            for entry in finished {
-                appendDurableEntry(entry, sessionId: sessionId)
-                if let callId = entry.toolCallId {
-                    pending.removeValue(forKey: callId)
-                    timeline.removeTool(callId: callId)
-                }
-            }
-            if pending.isEmpty { pendingToolEntries.removeValue(forKey: sessionId) }
-            else { pendingToolEntries[sessionId] = pending }
-        }
-        if timeline.isEmpty {
-            liveTurnTasks.removeValue(forKey: sessionId)?.cancel()
-            liveTurns.removeValue(forKey: sessionId)
-        } else {
-            liveTurns[sessionId] = timeline
-        }
+        finishPendingTranscriptEntries(sessionId: sessionId)
     }
 
     private func settleLiveTurnTool(sessionId: String, callId: String) {
@@ -407,10 +409,14 @@ final class T4SessionStore: ObservableObject {
         }
     }
 
-    private func settleLiveTurnAssistant(sessionId: String) {
+    private func settleLiveTurnAssistant(sessionId: String, entryId: String? = nil) {
         guard var timeline = liveTurns[sessionId],
               timeline.hasAssistantBlocks() else { return }
-        timeline.removeAssistantBlocks()
+        if let entryId, timeline.hasAssistantBlocks(entryId: entryId) {
+            timeline.removeAssistantBlocks(entryId: entryId)
+        } else {
+            timeline.removeAssistantBlocks()
+        }
         if timeline.isEmpty {
             liveTurnTasks.removeValue(forKey: sessionId)?.cancel()
             liveTurns.removeValue(forKey: sessionId)
@@ -432,9 +438,7 @@ final class T4SessionStore: ObservableObject {
     }
 
     private func finishPendingAssistantEntry(sessionId: String) {
-        guard let entry = pendingAssistantEntries.removeValue(forKey: sessionId) else { return }
-        appendDurableEntry(entry, sessionId: sessionId)
-        streamingMessages.removeValue(forKey: sessionId)
+        finishPendingTranscriptEntries(sessionId: sessionId)
     }
 
     private func receiveToolEvent(sessionId: String, event: SessionEvent) {
@@ -460,12 +464,70 @@ final class T4SessionStore: ObservableObject {
     }
 
     private func finishPendingToolEntries(sessionId: String) {
-        guard let pending = pendingToolEntries.removeValue(forKey: sessionId) else { return }
-        for entry in pending.values.sorted(by: { $0.timestamp < $1.timestamp }) {
-            appendDurableEntry(entry, sessionId: sessionId)
-            if let callId = entry.toolCallId {
-                settleTool(sessionId: sessionId, callId: callId)
+        finishPendingTranscriptEntries(sessionId: sessionId)
+    }
+
+    private func enqueuePendingTranscriptEntry(_ entry: TranscriptEntry, sessionId: String) {
+        var pending = pendingTranscriptEntries[sessionId] ?? PendingTranscriptQueue()
+        pending.enqueue(entry)
+        pendingTranscriptEntries[sessionId] = pending
+    }
+
+    private func shouldDeferTranscriptEntry(_ entry: TranscriptEntry, sessionId: String) -> Bool {
+        if pendingTranscriptEntries[sessionId]?.isEmpty == false { return true }
+        return !pendingTranscriptEntryIsReady(entry, sessionId: sessionId)
+    }
+
+    private func pendingTranscriptEntryIsReady(
+        _ entry: TranscriptEntry,
+        sessionId: String
+    ) -> Bool {
+        if entry.kind == .message, entry.role != "user" {
+            if let timeline = liveTurns[sessionId] {
+                if timeline.hasAssistantBlocks(entryId: entry.id) {
+                    return timeline.assistantIsCaughtUp(entryId: entry.id)
+                }
+                if timeline.hasAssistantBlocks() {
+                    return timeline.assistantIsCaughtUp()
+                }
             }
+            if let buffer = streamingMessages[sessionId] {
+                return buffer.isCaughtUp
+            }
+        }
+        if entry.kind == .toolUse, let callId = entry.toolCallId {
+            if let timeline = liveTurns[sessionId], timeline.contains(callId: callId) {
+                return timeline.toolIsCaughtUp(callId: callId)
+            }
+            if let projection = liveTools[sessionId],
+               projection.calls.contains(where: { $0.id == callId }) {
+                return projection.isCaughtUp
+            }
+        }
+        return true
+    }
+
+    private func finishPendingTranscriptEntries(sessionId: String) {
+        guard var pending = pendingTranscriptEntries[sessionId] else { return }
+        let finished = pending.drainReadyPrefix {
+            pendingTranscriptEntryIsReady($0, sessionId: sessionId)
+        }
+        if pending.isEmpty { pendingTranscriptEntries.removeValue(forKey: sessionId) }
+        else { pendingTranscriptEntries[sessionId] = pending }
+        for entry in finished {
+            appendDurableEntry(entry, sessionId: sessionId)
+            settleLiveProjection(for: entry, sessionId: sessionId)
+        }
+    }
+
+    private func settleLiveProjection(for entry: TranscriptEntry, sessionId: String) {
+        if entry.kind == .message, entry.role != "user" {
+            streamingMessages.removeValue(forKey: sessionId)
+            settleLiveTurnAssistant(sessionId: sessionId, entryId: entry.id)
+        }
+        if let callId = entry.toolCallId {
+            settleLiveTurnTool(sessionId: sessionId, callId: callId)
+            settleTool(sessionId: sessionId, callId: callId)
         }
     }
 
@@ -1948,7 +2010,7 @@ final class T4SessionStore: ObservableObject {
             case .snapshot(let snapshot):
                 clearStreamingMessage(sessionId: snapshot.sessionId)
                 clearLiveTurn(sessionId: snapshot.sessionId)
-                pendingToolEntries.removeValue(forKey: snapshot.sessionId)
+                pendingTranscriptEntries.removeValue(forKey: snapshot.sessionId)
                 toolStreamingTasks.removeValue(forKey: snapshot.sessionId)?.cancel()
                 liveTools.removeValue(forKey: snapshot.sessionId)
                 liveEntries[snapshot.sessionId] = snapshot.entries.map { TranscriptEntry(from: $0) }
@@ -1960,36 +2022,15 @@ final class T4SessionStore: ObservableObject {
                 let sid = entryFrame.sessionId
                 // A settled row can arrive in the same provider burst as its
                 // final delta. Keep it pending until the live projection has
-                // revealed that final snapshot, then swap rows atomically.
-                if entry.kind == .message, entry.role != "user",
-                   let timeline = liveTurns[sid],
-                   timeline.hasAssistantBlocks(),
-                   !timeline.assistantIsCaughtUp() {
-                    pendingAssistantEntries[sid] = entry
-                } else if entry.kind == .message, entry.role != "user",
-                   let buffer = streamingMessages[sid], !buffer.isCaughtUp {
-                    pendingAssistantEntries[sid] = entry
-                } else if entry.kind == .toolUse, let callId = entry.toolCallId,
-                          let timeline = liveTurns[sid], timeline.contains(callId: callId),
-                          !timeline.toolIsCaughtUp(callId: callId) {
-                    var pending = pendingToolEntries[sid] ?? [:]
-                    pending[callId] = entry
-                    pendingToolEntries[sid] = pending
-                } else if entry.kind == .toolUse, let callId = entry.toolCallId,
-                          let projection = liveTools[sid], !projection.isCaughtUp {
-                    var pending = pendingToolEntries[sid] ?? [:]
-                    pending[callId] = entry
-                    pendingToolEntries[sid] = pending
+                // revealed that final snapshot. Once any row is pending, all
+                // later rows join the same queue so a fast tool cannot settle
+                // ahead of earlier paced assistant content.
+                if shouldDeferTranscriptEntry(entry, sessionId: sid) {
+                    enqueuePendingTranscriptEntry(entry, sessionId: sid)
+                    finishPendingTranscriptEntries(sessionId: sid)
                 } else {
                     appendDurableEntry(entry, sessionId: sid)
-                    if entry.kind == .message, entry.role != "user" {
-                        clearStreamingMessage(sessionId: sid)
-                        settleLiveTurnAssistant(sessionId: sid)
-                    }
-                    if let callId = entry.toolCallId {
-                        settleLiveTurnTool(sessionId: sid, callId: callId)
-                        settleTool(sessionId: sid, callId: callId)
-                    }
+                    settleLiveProjection(for: entry, sessionId: sid)
                 }
             case .confirmation(let challenge):
                 pendingConfirmation = challenge
@@ -2162,8 +2203,7 @@ final class T4SessionStore: ObservableObject {
         streamingMessages.removeAll()
         liveTurns.removeAll()
         liveTools.removeAll()
-        pendingAssistantEntries.removeAll()
-        pendingToolEntries.removeAll()
+        pendingTranscriptEntries.removeAll()
         // Drop any open terminals — the transport is gone, no close frame.
         terminalOutput.removeAll()
         terminalExits.removeAll()
