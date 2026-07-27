@@ -717,10 +717,24 @@ export class TailscaleRemotePolicy implements RemoteConnectionPolicy {
 
 function sanitizeRemoteFrame(frame: ServerFrame): ServerFrame | undefined {
 	const seen = new WeakSet<object>();
-	const walk = (value: unknown, depth: number, settingsMap = false): unknown => {
+	// Read commands whose result carries one large bounded payload string. The
+	// 64 KiB generic string bound would silently drop their responses (a
+	// base64 chunk is ~1.33× the bytes); the protocol's own chunk sizes are
+	// the real cap, so these fields get their per-command bound instead.
+	const LARGE_CONTENT: Readonly<Record<string, number>> = {
+		"files.read": 786_432 * 2, // MAX_FILE_BYTES base64 ceiling, with slack
+		"session.image.read": 400_000,
+		"artifact.read": 400_000,
+		"preview.capture.read": 400_000,
+	};
+	const largeStringLimit =
+		frame.type === "response" && typeof frame.command === "string" ? LARGE_CONTENT[frame.command] : undefined;
+	const walk = (value: unknown, depth: number, settingsMap = false, largeContent = false): unknown => {
 		if (depth > 12) throw new Error("outbound depth exceeded");
 		if (typeof value === "string") {
-			if (value.length > 65_536) throw new Error("outbound string exceeded");
+			if (value.length > (largeContent && largeStringLimit !== undefined ? largeStringLimit : 65_536))
+				throw new Error("outbound string exceeded");
+			if (largeContent) return value; // bounded payload field: no secret/path redaction of base64
 			if (
 				/^(?:[A-Za-z]+\s+)?[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(value) ||
 				/^Bearer\s+/iu.test(value)
@@ -733,9 +747,9 @@ function sanitizeRemoteFrame(frame: ServerFrame): ServerFrame | undefined {
 		if (value === null || typeof value !== "object") return value;
 		if (seen.has(value)) throw new Error("outbound cycle");
 		seen.add(value);
-		if (Array.isArray(value)) {
+			if (Array.isArray(value)) {
 			if (value.length > MAX_ARRAY_ITEMS) throw new Error("outbound array exceeded");
-			const result = value.map(item => walk(item, depth + 1));
+			const result = value.map(item => walk(item, depth + 1, false, false));
 			seen.delete(value);
 			return result;
 		}
@@ -752,7 +766,13 @@ function sanitizeRemoteFrame(frame: ServerFrame): ServerFrame | undefined {
 				result[childKey] = child;
 			} else if (!settingsMap && (childKey === "deviceToken" || isSecretLikeKey(childKey))) {
 				result[childKey] = "[redacted]";
-			} else result[childKey] = walk(child, depth + 1, childIsSettingsMap);
+			} else
+				result[childKey] = walk(
+					child,
+					depth + 1,
+					childIsSettingsMap,
+					largeStringLimit !== undefined && (childKey === "content" || childKey === "data"),
+				);
 		}
 		seen.delete(value);
 		return result;
