@@ -12,11 +12,11 @@
 // revision is a content hash so concurrent writers conflict loudly instead of
 // silently last-write-winning. Unknown config.yml keys round-trip untouched —
 // omp owns the schema, we only touch the paths listed above.
+import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
-import { open, readFile, rename, writeFile } from "node:fs/promises";
+import { open, readFile, rename } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type { CommandResult } from "@t4-code/host-wire";
 import type { OperationContext } from "./operations/dispatcher.ts";
@@ -82,8 +82,8 @@ export class OmpSettingsAuthority {
 	}
 
 	// ── agent.db auth_credentials ────────────────────────────────────────
-	#openDb(): DatabaseSync {
-		return new DatabaseSync(this.#agentDbPath);
+	#openDb(): Database {
+		return new Database(this.#agentDbPath);
 	}
 
 	#readProviderKeys(): Record<string, string> {
