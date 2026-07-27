@@ -676,7 +676,7 @@ jobs:
   # exactly when the result is worth having.
   ios:
     needs: changes
-    if: ${{ needs.changes.outputs.ios == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || vars.M1_CI_ENABLED != 'true') }}
+    if: ${{ needs.changes.outputs.ios == 'true' }}
     # macos-15 preselects Xcode 16.4, whose simulator SDK compiles only to
     # iOS 18.5, while project.yml targets iOS 26 and the UI uses iOS 26 APIs.
     # macos-26 ships an Xcode 26 toolchain.
@@ -700,44 +700,6 @@ jobs:
           xcrun simctl list runtimes available
 
       - name: Build the application and run its XCUITest bundle
-        run: node scripts/verify-ios.mjs
-
-  private-ios:
-    name: m1-ios
-    needs: changes
-    if: ${{ needs.changes.outputs.ios == 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.M1_CI_ENABLED == 'true' }}
-    runs-on: [self-hosted, macOS, ARM64, wolfie-m1, trusted]
-    timeout-minutes: 30
-    steps:
-      - name: Check out source
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-
-      - name: Install Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 24.13.1
-
-      - name: Select the newest installed Xcode
-        shell: bash
-        run: |
-          xcode_app=
-          for candidate in /Applications/Xcode*.app; do
-            [[ -d "$candidate" ]] && xcode_app="$candidate"
-          done
-          test -n "$xcode_app"
-          test -d "$xcode_app/Contents/Developer"
-          echo "using $xcode_app"
-          echo "DEVELOPER_DIR=$xcode_app/Contents/Developer" >> "$GITHUB_ENV"
-
-      - name: Install XcodeGen when missing
-        run: command -v xcodegen >/dev/null || brew install xcodegen
-
-      - name: Report the toolchain under test
-        run: |
-          xcodebuild -version
-          xcrun simctl list runtimes available
-
-      - name: Build the application and run its XCUITest bundle on the M1
         run: node scripts/verify-ios.mjs
 
   # The branch-protection gate. It waits only on legs that run on ubuntu-24.04
@@ -793,7 +755,7 @@ jobs:
   release-gates:
     name: release-gates
     if: ${{ always() }}
-    needs: [changes, legacy-bridge-continuity, official-omp-gate0, ios, private-ios]
+    needs: [changes, legacy-bridge-continuity, official-omp-gate0, ios]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -804,17 +766,13 @@ jobs:
           CONTINUITY_RESULT: ${{ needs.legacy-bridge-continuity.result }}
           OFFICIAL_OMP_GATE0_RESULT: ${{ needs.official-omp-gate0.result }}
           IOS_RESULT: ${{ needs.ios.result }}
-          PRIVATE_IOS_RESULT: ${{ needs.private-ios.result }}
         run: |
           set -euo pipefail
           test "$CHANGES_RESULT" = success
-          case "$IOS_RESULT:$PRIVATE_IOS_RESULT" in
-            success:skipped|skipped:success|skipped:skipped) ;;
-            *) exit 1 ;;
-          esac
           for result in \
             "$CONTINUITY_RESULT" \
-            "$OFFICIAL_OMP_GATE0_RESULT"
+            "$OFFICIAL_OMP_GATE0_RESULT" \
+            "$IOS_RESULT"
           do
             case "$result" in
               success|skipped) ;;
