@@ -273,24 +273,19 @@ all speaking the same <code>omp-app/1</code> wire to your <code>t4-host</code>, 
 	<div class="swatch"><div class="chip" style="background:#86e0b0"></div><div class="name">ok</div><div class="hex">#86e0b0</div></div>
 </div>
 
-<h2><span class="dot">●</span> new this cycle — regions, settings & cmux parity</h2>
+<h2><span class="dot">●</span> everything in this build</h2>
 <div class="facts">
 	<div class="fact"><span class="k">regions</span><div>Every pane is a tile: right dock (browser, files, agents, review) concurrent with the transcript and the bottom terminal. Per-session layouts persist.</div></div>
 	<div class="fact"><span class="k">floating</span><div>Any tile pops out into its own floating panel on macOS — and docks back with one click.</div></div>
 	<div class="fact"><span class="k">settings</span><div>Full OMP settings from the app: models per agent role, thinking level, approval mode, provider keys (masked), wss pinning, theme. Writes are confirmed and revision-checked.</div></div>
-	<div class="fact"><span class="k">fork</span><div>Branch any session into a full-history copy — from the rail row menu, the session menu, or the TUI (<code>f</code>).</div></div>
+	<div class="fact"><span class="k">fork</span><div>Branch any session into a full-history copy — rail row menu, session menu, or the TUI (<code>f</code>).</div></div>
 	<div class="fact"><span class="k">design mode</span><div>Annotate an element in the browser pane, add a note, and a structured prompt lands in the composer.</div></div>
 	<div class="fact"><span class="k">gallery</span><div>The files pane shows real image thumbnails with a full-screen preview.</div></div>
 	<div class="fact"><span class="k">unread</span><div>Accent dots on rail rows with new activity; <code>⌘⌥U</code> cycles unread sessions on macOS.</div></div>
+	<div class="fact"><span class="k">unread</span><div>Terminal mouse reporting — htop, vim, lazygit take clicks and scrolls.</div></div>
+	<div class="fact"><span class="k">wss</span><div>Pinned TLS alongside plain ws on the tailnet — TOFU fingerprint in the Keychain, published on <code>/healthz</code>.</div></div>
+	<div class="fact"><span class="k">preview</span><div>Host-side headless-Chromium preview service: launch, navigate, capture, click/type/scroll, leases — all 22 commands.</div></div>
 	<div class="fact"><span class="k">t4 tui</span><div>The whole product in a terminal: rail, live transcript, composer, fork — one self-contained binary.</div></div>
-</div>
-
-<h2><span class="dot">●</span> the new layout</h2>
-<div class="grid">
-	<div class="card"><img src="../screenshots/region-hero.png" alt="region layout"><div class="body"><span class="tag tag-mac">macOS</span><h3>Regions</h3><p>Browser right dock, terminal bottom, transcript center — all live at once.</p></div></div>
-	<div class="card"><img src="../screenshots/floating-tile.png" alt="floating tile"><div class="body"><span class="tag tag-mac">macOS</span><h3>Floating tiles</h3><p>Pop any pane into its own window; Dock Back returns it.</p></div></div>
-	<div class="card"><img src="../screenshots/settings-full.png" alt="settings"><div class="body"><span class="tag tag-mac">macOS</span><h3>Real settings</h3><p>Models per role, behavior, masked keys, connection, appearance.</p></div></div>
-	<div class="card"><img src="../screenshots/region-ios.png" alt="iOS right slide-over"><div class="body"><span class="tag tag-ios">iOS</span><h3>Right slide-over</h3><p>The same dock model, as a right-edge overlay on the phone.</p></div></div>
 </div>
 
 <h2><span class="dot">●</span> iOS</h2>
@@ -300,6 +295,7 @@ all speaking the same <code>omp-app/1</code> wire to your <code>t4-host</code>, 
 		<figure class="car-slide"><img src="../screenshots/feature-01-onboarding.png" alt="onboarding"><figcaption><b>Onboarding</b> — pair a host with a code, QR, or deep link.</figcaption></figure>
 		<figure class="car-slide"><img src="../screenshots/feature-02-rail.png" alt="session rail"><figcaption><b>Session rail</b> — swipe-right drawer, project groups, unread dots.</figcaption></figure>
 		<figure class="car-slide"><img src="../screenshots/feature-03-session.png" alt="session"><figcaption><b>Live transcript</b> — real-time entries, streaming.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/agent-ios.png" alt="agent streaming"><figcaption><b>Agent streaming</b> — a live turn mid-response, with stop affordance.</figcaption></figure>
 		<figure class="car-slide"><img src="../screenshots/feature-04-inbox.png" alt="inbox"><figcaption><b>Inbox</b> — everything that needs attention, one tap away.</figcaption></figure>
 		<figure class="car-slide"><img src="../screenshots/feature-05-plan.png" alt="plan"><figcaption><b>Plan panel</b> — phase progress inline in the session.</figcaption></figure>
 		<figure class="car-slide"><img src="../screenshots/feature-06-ask.png" alt="ask"><figcaption><b>Approvals</b> — ask cards for plan review and confirmations.</figcaption></figure>
@@ -327,6 +323,7 @@ all speaking the same <code>omp-app/1</code> wire to your <code>t4-host</code>, 
 		<figure class="car-slide"><img src="../screenshots/mac-03-agents.png" alt="agents"><figcaption><b>Agents</b> — subagent roster.</figcaption></figure>
 		<figure class="car-slide"><img src="../screenshots/mac-04-terminal.png" alt="terminal"><figcaption><b>Terminal</b> — host PTY, docked, live.</figcaption></figure>
 		<figure class="car-slide"><img src="../screenshots/region-hero.png" alt="browser right dock"><figcaption><b>Browser</b> — right dock, live and concurrent with the terminal.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/floating-tile.png" alt="floating tile"><figcaption><b>Floating tiles</b> — pop any pane into its own window; Dock Back returns it.</figcaption></figure>
 		<figure class="car-slide"><img src="../screenshots/mac-10-searchdiff.png" alt="search and diff"><figcaption><b>Search & diff</b> — right dock, find any file in the workspace.</figcaption></figure>
 		<figure class="car-slide"><img src="../screenshots/mac-06-plan.png" alt="plan"><figcaption><b>Plan panel</b> — phase tracking inline.</figcaption></figure>
 		<figure class="car-slide"><img src="../screenshots/mac-07-ask.png" alt="ask"><figcaption><b>Plan review</b> — approvals with real shortcuts.</figcaption></figure>
