@@ -45,6 +45,11 @@ export function isTailnetAddress(address: string): boolean {
 	const v6 = ipv6(normalized);
 	return v6 !== undefined && v6 >> 80n === 0xfd7a115ca1e0n;
 }
+function isLoopbackAddress(address: string): boolean {
+	const normalized = normalizeIpAddress(address);
+	const v4 = ipv4(normalized);
+	return v4 ? v4[0] === 127 : normalized === "::1";
+}
 export function createListenerPlan(config: RemoteListenerConfig): ListenerPlan {
 	if (!isTailnetAddress(config.address) || normalizeIpAddress(config.address) !== config.address)
 		throw new Error("direct listener address must be an explicit Tailscale address");
@@ -160,8 +165,27 @@ export class BunRemoteListener {
 							peer = { address: normalized, source: "direct", identity: { nodeId: this.config.internalPeerNodeId, addresses: [normalized], source: "direct" } };
 						}
 						else {
-							if (!isTailnetAddress(address) || !this.resolver) return new Response("Unauthorized", { status: 401 });
-							peer = { address, source: "direct", identity: await this.resolver.resolve(address) };
+							// A client on this same Mac reaches the explicitly
+							// Tailnet-bound listener either from loopback or the
+							// Mac's own Tailnet address. Give that self-connection
+							// a stable local identity without depending on
+							// `tailscale whois` accepting a self-query. Remote
+							// peers still require verified Tailscale identity.
+							const local = isLoopbackAddress(address) || address === this.plan.address;
+							const peerAddress = local ? this.plan.address : address;
+							if (!isTailnetAddress(peerAddress) || !this.resolver)
+								return new Response("Unauthorized", { status: 401 });
+							peer = {
+								address: peerAddress,
+								source: "direct",
+								identity: local
+									? {
+											nodeId: `local:${peerAddress}`,
+											addresses: [peerAddress],
+											source: "direct",
+										}
+									: await this.resolver.resolve(peerAddress),
+							};
 						}
 					} else {
 						peer = resolveServePeer(address, request.headers, this.plan.trustedServeProxy);
