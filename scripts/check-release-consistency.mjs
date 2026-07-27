@@ -1051,9 +1051,16 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
         errors.push(`.github/workflows/ci.yml release-gates must aggregate the ${job} leg`);
     }
     // The iOS leg is path-gated, so a broken gate would silently ship Swift
-    // that no job ever compiled.
+    // that no job ever compiled. Its persistent runner is restricted to
+    // same-repository pull requests; every other event uses disposable macOS.
     if (workflow?.jobs?.ios?.if !== "${{ needs.changes.outputs.ios == 'true' }}")
       errors.push(".github/workflows/ci.yml ios must be gated on needs.changes.outputs.ios");
+    const expectedIosRunner =
+      "${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.M1_CI_ENABLED == 'true' && '[\"self-hosted\",\"macOS\",\"ARM64\",\"wolfie-m1\",\"trusted\"]' || '\"macos-26\"') }}";
+    if (workflow?.jobs?.ios?.["runs-on"] !== expectedIosRunner)
+      errors.push(
+        ".github/workflows/ci.yml ios must reserve the M1 for trusted same-repository pull requests and otherwise use hosted macOS",
+      );
     if (workflow?.jobs?.changes?.outputs?.ios !== "${{ steps.classify.outputs.ios }}")
       errors.push(".github/workflows/ci.yml changes must export the ios classification");
     // A merge run may only narrow its legs against a commit whose own run was

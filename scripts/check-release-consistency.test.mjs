@@ -368,6 +368,15 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
     [
       ".github/workflows/ci.yml",
       (text) =>
+        replaceRequired(
+          text,
+          "github.event.pull_request.head.repo.full_name == github.repository",
+          "github.event_name == 'pull_request'",
+        ),
+    ],
+    [
+      ".github/workflows/ci.yml",
+      (text) =>
         text.replace(
           "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]",
           "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, maintainer, android-debug]",
