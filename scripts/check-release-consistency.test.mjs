@@ -335,7 +335,7 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, private-build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]",
+          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, private-maintainer, android-debug]",
           "needs: [changes, check, tooling, android-debug]",
         ),
     ],
@@ -351,8 +351,8 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, private-build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]",
-          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, private-build-e2e, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, maintainer, android-debug]",
+          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, private-maintainer, android-debug]",
+          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, maintainer, private-maintainer, android-debug]",
         ),
     ],
     [
@@ -367,8 +367,8 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "if: ${{ needs.changes.outputs.maintainer == 'true' }}",
-          "if: ${{ github.event_name != 'pull_request' && needs.changes.outputs.maintainer == 'true' }}",
+          "github.event_name != 'pull_request' ||",
+          "github.event_name == 'push' ||",
         ),
     ],
     [
@@ -626,13 +626,13 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("check:"));
   assert.ok(ciWorkflow.includes("unit-tests:"));
   assert.ok(ciWorkflow.includes("build-e2e:"));
-  assert.ok(ciWorkflow.includes("private-build-e2e:"));
+  assert.ok(ciWorkflow.includes("private-maintainer:"));
   assert.ok(
     ciWorkflow.includes(
       "runs-on: [self-hosted, Linux, X64, wolfie-vps, omperator-primary, trusted]",
     ),
   );
-  assert.ok(ciWorkflow.includes("run: scripts/ci-vps-build-e2e.sh"));
+  assert.ok(ciWorkflow.includes("run: pnpm test:maintainer"));
   assert.ok(ciWorkflow.includes("path: ~/.cache/ms-playwright"));
   assert.ok(
     ciWorkflow.includes(
@@ -684,7 +684,7 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("if: ${{ always() }}"));
   assert.ok(
     ciWorkflow.includes(
-      "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, private-build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]",
+      "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, private-maintainer, android-debug]",
     ),
   );
   assert.ok(ciWorkflow.includes("name: release-gates"));
@@ -695,11 +695,11 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes('test "$UNIT_TESTS_RESULT" = success'));
   assert.ok(
     ciWorkflow.includes(
-      "PRIVATE_BUILD_E2E_RESULT: ${{ needs.private-build-e2e.result }}",
+      "PRIVATE_MAINTAINER_RESULT: ${{ needs.private-maintainer.result }}",
     ),
   );
-  assert.ok(ciWorkflow.includes('case "$BUILD_E2E_RESULT:$PRIVATE_BUILD_E2E_RESULT" in'));
-  assert.ok(ciWorkflow.includes("success:skipped|skipped:success) ;;"));
+  assert.ok(ciWorkflow.includes('case "$MAINTAINER_RESULT:$PRIVATE_MAINTAINER_RESULT" in'));
+  assert.ok(ciWorkflow.includes("success:skipped|skipped:success|skipped:skipped) ;;"));
   assert.ok(
     ciWorkflow.includes("OFFICIAL_OMP_GATE0_RESULT: ${{ needs.official-omp-gate0.result }}"),
   );

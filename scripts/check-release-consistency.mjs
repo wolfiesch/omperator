@@ -1023,7 +1023,6 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
       ["current-bridge-continuity", "continuity"],
       ["cluster", "cluster"],
       ["tooling", "tooling"],
-      ["maintainer", "maintainer"],
       ["android-debug", "android_debug"],
     ]) {
       if (
@@ -1038,19 +1037,21 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
       if (workflow?.jobs?.[job]?.if !== undefined)
         errors.push(`.github/workflows/ci.yml ${job} must run unconditionally`);
     }
-    const hostedBuildCondition =
-      "github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || vars.PRIVATE_CI_ENABLED != 'true'";
-    const privateBuildCondition =
-      "github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.PRIVATE_CI_ENABLED == 'true'";
-    if (workflow?.jobs?.["build-e2e"]?.if !== hostedBuildCondition)
-      errors.push(".github/workflows/ci.yml hosted build-e2e must cover pushes, forks, and the private-runner fallback");
-    if (workflow?.jobs?.["private-build-e2e"]?.if !== privateBuildCondition)
-      errors.push(".github/workflows/ci.yml private build-e2e must be restricted to same-repository pull requests");
+    const hostedMaintainerCondition =
+      "needs.changes.outputs.maintainer == 'true' && (\n  github.event_name != 'pull_request' ||\n  github.event.pull_request.head.repo.full_name != github.repository ||\n  vars.PRIVATE_CI_ENABLED != 'true'\n)";
+    const privateMaintainerCondition =
+      "needs.changes.outputs.maintainer == 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.PRIVATE_CI_ENABLED == 'true'";
+    if (workflow?.jobs?.["build-e2e"]?.if !== undefined)
+      errors.push(".github/workflows/ci.yml hosted build-e2e must run unconditionally");
+    if (workflow?.jobs?.maintainer?.if !== hostedMaintainerCondition)
+      errors.push(".github/workflows/ci.yml hosted maintainer must cover pushes, forks, and the private-runner fallback");
+    if (workflow?.jobs?.["private-maintainer"]?.if !== privateMaintainerCondition)
+      errors.push(".github/workflows/ci.yml private maintainer must be restricted to affected same-repository pull requests");
     if (
-      JSON.stringify(workflow?.jobs?.["private-build-e2e"]?.["runs-on"]) !==
+      JSON.stringify(workflow?.jobs?.["private-maintainer"]?.["runs-on"]) !==
       JSON.stringify(["self-hosted", "Linux", "X64", "wolfie-vps", "omperator-primary", "trusted"])
     )
-      errors.push(".github/workflows/ci.yml private build-e2e must require the trusted Omperator VPS labels");
+      errors.push(".github/workflows/ci.yml private maintainer must require the trusted Omperator VPS labels");
     // The required branch-protection gate must not wait on the deferred
     // release legs, and those legs must stay aggregated by release-gates so a
     // merge-run failure still fails the run the release waiter reads.
@@ -1101,10 +1102,10 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "check:",
     "unit-tests:",
     "build-e2e:",
-    "private-build-e2e:",
+    "private-maintainer:",
     "runs-on: [self-hosted, Linux, X64, wolfie-vps, omperator-primary, trusted]",
     "vars.PRIVATE_CI_ENABLED == 'true'",
-    "run: scripts/ci-vps-build-e2e.sh",
+    "run: pnpm test:maintainer",
     "path: ~/.cache/ms-playwright",
     "key: playwright-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}",
     "run: pnpm exec playwright install --with-deps chromium",
@@ -1149,16 +1150,16 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "android-debug:",
     "name: verify",
     "if: ${{ always() }}",
-    "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, private-build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]",
+    "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, private-maintainer, android-debug]",
     "name: release-gates",
     "needs: [changes, legacy-bridge-continuity, official-omp-gate0]",
     'test "$CHANGES_RESULT" = success',
     'test "$T4_API_GENERATION_RESULT" = success',
     'test "$CHECK_RESULT" = success',
     'test "$UNIT_TESTS_RESULT" = success',
-    "PRIVATE_BUILD_E2E_RESULT: ${{ needs.private-build-e2e.result }}",
-    'case "$BUILD_E2E_RESULT:$PRIVATE_BUILD_E2E_RESULT" in',
-    "success:skipped|skipped:success) ;;",
+    "PRIVATE_MAINTAINER_RESULT: ${{ needs.private-maintainer.result }}",
+    'case "$MAINTAINER_RESULT:$PRIVATE_MAINTAINER_RESULT" in',
+    "success:skipped|skipped:success|skipped:skipped) ;;",
     "OFFICIAL_OMP_GATE0_RESULT: ${{ needs.official-omp-gate0.result }}",
     "CURRENT_CONTINUITY_RESULT: ${{ needs.current-bridge-continuity.result }}",
     '"$CURRENT_CONTINUITY_RESULT" \\',
