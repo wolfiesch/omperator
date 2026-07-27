@@ -985,7 +985,9 @@ struct T4SettingsPane: View {
             // optimistic row list includes the new key alongside the others.
             var keys: [String: String] = [:]
             if case .object(let o) = s["providerKeys"] ?? .null {
-                for (k, v) in o where case .string(let m) = v { keys[k] = m }
+                for (k, v) in o {
+                    if case .string(let m) = v { keys[k] = m }
+                }
             }
             keys[provider] = "sk-…\(value.suffix(4))"
             s["providerKeys"] = .object(keys.mapValues { .string($0) })
