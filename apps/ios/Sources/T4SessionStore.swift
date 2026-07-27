@@ -737,8 +737,8 @@ final class T4SessionStore: ObservableObject {
     private static let clientFeatures = [
         "resume", "prompt.lease", "controller.lease", "prompt.images", "transcript.page",
         "session.delta", "files.list", "terminal.io",
-        "preview.control", "preview.read", "files.search", "transcript.search",
-        "artifact.read", "session.watch", "host.watch", "runtime.list", "project.reveal",
+        "preview.control", "files.search", "transcript.search",
+        "session.watch", "host.watch", "project.reveal",
     ]
 
     /// Transport for an endpoint. `wss://` gets a pinning session (TOFU leaf
