@@ -253,6 +253,7 @@ struct T4SessionDetailView: View {
         .sheet(item: $activeSheet) { sheet in
             // Only settings + usage remain as modal sheets — the region
             // migration moved every dockable pane into the right dock tile.
+            Group {
             switch sheet {
             case .usage:
                 T4UsagePane(store: store, isPresented: sheetBinding(.usage))
@@ -260,6 +261,7 @@ struct T4SessionDetailView: View {
             case .settings:
                 T4SettingsPane(store: store, isPresented: sheetBinding(.settings))
                     .environmentObject(theme)
+            }
             }
             #if os(macOS)
             .frame(minWidth: 520, idealWidth: 640, minHeight: 480, idealHeight: 600)
