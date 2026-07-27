@@ -96,6 +96,73 @@ describe("appserver transcript event translator", () => {
 		expect(events.filter(event => event.type === "tool.result")).toHaveLength(1);
 	});
 
+	test("preserves provider tool-call argument updates before execution starts", () => {
+		const translator = new TranscriptEventTranslator(() => 99);
+		translator.translate({
+			type: "message_start",
+			message: { role: "assistant", timestamp: 10, content: [] },
+		});
+		const events = translator.translate({
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_delta",
+				contentIndex: 0,
+				delta: "{\"path\":\"src/",
+				partial: {
+					role: "assistant",
+					content: [{ type: "toolCall", id: "call-stream", name: "read", arguments: {} }],
+				},
+			},
+			message: {
+				role: "assistant",
+				timestamp: 10,
+				content: [{ type: "toolCall", id: "call-stream", name: "read", arguments: {} }],
+			},
+		});
+
+		expect(events).toEqual([
+			{
+				type: "tool.input.update",
+				callId: "call-stream",
+				tool: "read",
+				input: "{\"path\":\"src/",
+				at: "1970-01-01T00:00:00.010Z",
+			},
+		]);
+	});
+
+	test("redacts accumulated tool input even when a secret spans provider chunks", () => {
+		const translator = new TranscriptEventTranslator(() => 99);
+		translator.translate({ type: "message_start", message: { role: "assistant", content: [] } });
+		const update = (delta: string) =>
+			translator.translate({
+				type: "message_update",
+				assistantMessageEvent: {
+					type: "toolcall_delta",
+					contentIndex: 0,
+					delta,
+					partial: {
+						role: "assistant",
+						content: [{ type: "toolCall", id: "call-secret", name: "bash", arguments: {} }],
+					},
+				},
+				message: {
+					role: "assistant",
+					content: [{ type: "toolCall", id: "call-secret", name: "bash", arguments: {} }],
+				},
+			});
+		update("{\"password\":");
+		const events = update("\"super-secret-value\"}");
+
+		expect(events).toHaveLength(1);
+		expect(events[0]).toMatchObject({
+			type: "tool.input.update",
+			callId: "call-secret",
+			input: "{\"password\":[redacted]}",
+		});
+		expect(JSON.stringify(events)).not.toContain("super-secret-value");
+	});
+
 	test("projects v17 xdev execution frames as the semantic live tool", () => {
 		const translator = new TranscriptEventTranslator(() => 99);
 		const [start] = translator.translate({

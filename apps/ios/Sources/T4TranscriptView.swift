@@ -9,9 +9,8 @@ import HostWire
 
 struct T4TranscriptView: View {
     let entries: [TranscriptEntry]
-    /// In-progress assistant text (store.streamingText[sessionId]); when
-    /// non-empty, rendered as a live tail row after the durable entries.
-    var streamingText: String = ""
+    var streamingMessage: StreamingAssistantBuffer?
+    var liveTools: LiveToolProjection
     let theme: Theme
 
     var body: some View {
@@ -26,8 +25,15 @@ struct T4TranscriptView: View {
                     T4TranscriptRow(entry: entry, theme: theme)
                 }
             }
-            if !streamingText.isEmpty {
-                T4StreamingMessage(text: streamingText, theme: theme)
+            if let streamingMessage, !streamingMessage.isEmpty {
+                T4StreamingMessage(
+                    text: streamingMessage.text,
+                    reasoning: streamingMessage.reasoning,
+                    theme: theme
+                )
+            }
+            ForEach(liveTools.calls) { call in
+                T4LiveToolRow(call: call, theme: theme)
             }
         }
     }
@@ -156,18 +162,30 @@ struct T4TranscriptRow: View {
     }
 }
 
-/// Live tail row: in-progress assistant text mirrored from `message.update`
-/// events, rendered with the same T4Markdown treatment as a settled assistant
-/// message plus a subtle pulsing cursor dot to signal the turn is streaming.
+/// Live tail row. The unfinished tail intentionally stays lightweight plain
+/// text; settled entries receive full Markdown and syntax highlighting.
 struct T4StreamingMessage: View {
     let text: String
+    let reasoning: String
     let theme: Theme
 
     @State private var pulse = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            T4Markdown(text: text, theme: theme)
+            if !reasoning.isEmpty {
+                Text(reasoning)
+                    .font(.system(size: 13))
+                    .italic()
+                    .foregroundStyle(theme.txtMuted)
+                    .textSelection(.enabled)
+            }
+            if !text.isEmpty {
+                Text(text)
+                    .font(.system(size: 15))
+                    .foregroundStyle(theme.txt)
+                    .textSelection(.enabled)
+            }
             HStack(spacing: 6) {
                 Circle()
                     .fill(theme.accent)
@@ -182,5 +200,76 @@ struct T4StreamingMessage: View {
         .padding(.top, 6)
         .accessibilityLabel("Assistant is typing: \(text)")
         .onAppear { pulse = true }
+    }
+}
+
+struct T4LiveToolRow: View {
+    let call: LiveToolCall
+    let theme: Theme
+    @State private var pulse = false
+
+    private var isActive: Bool { call.phase == .generating || call.phase == .running }
+    private var color: Color {
+        switch call.phase {
+        case .generating, .running: return theme.cBash
+        case .succeeded: return theme.diffAdd
+        case .failed: return theme.diffDel
+        }
+    }
+    private var status: String {
+        switch call.phase {
+        case .generating: return "preparing"
+        case .running: return "running"
+        case .succeeded: return "completed"
+        case .failed: return "failed"
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 7) {
+                Image(systemName: "wrench.and.screwdriver")
+                    .font(.system(size: 11))
+                    .foregroundStyle(color)
+                Text(call.title.isEmpty ? call.tool : call.title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(theme.txtBody)
+                Spacer()
+                Circle()
+                    .fill(color)
+                    .frame(width: 6, height: 6)
+                    .opacity(isActive && pulse ? 0.9 : 0.35)
+                Text(status)
+                    .font(.system(size: 9))
+                    .foregroundStyle(theme.txtLabel)
+            }
+            if !call.input.isEmpty {
+                Text(String(call.input.prefix(2_400)))
+                    .font(.term(11.5))
+                    .foregroundStyle(theme.txt)
+                    .textSelection(.enabled)
+            }
+            if !call.progress.isEmpty {
+                Text(String(call.progress.suffix(1_600)))
+                    .font(.term(11.5))
+                    .foregroundStyle(theme.txtMuted)
+                    .textSelection(.enabled)
+            }
+            if !call.result.isEmpty && !isActive {
+                Text(String(call.result.prefix(1_600)))
+                    .font(.term(11.5))
+                    .foregroundStyle(theme.txtMuted)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(10)
+        .background(theme.glassFill2, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(color.opacity(0.35), lineWidth: 1)
+        )
+        .animation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true), value: pulse)
+        .onAppear { pulse = true }
+        .accessibilityLabel("\(call.tool) \(status)")
     }
 }

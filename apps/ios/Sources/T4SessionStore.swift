@@ -115,13 +115,11 @@ final class T4SessionStore: ObservableObject {
     /// only for attached sessions while connected; the sample rail falls back
     /// to `sampleTranscript` when disconnected.
     @Published private(set) var liveEntries: [String: [TranscriptEntry]] = [:]
-    /// In-progress assistant text by sessionId, mirrored from `message.update`
-    /// live events. Cleared on `message.settled`/`message.discarded`/`turn.end`
-    /// and when the matching durable assistant entry lands via `.entry` (de-
-    /// dupe: the durable entry is the source of truth once it arrives). The
-    /// transcript view renders this as a pulsing live tail row after the
-    /// durable entries.
-    @Published private(set) var streamingText: [String: String] = [:]
+    /// Frame-paced assistant text/reasoning by session. Host snapshots remain
+    /// authoritative; the display buffer reveals them by whole graphemes.
+    @Published private(set) var streamingMessages: [String: StreamingAssistantBuffer] = [:]
+    /// Transient tool arguments, execution progress, and results by session.
+    @Published private(set) var liveTools: [String: LiveToolProjection] = [:]
     /// Sessions with a turn in flight, from turn.start/turn.end events — the
     /// composer's stop button keys off this (the ref's `status` sticks at
     /// "active" long after the turn actually ends).
@@ -266,6 +264,8 @@ final class T4SessionStore: ObservableObject {
 
     private var client: HostClient?
     private var hostId: String = ""
+    private var streamingTasks: [String: Task<Void, Never>] = [:]
+    private var toolStreamingTasks: [String: Task<Void, Never>] = [:]
     /// Capabilities the host granted at welcome — gates optional commands
     /// (e.g. catalog.get needs catalog.read; an unauthorized command gets
     /// the connection closed by the remote policy).
@@ -289,6 +289,58 @@ final class T4SessionStore: ObservableObject {
     /// UserDefaults flag set once the legacy plist credentials have been
     /// copied into the Keychain and the plist entries deleted.
     private static let keychainMigratedKey = "t4.keychainMigrated"
+
+    private func receiveStreamingMessage(sessionId: String, text: String, reasoning: String) {
+        var buffer = streamingMessages[sessionId] ?? StreamingAssistantBuffer()
+        buffer.receive(text: text, reasoning: reasoning)
+        streamingMessages[sessionId] = buffer
+        guard streamingTasks[sessionId] == nil else { return }
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled, var next = self.streamingMessages[sessionId] {
+                let hasMore = next.advance()
+                self.streamingMessages[sessionId] = next
+                if !hasMore { break }
+                try? await Task.sleep(nanoseconds: 16_666_667)
+            }
+            if !Task.isCancelled { self.streamingTasks[sessionId] = nil }
+        }
+        streamingTasks[sessionId] = task
+    }
+
+    private func clearStreamingMessage(sessionId: String) {
+        streamingTasks.removeValue(forKey: sessionId)?.cancel()
+        streamingMessages.removeValue(forKey: sessionId)
+    }
+
+    private func receiveToolEvent(sessionId: String, event: SessionEvent) {
+        var projection = liveTools[sessionId] ?? LiveToolProjection()
+        projection.apply(event)
+        if projection.calls.isEmpty { liveTools.removeValue(forKey: sessionId) }
+        else { liveTools[sessionId] = projection }
+        guard !projection.isCaughtUp, toolStreamingTasks[sessionId] == nil else { return }
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled, var next = self.liveTools[sessionId] {
+                let hasMore = next.advance()
+                self.liveTools[sessionId] = next
+                if !hasMore { break }
+                try? await Task.sleep(nanoseconds: 16_666_667)
+            }
+            if !Task.isCancelled { self.toolStreamingTasks[sessionId] = nil }
+        }
+        toolStreamingTasks[sessionId] = task
+    }
+
+    private func settleTool(sessionId: String, callId: String) {
+        guard var projection = liveTools[sessionId] else { return }
+        projection.remove(callId: callId)
+        if projection.calls.isEmpty {
+            toolStreamingTasks.removeValue(forKey: sessionId)?.cancel()
+            liveTools.removeValue(forKey: sessionId)
+        }
+        else { liveTools[sessionId] = projection }
+    }
 
     /// One-time migration of the prior dev-grade UserDefaults credentials
     /// into the Keychain. Copies any legacy endpoint/deviceId/deviceToken
@@ -1757,6 +1809,9 @@ final class T4SessionStore: ObservableObject {
                 markLive()
                 reconcileSelection()
             case .snapshot(let snapshot):
+                clearStreamingMessage(sessionId: snapshot.sessionId)
+                toolStreamingTasks.removeValue(forKey: snapshot.sessionId)?.cancel()
+                liveTools.removeValue(forKey: snapshot.sessionId)
                 liveEntries[snapshot.sessionId] = snapshot.entries.map { TranscriptEntry(from: $0) }
                 // The snapshot is the live tail at the current cursor; older
                 // history paging restarts from unknown (hasMore = nil).
@@ -1768,12 +1823,12 @@ final class T4SessionStore: ObservableObject {
                     entries.append(entry)
                     liveEntries[entryFrame.sessionId] = entries
                 }
-                // De-dupe with the live tail: when the durable assistant
-                // message entry lands, the in-progress streaming text is now
-                // redundant — drop it so the transcript doesn't double-render.
-                if entry.kind == .message, entry.role != "user",
-                   streamingText[entryFrame.sessionId] != nil {
-                    streamingText.removeValue(forKey: entryFrame.sessionId)
+                // Durable rows replace their transient counterparts.
+                if entry.kind == .message, entry.role != "user" {
+                    clearStreamingMessage(sessionId: entryFrame.sessionId)
+                }
+                if let callId = entry.toolCallId {
+                    settleTool(sessionId: entryFrame.sessionId, callId: callId)
                 }
             case .confirmation(let challenge):
                 pendingConfirmation = challenge
@@ -1788,28 +1843,27 @@ final class T4SessionStore: ObservableObject {
                 } else if let ask = frame.event.askRequest {
                     pendingAsk = PendingAsk(sessionId: frame.sessionId, request: ask)
                 }
-                // Assistant streaming: the host emits `message.update` with
-                // the FULL current text snapshot (not an append) per token
-                // batch, then `message.settled` once the durable entry is
-                // committed. Mirror the snapshot into streamingText while in
-                // flight; clear on settled/discarded/turn.end (the durable
-                // entry then arrives via .entry above).
                 let sid = frame.sessionId
                 switch frame.event.type {
                 case "turn.start":
                     activeTurns.insert(sid)
                 case "turn.end", "turn.error":
                     activeTurns.remove(sid)
+                    toolStreamingTasks.removeValue(forKey: sid)?.cancel()
+                    liveTools.removeValue(forKey: sid)
                     Task { await refreshTodos(sessionId: sid) }
                 case "message.update":
-                    // Only stream the assistant voice; user echoes are sent
-                    // by the client itself and settle immediately.
                     if case .string(let role) = frame.event.fields["role"], role == "assistant",
                        case .string(let text) = frame.event.fields["text"] {
-                        streamingText[sid] = text
+                        let reasoning: String
+                        if case .string(let value) = frame.event.fields["reasoning"] { reasoning = value }
+                        else { reasoning = "" }
+                        receiveStreamingMessage(sessionId: sid, text: text, reasoning: reasoning)
                     }
                 case "message.settled", "message.discarded":
-                    streamingText.removeValue(forKey: sid)
+                    clearStreamingMessage(sessionId: sid)
+                case "tool.input.update", "tool.start", "tool.progress", "tool.result":
+                    receiveToolEvent(sessionId: sid, event: frame.event)
                 default:
                     break
                 }
@@ -1921,6 +1975,12 @@ final class T4SessionStore: ObservableObject {
         grantedFeatures = []
         pairedEndpoint = nil
         hostInfo = nil
+        for task in streamingTasks.values { task.cancel() }
+        streamingTasks.removeAll()
+        for task in toolStreamingTasks.values { task.cancel() }
+        toolStreamingTasks.removeAll()
+        streamingMessages.removeAll()
+        liveTools.removeAll()
         // Drop any open terminals — the transport is gone, no close frame.
         terminalOutput.removeAll()
         terminalExits.removeAll()

@@ -35,6 +35,9 @@ public struct TranscriptEntry: Equatable, Sendable {
     /// nil for non-message kinds or missing data.
     public var role: String? { data.string("role") }
 
+    /// Stable OMP tool-call id carried by durable tool rows.
+    public var toolCallId: String? { data.string("toolCallId") }
+
     /// Wrap a decoded `DurableEntry`, deriving `kind`/`headline`/`body` from
     /// its `data` payload. Unknown kinds yield `kind == nil`,
     /// `headline == entry.kind`, `body == ""`.
