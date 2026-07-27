@@ -335,7 +335,7 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, private-maintainer, android-debug]",
+          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]",
           "needs: [changes, check, tooling, android-debug]",
         ),
     ],
@@ -343,7 +343,7 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "needs: [changes, legacy-bridge-continuity, official-omp-gate0, ios]",
+          "needs: [changes, legacy-bridge-continuity, official-omp-gate0, ios, private-ios]",
           "needs: [changes, legacy-bridge-continuity, official-omp-gate0]",
         ),
     ],
@@ -353,24 +353,24 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "needs: [changes, legacy-bridge-continuity, official-omp-gate0, ios]",
-          "needs: [changes, legacy-bridge-continuity, ios]",
+          "needs: [changes, legacy-bridge-continuity, official-omp-gate0, ios, private-ios]",
+          "needs: [changes, legacy-bridge-continuity, ios, private-ios]",
         ),
     ],
     [
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "if: ${{ needs.changes.outputs.ios == 'true' }}",
-          "if: ${{ needs.changes.outputs.android_debug == 'true' }}",
+          "vars.M1_CI_ENABLED != 'true'",
+          "vars.M1_CI_ENABLED == 'true'",
         ),
     ],
     [
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, private-maintainer, android-debug]",
-          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, maintainer, private-maintainer, android-debug]",
+          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]",
+          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, maintainer, android-debug]",
         ),
     ],
     [
@@ -644,10 +644,10 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("check:"));
   assert.ok(ciWorkflow.includes("unit-tests:"));
   assert.ok(ciWorkflow.includes("build-e2e:"));
-  assert.ok(ciWorkflow.includes("private-maintainer:"));
+  assert.ok(ciWorkflow.includes("private-ios:"));
   assert.ok(
     ciWorkflow.includes(
-      "runs-on: [self-hosted, Linux, X64, wolfie-vps, omperator-primary, trusted]",
+      "runs-on: [self-hosted, macOS, ARM64, wolfie-m1, trusted]",
     ),
   );
   assert.ok(ciWorkflow.includes("run: pnpm test:maintainer"));
@@ -702,22 +702,23 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("if: ${{ always() }}"));
   assert.ok(
     ciWorkflow.includes(
-      "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, private-maintainer, android-debug]",
+      "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]",
     ),
   );
   assert.ok(ciWorkflow.includes("name: release-gates"));
-  assert.ok(ciWorkflow.includes("needs: [changes, legacy-bridge-continuity, official-omp-gate0, ios]"));
+  assert.ok(ciWorkflow.includes("needs: [changes, legacy-bridge-continuity, official-omp-gate0, ios, private-ios]"));
   assert.ok(ciWorkflow.includes("IOS_RESULT: ${{ needs.ios.result }}"));
+  assert.ok(ciWorkflow.includes("PRIVATE_IOS_RESULT: ${{ needs.private-ios.result }}"));
   assert.ok(ciWorkflow.includes('test "$CHANGES_RESULT" = success'));
   assert.ok(ciWorkflow.includes('test "$T4_API_GENERATION_RESULT" = success'));
   assert.ok(ciWorkflow.includes('test "$CHECK_RESULT" = success'));
   assert.ok(ciWorkflow.includes('test "$UNIT_TESTS_RESULT" = success'));
   assert.ok(
     ciWorkflow.includes(
-      "PRIVATE_MAINTAINER_RESULT: ${{ needs.private-maintainer.result }}",
+      "PRIVATE_IOS_RESULT: ${{ needs.private-ios.result }}",
     ),
   );
-  assert.ok(ciWorkflow.includes('case "$MAINTAINER_RESULT:$PRIVATE_MAINTAINER_RESULT" in'));
+  assert.ok(ciWorkflow.includes('case "$IOS_RESULT:$PRIVATE_IOS_RESULT" in'));
   assert.ok(ciWorkflow.includes("success:skipped|skipped:success|skipped:skipped) ;;"));
   assert.ok(
     ciWorkflow.includes("OFFICIAL_OMP_GATE0_RESULT: ${{ needs.official-omp-gate0.result }}"),

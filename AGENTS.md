@@ -42,10 +42,10 @@ Do not reach for the full repository gates while iterating. `pnpm check` and
   `pnpm test` and `pnpm typecheck`.
 - CI mirrors this split. `check`, `unit-tests`, and `build-e2e` run in
   parallel on GitHub-hosted runners. Same-repository pull requests run the
-  path-selected `maintainer` gate on the trusted VPS when the
-  `PRIVATE_CI_ENABLED` repository variable is `true`; fork pull requests and
-  pushes use a disposable GitHub runner. Set the variable to `false` and rerun
-  CI for the hosted fallback. The remaining legs are path-gated by
+  path-selected iOS/XCUITest gate on the trusted M1 when the `M1_CI_ENABLED`
+  repository variable is `true`; fork pull requests and pushes use a
+  disposable GitHub macOS runner. Set the variable to `false` and rerun CI for
+  the hosted fallback. The remaining legs are path-gated by
   `scripts/ci-paths.mjs`, so a local affected run predicts what a pull request
   will actually execute.
 - Reserve `pnpm test:e2e`, `pnpm test:maintainer`, and the bridge continuity

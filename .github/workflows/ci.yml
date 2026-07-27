@@ -238,33 +238,6 @@ jobs:
           path: ~/.cache/ms-playwright
           key: ${{ steps.playwright-cache.outputs.cache-primary-key }}
 
-  private-maintainer:
-    name: vps-maintainer
-    needs: changes
-    if: ${{ needs.changes.outputs.maintainer == 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.PRIVATE_CI_ENABLED == 'true' }}
-    runs-on: [self-hosted, Linux, X64, wolfie-vps, omperator-primary, trusted]
-    timeout-minutes: 30
-    steps:
-      - name: Check out source
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-        with:
-          version: 11.10.0
-
-      - name: Install Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 24.13.1
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Run maintainer deployment regression tests on the VPS
-        run: pnpm test:maintainer
-
   # Release-time gates, deferred to pushes. The legacy pin is a frozen
   # historical compatibility proof and the gate0 matrix spans three runners
   # including macOS. Pushes to main classify as --all, so both still run on
@@ -630,7 +603,7 @@ jobs:
 
   maintainer:
     needs: changes
-    if: ${{ needs.changes.outputs.maintainer == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || vars.PRIVATE_CI_ENABLED != 'true') }}
+    if: ${{ needs.changes.outputs.maintainer == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -703,7 +676,7 @@ jobs:
   # exactly when the result is worth having.
   ios:
     needs: changes
-    if: ${{ needs.changes.outputs.ios == 'true' }}
+    if: ${{ needs.changes.outputs.ios == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || vars.M1_CI_ENABLED != 'true') }}
     # macos-15 preselects Xcode 16.4, whose simulator SDK compiles only to
     # iOS 18.5, while project.yml targets iOS 26 and the UI uses iOS 26 APIs.
     # macos-26 ships an Xcode 26 toolchain.
@@ -729,6 +702,32 @@ jobs:
       - name: Build the application and run its XCUITest bundle
         run: node scripts/verify-ios.mjs
 
+  private-ios:
+    name: m1-ios
+    needs: changes
+    if: ${{ needs.changes.outputs.ios == 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.M1_CI_ENABLED == 'true' }}
+    runs-on: [self-hosted, macOS, ARM64, wolfie-m1, trusted]
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.13.1
+
+      - name: Install XcodeGen when missing
+        run: command -v xcodegen >/dev/null || brew install xcodegen
+
+      - name: Report the toolchain under test
+        run: |
+          xcodebuild -version
+          xcrun simctl list runtimes available
+
+      - name: Build the application and run its XCUITest bundle on the M1
+        run: node scripts/verify-ios.mjs
+
   # The branch-protection gate. It waits only on legs that run on ubuntu-24.04
   # for a pull request, so a merge run's macOS and arm64 matrix cannot hold the
   # required check behind a queued runner. The deferred release gates are
@@ -737,7 +736,7 @@ jobs:
   verify:
     name: verify
     if: ${{ always() }}
-    needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, private-maintainer, android-debug]
+    needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -753,7 +752,6 @@ jobs:
           CLUSTER_RESULT: ${{ needs.cluster.result }}
           TOOLING_RESULT: ${{ needs.tooling.result }}
           MAINTAINER_RESULT: ${{ needs.maintainer.result }}
-          PRIVATE_MAINTAINER_RESULT: ${{ needs.private-maintainer.result }}
           ANDROID_RESULT: ${{ needs.android-debug.result }}
         run: |
           set -euo pipefail
@@ -762,10 +760,6 @@ jobs:
           test "$CHECK_RESULT" = success
           test "$UNIT_TESTS_RESULT" = success
           test "$BUILD_E2E_RESULT" = success
-          case "$MAINTAINER_RESULT:$PRIVATE_MAINTAINER_RESULT" in
-            success:skipped|skipped:success|skipped:skipped) ;;
-            *) exit 1 ;;
-          esac
           for result in \
             "$CURRENT_CONTINUITY_RESULT" \
             "$CLUSTER_RESULT" \
@@ -787,7 +781,7 @@ jobs:
   release-gates:
     name: release-gates
     if: ${{ always() }}
-    needs: [changes, legacy-bridge-continuity, official-omp-gate0, ios]
+    needs: [changes, legacy-bridge-continuity, official-omp-gate0, ios, private-ios]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -798,13 +792,17 @@ jobs:
           CONTINUITY_RESULT: ${{ needs.legacy-bridge-continuity.result }}
           OFFICIAL_OMP_GATE0_RESULT: ${{ needs.official-omp-gate0.result }}
           IOS_RESULT: ${{ needs.ios.result }}
+          PRIVATE_IOS_RESULT: ${{ needs.private-ios.result }}
         run: |
           set -euo pipefail
           test "$CHANGES_RESULT" = success
+          case "$IOS_RESULT:$PRIVATE_IOS_RESULT" in
+            success:skipped|skipped:success|skipped:skipped) ;;
+            *) exit 1 ;;
+          esac
           for result in \
             "$CONTINUITY_RESULT" \
-            "$OFFICIAL_OMP_GATE0_RESULT" \
-            "$IOS_RESULT"
+            "$OFFICIAL_OMP_GATE0_RESULT"
           do
             case "$result" in
               success|skipped) ;;

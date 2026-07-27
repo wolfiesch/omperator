@@ -1023,6 +1023,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
       ["current-bridge-continuity", "continuity"],
       ["cluster", "cluster"],
       ["tooling", "tooling"],
+      ["maintainer", "maintainer"],
       ["android-debug", "android_debug"],
     ]) {
       if (
@@ -1037,37 +1038,33 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
       if (workflow?.jobs?.[job]?.if !== undefined)
         errors.push(`.github/workflows/ci.yml ${job} must run unconditionally`);
     }
-    const hostedMaintainerCondition =
-      "${{ needs.changes.outputs.maintainer == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || vars.PRIVATE_CI_ENABLED != 'true') }}";
-    const privateMaintainerCondition =
-      "${{ needs.changes.outputs.maintainer == 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.PRIVATE_CI_ENABLED == 'true' }}";
+    const hostedIosCondition =
+      "${{ needs.changes.outputs.ios == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || vars.M1_CI_ENABLED != 'true') }}";
+    const privateIosCondition =
+      "${{ needs.changes.outputs.ios == 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.M1_CI_ENABLED == 'true' }}";
     if (workflow?.jobs?.["build-e2e"]?.if !== undefined)
       errors.push(".github/workflows/ci.yml hosted build-e2e must run unconditionally");
-    if (workflow?.jobs?.maintainer?.if !== hostedMaintainerCondition)
-      errors.push(".github/workflows/ci.yml hosted maintainer must cover pushes, forks, and the private-runner fallback");
-    if (workflow?.jobs?.["private-maintainer"]?.if !== privateMaintainerCondition)
-      errors.push(".github/workflows/ci.yml private maintainer must be restricted to affected same-repository pull requests");
+    if (workflow?.jobs?.ios?.if !== hostedIosCondition)
+      errors.push(".github/workflows/ci.yml hosted ios must cover pushes, forks, and the M1 fallback");
+    if (workflow?.jobs?.["private-ios"]?.if !== privateIosCondition)
+      errors.push(".github/workflows/ci.yml private ios must be restricted to affected same-repository pull requests");
     if (
-      JSON.stringify(workflow?.jobs?.["private-maintainer"]?.["runs-on"]) !==
-      JSON.stringify(["self-hosted", "Linux", "X64", "wolfie-vps", "omperator-primary", "trusted"])
+      JSON.stringify(workflow?.jobs?.["private-ios"]?.["runs-on"]) !==
+      JSON.stringify(["self-hosted", "macOS", "ARM64", "wolfie-m1", "trusted"])
     )
-      errors.push(".github/workflows/ci.yml private maintainer must require the trusted Omperator VPS labels");
+      errors.push(".github/workflows/ci.yml private ios must require the trusted Omperator M1 labels");
     // The required branch-protection gate must not wait on any leg that runs
     // off ubuntu-24.04, and those legs must stay aggregated by release-gates so
     // a failure still fails the run the release waiter reads. `ios` is in this
     // set because it runs on macOS, not because it is deferred: unlike the
     // release gates it also runs on pull requests.
     const verifyNeeds = workflow?.jobs?.verify?.needs ?? [];
-    for (const job of ["legacy-bridge-continuity", "official-omp-gate0", "ios"]) {
+    for (const job of ["legacy-bridge-continuity", "official-omp-gate0", "ios", "private-ios"]) {
       if (verifyNeeds.includes(job))
         errors.push(`.github/workflows/ci.yml verify must not wait on the ${job} leg`);
       if (!(workflow?.jobs?.["release-gates"]?.needs ?? []).includes(job))
         errors.push(`.github/workflows/ci.yml release-gates must aggregate the ${job} leg`);
     }
-    // The iOS leg is path-gated, so a broken gate would silently ship Swift
-    // that no job ever compiled.
-    if (workflow?.jobs?.ios?.if !== "${{ needs.changes.outputs.ios == 'true' }}")
-      errors.push(".github/workflows/ci.yml ios must be gated on needs.changes.outputs.ios");
     if (workflow?.jobs?.changes?.outputs?.ios !== "${{ steps.classify.outputs.ios }}")
       errors.push(".github/workflows/ci.yml changes must export the ios classification");
     // A merge run may only narrow its legs against a commit whose own run was
@@ -1110,9 +1107,9 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "check:",
     "unit-tests:",
     "build-e2e:",
-    "private-maintainer:",
-    "runs-on: [self-hosted, Linux, X64, wolfie-vps, omperator-primary, trusted]",
-    "vars.PRIVATE_CI_ENABLED == 'true'",
+    "private-ios:",
+    "runs-on: [self-hosted, macOS, ARM64, wolfie-m1, trusted]",
+    "vars.M1_CI_ENABLED == 'true'",
     "run: pnpm test:maintainer",
     "path: ~/.cache/ms-playwright",
     "key: playwright-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}",
@@ -1158,18 +1155,18 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "android-debug:",
     "name: verify",
     "if: ${{ always() }}",
-    "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, private-maintainer, android-debug]",
+    "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]",
     "name: release-gates",
-    "needs: [changes, legacy-bridge-continuity, official-omp-gate0, ios]",
+    "needs: [changes, legacy-bridge-continuity, official-omp-gate0, ios, private-ios]",
     "ios:",
     "run: node scripts/verify-ios.mjs",
     "IOS_RESULT: ${{ needs.ios.result }}",
+    "PRIVATE_IOS_RESULT: ${{ needs.private-ios.result }}",
     'test "$CHANGES_RESULT" = success',
     'test "$T4_API_GENERATION_RESULT" = success',
     'test "$CHECK_RESULT" = success',
     'test "$UNIT_TESTS_RESULT" = success',
-    "PRIVATE_MAINTAINER_RESULT: ${{ needs.private-maintainer.result }}",
-    'case "$MAINTAINER_RESULT:$PRIVATE_MAINTAINER_RESULT" in',
+    'case "$IOS_RESULT:$PRIVATE_IOS_RESULT" in',
     "success:skipped|skipped:success|skipped:skipped) ;;",
     "OFFICIAL_OMP_GATE0_RESULT: ${{ needs.official-omp-gate0.result }}",
     "CURRENT_CONTINUITY_RESULT: ${{ needs.current-bridge-continuity.result }}",
