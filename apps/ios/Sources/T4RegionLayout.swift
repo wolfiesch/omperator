@@ -386,6 +386,10 @@ final class T4FloatingPaneManager: ObservableObject {
             let panel = makePanel(for: pane)
             panels[pane] = panel
             panel.makeKeyAndOrderFront(nil)
+            // NSHostingController contracts the panel to the SwiftUI fitting
+            // size on first layout, which made the floating browser look
+            // shrunken — re-assert the frame after it's on screen.
+            panel.setFrame(NSRect(x: 220, y: 220, width: 960, height: 640), display: true, animate: false)
         }
     }
 
@@ -410,10 +414,11 @@ final class T4FloatingPaneManager: ObservableObject {
             .environmentObject(theme ?? ThemeStore())
             .environmentObject(store)
         let hosting = NSHostingController(rootView: content)
-        let panel = NSPanel(contentRect: NSRect(x: 220, y: 220, width: 760, height: 540),
+        let panel = NSPanel(contentRect: NSRect(x: 220, y: 220, width: 960, height: 640),
                             styleMask: [.titled, .closable, .resizable, .miniaturizable],
                             backing: .buffered, defer: false)
         panel.contentViewController = hosting
+        panel.contentMinSize = NSSize(width: 480, height: 320)
         panel.title = pane.label
         panel.isFloatingPanel = true
         panel.hidesOnDeactivate = false
