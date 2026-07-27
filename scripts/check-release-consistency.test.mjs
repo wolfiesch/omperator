@@ -343,8 +343,26 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
+          "needs: [changes, legacy-bridge-continuity, official-omp-gate0, ios]",
           "needs: [changes, legacy-bridge-continuity, official-omp-gate0]",
-          "needs: [changes, legacy-bridge-continuity]",
+        ),
+    ],
+    // Dropping the iOS leg from the aggregator, or ungating it, would let Swift
+    // ship with no job that compiles it.
+    [
+      ".github/workflows/ci.yml",
+      (text) =>
+        text.replace(
+          "needs: [changes, legacy-bridge-continuity, official-omp-gate0, ios]",
+          "needs: [changes, legacy-bridge-continuity, ios]",
+        ),
+    ],
+    [
+      ".github/workflows/ci.yml",
+      (text) =>
+        text.replace(
+          "if: ${{ needs.changes.outputs.ios == 'true' }}",
+          "if: ${{ needs.changes.outputs.android_debug == 'true' }}",
         ),
     ],
     [
@@ -688,7 +706,8 @@ test("deploys release site source only after artifact publication", () => {
     ),
   );
   assert.ok(ciWorkflow.includes("name: release-gates"));
-  assert.ok(ciWorkflow.includes("needs: [changes, legacy-bridge-continuity, official-omp-gate0]"));
+  assert.ok(ciWorkflow.includes("needs: [changes, legacy-bridge-continuity, official-omp-gate0, ios]"));
+  assert.ok(ciWorkflow.includes("IOS_RESULT: ${{ needs.ios.result }}"));
   assert.ok(ciWorkflow.includes('test "$CHANGES_RESULT" = success'));
   assert.ok(ciWorkflow.includes('test "$T4_API_GENERATION_RESULT" = success'));
   assert.ok(ciWorkflow.includes('test "$CHECK_RESULT" = success'));

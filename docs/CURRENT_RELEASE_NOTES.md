@@ -1,3 +1,25 @@
+## Native iPhone companion and host preview work (unreleased)
+
+The current integration branch adds a candidate native SwiftUI iPhone
+companion, plus a shared macOS target used as an integration harness. It does
+not change the shipped desktop product: Electron and the canonical React
+renderer remain authoritative.
+
+The native client speaks the authoritative `omp-app/1` wire through the new
+HostWire Swift package. The implemented surfaces include the session rail,
+transcript, composer, files, agents, terminal, review, usage, settings, pairing,
+notifications, and a Browser pane. The exact integrated head compiles and
+passes the five current iOS UI tests; a production release decision and
+device-level proof remain separate work.
+
+The branch also adds the bounded host Browser Preview service and an optional
+WSS listener. `--remote-tls-port 8788` serves a per-profile self-signed
+certificate, and the native client pins the leaf SHA-256 in the Keychain on
+first use, rejects mismatches, and fails closed if it cannot persist the pin.
+Plain `ws://` inside the tailnet remains supported.
+
+---
+
 ## Current independently owned release
 
 Omperator v0.2.1 is the current release published from

@@ -129,6 +129,8 @@ apps/desktop   Primary Electron shell: windows, local OMP discovery,
 apps/web       Canonical React renderer shared by Electron, Tailnet browser/PWA,
                and the React/Capacitor Android compatibility client
 apps/mobile    Android compatibility wrapper and native secure-storage/update bridges
+apps/ios       Candidate native SwiftUI iPhone companion; its shared macOS target
+               is an integration harness, not a second shipped desktop product
 packages/      client, protocol, host-wire, host-service, remote,
                service-manager, ui
 ```

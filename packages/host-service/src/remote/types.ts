@@ -40,6 +40,9 @@ export interface RemoteListenerConfig {
 	serveProxy?: boolean;
 	/** Fixed peer identity for a pod-network listener whose omp-app hello is authenticated by a dedicated policy. */
 	internalPeerNodeId?: string;
+	/** PEM cert/key for a TLS (wss) listener; fingerprint is sha256 of the cert DER, hex. */
+	tls?: { readonly cert: string; readonly key: string };
+	tlsFingerprint?: string;
 	originAllowlist?: readonly string[];
 	maxConnections?: number;
 	maxFrameBytes?: number;
@@ -48,6 +51,21 @@ export interface RemoteListenerConfig {
 	whoisTimeoutMs?: number;
 	whoisMaxOutputBytes?: number;
 }
+/** Snapshot returned by `GET /healthz` on the remote listener. */
+export interface HealthSnapshot {
+	readonly ok: boolean;
+	readonly hostId: string;
+	readonly epoch: string;
+	readonly draining: boolean;
+	readonly version: string;
+	readonly uptimeSec: number;
+	readonly sessions: number;
+	readonly supervisors: number;
+	readonly watchdog: { readonly graceMs: number; readonly actions: number };
+}
+/** Provider the listener calls on each `/healthz` request to enrich the
+ * response with live host state. Falls back to `{ ok: true }` when absent. */
+export type HealthProvider = () => HealthSnapshot;
 export interface ListenerPlan {
 	mode: "direct" | "serve";
 	address: string;

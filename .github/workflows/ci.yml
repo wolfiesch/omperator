@@ -27,6 +27,7 @@ jobs:
       official_omp_gate0: ${{ steps.classify.outputs.official_omp_gate0 }}
       tooling: ${{ steps.classify.outputs.tooling }}
       maintainer: ${{ steps.classify.outputs.maintainer }}
+      ios: ${{ steps.classify.outputs.ios }}
       android_debug: ${{ steps.classify.outputs.android_debug }}
     steps:
       - name: Check out source and base history
@@ -695,6 +696,39 @@ jobs:
       - name: Verify unsigned Android debug application
         run: pnpm --filter @t4-code/mobile check:android:debug
 
+  # Runs on macOS, so it stays out of the required `verify` gate below and is
+  # aggregated into `release-gates` instead: a queued macOS runner must not
+  # hold branch protection. Unlike the other deferred gates this one is not
+  # restricted to push events, because a pull request that changes Swift is
+  # exactly when the result is worth having.
+  ios:
+    needs: changes
+    if: ${{ needs.changes.outputs.ios == 'true' }}
+    # macos-15 preselects Xcode 16.4, whose simulator SDK compiles only to
+    # iOS 18.5, while project.yml targets iOS 26 and the UI uses iOS 26 APIs.
+    # macos-26 ships an Xcode 26 toolchain.
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.13.1
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Report the toolchain under test
+        run: |
+          xcodebuild -version
+          xcrun simctl list runtimes available
+
+      - name: Build the application and run its XCUITest bundle
+        run: node scripts/verify-ios.mjs
+
   # The branch-protection gate. It waits only on legs that run on ubuntu-24.04
   # for a pull request, so a merge run's macOS and arm64 matrix cannot hold the
   # required check behind a queued runner. The deferred release gates are
@@ -745,13 +779,15 @@ jobs:
             esac
           done
 
-  # The deferred release-time legs. They are skipped on pull requests, so this
-  # only ever fails a merge run, and a failure here fails the run that
-  # `scripts/wait-for-exact-ci.mjs` demands be green before publishing.
+  # The deferred release-time legs, plus the macOS iOS build. The release gates
+  # are skipped on pull requests; the iOS leg is not, so this job can fail a
+  # pull request run without ever blocking the required `verify` check. A
+  # failure here fails the run that `scripts/wait-for-exact-ci.mjs` demands be
+  # green before publishing.
   release-gates:
     name: release-gates
     if: ${{ always() }}
-    needs: [changes, legacy-bridge-continuity, official-omp-gate0]
+    needs: [changes, legacy-bridge-continuity, official-omp-gate0, ios]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -761,12 +797,14 @@ jobs:
           CHANGES_RESULT: ${{ needs.changes.result }}
           CONTINUITY_RESULT: ${{ needs.legacy-bridge-continuity.result }}
           OFFICIAL_OMP_GATE0_RESULT: ${{ needs.official-omp-gate0.result }}
+          IOS_RESULT: ${{ needs.ios.result }}
         run: |
           set -euo pipefail
           test "$CHANGES_RESULT" = success
           for result in \
             "$CONTINUITY_RESULT" \
-            "$OFFICIAL_OMP_GATE0_RESULT"
+            "$OFFICIAL_OMP_GATE0_RESULT" \
+            "$IOS_RESULT"
           do
             case "$result" in
               success|skipped) ;;

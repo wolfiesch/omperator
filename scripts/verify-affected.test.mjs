@@ -48,6 +48,7 @@ test("unknown paths fail closed to the full suite", () => {
     "official-lifecycle",
     "official-packaged",
     "bridge-continuity",
+    "ios",
     "android-debug",
     "full-test",
   ]);
@@ -64,4 +65,14 @@ test("the advertised affected verification command executes its plan", async () 
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
   assert.equal(packageJson.scripts["verify:affected"], "node scripts/verify-affected.mjs --run");
   assert.equal(packageJson.scripts["verify:affected:plan"], "node scripts/verify-affected.mjs");
+});
+
+test("iOS sources select the Xcode leg and nothing else", () => {
+  assert.deepEqual(ids(["apps/ios/Sources/T4FilesPane.swift"]), ["check", "ios"]);
+});
+
+test("the wire contract the Swift client mirrors selects the Xcode leg", () => {
+  // apps/ios/HostWire is a hand-written port, so a host-wire change can pass
+  // every TypeScript gate and still fail to compile on the client.
+  assert.ok(ids(["packages/host-wire/src/command.ts"]).includes("ios"));
 });

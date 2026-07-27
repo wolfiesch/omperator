@@ -479,6 +479,16 @@ describe("control commands leave immediately with exact payloads", () => {
     expect(sent?.intent.args).toEqual({ enabled: true });
   });
 
+  it("setMode sends session.mode.set with the mode arg", async () => {
+    const { shell, runtime } = await startedRuntime({
+      items: [...CONTROL_COMMANDS, commandItem("session.mode.set")],
+    });
+    await runtime.submitPrompt({ kind: "setMode", mode: "plan" });
+    const sent = shell.commands.find((request) => request.intent.command === "session.mode.set");
+    expect(sent?.intent.args).toEqual({ mode: "plan" });
+    expect(sent?.intent.expectedRevision).toBeDefined();
+  });
+
   it("holds the control while in flight and never swaps the label optimistically", async () => {
     const { shell, runtime } = await startedRuntime();
     const gate = deferred<boolean>();
@@ -719,13 +729,55 @@ describe("honest unsupported controls", () => {
     expect(controls.modelUnsupportedReason).toBe("Model is pinned by policy");
   });
 
-  it("mode and attachments stay off for live hosts until a protocol exists", async () => {
-    const { runtime } = await startedRuntime();
+  it("mode stays off when the host does not offer session.mode.set, attachments need both grants", async () => {
+    const { shell, runtime } = await startedRuntime();
     const controls = runtime.getSnapshot().controls;
+    // Default catalog has model/thinking/fast but no mode command.
     expect(controls.modeSupported).toBe(false);
     expect(controls.attachmentsSupported).toBe(false);
     const outcome = await runtime.submitPrompt({ kind: "setMode", mode: "plan" });
     expect(outcome.kind).toBe("rejected");
+    expect(shell.commandCount("session.mode.set")).toBe(0);
+  });
+
+  it("modeSupported flips on when the host offers session.mode.set and reads mode from the ref", async () => {
+    const { shell, runtime } = await startedRuntime({
+      items: [...CONTROL_COMMANDS, commandItem("session.mode.set")],
+    });
+    // Existing session refs may omit the default mode. OMP still starts in
+    // build mode, so the control must remain visible.
+    let controls = runtime.getSnapshot().controls;
+    expect(controls.modeSupported).toBe(true);
+    expect(controls.mode).toBe("build");
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: sessionsUpsert(2, { mode: "plan" }),
+    });
+    controls = runtime.getSnapshot().controls;
+    expect(controls.modeSupported).toBe(true);
+    expect(controls.mode).toBe("plan");
+
+    // A malformed mode on the wire is ignored in favor of OMP's default.
+    shell.emitFrame({
+      targetId: "local",
+      frame: sessionsUpsert(3, { mode: "bogus" }),
+    });
+    expect(runtime.getSnapshot().controls.mode).toBe("build");
+  });
+
+  it("a refused session.mode.set item disables mode with the host's reason", async () => {
+    const { runtime } = await startedRuntime({
+      items: [
+        {
+          ...commandItem("session.mode.set"),
+          supported: false,
+          reason: "Mode is locked by policy",
+        },
+      ],
+    });
+    const controls = runtime.getSnapshot().controls;
+    expect(controls.modeSupported).toBe(false);
   });
 
   it("enables attachments only when prompt capability and image feature are both granted", async () => {

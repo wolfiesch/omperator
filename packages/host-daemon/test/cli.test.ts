@@ -45,6 +45,59 @@ describe("T4 host daemon CLI", () => {
         "/home/test",
       ),
     ).toThrow("loopback");
+    expect(
+      parseHostDaemonArgs(
+        [
+          "serve",
+          "--omp",
+          "/opt/omp",
+          "--remote-mode",
+          "direct",
+          "--remote-address",
+          "100.64.0.1",
+          "--remote-port",
+          "8787",
+          "--remote-tls-port",
+          "8788",
+        ],
+        "/home/test",
+      ).remote,
+    ).toMatchObject({ port: 8787, tlsPort: 8788 });
+    expect(() =>
+      parseHostDaemonArgs(
+        [
+          "serve",
+          "--omp",
+          "/opt/omp",
+          "--remote-mode",
+          "direct",
+          "--remote-address",
+          "100.64.0.1",
+          "--remote-port",
+          "8788",
+          "--remote-tls-port",
+          "8788",
+        ],
+        "/home/test",
+      ),
+    ).toThrow("must differ");
+    expect(() =>
+      parseHostDaemonArgs(
+        [
+          "serve",
+          "--omp",
+          "/opt/omp",
+          "--remote-mode",
+          "serve",
+          "--remote-address",
+          "127.0.0.1",
+          "--trusted-serve-proxy",
+          "--remote-tls-port",
+          "8788",
+        ],
+        "/home/test",
+      ),
+    ).toThrow("direct-mode only");
     expect(() =>
       parseHostDaemonArgs(
         [

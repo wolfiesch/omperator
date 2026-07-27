@@ -1,0 +1,1 @@
+{"v":"omp-app/1","type":"catalog","hostId":"host-1","revision":"rev-1","items":[{"id":"tool-shell","kind":"tool","name":"shell","capabilities":["bash.run"]},{"id":"model-main","kind":"model","name":"default"}]}

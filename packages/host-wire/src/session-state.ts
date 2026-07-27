@@ -14,12 +14,25 @@ export interface QueuedMessages {
 	steering: string[];
 	followUp: string[];
 }
+export interface TodoTask {
+	content: string;
+	status: string;
+}
+export interface TodoPhase {
+	name: string;
+	tasks: TodoTask[];
+}
 export const SESSION_THINKING_EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type SessionThinkingEffort = (typeof SESSION_THINKING_EFFORTS)[number];
 export type SessionConfiguredThinking = "inherit" | "off" | "auto" | SessionThinkingEffort;
 export type SessionEffectiveThinking = "off" | SessionThinkingEffort;
 const MAX_QUEUE_ITEMS = 128;
 const MAX_QUEUE_TEXT = 65_536;
+const MAX_TODO_PHASES = 32;
+const MAX_TODO_TASKS_PER_PHASE = 64;
+const MAX_TODO_PHASE_NAME = 512;
+const MAX_TODO_TASK_CONTENT = 8192;
+const MAX_TODO_TASK_STATUS = 64;
 export interface SessionStateResult {
 	isStreaming: boolean;
 	isCompacting: boolean;
@@ -42,6 +55,7 @@ export interface SessionStateResult {
 	fastActive?: boolean;
 	sessionName?: string;
 	contextUsage?: ContextUsage;
+	todoPhases?: TodoPhase[];
 }
 const KEYS = new Set([
 	"isStreaming",
@@ -65,6 +79,7 @@ const KEYS = new Set([
 	"sessionName",
 	"contextUsage",
 	"queuedMessages",
+	"todoPhases",
 ]);
 function strict(value: unknown, path: string): Record<string, unknown> {
 	const out = boundedMap(value, path);
@@ -90,6 +105,25 @@ function queues(value: unknown, path: string): QueuedMessages {
 	const steering = boundedArray(raw.steering, `${path}.steering`, MAX_QUEUE_ITEMS).map(decode);
 	const followUp = boundedArray(raw.followUp, `${path}.followUp`, MAX_QUEUE_ITEMS).map(decode);
 	return { steering, followUp };
+}
+function todoPhases(value: unknown, path: string): TodoPhase[] {
+	const raw = boundedArray(value, path, MAX_TODO_PHASES);
+	return raw.map((phase, index) => {
+		const p = boundedMap(phase, `${path}[${index}]`);
+		for (const key of Object.keys(p))
+			if (key !== "name" && key !== "tasks") fail("INVALID_FRAME", "unknown todo phase field", `${path}[${index}]`);
+		const name = controlFree(p.name, `${path}[${index}].name`, MAX_TODO_PHASE_NAME);
+		const tasks = boundedArray(p.tasks, `${path}[${index}].tasks`, MAX_TODO_TASKS_PER_PHASE).map((task, tIndex) => {
+			const t = boundedMap(task, `${path}[${index}].tasks[${tIndex}]`);
+			for (const key of Object.keys(t))
+				if (key !== "content" && key !== "status")
+					fail("INVALID_FRAME", "unknown todo task field", `${path}[${index}].tasks[${tIndex}]`);
+			const content = controlFree(t.content, `${path}[${index}].tasks[${tIndex}].content`, MAX_TODO_TASK_CONTENT);
+			const status = controlFree(t.status, `${path}[${index}].tasks[${tIndex}].status`, MAX_TODO_TASK_STATUS);
+			return { content, status };
+		});
+		return { name, tasks };
+	});
 }
 function thinkingValue<const T extends readonly string[]>(value: unknown, path: string, allowed: T): T[number] {
 	const text = controlFree(value, path, 64);
@@ -160,6 +194,8 @@ export function decodeSessionStateResult(value: unknown): SessionStateResult {
 	const contextUsage = out.contextUsage === undefined ? undefined : context(out.contextUsage, "result.contextUsage");
 	const queuedMessages =
 		out.queuedMessages === undefined ? undefined : queues(out.queuedMessages, "result.queuedMessages");
+	const decodedTodoPhases =
+		out.todoPhases === undefined ? undefined : todoPhases(out.todoPhases, "result.todoPhases");
 	return {
 		isStreaming,
 		isCompacting,
@@ -182,6 +218,7 @@ export function decodeSessionStateResult(value: unknown): SessionStateResult {
 		...(sessionName === undefined ? {} : { sessionName }),
 		...(contextUsage ? { contextUsage } : {}),
 		...(queuedMessages ? { queuedMessages } : {}),
+		...(decodedTodoPhases ? { todoPhases: decodedTodoPhases } : {}),
 	};
 }
 export function decodeSessionStateFrame(input: unknown): SessionStateResult {

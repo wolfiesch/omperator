@@ -56,6 +56,7 @@ import {
   commandSupport,
   deriveComposerControls,
   FAST_SET_COMMAND,
+  MODE_SET_COMMAND,
   MODEL_SET_COMMAND,
   THINKING_SET_COMMAND,
   type PendingControl,
@@ -87,6 +88,7 @@ const CONTROL_REJECTED: Record<PendingControl, string> = {
   model: "The host declined the model change. The session keeps its current model.",
   thinking: "The host declined the thinking change. The session keeps its current level.",
   fast: "The host declined the fast-mode change.",
+  mode: "The host declined the mode change. The session keeps its current mode.",
 };
 const CONTROL_UNKNOWN =
   "The connection dropped before the host answered. The control shows the host's last confirmed value.";
@@ -1070,9 +1072,7 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
       return applyControlCommand("fast", FAST_SET_COMMAND, { enabled: intent.enabled });
     }
     if (intent.kind === "setMode") {
-      // No live protocol exists for working modes; the control is hidden,
-      // and a stray intent gets the honest refusal instead of a fake echo.
-      return { kind: "rejected", reason: "This host has no working-mode command yet." };
+      return applyControlCommand("mode", MODE_SET_COMMAND, { mode: intent.mode });
     }
     if (intent.kind === "ask") {
       const value = intent.text !== "" ? intent.text : intent.optionIds.join(", ");

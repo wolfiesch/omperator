@@ -18,7 +18,8 @@ import type {
 
 const TITLE_SLOT_BYTES = 256;
 const METADATA_BYTES = 1024 * 1024;
-const OWNER_FILE = ".t4-exclusive-owner.lock";
+export const OFFICIAL_OMP_OWNER_FILE = ".t4-exclusive-owner.lock";
+const OWNER_FILE = OFFICIAL_OMP_OWNER_FILE;
 
 interface OwnerRecord {
 	readonly version: 1;

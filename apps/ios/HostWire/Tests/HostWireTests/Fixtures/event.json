@@ -1,0 +1,1 @@
+{"v":"omp-app/1","type":"event","cursor":{"epoch":"epoch-2","seq":11},"hostId":"host-a","sessionId":"same-raw-id","event":{"type":"message.delta","entryId":"entry-durable-1","text":" world"}}

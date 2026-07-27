@@ -1,0 +1,1 @@
+{"v":"omp-app/1","type":"files.diff","hostId":"host-1","sessionId":"session-1","path":"src/app.ts","diff":"@@ -1 +1 @@\n-old\n+new\n"}

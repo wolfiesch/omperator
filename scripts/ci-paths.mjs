@@ -93,6 +93,17 @@ const GROUP_PATTERNS = Object.freeze({
     /^scripts\/t4-maintainer-/u,
     /^scripts\/test-temporary-directory\.mjs$/u,
   ],
+  // The Swift client re-implements the wire contract by hand in
+  // apps/ios/HostWire, so a protocol change can compile everywhere and still
+  // break the app. host-wire therefore selects this leg alongside the iOS
+  // sources themselves.
+  ios: [
+    /^\.github\/workflows\/ci\.yml$/u,
+    /^apps\/ios\//u,
+    /^packages\/host-wire\//u,
+    /^packages\/protocol\//u,
+    /^scripts\/verify-ios\.mjs$/u,
+  ],
   android_debug: [
     /^apps\/(?:mobile|web)\//u,
     /^packages\/(?:client|protocol|ui)\//u,
