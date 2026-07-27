@@ -35,6 +35,20 @@ private struct FileViewTarget: Identifiable, Equatable {
     var id: String { path }
 }
 
+/// Single presentation channel for the files pane: either the text file
+/// viewer or a full-screen image preview. Unifying them avoids two
+/// `.fullScreenCover`/`.sheet` modifiers competing on the same view.
+private enum FilesPresentation: Identifiable {
+    case fileViewer(FileViewTarget)
+    case imagePreview(PlatformImage)
+    var id: String {
+        switch self {
+        case .fileViewer(let t): return "fv:" + t.path
+        case .imagePreview: return "img"
+        }
+    }
+}
+
 /// Read-only file viewer for a single file's contents.
 private struct FileViewer: View {
     let session: SessionRef
@@ -119,7 +133,7 @@ struct T4FilesPane: View {
     /// Navigation stack of directory paths, root-first. The last element is
     /// the currently displayed directory; "" is the workspace root.
     @State private var pathStack: [String] = [""]
-    @State private var viewedFile: FileViewTarget?
+    @State private var presentation: FilesPresentation?
     @State private var loading = true
     @State private var error: String?
     @State private var entries: [FileRow]?
@@ -166,13 +180,13 @@ struct T4FilesPane: View {
                 }
             }
             #if os(iOS)
-            .fullScreenCover(item: $viewedFile) { target in
-                FileViewer(session: session, store: store, path: target.path)
+            .fullScreenCover(item: $presentation) { p in
+                filesPresentationView(p)
                     .environmentObject(theme)
             }
             #else
-            .sheet(item: $viewedFile) { target in
-                FileViewer(session: session, store: store, path: target.path)
+            .sheet(item: $presentation) { p in
+                filesPresentationView(p)
                     .environmentObject(theme)
             }
             #endif
@@ -209,6 +223,9 @@ struct T4FilesPane: View {
     }
 
     /// Sorted directory list: folders first, then files, each alphabetical.
+    /// Image files (≤ 2MB) render an inline thumbnail row that lazy-loads via
+    /// `.task` and opens a full-screen zoomable preview on tap; everything
+    /// else uses the standard icon row → text file viewer.
     private func list(_ rows: [FileRow]) -> some View {
         let sorted = rows.sorted { a, b in
             if a.isDirectory != b.isDirectory { return a.isDirectory }
@@ -216,45 +233,81 @@ struct T4FilesPane: View {
         }
         return List {
             ForEach(sorted) { row in
-                Button {
-                    if row.isDirectory {
-                        pathStack.append(row.entry.path)
-                    } else {
-                        viewedFile = FileViewTarget(path: row.entry.path)
+                if isImageFile(row) {
+                    ImageFileRow(session: session, store: store, row: row) { image in
+                        presentation = .imagePreview(image)
                     }
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: row.isDirectory ? "folder.fill" : icon(for: row.name))
-                            .font(.system(size: 15))
-                            .foregroundStyle(row.isDirectory ? t.accent : t.txtMuted)
-                            .frame(width: 22)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(row.name)
-                                .font(.system(size: 14))
-                                .foregroundStyle(t.txt)
-                                .lineLimit(1)
-                            if let size = row.entry.size, !row.isDirectory {
-                                Text(byteLabel(size))
-                                    .font(.system(size: 10, design: .monospaced))
-                                    .foregroundStyle(t.txtLabel)
-                            }
-                        }
-                        Spacer()
+                    .buttonStyle(.plain)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparatorTint(t.lineFaint)
+                } else {
+                    Button {
                         if row.isDirectory {
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 11))
-                                .foregroundStyle(t.txtLabel)
+                            pathStack.append(row.entry.path)
+                        } else {
+                            presentation = .fileViewer(FileViewTarget(path: row.entry.path))
                         }
+                    } label: {
+                        fileRowLabel(row)
                     }
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparatorTint(t.lineFaint)
                 }
-                .buttonStyle(.plain)
-                .listRowBackground(Color.clear)
-                .listRowSeparatorTint(t.lineFaint)
             }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
+    }
+
+    /// Standard (non-image) row: folder/file icon, name, byte size, and a
+    /// drill-in chevron for directories.
+    @ViewBuilder
+    private func fileRowLabel(_ row: FileRow) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: row.isDirectory ? "folder.fill" : icon(for: row.name))
+                .font(.system(size: 15))
+                .foregroundStyle(row.isDirectory ? t.accent : t.txtMuted)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(row.name)
+                    .font(.system(size: 14))
+                    .foregroundStyle(t.txt)
+                    .lineLimit(1)
+                if let size = row.entry.size, !row.isDirectory {
+                    Text(byteLabel(size))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(t.txtLabel)
+                }
+            }
+            Spacer()
+            if row.isDirectory {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11))
+                    .foregroundStyle(t.txtLabel)
+            }
+        }
+        .contentShape(Rectangle())
+    }
+
+    /// Routes the unified presentation enum to its destination view.
+    @ViewBuilder
+    private func filesPresentationView(_ p: FilesPresentation) -> some View {
+        switch p {
+        case .fileViewer(let target):
+            FileViewer(session: session, store: store, path: target.path)
+        case .imagePreview(let image):
+            ImagePreviewSheet(image: image)
+        }
+    }
+
+    /// True for non-directory image files within the thumbnail size budget.
+    /// The host caps files.read content (MAX_FILE_BYTES), so larger images
+    /// would fail to load anyway — gate them out to skip a doomed request.
+    private func isImageFile(_ row: FileRow) -> Bool {
+        guard !row.isDirectory, let size = row.entry.size, size <= 2 * 1024 * 1024 else { return false }
+        let ext = (row.name as NSString).pathExtension.lowercased()
+        return ["png", "jpg", "jpeg", "gif", "webp", "heic"].contains(ext)
     }
 
     /// Fetch the current directory listing.
@@ -302,4 +355,96 @@ private func byteLabel(_ bytes: Int) -> String {
     let mb = kb / 1024
     if mb < 1024 { return String(format: "%.1f MB", mb) }
     return String(format: "%.1f GB", mb / 1024)
+}
+
+/// Image file row: a 40pt rounded thumbnail lazy-loaded via `.task` (only
+/// visible rows run it), the file name + byte size, and a tap target that
+/// hands the decoded image to the pane's full-screen preview. Falls back to
+/// a placeholder icon when the read or decode fails.
+private struct ImageFileRow: View {
+    let session: SessionRef
+    let store: T4SessionStore
+    let row: FileRow
+    let onPreview: (PlatformImage) -> Void
+    @EnvironmentObject var theme: ThemeStore
+    @State private var image: PlatformImage?
+    @State private var failed = false
+    private var t: Theme { theme.t }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6, style: .continuous).fill(t.lineFaint)
+                if let image {
+                    Image(platformImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 40, height: 40)
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                } else if failed {
+                    Image(systemName: "photo.badge.exclamationmark")
+                        .font(.system(size: 15))
+                        .foregroundStyle(t.txtMuted)
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+            }
+            .frame(width: 40, height: 40)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(row.name)
+                    .font(.system(size: 14))
+                    .foregroundStyle(t.txt)
+                    .lineLimit(1)
+                if let size = row.entry.size {
+                    Text(byteLabel(size))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(t.txtLabel)
+                }
+            }
+            Spacer()
+        }
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+        .onTapGesture { if let image { onPreview(image) } }
+        .task { await load() }
+    }
+
+    /// Fetch + decode the image once; later appearances no-op once loaded.
+    private func load() async {
+        guard image == nil, !failed else { return }
+        if let data = await store.readFileData(sessionId: session.sessionId, path: row.entry.path),
+           let img = platformImage(data: data) {
+            image = img
+        } else {
+            failed = true
+        }
+    }
+}
+
+/// Full-screen zoomable image preview (reuses `ZoomableCaptureImage` from the
+/// browser pane). A trailing close button dismisses; on iOS the cover has no
+/// swipe-down dismiss, so the button is the primary affordance.
+private struct ImagePreviewSheet: View {
+    let image: PlatformImage
+    @EnvironmentObject var theme: ThemeStore
+    @Environment(\.dismiss) private var dismiss
+    private var t: Theme { theme.t }
+
+    var body: some View {
+        ZStack {
+            t.bg.ignoresSafeArea()
+            ZoomableCaptureImage(image: image)
+        }
+        .overlay(alignment: .topTrailing) {
+            Button { dismiss() } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 22))
+                    .foregroundStyle(t.txtMuted)
+                    .padding(12)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Close preview")
+        }
+    }
 }

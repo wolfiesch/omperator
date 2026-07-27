@@ -101,6 +101,10 @@ struct MacCommands: SwiftUI.Commands {
             Button("Close Sheet") { commands?.dismissPresented() }
                 .keyboardShortcut(.escape, modifiers: [])
 
+            Button("Next Unread") { selectNextUnread() }
+                .keyboardShortcut("u", modifiers: [.command, .option])
+                .disabled(store?.unreadSessions.isEmpty ?? true)
+
         }
 
         CommandMenu("Host") {
@@ -141,6 +145,22 @@ struct MacCommands: SwiftUI.Commands {
         store.select(flatSessions[i])
     }
 
-
+    /// ⌘⌥U: cycle selection to the next session with an unread dot, in rail
+    /// order, wrapping past the current selection. No-op when none are unread.
+    private func selectNextUnread() {
+        guard let store else { return }
+        let flat = flatSessions
+        let ids = flat.map(\.sessionId)
+        let unread = store.unreadSessions
+        guard !unread.isEmpty, !ids.isEmpty else { return }
+        let start = selected.flatMap { ids.firstIndex(of: $0.sessionId) } ?? -1
+        for offset in 1...ids.count {
+            let idx = (start + offset + ids.count) % ids.count
+            if unread.contains(ids[idx]) {
+                store.select(flat[idx])
+                return
+            }
+        }
+    }
 }
 #endif

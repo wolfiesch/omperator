@@ -33,7 +33,7 @@ struct T4SessionsView: View {
                 Section {
                     ForEach(group.sessions, id: \.sessionId) { session in
                         Button { onSelect(session) } label: {
-                            T4SessionRow(session: session, theme: t)
+                            T4SessionRow(session: session, theme: t, unread: store.unreadSessions.contains(session.sessionId))
                         }
                         .buttonStyle(.plain)
                         .listRowBackground(Color.clear)
@@ -122,37 +122,48 @@ struct T4SessionsView: View {
 struct T4SessionRow: View {
     let session: SessionRef
     let theme: Theme
+    /// True when durable entries arrived since this session was last selected
+    /// — renders a leading accent dot. Driven by `store.unreadSessions`.
+    var unread: Bool = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(session.title)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(theme.txt)
-                    .lineLimit(1)
-                Spacer(minLength: 8)
-                StatusPill(status: session.status, theme: theme)
+        HStack(alignment: .top, spacing: 8) {
+            if unread {
+                Circle()
+                    .fill(theme.accent)
+                    .frame(width: 8, height: 8)
+                    .padding(.top, 7)
             }
-            HStack(spacing: 10) {
-                if let model = session.model {
-                    T4ModelLabel(selector: model, theme: theme)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(session.title)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(theme.txt)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    StatusPill(status: session.status, theme: theme)
+                }
+                HStack(spacing: 10) {
+                    if let model = session.model {
+                        T4ModelLabel(selector: model, theme: theme)
+                            .lineLimit(1)
+                    }
+                    if let usage = session.contextUsage {
+                        ContextMeter(used: usage.used, limit: usage.limit, theme: theme)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .lineLimit(1)
+                .truncationMode(.tail)
+                HStack(spacing: 6) {
+                    if session.pendingApproval == true { Tag(text: "approval", color: theme.diffAdd, theme: theme) }
+                    if session.pendingUserInput == true { Tag(text: "input", color: theme.cTask, theme: theme) }
+                    Text(session.updatedAt).font(.system(size: 10)).foregroundStyle(theme.txtLabel)
                         .lineLimit(1)
                 }
-                if let usage = session.contextUsage {
-                    ContextMeter(used: usage.used, limit: usage.limit, theme: theme)
-                }
-                Spacer(minLength: 0)
+                .lineLimit(1)
+                .truncationMode(.tail)
             }
-            .lineLimit(1)
-            .truncationMode(.tail)
-            HStack(spacing: 6) {
-                if session.pendingApproval == true { Tag(text: "approval", color: theme.diffAdd, theme: theme) }
-                if session.pendingUserInput == true { Tag(text: "input", color: theme.cTask, theme: theme) }
-                Text(session.updatedAt).font(.system(size: 10)).foregroundStyle(theme.txtLabel)
-                    .lineLimit(1)
-            }
-            .lineLimit(1)
-            .truncationMode(.tail)
         }
         .padding(.vertical, 3)
     }

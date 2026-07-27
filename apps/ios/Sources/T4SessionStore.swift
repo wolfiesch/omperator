@@ -115,6 +115,10 @@ final class T4SessionStore: ObservableObject {
     /// appserver version). Captured on connect, cleared on disconnect.
     @Published private(set) var hostInfo: HostInfo?
     @Published var selectedSession: SessionRef?
+    /// Session ids with durable entries that arrived while the session was
+    /// not selected — drives the rail's unread dot. Cleared on select, pruned
+    /// to the live inventory on each sessions push. In-memory only.
+    @Published private(set) var unreadSessions: Set<String> = []
     /// Live transcripts by sessionId (snapshot + streamed entries). Present
     /// only for attached sessions while connected; the sample rail falls back
     /// to `sampleTranscript` when disconnected.
@@ -343,6 +347,8 @@ final class T4SessionStore: ObservableObject {
     /// Select a session (rail tap or auto-select of the most recent).
     func select(_ session: SessionRef?) {
         selectedSession = session
+        // Viewing clears the unread dot for the now-selected session.
+        if let session { unreadSessions.remove(session.sessionId) }
         if connected, let session { Task { await attach(sessionId: session.sessionId) } }
     }
 
@@ -900,12 +906,14 @@ final class T4SessionStore: ObservableObject {
     private func reconcileSelection() {
         guard let selected = selectedSession else {
             selectedSession = sessions.first
+            if let s = selectedSession { unreadSessions.remove(s.sessionId) }
             return
         }
         if let fresh = sessions.first(where: { $0.sessionId == selected.sessionId }) {
             selectedSession = fresh
         } else {
             selectedSession = sessions.first
+            if let s = selectedSession { unreadSessions.remove(s.sessionId) }
         }
     }
 
@@ -968,6 +976,16 @@ final class T4SessionStore: ObservableObject {
             lastError = "\(error)"
             return nil
         }
+    }
+
+    /// Read a binary file (e.g. an image) as `Data`. Reuses `readFile` (the
+    /// same files.read wire call) and base64-decodes the payload the host
+    /// returns for non-text files. Returns nil on failure or if the content
+    /// isn't valid base64 (text files, truncated reads). Used for file-pane
+    /// image thumbnails.
+    func readFileData(sessionId: String, path: String) async -> Data? {
+        guard let content = await readFile(sessionId: sessionId, path: path) else { return nil }
+        return Data(base64Encoded: content)
     }
 
     // MARK: - Files search & diff
@@ -1660,6 +1678,8 @@ final class T4SessionStore: ObservableObject {
             switch frame {
             case .sessions(let inventory):
                 sessions = inventory.sessions
+                // Drop unread markers for sessions no longer in the inventory.
+                unreadSessions.formIntersection(Set(inventory.sessions.map(\.sessionId)))
                 markLive()
                 reconcileSelection()
             case .snapshot(let snapshot):
@@ -1673,6 +1693,10 @@ final class T4SessionStore: ObservableObject {
                 if !entries.contains(where: { $0.id == entry.id }) {
                     entries.append(entry)
                     liveEntries[entryFrame.sessionId] = entries
+                    // A durable entry on a session the user isn't viewing → unread dot.
+                    if entryFrame.sessionId != selectedSession?.sessionId {
+                        unreadSessions.insert(entryFrame.sessionId)
+                    }
                 }
                 // De-dupe with the live tail: when the durable assistant
                 // message entry lands, the in-progress streaming text is now

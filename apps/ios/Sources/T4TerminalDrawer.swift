@@ -196,10 +196,18 @@ struct T4TerminalDrawer: View {
     }
 }
 
-/// SwiftUI bridge to SwiftTerm's UIKit `TerminalView`. Feeds buffered output
+/// SwiftUI bridge to SwiftTerm's `TerminalView`. Feeds buffered output
 /// (only the newly appended tail each update), forwards keystrokes via
 /// `onInput`, and reports pixel→cell resizes via `onResize`. The underlying
 /// `TerminalView` is created once and reused across updates.
+///
+/// Mouse forwarding is automatic: SwiftTerm's `TerminalView` defaults
+/// `allowMouseReporting` to true on both platforms and forwards taps/clicks,
+/// scrolls, and drags to the pty whenever a TUI app enables a mouse mode
+/// (X10 / vt200 / button-event / any-event, +SGR encoding) via DECSET — the
+/// `mouseModeChanged` delegate callback enables the iOS mouse-pan gesture
+/// on demand. Nothing to opt in to here; only `isUserInteractionEnabled`
+/// gates input after pty exit.
 struct T4TerminalSurface: View {
     let terminalId: String
     let output: String
