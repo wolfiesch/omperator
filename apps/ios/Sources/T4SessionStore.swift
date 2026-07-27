@@ -266,7 +266,11 @@ final class T4SessionStore: ObservableObject {
     @Published private(set) var hasLiveInventory = false
     /// True when a previous session's endpoint is persisted (restore will run).
     var hasSavedConnection: Bool {
-        Keychain.get(Self.savedEndpointKey) != nil
+        // Ephemeral-credential runs never consult the Keychain (the macOS
+        // consent dialog ignores kSecUseAuthenticationUIFail for ACL-denied
+        // items and can block the main thread before first paint).
+        if ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("-T4DeviceToken=") }) { return true }
+        return Keychain.get(Self.savedEndpointKey) != nil
     }
 
     /// True once a live host has spoken; false while showing the offline sample.
