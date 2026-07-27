@@ -14,6 +14,11 @@ export function developmentSandboxServiceConfig(
 ): DevelopmentSandboxServiceConfig | undefined {
   const configuredRoot = environment.T4_DEV_SANDBOX_ROOT;
   const sandbox = environment.T4_DEV_SANDBOX;
+  const runtimeOverride = environment.T4_HOST_RUNTIME_DIR;
+  if (runtimeOverride !== undefined && !isAbsolute(runtimeOverride)) {
+    throw new Error("T4_HOST_RUNTIME_DIR must be an absolute path");
+  }
+  const hostRuntimeDirectory = runtimeOverride;
   if (configuredRoot === undefined && sandbox === undefined) return undefined;
   if (
     configuredRoot === undefined ||
@@ -34,10 +39,10 @@ export function developmentSandboxServiceConfig(
     environment: Object.freeze({
       HOME: homeDirectory,
       // Supplied by the dev harness; the sandbox HOME is too deep to host a
-      // connectable socket path.
-      ...(process.env.T4_HOST_RUNTIME_DIR === undefined
-        ? {}
-        : { T4_HOST_RUNTIME_DIR: process.env.T4_HOST_RUNTIME_DIR }),
+      // connectable socket path. Read from the caller's environment, not the
+      // global one, so a caller-supplied sandbox cannot silently pick up an
+      // unrelated value. A relative path would not be a usable socket root.
+      ...(hostRuntimeDirectory === undefined ? {} : { T4_HOST_RUNTIME_DIR: hostRuntimeDirectory }),
       TMPDIR: join(configuredRoot, "tmp"),
       XDG_CACHE_HOME: join(configuredRoot, "xdg", "cache"),
       XDG_CONFIG_HOME: join(configuredRoot, "xdg", "config"),

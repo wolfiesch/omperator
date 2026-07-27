@@ -83,6 +83,17 @@ describe("service-manager definitions", () => {
     expect(content).toContain("StandardOutput=append:/home/alice/.omp/logs/appserver.log");
     expect(content).toContain('Environment="OMP_PROFILE=default"');
   });
+  it("renders the host runtime override into the launch agent environment", () => {
+    // The override relocates the host socket. If the renderer drops it, the
+    // daemon binds under a deep sandbox HOME and the app cannot reach it.
+    const content = renderMacLaunchAgentDefinition({
+      ...spec,
+      environment: { ...spec.environment, T4_HOST_RUNTIME_DIR: "/private/tmp/t4-501-abcdef" },
+    });
+    expect(content).toContain("<key>T4_HOST_RUNTIME_DIR</key>");
+    expect(content).toContain("<string>/private/tmp/t4-501-abcdef</string>");
+  });
+
   it("renders plist as XML-safe ProgramArguments without shell", () => {
     const definitionPath = "/home/alice/Library/LaunchAgents/dev.oh-my-pi.appserver.plist";
     const content = renderMacLaunchAgentDefinition(spec);

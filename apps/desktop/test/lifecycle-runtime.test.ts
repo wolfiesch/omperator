@@ -22,6 +22,34 @@ import {
 } from "../src/local-profiles.ts";
 
 describe("development sandbox service configuration", () => {
+  it("carries the host runtime override from the caller's environment", () => {
+    // Reading process.env here would let an unrelated global value leak into a
+    // caller-supplied sandbox, and the two disagreeing is precisely how the
+    // socket ended up somewhere the app could not reach.
+    const config = developmentSandboxServiceConfig({
+      T4_DEV_SANDBOX: "watch-loop",
+      T4_DEV_SANDBOX_ROOT: "/tmp/omperator-dev/watch-loop",
+      T4_HOST_RUNTIME_DIR: "/private/tmp/t4-501-abcdef",
+    });
+    expect(config?.environment.T4_HOST_RUNTIME_DIR).toBe("/private/tmp/t4-501-abcdef");
+
+    // Absent from the caller's environment means absent from the service.
+    const withoutOverride = developmentSandboxServiceConfig({
+      T4_DEV_SANDBOX: "watch-loop",
+      T4_DEV_SANDBOX_ROOT: "/tmp/omperator-dev/watch-loop",
+    });
+    expect(withoutOverride?.environment.T4_HOST_RUNTIME_DIR).toBeUndefined();
+
+    // A relative path is not a usable socket root.
+    expect(() =>
+      developmentSandboxServiceConfig({
+        T4_DEV_SANDBOX: "watch-loop",
+        T4_DEV_SANDBOX_ROOT: "/tmp/omperator-dev/watch-loop",
+        T4_HOST_RUNTIME_DIR: "relative/run",
+      }),
+    ).toThrow(/must be an absolute path/u);
+  });
+
   it("derives isolated service, runtime, log, and Electron paths from one root", () => {
     const config = developmentSandboxServiceConfig({
       T4_DEV_SANDBOX: "watch-loop",
