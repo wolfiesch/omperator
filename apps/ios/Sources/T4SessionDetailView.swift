@@ -150,6 +150,13 @@ struct T4SessionDetailView: View {
                let sheet = ActiveSheet(rawValue: String(raw.dropFirst("-T4ShowSheet=".count))) {
                 activeSheet = sheet
             }
+            // UI-test seam: -T4Fork forks the current session at boot and selects the copy.
+            if args.contains("-T4Fork") {
+                Task {
+                    for _ in 0..<40 where !store.connected { try? await Task.sleep(for: .milliseconds(500)) }
+                    _ = await store.forkSession(sessionId: session.sessionId)
+                }
+            }
         }
         .task(id: session.sessionId) {
             // -T4ShowAsk: demo ask pinned to whatever session is current (the
