@@ -269,7 +269,7 @@ struct T4SessionDetailView: View {
             }
             }
             #if os(macOS)
-            .frame(minWidth: 520, idealWidth: 640, minHeight: 480, idealHeight: 600)
+            .frame(minWidth: 560, idealWidth: 680, minHeight: 720, idealHeight: 840)
             #endif
         }
         #if os(macOS)

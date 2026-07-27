@@ -66,7 +66,14 @@ struct T4SearchPane: View {
     private enum Mode: Hashable { case search, diff }
 
     @State private var mode: Mode = .search
-    @State private var query = ""
+    /// UI-test seam: -T4SearchQuery=server pre-fills and runs a real search;
+    /// -T4SearchMode=diff opens on the diff tab.
+    @State private var query: String = {
+        guard let raw = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("-T4SearchQuery=") })
+        else { return "" }
+        return String(raw.dropFirst("-T4SearchQuery=".count))
+    }()
+    @State private var initialMode: Bool = ProcessInfo.processInfo.arguments.contains("-T4SearchMode=diff")
     @State private var turnId = ""
     @State private var searchResults: FilesSearchResult?
     @State private var searching = false
@@ -114,6 +121,12 @@ struct T4SearchPane: View {
                     Button("Done") { isPresented = false }
                         .font(.system(size: 14, weight: .semibold))
                 }
+            }
+        }
+        .onAppear {
+            if initialMode {
+                initialMode = false
+                mode = .diff
             }
         }
         .onChange(of: mode) { _, newMode in
