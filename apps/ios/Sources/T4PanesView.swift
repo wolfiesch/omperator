@@ -661,47 +661,80 @@ struct T4SettingsPane: View {
     }
 
     private var settingsList: some View {
-        List {
-            modelsSection
-            behaviorSection
-            providersSection
-            connectionSection
-            appearanceSection
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                modelsSection
+                behaviorSection
+                providersSection
+                connectionSection
+                appearanceSection
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 16)
         }
-        #if os(iOS)
-        .listStyle(.insetGrouped)
-        #else
-        .listStyle(.inset)
-        #endif
         .scrollContentBackground(.hidden)
+        .background(t.bg)
+    }
+
+    /// One settings group: a labeled card of rows, no hairline dividers — the
+    /// card's padding does the grouping work the separators used to fake.
+    @ViewBuilder
+    private func settingsCard<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title.uppercased())
+                .font(.system(size: 11, weight: .semibold))
+                .tracking(0.8)
+                .foregroundStyle(t.txtLabel)
+                .padding(.leading, 4)
+            VStack(alignment: .leading, spacing: 2) { content() }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(t.bg2)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(t.lineFaint, lineWidth: 0.5)
+                )
+        }
+    }
+
+    /// One row inside a card: breathing room instead of a separator.
+    @ViewBuilder
+    private func cardRow<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        HStack { content() }
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: MODELS
 
     @ViewBuilder
     private var modelsSection: some View {
-        Section(header: sectionHeader("Models")) {
+        settingsCard("Models") {
             if store.catalogModels.isEmpty {
                 Text("No models in catalog")
                     .font(.system(size: 12))
                     .foregroundStyle(t.txtMuted)
             } else {
                 ForEach(roles, id: \.id) { role in
-                    Picker(selection: Binding(
-                        get: { roleValue(role.id) },
-                        set: { new in Task { await setRole(role.id, new) } }
-                    )) {
-                        Text("default").tag("default")
-                        ForEach(store.catalogModels, id: \.id) { m in
-                            Text(m.id).tag(m.id)
+                    cardRow {
+                        Picker(selection: Binding(
+                            get: { roleValue(role.id) },
+                            set: { new in Task { await setRole(role.id, new) } }
+                        )) {
+                            Text("default").tag("default")
+                            ForEach(store.catalogModels, id: \.id) { m in
+                                Text(m.id).tag(m.id)
+                            }
+                        } label: {
+                            Text(role.label)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(t.txt)
                         }
-                    } label: {
-                        Text(role.label)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(t.txt)
+                        .pickerStyle(.menu)
+                        .tint(t.interactiveAccent)
                     }
-                    .pickerStyle(.menu)
-                    .tint(t.accent)
                 }
             }
         }
@@ -711,32 +744,36 @@ struct T4SettingsPane: View {
 
     @ViewBuilder
     private var behaviorSection: some View {
-        Section(header: sectionHeader("Behavior")) {
-            Picker(selection: Binding(
-                get: { thinkingLevel() },
-                set: { new in Task { await setThinkingLevel(new) } }
-            )) {
-                ForEach(thinkingLevels, id: \.self) { Text($0).tag($0) }
-            } label: {
-                Text("Thinking")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(t.txt)
+        settingsCard("Behavior") {
+            cardRow {
+                Picker(selection: Binding(
+                    get: { thinkingLevel() },
+                    set: { new in Task { await setThinkingLevel(new) } }
+                )) {
+                    ForEach(thinkingLevels, id: \.self) { Text($0).tag($0) }
+                } label: {
+                    Text("Thinking")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(t.txt)
+                }
+                .pickerStyle(.menu)
+                .tint(t.interactiveAccent)
             }
-            .pickerStyle(.menu)
-            .tint(t.accent)
 
-            Picker(selection: Binding(
-                get: { approvalMode() },
-                set: { new in Task { await setApprovalMode(new) } }
-            )) {
-                ForEach(approvalModes, id: \.id) { Text($0.label).tag($0.id) }
-            } label: {
-                Text("Tool approval")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(t.txt)
+            cardRow {
+                Picker(selection: Binding(
+                    get: { approvalMode() },
+                    set: { new in Task { await setApprovalMode(new) } }
+                )) {
+                    ForEach(approvalModes, id: \.id) { Text($0.label).tag($0.id) }
+                } label: {
+                    Text("Tool approval")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(t.txt)
+                }
+                .pickerStyle(.menu)
+                .tint(t.interactiveAccent)
             }
-            .pickerStyle(.menu)
-            .tint(t.accent)
         }
     }
 
@@ -744,7 +781,7 @@ struct T4SettingsPane: View {
 
     @ViewBuilder
     private var providersSection: some View {
-        Section(header: sectionHeader("Providers & Keys")) {
+        settingsCard("Providers & Keys") {
             let keys = providerKeys()
             if keys.isEmpty {
                 Text("No provider keys set")
@@ -752,7 +789,7 @@ struct T4SettingsPane: View {
                     .foregroundStyle(t.txtMuted)
             } else {
                 ForEach(keys, id: \.provider) { entry in
-                    HStack {
+                    cardRow {
                         Text(entry.provider)
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(t.txt)
@@ -765,14 +802,16 @@ struct T4SettingsPane: View {
                     }
                 }
             }
-            Button {
-                addingKey = true
-            } label: {
-                Label("Add provider key", systemImage: "plus")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(t.accent)
+            cardRow {
+                Button {
+                    addingKey = true
+                } label: {
+                    Label("Add provider key", systemImage: "plus")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .tint(t.interactiveAccent)
+                .disabled(saving)
             }
-            .disabled(saving)
         }
     }
 
@@ -828,7 +867,7 @@ struct T4SettingsPane: View {
 
     @ViewBuilder
     private var connectionSection: some View {
-        Section(header: sectionHeader("Connection")) {
+        settingsCard("Connection") {
             if let info = store.hostInfo {
                 hostRow("Host ID", info.hostId)
                 hostRow("OMP version", info.ompVersion)
@@ -843,7 +882,7 @@ struct T4SettingsPane: View {
                 .replacingOccurrences(of: "ws://", with: "")
                 .replacingOccurrences(of: "/v1/ws", with: "") ?? "Not connected")
             if let fp = pinnedFingerprint {
-                HStack(alignment: .firstTextBaseline) {
+                cardRow {
                     Text("wss fingerprint")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(t.txt)
@@ -854,19 +893,23 @@ struct T4SettingsPane: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
-                Button(role: .destructive) {
-                    forgetPin()
-                } label: {
-                    Label("Forget pinned cert", systemImage: "lock.slash")
-                        .font(.system(size: 13))
+                cardRow {
+                    Button(role: .destructive) {
+                        forgetPin()
+                    } label: {
+                        Label("Forget pinned cert", systemImage: "lock.slash")
+                            .font(.system(size: 13))
+                    }
                 }
             }
-            Button(role: .destructive) {
-                Task { await store.disconnect() }
-            } label: {
-                Label("Disconnect", systemImage: "antenna.radiowaves.left.and.right.slash")
+            cardRow {
+                Button(role: .destructive) {
+                    Task { await store.disconnect() }
+                } label: {
+                    Label("Disconnect", systemImage: "antenna.radiowaves.left.and.right.slash")
+                }
+                .disabled(!store.connected)
             }
-            .disabled(!store.connected)
         }
     }
 
@@ -874,33 +917,28 @@ struct T4SettingsPane: View {
 
     @ViewBuilder
     private var appearanceSection: some View {
-        Section(header: sectionHeader("Appearance")) {
-            Picker(selection: $theme.mode) {
-                Text("System").tag(Appearance.system)
-                Text("Dark").tag(Appearance.dark)
-                Text("Light").tag(Appearance.light)
-            } label: {
-                Text("Theme")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(t.txt)
+        settingsCard("Appearance") {
+            cardRow {
+                Picker(selection: $theme.mode) {
+                    Text("System").tag(Appearance.system)
+                    Text("Dark").tag(Appearance.dark)
+                    Text("Light").tag(Appearance.light)
+                } label: {
+                    Text("Theme")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(t.txt)
+                }
+                .pickerStyle(.menu)
+                .tint(t.interactiveAccent)
             }
-            .pickerStyle(.menu)
-            .tint(t.accent)
         }
     }
 
     // MARK: Helpers
 
     @ViewBuilder
-    private func sectionHeader(_ title: String) -> some View {
-        Text(title)
-            .font(.system(size: 12, weight: .bold))
-            .foregroundStyle(t.txtLabel)
-    }
-
-    @ViewBuilder
     private func hostRow(_ key: String, _ value: String) -> some View {
-        HStack {
+        cardRow {
             Text(key)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(t.txt)
