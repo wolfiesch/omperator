@@ -178,6 +178,7 @@ struct T4SessionDetailView: View {
             Text("Enter a new title for this session.")
         }
         .sheet(item: $activeSheet) { sheet in
+            Group {
             switch sheet {
             case .files:
                 T4FilesPane(session: session, store: store, isPresented: sheetBinding(.files))
@@ -203,6 +204,7 @@ struct T4SessionDetailView: View {
             case .searchDiff:
                 T4SearchPane(session: session, store: store, isPresented: sheetBinding(.searchDiff))
                     .environmentObject(theme)
+            }
             }
             // iOS sheets size from the screen; macOS sheets size from content,
             // which left panes (browser especially) as cramped little popovers.
