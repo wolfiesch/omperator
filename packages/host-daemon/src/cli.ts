@@ -8,6 +8,7 @@ import {
   createHostLogger,
   createRemoteAppserver,
   OfficialOmpProfileAuthority,
+  OmpSettingsAuthority,
   OFFICIAL_OMP_OWNER_FILE,
   OmpAuthorityBridgeClient,
   profileSocketPath,
@@ -414,6 +415,7 @@ export async function runHostDaemon(
         items: officialCatalogItems(),
       }),
       ...terminals.operations(),
+      ...new OmpSettingsAuthority().operations(),
     };
     projectRootForProject = projectId => official.projectRootForProject(projectId);
     projectRootForSession = sessionId => official.projectRootForSession(sessionId);
