@@ -137,18 +137,32 @@ export class OmpSettingsAuthority {
 	}
 
 	// ── operations ──────────────────────────────────────────────────────
+	// The wire's boundedSettings demands every settings value be an object —
+	// bare scalars die in its JSON-literal parser. So every leaf travels as a
+	// metadata entry {effective, type}.
 	async settingsRead(): Promise<CommandResult> {
 		const { doc, revision } = await this.#readConfig();
 		const settings: Record<string, unknown> = {};
-		for (const key of CONFIG_KEYS) if (doc[key] !== undefined) settings[key] = doc[key];
+		for (const key of CONFIG_KEYS) {
+			if (doc[key] === undefined) continue;
+			settings[key] = { type: Array.isArray(doc[key]) ? "list" : typeof doc[key] === "object" ? "map" : "string", effective: doc[key] };
+		}
 		const tools = doc.tools;
 		if (tools && typeof tools === "object" && !Array.isArray(tools)) {
 			const approvalMode = (tools as Record<string, unknown>).approvalMode;
-			if (approvalMode !== undefined) settings["tools.approvalMode"] = approvalMode;
+			if (approvalMode !== undefined) settings["tools.approvalMode"] = { type: "enum", effective: approvalMode, options: ["always-ask", "write", "yolo"] };
 			const approval = (tools as Record<string, unknown>).approval;
-			if (approval !== undefined) settings["tools.approval"] = approval;
+			if (approval !== undefined) settings["tools.approval"] = { type: "map", effective: approval };
 		}
-		settings.providerKeys = this.#readProviderKeys();
+		const keys = this.#readProviderKeys();
+		if (Object.keys(keys).length > 0) {
+			settings.providerKeys = {
+				type: "map",
+				effective: Object.fromEntries(
+					Object.entries(keys).map(([provider, masked]) => [provider, { type: "string", effective: masked }]),
+				),
+			};
+		}
 		return { settings, revision };
 	}
 

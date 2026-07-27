@@ -1844,6 +1844,19 @@ final class T4SessionStore: ObservableObject {
         }
     }
 
+    /// The wire's settings.read carries metadata entries ({type, effective}),
+    /// not bare values. Unwrap to the raw map the panes consume — entries that
+    /// are already bare (bridge hosts) pass through untouched.
+    private static func unwrapSettingsMetadata(_ settings: [String: JSONValue]) -> [String: JSONValue] {
+        settings.mapValues { value in
+            guard case .object(let entry) = value,
+                  entry["type"] != nil,
+                  let effective = entry["effective"]
+            else { return value }
+            return effective
+        }
+    }
+
     /// Fetch the host settings map (settings.read, host scope). Stores the
     /// map in `settingsSnapshot` and returns it; nil on failure (lastError
     /// is set).
@@ -1860,9 +1873,10 @@ final class T4SessionStore: ObservableObject {
             let result = try await client.sendCommand(CommandIntent(
                 hostId: hostId, command: "settings.read"))
             let read = try result.settingsReadResult()
-            settingsSnapshot = read.settings
+            let settings = Self.unwrapSettingsMetadata(read.settings)
+            settingsSnapshot = settings
             settingsRevision = read.revision
-            return read.settings
+            return settings
         } catch {
             t4log.error("settings.read failed: \(error)")
             lastError = "\(error)"
