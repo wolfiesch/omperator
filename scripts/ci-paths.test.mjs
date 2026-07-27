@@ -226,3 +226,12 @@ test("iOS sources select their own leg instead of the whole matrix", () => {
     assert.deepEqual(classifyCiPaths([path]), { ...none, ios: true }, path);
   }
 });
+
+test("iOS CI scripts select tooling and the Xcode leg", () => {
+  for (const path of [
+    "scripts/prepare-ios-ci-cache.mjs",
+    "scripts/verify-ios.mjs",
+  ]) {
+    assert.deepEqual(classifyCiPaths([path]), { ...none, tooling: true, ios: true }, path);
+  }
+});
