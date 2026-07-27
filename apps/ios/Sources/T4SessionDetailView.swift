@@ -135,6 +135,11 @@ struct T4SessionDetailView: View {
             if args.contains("-T4ShowAgents") { activeSheet = .agents }
             if args.contains("-T4ShowTerminal") { showTerminal = true }
             if args.contains("-T4ShowPlan") { planExpanded = true }
+            // Generic: -T4ShowSheet=usage|review|artifacts|settings|searchDiff|files|browser|agents
+            if let raw = args.first(where: { $0.hasPrefix("-T4ShowSheet=") }),
+               let sheet = ActiveSheet(rawValue: String(raw.dropFirst("-T4ShowSheet=".count))) {
+                activeSheet = sheet
+            }
         }
         .task(id: session.sessionId) {
             // -T4ShowAsk: demo ask pinned to whatever session is current (the
