@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>t4 code — three faces, one host</title>
+<style>
+	/* t4 palette (Rosé Pine lineage, mirrors the native apps' Theme.swift) */
+	:root {
+		--bg: #000000;
+		--panel: #0c0c0e;
+		--line: #262626;
+		--line-faint: #141414;
+		--ink: #ffffff;
+		--body: #cccccc;
+		--muted: #949494;
+		--label: #666666;
+		--ghost: #404040;
+		--accent: #c8d6e5;
+		--gold: #f6c177;
+		--foam: #7fd6c8;
+		--iris: #b9a3e3;
+		--pine: #7bb8d4;
+		--love: #e8919f;
+		--ok: #86e0b0;
+	}
+	* { margin: 0; padding: 0; box-sizing: border-box; }
+	html { background: var(--bg); }
+	body {
+		font: 15px/1.55 -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
+		color: var(--body);
+		max-width: 1180px;
+		margin: 0 auto;
+		padding: 64px 32px 96px;
+	}
+	a { color: var(--pine); text-decoration: none; }
+	h1, h2, h3 { color: var(--ink); font-weight: 700; letter-spacing: -0.02em; }
+	h1 { font-size: 44px; }
+	h2 { font-size: 22px; margin: 64px 0 16px; }
+	h2 .dot { color: var(--accent); }
+	h3 { font-size: 15px; margin-bottom: 6px; }
+	.lede { color: var(--muted); font-size: 17px; max-width: 640px; margin-top: 10px; }
+	.wordmark { display: flex; align-items: baseline; gap: 14px; }
+	.wordmark .live { color: var(--ok); font-size: 13px; letter-spacing: 0.04em; }
+	.wordmark .live::before { content: "●"; margin-right: 6px; }
+
+	/* palette */
+	.swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin-top: 20px; }
+	.swatch { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--panel); }
+	.swatch .chip { height: 56px; }
+	.swatch .name { padding: 8px 10px 2px; font-size: 12px; color: var(--body); }
+	.swatch .hex { padding: 0 10px 8px; font: 11px ui-monospace, monospace; color: var(--label); }
+
+	/* feature cards */
+	.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; margin-top: 20px; }
+	.card {
+		background: var(--panel);
+		border: 1px solid var(--line);
+		border-radius: 14px;
+		overflow: hidden;
+		transition: border-color 120ms;
+	}
+	.card:hover { border-color: var(--ghost); }
+	.card img { display: block; width: 100%; background: var(--line-faint); }
+	.card .body { padding: 14px 16px 16px; }
+	.card .tag {
+		display: inline-block; font-size: 10px; font-weight: 600; letter-spacing: 0.08em;
+		text-transform: uppercase; padding: 2px 8px; border-radius: 99px; margin-bottom: 8px;
+	}
+	.tag-ios { color: var(--foam); border: 1px solid var(--foam); }
+	.tag-mac { color: var(--iris); border: 1px solid var(--iris); }
+	.tag-tui { color: var(--gold); border: 1px solid var(--gold); }
+	.tag-new { color: var(--love); border: 1px solid var(--love); }
+	.card p { color: var(--muted); font-size: 13px; }
+
+	/* keyline lists */
+	.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0 32px; margin-top: 12px; }
+	.fact { display: flex; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line-faint); }
+	.fact .k { color: var(--accent); font: 12px ui-monospace, monospace; white-space: nowrap; padding-top: 2px; }
+	.fact div { color: var(--muted); font-size: 13px; }
+	footer { margin-top: 72px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--label); font-size: 12px; display: flex; justify-content: space-between; }
+</style>
+</head>
+<body>
+
+<div class="wordmark">
+	<h1>t4 code</h1>
+	<span class="live">host live</span>
+</div>
+<p class="lede">One host, three faces: a native iOS app, a native macOS app, and a terminal UI —
+all speaking the same <code>omp-app/1</code> wire to your <code>t4-host</code>, over the tailnet, with pinned wss.</p>
+
+<h2><span class="dot">●</span> the palette</h2>
+<div class="swatches">
+	<div class="swatch"><div class="chip" style="background:#000000;border-bottom:1px solid var(--line)"></div><div class="name">bg</div><div class="hex">#000000</div></div>
+	<div class="swatch"><div class="chip" style="background:#0c0c0e"></div><div class="name">panel</div><div class="hex">#0c0c0e</div></div>
+	<div class="swatch"><div class="chip" style="background:#c8d6e5"></div><div class="name">accent</div><div class="hex">#c8d6e5</div></div>
+	<div class="swatch"><div class="chip" style="background:#7fd6c8"></div><div class="name">foam</div><div class="hex">#7fd6c8</div></div>
+	<div class="swatch"><div class="chip" style="background:#b9a3e3"></div><div class="name">iris</div><div class="hex">#b9a3e3</div></div>
+	<div class="swatch"><div class="chip" style="background:#7bb8d4"></div><div class="name">pine</div><div class="hex">#7bb8d4</div></div>
+	<div class="swatch"><div class="chip" style="background:#f6c177"></div><div class="name">gold</div><div class="hex">#f6c177</div></div>
+	<div class="swatch"><div class="chip" style="background:#e8919f"></div><div class="name">love</div><div class="hex">#e8919f</div></div>
+	<div class="swatch"><div class="chip" style="background:#86e0b0"></div><div class="name">ok</div><div class="hex">#86e0b0</div></div>
+</div>
+
+<h2><span class="dot">●</span> new this cycle — cmux parity</h2>
+<div class="facts">
+	<div class="fact"><span class="k">fork</span><div>Branch any session into a full-history copy — from the rail row menu, the session menu, or the TUI (<code>f</code>). Official-host forking implemented end to end.</div></div>
+	<div class="fact"><span class="k">design mode</div><div>Annotate an element in the browser pane, add a note, and a structured prompt lands in the composer. One-shot, no auto-send.</div></div>
+	<div class="fact"><span class="k">gallery</span><div>The files pane shows real image thumbnails with a full-screen preview — after we fixed the host silently dropping large reads over remote.</div></div>
+	<div class="fact"><span class="k">unread</span><div>Accent dots on rail rows with new activity; <code>⌘⌥U</code> cycles unread sessions on macOS.</div></div>
+	<div class="fact"><span class="k">mouse</span><div>Terminal mouse reporting verified — htop, vim, and lazygit take clicks and scrolls.</div></div>
+	<div class="fact"><span class="k">t4 tui</span><div>The whole product in a terminal: rail, live transcript, composer, fork — one self-contained binary.</div></div>
+</div>
+
+<h2><span class="dot">●</span> iOS</h2>
+<div class="grid">
+	<div class="card"><img src="../screenshots/feature-02-rail.png" alt="session rail"><div class="body"><span class="tag tag-ios">iOS</span><h3>Session rail</h3><p>Swipe-right drawer with project groups, status pills, unread dots.</p></div></div>
+	<div class="card"><img src="../screenshots/feature-03-session.png" alt="session detail"><div class="body"><span class="tag tag-ios">iOS</span><h3>Live transcript</h3><p>Real-time entries from the host, role-colored, streaming.</p></div></div>
+	<div class="card"><img src="../screenshots/feature-06-ask.png" alt="ask card"><div class="body"><span class="tag tag-ios">iOS</span><h3>Approvals</h3><p>Ask cards for plan review and confirmations, in-line.</p></div></div>
+	<div class="card"><img src="../screenshots/feature-09-terminal.png" alt="terminal"><div class="body"><span class="tag tag-ios">iOS</span><h3>Terminal</h3><p>Host PTY drawer, four tabs per session, mouse reporting.</p></div></div>
+	<div class="card"><img src="../screenshots/feature-10-browser.png" alt="browser"><div class="body"><span class="tag tag-ios">iOS</span><h3>Browser + design mode</h3><p>WKWebView with host preview captures and element annotation.</p></div></div>
+	<div class="card"><img src="../screenshots/parity-files.png" alt="files gallery"><div class="body"><span class="tag tag-new">new</span><h3>Files gallery</h3><p>Image thumbnails inline, full-screen preview.</p></div></div>
+</div>
+
+<h2><span class="dot">●</span> macOS</h2>
+<div class="grid">
+	<div class="card"><img src="../screenshots/mac-01-session.png" alt="mac session"><div class="body"><span class="tag tag-mac">macOS</span><h3>Same codebase</h3><p>One SwiftUI tree drives both apps; split view on the Mac, drawer on iOS.</p></div></div>
+	<div class="card"><img src="../screenshots/mac-04-terminal.png" alt="mac terminal"><div class="body"><span class="tag tag-mac">macOS</span><h3>Terminal</h3><p>Two tabs live on <code>omperator git:(t4code-ios)</code>.</p></div></div>
+	<div class="card"><img src="../screenshots/mac-05-browser.png" alt="mac browser"><div class="body"><span class="tag tag-mac">macOS</span><h3>Browser</h3><p>Live page at localhost:3000, served by the host preview pipeline.</p></div></div>
+	<div class="card"><img src="../screenshots/mac-07-ask.png" alt="mac ask"><div class="body"><span class="tag tag-mac">macOS</span><h3>Plan review</h3><p>The same ask cards, with real keyboard shortcuts.</p></div></div>
+</div>
+
+<h2><span class="dot">●</span> terminal</h2>
+<div class="grid">
+	<div class="card" style="grid-column: 1 / -1;"><img src="../screenshots/tui-live.png" alt="t4 TUI"><div class="body"><span class="tag tag-tui">TUI</span><h3><code>t4</code> — the terminal client</h3><p>Session rail, live transcript, composer with history, fork, help — a 62 MB self-contained binary speaking <code>omp-app/1</code> over UDS or wss. <code>packages/t4-cli</code>.</p></div></div>
+</div>
+
+<footer>
+	<span>t4 code · omperator</span>
+	<span>Rosé Pine · omp-app/1 · tailnet + pinned wss</span>
+</footer>
+
+</body>
+</html>
