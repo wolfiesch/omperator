@@ -130,6 +130,14 @@ struct LiveTranscriptTests {
         #expect(projection.calls.first?.input.count == 65_536)
         #expect(projection.calls.first?.input.hasPrefix("…") == true)
         #expect(projection.isCaughtUp)
+
+        projection.apply(event("tool.result", [
+            "callId": .string("call-large"),
+            "ok": .bool(true),
+            "result": .string(large),
+        ]))
+        #expect(projection.calls.first?.result.count == 65_536)
+        #expect(projection.calls.first?.result.hasPrefix("…") == true)
     }
 
     private func event(_ type: String, _ fields: [String: JSONValue]) -> SessionEvent {
