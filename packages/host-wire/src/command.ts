@@ -368,6 +368,14 @@ export const COMMAND_DESCRIPTORS: Readonly<Record<string, CommandDescriptor>> = 
 		confirmation: "none",
 		desktopCatalog: true,
 	},
+	"session.mode.set": {
+		capability: "sessions.manage",
+		scope: "session",
+		revision: "optional",
+		revisionOwner: "session",
+		confirmation: "none",
+		desktopCatalog: true,
+	},
 	"session.ui.respond": {
 		capability: "sessions.prompt",
 		scope: "session",
@@ -1743,6 +1751,13 @@ export const COMMAND_ARGUMENT_DECODERS: Readonly<Record<string, (value: unknown)
 		if (typeof x.enabled !== "boolean") fail("INVALID_FRAME", "enabled must be boolean", "args.enabled");
 		return x;
 	},
+	"session.mode.set": value => {
+		const x = leasedArgs(value, ["mode"]);
+		const mode = controlFree(x.mode, "args.mode", 32);
+		if (mode !== "build" && mode !== "plan" && mode !== "readOnly")
+			fail("INVALID_FRAME", "invalid session mode", "args.mode");
+		return x;
+	},
 	"session.ui.respond": decodeSessionUiResponse,
 	"session.cancel": value => leasedArgs(value, []),
 	"session.close": value => leasedArgs(value, []),
@@ -2001,6 +2016,13 @@ export const COMMAND_RESULT_DECODERS: Readonly<Record<string, (value: unknown) =
 	"session.model.set": decodeAcceptedResult,
 	"session.thinking.set": decodeAcceptedResult,
 	"session.fast.set": decodeAcceptedResult,
+	"session.mode.set": value => {
+		const x = strictResult(value, ["mode"]);
+		const mode = controlFree(x.mode, "result.mode", 32);
+		if (mode !== "build" && mode !== "plan" && mode !== "readOnly")
+			fail("INVALID_FRAME", "invalid session mode", "result.mode");
+		return { mode };
+	},
 	"session.ui.respond": decodeAcceptedResult,
 	"session.cancel": value => boolField(value, "cancelled"),
 	"session.close": value => boolField(value, "closed"),

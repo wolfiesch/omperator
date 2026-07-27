@@ -24,6 +24,7 @@ import type {
 } from "@t4-code/host-wire";
 import type { DesktopOperationsAuthority, HostTraceSink } from "./operations/dispatcher.ts";
 import type { BunRemoteListener } from "./remote/listener.ts";
+import type { HostLogger } from "./remote/logging.ts";
 import type {
 	ListenerPeerContext,
 	RemoteConnection,
@@ -111,6 +112,7 @@ export interface SessionRecord {
 	archivedAt?: string;
 	model?: string;
 	thinking?: string;
+	mode?: string;
 	runtime?: { readonly id: string; readonly workspaceInstanceId?: string };
 	/** Durable proof that the transcript came from the compatible owned OMP runtime. */
 	authorityProtocol?: "t4-omp-authority/1";
@@ -242,6 +244,18 @@ export interface AppserverTestControl {
 	cleanup(runId: string): Promise<AppserverTestControlStatus>;
 }
 
+/** Configuration for the host-side headless preview service. */
+export interface PreviewAuthority {
+	/** When false, the preview service is disabled. Defaults to true. */
+	readonly enabled?: boolean;
+	/** Maximum concurrent browser contexts. Defaults to 2. */
+	readonly maxConcurrent?: number;
+	/** Idle timeout in ms before a preview's browser is closed. Defaults to 10 min. */
+	readonly idleTimeoutMs?: number;
+	/** Override the chromium resolver (e.g. with a pre-staged path for tests). */
+	readonly chromiumResolver?: () => Promise<{ readonly path: string; readonly browserVersion: string }>;
+}
+
 export interface AppserverOptions {
 	hostId?: HostId;
 	/** Persistent host identity path. Omitted to preserve the default OMP identity location. */
@@ -285,6 +299,8 @@ export interface AppserverOptions {
 	rpcChildInvocation?: RpcChildInvocation;
 	/** Bounded profile environment applied only to per-session OMP children. */
 	rpcChildEnvironment?: Readonly<Record<string, string>>;
+	/** Private durable ledger used to reap only identity-verified orphan RPC groups. */
+	rpcChildRegistryPath?: string;
 	/** Exact child RPC command dialect; official OMP intentionally exposes a narrower command set. */
 	rpcDialect?: "fork" | "official-17.0.9";
 	appserverVersion?: string;
@@ -296,14 +312,26 @@ export interface AppserverOptions {
 	ringSize?: number;
 	/** Maximum time lifecycle mutations wait for terminal and child shutdown. */
 	lifecycleQuiesceTimeoutMs?: number;
+	/** Grace window before an RPC-silent supervisor with pending prompt
+	 * lifecycles is disposed (SIGKILL) and its stuck lifecycles released. */
+	idleSupervisorGraceMs?: number;
+	/** Interval between idle-supervisor watchdog sweeps. Defaults to a fraction
+	 * of the grace window; inject a small value for tests. */
+	idleSupervisorTickMs?: number;
 	now?: () => Date;
 	remoteEndpoint?: RemoteListenerConfig;
+	/** Optional second listener serving the same policy over TLS (wss); shares hooks and health with remoteEndpoint. */
+	remoteEndpointTls?: RemoteListenerConfig;
 	remotePolicy?: RemoteConnectionPolicy;
 	remoteResolver?: { resolve(address: string): Promise<RemotePeerIdentity> };
+	/** Optional structured host logger for connection/pair/denied/supervisor/watchdog events. */
+	logger?: HostLogger;
 	remoteListener?: BunRemoteListener;
 	admin?: AppserverAdminCallbacks;
 	/** Local-UDS-only deterministic integration control. Omitted outside explicit test mode. */
 	testControl?: AppserverTestControl;
+	/** When set, the host runs a headless Chromium preview service for remote clients. */
+	previewAuthority?: PreviewAuthority;
 }
 export interface AppserverDrainBusy {
 	readonly connections: number;

@@ -1,25 +1,30 @@
 #!/usr/bin/env bun
 import { createHash } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { chmod, mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import {
   createAppserver,
+  createHostLogger,
   createRemoteAppserver,
   OfficialOmpProfileAuthority,
   OmpAuthorityBridgeClient,
   profileSocketPath,
+  FilesAuthority,
   ProjectFileSearchAuthority,
   PtyTerminalAuthority,
+  RpcChildRegistry,
   SeedingTestControl,
   TranscriptSearchIndex,
   type AppserverHandle,
   type AppserverOptions,
   type DesktopOperationsAuthority,
+  type HostLogger,
   type SessionAuthority,
   type SessionDiscovery,
 } from "@t4-code/host-service";
 import { COMMAND_DESCRIPTORS, type ProjectId, type SessionId } from "@t4-code/protocol";
+import { parsePairArgs, runPairAction } from "./pair.ts";
 
 export const T4_HOST_VERSION = "0.2.1";
 export const OFFICIAL_OMP_VERSION = "17.0.9";
@@ -70,6 +75,7 @@ export interface HostDaemonConfig {
     readonly port: number;
     readonly origins: readonly string[];
     readonly trustedServeProxy: boolean;
+    readonly tlsPort?: number;
   };
 }
 
@@ -129,6 +135,7 @@ export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): 
   let remoteMode: "direct" | "serve" | undefined;
   let remoteAddress: string | undefined;
   let remotePort = 8787;
+  let remoteTlsPort: number | undefined;
   let trustedServeProxy = false;
   let testControl = false;
   const origins: string[] = [];
@@ -153,6 +160,10 @@ export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): 
       remotePort = Number(value(argv, index++, flag));
       if (!Number.isSafeInteger(remotePort) || remotePort < 1 || remotePort > 65_535)
         throw new Error("--remote-port must be between 1 and 65535");
+    } else if (flag === "--remote-tls-port") {
+      remoteTlsPort = Number(value(argv, index++, flag));
+      if (!Number.isSafeInteger(remoteTlsPort) || remoteTlsPort < 1 || remoteTlsPort > 65_535)
+        throw new Error("--remote-tls-port must be between 1 and 65535");
     } else if (flag === "--remote-origin") {
       if (origins.length >= ORIGIN_LIMIT) throw new Error("too many --remote-origin values");
       origins.push(boundedOrigin(value(argv, index++, flag)));
@@ -168,13 +179,16 @@ export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): 
     throw new Error("official OMP authority requires an absolute --omp-sessions-root");
   if (authorityMode === "bridge" && ompSessionsRoot)
     throw new Error("--omp-sessions-root requires official OMP authority");
-  if (!remoteMode && (remoteAddress || origins.length || trustedServeProxy || remotePort !== 8787))
+  if (!remoteMode && (remoteAddress || origins.length || trustedServeProxy || remotePort !== 8787 || remoteTlsPort !== undefined))
     throw new Error("remote flags require --remote-mode");
   if (remoteMode && !remoteAddress) throw new Error("remote mode requires --remote-address");
   if (remoteMode === "serve" && remoteAddress !== "127.0.0.1" && remoteAddress !== "::1")
     throw new Error("serve mode requires a loopback address");
   if (remoteMode === "serve" && !trustedServeProxy)
     throw new Error("serve mode requires --trusted-serve-proxy");
+  if (remoteMode === "serve" && remoteTlsPort !== undefined)
+    throw new Error("--remote-tls-port is direct-mode only");
+  if (remoteTlsPort === remotePort) throw new Error("--remote-tls-port must differ from --remote-port");
   if (remoteMode === "direct" && trustedServeProxy)
     throw new Error("trusted Serve proxy is invalid in direct mode");
   if (testControl) {
@@ -201,6 +215,7 @@ export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): 
             port: remotePort,
             origins,
             trustedServeProxy,
+            ...(remoteTlsPort !== undefined ? { tlsPort: remoteTlsPort } : {}),
           },
         }
       : {}),
@@ -240,6 +255,48 @@ export interface HostDaemonDependencies {
   readonly verifyOfficialRuntime?: (executable: string) => Promise<Pick<AppserverOptions, "ompVersion" | "ompBuild">>;
   readonly onSignal?: (signal: "SIGINT" | "SIGTERM", listener: () => void) => void;
   readonly removeSignal?: (signal: "SIGINT" | "SIGTERM", listener: () => void) => void;
+  /** Structured host logger for boot reaping and appserver events; constructed from profileStateRoot when omitted. */
+  readonly loggerHost?: HostLogger;
+}
+
+/**
+ * Load or generate the self-signed cert a wss listener serves. Persisted per
+ * profile so the fingerprint clients pin (TOFU) survives restarts. RSA rather
+ * than ECDSA: Bun's BoringSSL rejected LibreSSL-written EC keys at startup.
+ */
+async function ensureSelfSignedCert(
+  dir: string,
+  commonName: string,
+): Promise<{ cert: string; key: string; fingerprint: string }> {
+  const certPath = join(dir, "wss-cert.pem");
+  const keyPath = join(dir, "wss-key.pem");
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  const existing = await Promise.all([
+    readFile(certPath, "utf8").catch(() => undefined),
+    readFile(keyPath, "utf8").catch(() => undefined),
+  ]);
+  if (existing[0] && existing[1])
+    return { cert: existing[0], key: existing[1], fingerprint: certFingerprint(existing[0]) };
+  const child = Bun.spawn(
+    [
+      "/usr/bin/openssl", "req", "-x509", "-newkey", "rsa:2048",
+      "-nodes", "-days", "3650", "-subj", `/CN=${commonName}`,
+      "-keyout", keyPath, "-out", certPath,
+    ],
+    { stdout: "ignore", stderr: "pipe" },
+  );
+  const stderr = child.stderr ? await boundedProcessOutput(child.stderr, 4096) : "";
+  if ((await child.exited) !== 0) throw new Error(`openssl cert generation failed: ${stderr.trim()}`);
+  await chmod(keyPath, 0o600);
+  const cert = await readFile(certPath, "utf8");
+  const key = await readFile(keyPath, "utf8");
+  return { cert, key, fingerprint: certFingerprint(cert) };
+}
+
+/** sha256 of the certificate DER, hex — the value clients pin. */
+function certFingerprint(pem: string): string {
+  const body = pem.replace(/-----[^-]+-----/g, "").replace(/\s+/g, "");
+  return createHash("sha256").update(Buffer.from(body, "base64")).digest("hex");
 }
 
 async function boundedProcessOutput(stream: ReadableStream<Uint8Array>, maxBytes: number): Promise<string> {
@@ -298,6 +355,16 @@ export async function runHostDaemon(
 ): Promise<void> {
   const paths = hostDaemonPaths(config);
   await mkdir(paths.profileStateRoot, { recursive: true, mode: 0o700 });
+  // One structured logger backs boot reaping and the appserver's
+  // connection/pair/denied/supervisor/watchdog event log. It writes NDJSON to
+  // <profileStateRoot>/logs/host-<date>.ndjson with size-based rotation.
+  const hostLogger = dependencies.loggerHost ?? createHostLogger({ stateRoot: paths.profileStateRoot });
+  const rpcChildRegistryPath = join(paths.profileStateRoot, "rpc-children.json");
+  const reaped = new RpcChildRegistry(rpcChildRegistryPath).reap();
+  for (const pid of reaped.killed)
+    hostLogger.log("supervisor.killed", { pid, reason: "identity-verified orphan reaped at boot" });
+  for (const pid of reaped.skipped)
+    hostLogger.log("reap.skip", { pid, reason: "rpc child was not safe to reap", level: "warn" });
   let bridge: OmpAuthorityBridgeClient | undefined;
   let terminals: PtyTerminalAuthority | undefined;
   let officialAuthority: OfficialOmpProfileAuthority | undefined;
@@ -372,6 +439,8 @@ export async function runHostDaemon(
     const projectFileSearchAuthority = new ProjectFileSearchAuthority(
       projectRootForSession,
     );
+    const filesAuthority = new FilesAuthority({ projectRootForSession });
+    const filesOperations = filesAuthority.operations();
     const testControl = config.testControl
       ? new SeedingTestControl({
           token: requiredTestControlToken(),
@@ -391,9 +460,15 @@ export async function runHostDaemon(
       sessionOwnershipPath: paths.sessionOwnershipPath,
       sessionAuthority,
       discovery,
+      logger: hostLogger,
       operationsAuthority: {
         ...operationsAuthority,
         ...projectFileSearchAuthority.operations(),
+        // The bridge forwards files.list/read to the OMP RPC when the runtime
+        // advertises them; the T4-owned standalone host serves them directly
+        // from the session cwd so remote clients get the files pane either way.
+        ...(operationsAuthority.filesList ? {} : { filesList: filesOperations.filesList }),
+        ...(operationsAuthority.filesRead ? {} : { filesRead: filesOperations.filesRead }),
       },
       ...(usageAuthority ? { usageAuthority } : {}),
       transcriptSearchAuthority,
@@ -406,6 +481,7 @@ export async function runHostDaemon(
       ...(transcriptImageRoot ? { transcriptImageRoot } : {}),
       rpcChildInvocation: { executable: config.ompExecutable, prefixArgv: [] },
       rpcChildEnvironment: { OMP_PROFILE: config.profileId },
+      rpcChildRegistryPath,
       ...(config.authorityMode === "official" ? { rpcDialect: "official-17.0.9" as const } : {}),
       ...(process.platform === "darwin"
         ? {
@@ -418,9 +494,15 @@ export async function runHostDaemon(
             },
           }
         : {}),
+      previewAuthority: { enabled: true },
     };
     let appserver: AppserverHandle;
     try {
+      const tlsMaterial = config.remote?.tlsPort
+        ? await ensureSelfSignedCert(join(paths.remoteStateRoot, "tls"), config.remote.address)
+        : undefined;
+      if (tlsMaterial)
+        hostLogger.log("remote.tls", { fingerprint: tlsMaterial.fingerprint });
       appserver = config.remote
         ? await (dependencies.createRemote ?? createRemoteAppserver)({
             stateDir: paths.remoteStateRoot,
@@ -431,6 +513,17 @@ export async function runHostDaemon(
               serveProxy: config.remote.mode === "serve",
               trustedServeProxy: config.remote.trustedServeProxy,
             },
+            ...(tlsMaterial && config.remote.tlsPort
+              ? {
+                  remoteEndpointTls: {
+                    address: config.remote.address,
+                    port: config.remote.tlsPort,
+                    originAllowlist: config.remote.origins,
+                    tls: { cert: tlsMaterial.cert, key: tlsMaterial.key },
+                    tlsFingerprint: tlsMaterial.fingerprint,
+                  },
+                }
+              : {}),
             appserver: options,
           })
         : (dependencies.createLocal ?? createAppserver)(options);
@@ -462,12 +555,20 @@ export async function runHostDaemon(
     terminals?.closeAll();
     await bridge?.stop();
     await officialAuthority?.close();
+    // Flush queued log writes (rotation + appserver events) before exit. The
+    // injected logger is owned by the caller; only close one we constructed.
+    if (!dependencies.loggerHost) await hostLogger.close();
   }
 }
 
 async function main(): Promise<void> {
   try {
-    await runHostDaemon(parseHostDaemonArgs(process.argv.slice(2)));
+    const argv = process.argv.slice(2);
+    if (argv[0] === "pair") {
+      await runPairAction(parsePairArgs(argv.slice(1)));
+    } else {
+      await runHostDaemon(parseHostDaemonArgs(argv));
+    }
   } catch (error) {
     process.stderr.write(
       `t4-host error: ${error instanceof Error ? error.message : String(error)}\n`,

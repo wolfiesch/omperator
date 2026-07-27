@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { isIP } from "node:net";
 import type {
+	HealthProvider,
 	ListenerPeerContext,
 	ListenerPlan,
 	RemoteConnection,
@@ -8,6 +9,7 @@ import type {
 	RemoteListenerConfig,
 	RemotePeerIdentity,
 } from "./types.ts";
+
 // Remote bootstrap can burst multiple 4 MiB app frames. Bound the queue while
 // leaving enough room for settings metadata and a transcript snapshot.
 const DEFAULT_REMOTE_BACKPRESSURE_BYTES = 16 * 1024 * 1024;
@@ -122,6 +124,7 @@ export class BunRemoteListener {
 		private readonly hooks: RemoteConnectionHooks,
 		private readonly config: RemoteListenerConfig,
 		private readonly resolver?: { resolve(address: string): Promise<RemotePeerIdentity> },
+		private readonly health?: HealthProvider,
 	) {}
 	start(): void {
 		if (this.#run) throw new Error("remote listener already started");
@@ -132,9 +135,14 @@ export class BunRemoteListener {
 		run.server = Bun.serve<SocketData>({
 			hostname: this.plan.address,
 			port: this.plan.port,
+			...(this.config.tls ? { tls: { cert: this.config.tls.cert, key: this.config.tls.key } } : {}),
 			fetch: async (request, server) => {
 				const url = new URL(request.url);
-				if (url.pathname === "/healthz" && request.method === "GET") return Response.json({ ok: true });
+				if (url.pathname === "/healthz" && request.method === "GET")
+					return Response.json({
+						...(this.health ? this.health() : { ok: true }),
+						...(this.config.tlsFingerprint ? { tlsFingerprint: this.config.tlsFingerprint } : {}),
+					});
 				if (url.pathname !== this.plan.path) return new Response("Not Found", { status: 404 });
 				if (!originAllowed(request.headers.get("origin"), this.config.originAllowlist))
 					return new Response("Forbidden", { status: 403 });

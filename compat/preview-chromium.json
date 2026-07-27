@@ -1,0 +1,28 @@
+{
+  "browserVersion": "149.0.7827.55",
+  "sourceRepository": "https://cdn.playwright.dev",
+  "sourcePath": "builds/cft/149.0.7827.55",
+  "artifacts": {
+    "linux-x64": {
+      "name": "chrome-headless-shell-linux64.zip",
+      "path": "linux64/chrome-headless-shell-linux64.zip",
+      "size": 119778157,
+      "sha256": "410c9407d5de3fea80d9398666be06f2aa09154a3fa7b327dc254e336bb4c4b7",
+      "executable": ["chrome-headless-shell-linux64", "chrome-headless-shell"]
+    },
+    "darwin-arm64": {
+      "name": "chrome-headless-shell-mac-arm64.zip",
+      "path": "mac-arm64/chrome-headless-shell-mac-arm64.zip",
+      "size": 98043456,
+      "sha256": "302f82603be06683947594ecd60f849e362a8fe3dd82a89bd4408477c97e75a6",
+      "executable": ["chrome-headless-shell-mac-arm64", "chrome-headless-shell"]
+    },
+    "darwin-x64": {
+      "name": "chrome-headless-shell-mac-x64.zip",
+      "path": "mac-x64/chrome-headless-shell-mac-x64.zip",
+      "size": 103452247,
+      "sha256": "a32029e1861329a431b712d5b864e213d9cf8ef51a82ce4c24b27e25f6605434",
+      "executable": ["chrome-headless-shell-mac-x64", "chrome-headless-shell"]
+    }
+  }
+}

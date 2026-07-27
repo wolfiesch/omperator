@@ -832,6 +832,49 @@ describe("remote appserver policy transport", () => {
 	});
 });
 
+describe("remote healthz", () => {
+	test("reports the enriched host snapshot shape", async () => {
+		const harness = new FakeBunHarness();
+		harness.install();
+		try {
+			const appserver = createAppserver({
+				hostId: "health-host" as never,
+				epoch: "health-epoch",
+				socketPath: join(mkdtempSync(join(tmpdir(), "omp-health-")), "app.sock"),
+				discovery: { list: async () => [] },
+				remoteEndpoint: { address: "100.64.0.1", port: 1 },
+				remoteResolver: { resolve: async () => peerIdentity("node") },
+				remotePolicy: { authenticate: async () => ({ authenticated: true }), authorize: async () => true },
+				appserverVersion: "9.9.9",
+				idleSupervisorGraceMs: 1234,
+			});
+			await appserver.start();
+			const remote = harness.remote();
+			const response = await remote.config.fetch?.(new Request("http://remote.test/healthz"), remote);
+			if (!response) throw new Error("healthz fetch returned no response");
+			expect(response.status).toBe(200);
+			const body = (await response.json()) as Record<string, unknown>;
+			expect(body).toMatchObject({
+				ok: true,
+				hostId: "health-host",
+				epoch: "health-epoch",
+				draining: false,
+				version: "9.9.9",
+			});
+			expect(typeof body.uptimeSec).toBe("number");
+			expect(body.uptimeSec).toBeGreaterThanOrEqual(0);
+			expect(typeof body.sessions).toBe("number");
+			expect(body.sessions).toBe(0);
+			expect(typeof body.supervisors).toBe("number");
+			expect(body.supervisors).toBe(0);
+			expect(body.watchdog).toMatchObject({ graceMs: 1234, actions: 0 });
+			await appserver.stop();
+		} finally {
+			harness.restore();
+		}
+	});
+});
+
 describe("default feature authority matrix", () => {
 	test("resume is always available and additive features require coherent handlers", async () => {
 		const base = {

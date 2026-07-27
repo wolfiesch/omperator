@@ -16,8 +16,8 @@
 //     and/or args.role plus persistence:"session"
 //   setThinking               → command "session.thinking.set" with args.level
 //   setFast                   → command "session.fast.set" with args.enabled
-//   setMode                   → no wire command exists yet; live runtimes
-//     reject it and hide the control, the fixture applies it locally
+//   setMode                   → command "session.mode.set" with args.mode;
+//     the fixture applies it locally
 
 /** OMP's real thinking ladder. "auto" defers to the model's own default. */
 export type ThinkingLevel =

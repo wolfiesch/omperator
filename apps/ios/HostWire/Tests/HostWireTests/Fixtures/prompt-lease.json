@@ -1,0 +1,1 @@
+{"v":"omp-app/1","type":"prompt.lease","hostId":"host-1","sessionId":"session-1","leaseId":"lease-1","cursor":{"epoch":"epoch-1","seq":4},"kind":"prompt","state":"acquired","owner":"desktop-1","expiresAt":"2026-07-11T00:00:00Z"}

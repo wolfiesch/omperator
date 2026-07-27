@@ -11,6 +11,7 @@ import type { RpcResponse, RpcSessionEntryFrame } from "./omp-rpc-contract.ts";
 import type { ManagedRpcImageRef } from "./image-upload-store.ts";
 import { OfficialOmpCapabilityAdapter } from "./official-omp-capabilities.ts";
 import type { ChildHandle, RpcChildFactory, SessionRecord } from "./types.ts";
+import type { RpcChildRegistry } from "./rpc-child-registry.ts";
 
 const MAX_LINE_BYTES = 1024 * 1024;
 const MAX_RPC_REASSEMBLED_BYTES = 64 * 1024 * 1024;
@@ -398,11 +399,13 @@ export class BunRpcChildFactory implements RpcChildFactory {
 	#prefixArgv: readonly string[];
 	#imageRoot: string | undefined;
 	#environment: Readonly<Record<string, string>>;
+	#registry: RpcChildRegistry | undefined;
 
 	constructor(
 		invocation: string | RpcChildInvocation = resolveRpcChildInvocation(),
 		imageRoot?: string,
 		environment: Readonly<Record<string, string>> = {},
+		registry?: RpcChildRegistry,
 	) {
 		const resolved = typeof invocation === "string" ? { executable: invocation, prefixArgv: [] } : invocation;
 		if (typeof resolved.executable !== "string" || resolved.executable.trim().length === 0) {
@@ -418,11 +421,15 @@ export class BunRpcChildFactory implements RpcChildFactory {
 		this.#prefixArgv = Object.freeze([...resolved.prefixArgv]);
 		this.#imageRoot = imageRoot;
 		this.#environment = Object.freeze({ ...environment });
+		this.#registry = registry;
 	}
 
 	spawn(spec: { session: SessionRecord; argv: string[]; cwd: string }): ChildHandle {
 		const child = Bun.spawn(spec.argv, {
 			cwd: spec.cwd,
+			// Each RPC runtime owns a dedicated process group. Its durable
+			// registry entry can therefore reap the whole orphaned group.
+			detached: true,
 			env: {
 				...process.env,
 				...this.#environment,
@@ -435,11 +442,28 @@ export class BunRpcChildFactory implements RpcChildFactory {
 			stdout: "pipe",
 			stderr: "pipe",
 		});
+		let identity;
+		try {
+			identity = this.#registry?.register(child.pid);
+		} catch (error) {
+			child.kill("SIGKILL");
+			throw error;
+		}
+		const exited = child.exited.finally(() => {
+			if (identity) {
+				try {
+					this.#registry?.unregister(identity);
+				} catch {
+					// A stale entry is safer than turning a child exit into a
+					// rejected lifecycle promise; the next boot revalidates it.
+				}
+			}
+		});
 		return {
 			stdin: { write: data => Promise.resolve(child.stdin.write(data)).then(() => undefined) },
 			stdout: child.stdout as unknown as AsyncIterable<Uint8Array>,
 			stderr: child.stderr as unknown as AsyncIterable<Uint8Array>,
-			exited: child.exited,
+			exited,
 			kill: signal => child.kill(signal as never),
 		};
 	}
@@ -511,6 +535,7 @@ export class RpcChildSupervisor {
 	#supportsProtocolV2 = false;
 	#protocolV2 = false;
 	readonly #frameDecoder = new RpcChunkDecoder();
+	#lastActivityAt = Date.now();
 	#termination?: Promise<void>;
 	#operationCapabilities: OfficialOmpCapabilityAdapter;
 	#transcript: DurableJsonlReconciler;
@@ -540,6 +565,11 @@ export class RpcChildSupervisor {
 	}
 	hasPendingCalls(): boolean {
 		return this.#pending.size > 0;
+	}
+	/** Epoch-ms of the last inbound RPC frame from the child. Stale beyond the
+	 * host's grace window means the child went mute (e.g. trapped SIGTERM). */
+	lastActivityAt(): number {
+		return this.#lastActivityAt;
 	}
 	async start(): Promise<void> {
 		if (this.#child) throw new Error("child already started");
@@ -728,6 +758,7 @@ export class RpcChildSupervisor {
 				const decoded = this.#frameDecoder.push(parsed);
 				if (!decoded) continue;
 				const frame = decoded;
+				this.#lastActivityAt = Date.now();
 				if (frame.type === "ready") {
 					const versions = frame.supportedProtocolVersions;
 					const maxFrameBytes = frame.maxFrameBytes;

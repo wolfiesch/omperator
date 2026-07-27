@@ -1,0 +1,12 @@
+# Xcode project is generated from project.yml by xcodegen — do not commit it.
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+
+# Build outputs.
+DerivedData/
+.build/
+.swiftpm/
+
+# Generated plists (xcodegen regenerates from the spec).
+/*-Info.plist.generated

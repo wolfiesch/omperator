@@ -33,6 +33,10 @@ import {
 	projectId,
 	type ProjectId,
 	type ResultFrame,
+	type PreviewAction,
+	type PreviewSnapshot,
+	previewCaptureId,
+	previewId,
 	requiredCapability,
 	revision as wireRevision,
 	type ServerFrame,
@@ -99,8 +103,10 @@ import {
 import { OfficialOmpCapabilityAdapter, OfficialOmpOperationError } from "./official-omp-capabilities.ts";
 import { SessionProjection } from "./projection.ts";
 import { BunRemoteListener, createInternalListenerPlan, createListenerPlan, createServeProxyPlan } from "./remote/listener.ts";
-import type { RemoteConnection, RemoteListenerConfig } from "./remote/types.ts";
+import type { HostLogger } from "./remote/logging.ts";
+import type { HealthSnapshot, RemoteConnection, RemoteListenerConfig } from "./remote/types.ts";
 import { BunRpcChildFactory, RpcChildSupervisor } from "./rpc-child.ts";
+import { RpcChildRegistry } from "./rpc-child-registry.ts";
 import type {
 	RuntimeAdapterRegistry,
 	RuntimePermissionResponse,
@@ -140,6 +146,8 @@ import type {
 	SessionLockStatus,
 	SessionRecord,
 } from "./types.ts";
+import { PreviewService, createPreviewChromiumResolver } from "./preview/index.ts";
+import { PreviewServiceError } from "./preview/types.ts";
 import { type WorkspaceAuthority, WorkspaceAuthorityError, type WorkspaceRecord } from "./workspace-authority.ts";
 
 const clock: Clock = { now: () => new Date() };
@@ -206,6 +214,10 @@ const PENDING_PROMPT_TEXT_BYTES = 8 * 1024;
 // plus the event envelope under the 64 KiB transient-event budget.
 const PENDING_PROMPT_EVENT_TEXT_BYTES = 24 * 1024;
 const MAX_PENDING_PROMPTS = 16;
+const PLAN_MODE_PREFIX =
+	"[PLAN MODE — you may inspect but MUST NOT modify anything: no file writes, edits, patches, or state-changing commands. Analyze the request, then propose a concrete step-by-step plan and stop.]\n\n";
+const READONLY_MODE_PREFIX =
+	"[READ-ONLY MODE — answer by inspection only: no writes, edits, patches, builds, or commands of any kind.]\n\n";
 // A session snapshot may carry all 16 reconnect prompts, but the session index
 // can contain 1,000 refs. Bound that aggregate independently so a pathological
 // all-pending index remains decodable by the 1 MiB / 20k-node app-wire limits.
@@ -493,6 +505,7 @@ function safeSessionState(value: unknown): SessionStateResult {
 			? { contextUsage: { used: context.used ?? context.tokens, limit: context.limit ?? context.contextWindow } }
 			: {}),
 		...(queued ? { queuedMessages: { steering: queued.steering, followUp: queued.followUp } } : {}),
+		...(raw.todoPhases === undefined ? {} : { todoPhases: raw.todoPhases }),
 	};
 	return decodeSessionStateResult(state);
 }
@@ -592,6 +605,9 @@ interface PromptLifecycle {
 	cancelRequested?: true;
 	internalId?: string;
 	transientEntryId?: string;
+	/** Epoch-ms when the lifecycle was registered, for idle-supervisor
+	 * watchdog and state-refresh reconciliation of wedged turns. */
+	registeredAt: number;
 }
 type PromptDiscardReason = "rejected" | "local-only" | "failed" | "cancelled" | "completed-without-entry";
 interface ExternalRuntimeOwner {
@@ -842,6 +858,7 @@ export function appserverSupportedFeatures(
 		| "workspaceAuthority"
 		| "workspaceTargetPathForProject"
 		| "sessionAuthority"
+		| "previewAuthority"
 		| "sessionOwnershipPath"
 	> & { readonly remotePolicy?: AppserverOptions["remotePolicy"] },
 	includeRemotePolicy = false,
@@ -875,6 +892,7 @@ export function appserverSupportedFeatures(
 	if (options.transcriptSearchAuthority) implementedFeatures.add("transcript.search");
 	if (!includeRemotePolicy && options.projectRootForProject && options.projectRevealer)
 		implementedFeatures.add("project.reveal");
+	if (options.previewAuthority?.enabled === true) implementedFeatures.add("preview.control");
 	if (authority?.catalogGet) implementedFeatures.add("catalog.metadata");
 	if (authority?.settingsRead) implementedFeatures.add("settings.metadata");
 	if (authority?.termOpen && authority.terminalInput && authority.terminalResize && authority.terminalClose)
@@ -888,7 +906,7 @@ export function appserverSupportedFeatures(
 	);
 }
 export function appserverSupportedCapabilities(
-	options: Pick<AppserverOptions, "operationsAuthority" | "supportedCapabilities" | "usageAuthority">,
+	options: Pick<AppserverOptions, "operationsAuthority" | "supportedCapabilities" | "usageAuthority" | "previewAuthority">,
 ): string[] {
 	const implemented = new Set([
 		"sessions.read",
@@ -899,6 +917,11 @@ export function appserverSupportedCapabilities(
 		...operationCapabilities(options.operationsAuthority),
 	]);
 	if (options.usageAuthority?.read) implemented.add("usage.read");
+	if (options.previewAuthority?.enabled === true) {
+		implemented.add("preview.read");
+		implemented.add("preview.control");
+		implemented.add("preview.input");
+	}
 	return [...(options.supportedCapabilities ?? implemented)];
 }
 export class LocalAppserver implements AppserverHandle {
@@ -917,11 +940,17 @@ export class LocalAppserver implements AppserverHandle {
 	#imageUploads: ImageUploadStore;
 	#transcriptImages?: TranscriptImageReader;
 	#artifacts = new ArtifactReader();
+	#previewService?: PreviewService;
 	#lockCheck: LockCheckHook;
 	#observerIndependentTerminalOperations: boolean;
 	#ringSize: number;
 	#lifecycleQuiesceTimeoutMs: number;
 	#usageReadTimeoutMs: number;
+	#idleSupervisorGraceMs: number;
+	#idleSupervisorTickMs: number;
+	#idleSupervisorTimer?: ReturnType<typeof setInterval>;
+	#watchdogActions = 0;
+	#startedAt = 0;
 	#handlers = new AppserverCommandHandlers();
 	#challenges = new Map<string, { command: CommandFrame; ws: AppWs; expiresAt: number; hash: string }>();
 	#records = new Map<SessionId, SessionRecord>();
@@ -978,6 +1007,8 @@ export class LocalAppserver implements AppserverHandle {
 	#remoteConnections = new Map<AppWs, RemoteConnection>();
 	#remoteDecisions = new Map<AppWs, RemoteHelloDecision>();
 	#remoteListener?: BunRemoteListener;
+	#remoteListenerTls?: BunRemoteListener;
+	#remoteEndpointTls?: RemoteListenerConfig;
 	#remotePolicy?: RemoteConnectionPolicy;
 	#admin?: AppserverOptions["admin"];
 	#testControl?: AppserverOptions["testControl"];
@@ -1009,6 +1040,7 @@ export class LocalAppserver implements AppserverHandle {
 	#runtimeAdapters?: RuntimeAdapterRegistry;
 	#workspaceAuthority?: WorkspaceAuthority;
 	#workspaceTargetPathForProject?: AppserverOptions["workspaceTargetPathForProject"];
+	#logger?: HostLogger;
 	#onOwnerAcquired?: AppserverOptions["onOwnerAcquired"];
 	#trace?: HostTraceSink;
 	constructor(options: AppserverOptions = {}) {
@@ -1042,6 +1074,7 @@ export class LocalAppserver implements AppserverHandle {
 		this.#admin = options.admin;
 		this.#testControl = options.testControl;
 		this.#remoteListener = options.remoteListener;
+		this.#remoteEndpointTls = options.remoteEndpointTls;
 		this.#clock = options.clock ?? clock;
 		this.#idempotency = new IdempotencyStore({ now: () => this.#clock.now().getTime() });
 		this.#authority = options.sessionAuthority;
@@ -1074,6 +1107,7 @@ export class LocalAppserver implements AppserverHandle {
 		this.#workspaceAuthority = options.workspaceAuthority;
 		this.#workspaceTargetPathForProject = options.workspaceTargetPathForProject;
 		this.#onOwnerAcquired = options.onOwnerAcquired;
+		this.#logger = options.logger;
 		this.#discovery = options.discovery ?? options.sessionAuthority ?? { list: async () => [] };
 		this.#imageUploads = new ImageUploadStore({ root: `${this.socketPath}.images` });
 		this.#transcriptImages = options.transcriptImageRoot
@@ -1081,7 +1115,14 @@ export class LocalAppserver implements AppserverHandle {
 			: undefined;
 		this.#lockStatus = options.lockStatus ?? (() => "missing");
 		this.#factory = options.childFactory ??
-			new BunRpcChildFactory(options.rpcChildInvocation, this.#imageUploads.root, options.rpcChildEnvironment);
+			new BunRpcChildFactory(
+				options.rpcChildInvocation,
+				this.#imageUploads.root,
+				options.rpcChildEnvironment,
+				options.rpcChildRegistryPath
+					? new RpcChildRegistry(options.rpcChildRegistryPath)
+					: undefined,
+			);
 		this.#ringSize = options.ringSize ?? 256;
 		if (options.lockStatus && !options.lockCheck)
 			this.#lockCheck = () => {
@@ -1102,6 +1143,21 @@ export class LocalAppserver implements AppserverHandle {
 			this.#usageReadTimeoutMs > 60_000
 		)
 			throw new Error("usageReadTimeoutMs must be between 1 and 60000");
+		this.#idleSupervisorGraceMs = options.idleSupervisorGraceMs ?? 30_000;
+		this.#idleSupervisorTickMs =
+			options.idleSupervisorTickMs ?? Math.max(100, Math.floor(this.#idleSupervisorGraceMs / 4));
+		if (
+			!Number.isSafeInteger(this.#idleSupervisorGraceMs) ||
+			this.#idleSupervisorGraceMs <= 0 ||
+			this.#idleSupervisorGraceMs > 300_000
+		)
+			throw new Error("idleSupervisorGraceMs must be between 1 and 300000");
+		if (
+			!Number.isSafeInteger(this.#idleSupervisorTickMs) ||
+			this.#idleSupervisorTickMs <= 0 ||
+			this.#idleSupervisorTickMs > 300_000
+		)
+			throw new Error("idleSupervisorTickMs must be between 1 and 300000");
 		this.#ompVersion = options.ompVersion ?? "local";
 		this.#ompBuild = options.ompBuild ?? "local";
 		this.#rpcDialect = options.rpcDialect ?? "fork";
@@ -1120,6 +1176,11 @@ export class LocalAppserver implements AppserverHandle {
 			...operationCapabilities(options.operationsAuthority),
 		]);
 		if (options.usageAuthority?.read) implemented.add("usage.read");
+		if (options.previewAuthority?.enabled === true) {
+			implemented.add("preview.read");
+			implemented.add("preview.control");
+			implemented.add("preview.input");
+		}
 		if (requested.some(capability => !implemented.has(capability)))
 			throw new Error("unsupported capability has no handler");
 		this.#supportedCapabilities = new Set(requested);
@@ -1146,6 +1207,27 @@ export class LocalAppserver implements AppserverHandle {
 		this.#handlers.register("session.archive", command => this.handleArchive(command));
 		this.#handlers.register("session.restore", command => this.handleRestore(command));
 		this.#handlers.register("session.delete", command => this.handleDelete(command));
+		this.#handlers.register("session.mode.set", command => this.handleModeSet(command));
+		if (options.previewAuthority?.enabled === true) {
+			this.#previewService = new PreviewService({
+				chromiumResolver: options.previewAuthority?.chromiumResolver ?? createPreviewChromiumResolver(),
+				...(options.previewAuthority?.maxConcurrent !== undefined
+					? { maxConcurrent: options.previewAuthority.maxConcurrent }
+					: {}),
+				...(options.previewAuthority?.idleTimeoutMs !== undefined
+					? { idleTimeoutMs: options.previewAuthority.idleTimeoutMs }
+					: {}),
+			});
+			this.registerPreviewHandlers();
+		}
+	}
+	/** Structured event sink; no-op when no logger is configured. Never throws. */
+	#log(event: string, fields?: Record<string, unknown>): void {
+		try {
+			this.#logger?.log(event, fields);
+		} catch {
+			/* logging must never disrupt the request path */
+		}
 	}
 	hasDesktopCatalogCommandHandler(command: string): boolean {
 		if (command === "usage.read") return this.#usageAuthority !== undefined;
@@ -1329,6 +1411,8 @@ export class LocalAppserver implements AppserverHandle {
 			if (this.#stopping) throw new Error("appserver is stopping");
 			this.#runIdentity = { paths, record, marker: finalMarker };
 			this.#started = true;
+			this.#startedAt = this.#clock.now().getTime();
+			this.#startIdleSupervisorWatchdog();
 			if (this.#remotePolicy && this.#remoteEndpoint) {
 				const listener =
 					this.#remoteListener ??
@@ -1345,7 +1429,8 @@ export class LocalAppserver implements AppserverHandle {
 						},
 						this.#remoteEndpoint,
 						this.#remoteResolver,
-					);
+						() => this.#healthSnapshot(),
+				);
 				this.#remoteListener = listener;
 				try {
 					listener.start();
@@ -1353,6 +1438,28 @@ export class LocalAppserver implements AppserverHandle {
 					this.#remoteListener = undefined;
 					throw error;
 				}
+			}
+			if (this.#remotePolicy && this.#remoteEndpointTls) {
+				const tlsEndpoint = this.#remoteEndpointTls;
+				const tlsListener = new BunRemoteListener(
+					createListenerPlan(tlsEndpoint),
+					{
+						connected: connection => this.#remoteConnected(connection),
+						message: (connection, message) => this.#remoteMessage(connection, message),
+						disconnected: connection => this.#remoteDisconnected(connection),
+					},
+					tlsEndpoint,
+					this.#remoteResolver,
+					() => this.#healthSnapshot(),
+				);
+				try {
+					tlsListener.start();
+				} catch (error) {
+					await this.#remoteListener?.stop().catch(() => undefined);
+					this.#remoteListener = undefined;
+					throw error;
+				}
+				this.#remoteListenerTls = tlsListener;
 			}
 		} catch (error) {
 			try {
@@ -1380,6 +1487,8 @@ export class LocalAppserver implements AppserverHandle {
 		try {
 			await this.#remoteListener?.stop();
 			this.#remoteListener = undefined;
+			await this.#remoteListenerTls?.stop();
+			this.#remoteListenerTls = undefined;
 			await Promise.all(
 				[...this.#clients].map(async ws => {
 					for (const controller of this.#abortControllers.get(ws) ?? []) controller.abort();
@@ -1409,6 +1518,10 @@ export class LocalAppserver implements AppserverHandle {
 				} catch (error) {
 					process.emitWarning(error instanceof Error ? error.message : String(error));
 				}
+			}
+			if (this.#idleSupervisorTimer) {
+				clearInterval(this.#idleSupervisorTimer);
+				this.#idleSupervisorTimer = undefined;
 			}
 			for (const timer of this.#observerTimers.values()) clearInterval(timer);
 			this.#observerTimers.clear();
@@ -1447,7 +1560,9 @@ export class LocalAppserver implements AppserverHandle {
 		} finally {
 			this.#transcriptImages?.clear();
 			await this.#transcriptSearch?.close();
-			await this.#imageUploads.stop();
+		await this.#imageUploads.stop();
+		await this.#previewService?.stop().catch(() => undefined);
+		await this.#logger?.flush().catch(() => undefined);
 		}
 	}
 	/**
@@ -1996,6 +2111,7 @@ export class LocalAppserver implements AppserverHandle {
 					commandId: command.commandId,
 					commandHash: payloadHash(command),
 					kind,
+					registeredAt: this.#clock.now().getTime(),
 				};
 				if (!this.#registerMessageLifecycle(command.sessionId!, lifecycle)) {
 					outcome = {
@@ -2010,7 +2126,7 @@ export class LocalAppserver implements AppserverHandle {
 					this.#emitPromptTransient(command.sessionId!, command, lifecycle, command.args.message as string, 0);
 					const type = kind === "steer" ? "steer" : "follow_up";
 					const result = await supervisor.call(
-						{ type, message: command.args.message },
+						{ type, message: this.shapePromptMessage(command.sessionId!, command.args.message as string) },
 						command.requestId,
 						undefined,
 						internalId => {
@@ -2135,6 +2251,7 @@ export class LocalAppserver implements AppserverHandle {
 							commandId: command.commandId,
 							commandHash: payloadHash(command),
 							kind: "prompt",
+							registeredAt: this.#clock.now().getTime(),
 						};
 						messageLifecycle = lifecycle;
 						if (!this.#registerMessageLifecycle(command.sessionId!, lifecycle))
@@ -2155,7 +2272,7 @@ export class LocalAppserver implements AppserverHandle {
 						try {
 							result = await supervisor.prompt(
 								command.requestId,
-								promptArguments!.message,
+								this.shapePromptMessage(command.sessionId!, promptArguments!.message),
 								// Registration and transient publication make this accepted work.
 								// Client disconnect must not revoke it before the child acknowledges it.
 								undefined,
@@ -2712,6 +2829,12 @@ export class LocalAppserver implements AppserverHandle {
 		const cleared = this.#projections.get(sessionId)?.clearPendingAttention();
 		if (cleared) this.broadcast(sessionId, cleared);
 	}
+	private shapePromptMessage(sessionId: SessionId, message: string): string {
+		const mode = this.#records.get(sessionId)?.mode;
+		if (mode === "plan") return PLAN_MODE_PREFIX + message;
+		if (mode === "readOnly") return READONLY_MODE_PREFIX + message;
+		return message;
+	}
 
 	private async handleExternalPrompt(
 		command: CommandFrame,
@@ -2738,6 +2861,7 @@ export class LocalAppserver implements AppserverHandle {
 			commandId: command.commandId,
 			commandHash: payloadHash(command),
 			kind: "prompt",
+			registeredAt: this.#clock.now().getTime(),
 		};
 		if (!this.#registerMessageLifecycle(sessionId, lifecycle))
 			return {
@@ -2767,7 +2891,7 @@ export class LocalAppserver implements AppserverHandle {
 		if (userEntryId) this.#settlePromptTransient(sessionId, lifecycle, userEntryId);
 		let failed = false;
 		try {
-			await owner.session.prompt(args.message);
+			await owner.session.prompt(this.shapePromptMessage(sessionId, args.message));
 			lifecycle.accepted = true;
 			return { frame: response(this.hostId, command, true, { accepted: true }) };
 		} catch (cause) {
@@ -3090,6 +3214,7 @@ export class LocalAppserver implements AppserverHandle {
 			this.#closedSessions.add(sessionId);
 			await this.#imageUploads.cleanupSession(sessionId);
 			const pending = this.#startPromises.get(sessionId);
+			await this.#previewService?.closeSession(sessionId).catch(() => undefined);
 			if (pending) await pending.catch(() => undefined);
 			supervisor = this.#supervisors.get(sessionId);
 			if (!(await this.quiesceSessionRuntime(sessionId))) {
@@ -3265,7 +3390,8 @@ export class LocalAppserver implements AppserverHandle {
 		if (!external && !this.#supervisors.has(sessionId)) {
 			try {
 				await this.#lockCheck(record);
-			} catch {
+			} catch (error) {
+				this.#log("lockCheck.failed", { sessionId, where: "deletePreflight", error: error instanceof Error ? error.message : String(error) });
 				return { code: "session_locked", message: "session is locked by another process" };
 			}
 		}
@@ -3396,6 +3522,7 @@ export class LocalAppserver implements AppserverHandle {
 	private releaseSupervisorAfterExit(sessionId: SessionId, supervisor: RpcChildSupervisor): void {
 		const release = () => {
 			if (this.#supervisors.get(sessionId) !== supervisor) return;
+			this.#log("supervisor.exit", { sessionId });
 			this.#supervisors.delete(sessionId);
 			if (this.#stopping || this.#closedSessions.has(sessionId)) return;
 			this.#transcripts.delete(sessionId);
@@ -3500,7 +3627,8 @@ export class LocalAppserver implements AppserverHandle {
 				return this.lifecycleBusyOutcome(command, "session runtime did not stop cleanly");
 			try {
 				await this.#lockCheck(record);
-			} catch {
+			} catch (error) {
+				this.#log("lockCheck.failed", { sessionId, where: "archive", error: error instanceof Error ? error.message : String(error) });
 				return {
 					frame: response(this.hostId, command, false, undefined, {
 						code: "session_locked",
@@ -3571,6 +3699,25 @@ export class LocalAppserver implements AppserverHandle {
 			this.#lifecycleMutations.delete(sessionId);
 		}
 	}
+	private async handleModeSet(command: CommandFrame): Promise<CommandOutcome> {
+		const sessionId = command.sessionId!;
+		const args = decodeCommandArguments(command.command, command.args);
+		const mode = args.mode as string;
+		const record = this.#records.get(sessionId);
+		const projection = this.#projections.get(sessionId);
+		if (!record || !projection)
+			return {
+				frame: response(this.hostId, command, false, undefined, {
+					code: "unknown_session",
+					message: "session is not indexed",
+				}),
+			};
+		if (mode === "build") record.mode = undefined;
+		else record.mode = mode;
+		const delta = projection.updateMode(mode);
+		if (delta) await this.broadcastIndex(delta);
+		return { frame: response(this.hostId, command, true, { mode }) };
+	}
 	private async handleDelete(command: CommandFrame): Promise<CommandOutcome> {
 		const sessionId = command.sessionId!;
 		if (this.#lifecycleMutations.has(sessionId))
@@ -3618,6 +3765,342 @@ export class LocalAppserver implements AppserverHandle {
 			};
 		} finally {
 			this.#lifecycleMutations.delete(sessionId);
+		}
+	}
+	private registerPreviewHandlers(): void {
+		const svc = this.#previewService!;
+		this.#handlers.register("preview.launch", command => this.handlePreviewLaunch(command));
+		this.#handlers.register("preview.state", command => this.handlePreviewState(command));
+		this.#handlers.register("preview.activate", command => this.handlePreviewActivate(command));
+		this.#handlers.register("preview.navigate", command => this.handlePreviewNavigate(command));
+		this.#handlers.register("preview.back", command => this.handlePreviewBack(command));
+		this.#handlers.register("preview.forward", command => this.handlePreviewForward(command));
+		this.#handlers.register("preview.reload", command => this.handlePreviewReload(command));
+		this.#handlers.register("preview.close", command => this.handlePreviewClose(command));
+		this.#handlers.register("preview.capture", command => this.handlePreviewCapture(command));
+		this.#handlers.register("preview.capture.read", command => this.handlePreviewCaptureRead(command));
+		this.#handlers.register("preview.click", command => this.handlePreviewClick(command));
+		this.#handlers.register("preview.fill", command => this.handlePreviewFill(command));
+		this.#handlers.register("preview.scroll", command => this.handlePreviewScroll(command));
+		this.#handlers.register("preview.type", command => this.handlePreviewType(command));
+		this.#handlers.register("preview.select", command => this.handlePreviewSelect(command));
+		this.#handlers.register("preview.press", command => this.handlePreviewPress(command));
+		this.#handlers.register("preview.upload", command => this.handlePreviewUpload(command));
+		this.#handlers.register("preview.policy.check", command => this.handlePreviewPolicyCheck(command));
+		this.#handlers.register("preview.lease.acquire", command => this.handlePreviewLeaseAcquire(command));
+		this.#handlers.register("preview.lease.renew", command => this.handlePreviewLeaseRenew(command));
+		this.#handlers.register("preview.lease.release", command => this.handlePreviewLeaseRelease(command));
+		this.#handlers.register("preview.handoff", command => this.handlePreviewHandoff(command));
+		void svc;
+	}
+	private previewError(command: CommandFrame, error: unknown): CommandOutcome {
+		if (error instanceof PreviewServiceError)
+			return {
+				frame: response(this.hostId, command, false, undefined, { code: error.code, message: error.message }),
+			};
+		return {
+			frame: response(this.hostId, command, false, undefined, {
+				code: "preview_failed",
+				message: error instanceof Error ? error.message : "preview operation failed",
+			}),
+		};
+	}
+	private async handlePreviewLaunch(command: CommandFrame): Promise<CommandOutcome> {
+		this.#log("preview.launch.start", { sessionId: command.sessionId });
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const snapshot = await this.#previewService!.launch({
+				sessionId: command.sessionId!,
+				url: args.url as string,
+				...(args.authorityId !== undefined ? { authorityId: args.authorityId as string } : {}),
+			});
+			this.#log("preview.launch.done", { sessionId: command.sessionId });
+			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private async handlePreviewState(command: CommandFrame): Promise<CommandOutcome> {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const result = await this.#previewService!.state({
+				sessionId: command.sessionId!,
+				...(args.previewId !== undefined ? { previewId: previewId(args.previewId) } : {}),
+			});
+			return { frame: response(this.hostId, command, true, result) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private async handlePreviewActivate(command: CommandFrame): Promise<CommandOutcome> {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const snapshot = await this.#previewService!.activate({
+				sessionId: command.sessionId!,
+				previewId: previewId(args.previewId),
+				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
+			});
+			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private async handlePreviewNavigate(command: CommandFrame): Promise<CommandOutcome> {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const snapshot = await this.#previewService!.navigate({
+				sessionId: command.sessionId!,
+				previewId: previewId(args.previewId),
+				url: args.url as string,
+				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
+			});
+			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private async handlePreviewBack(command: CommandFrame): Promise<CommandOutcome> {
+		return this.handlePreviewNavigation(command, (args, sessionId) =>
+			this.#previewService!.back({
+				sessionId,
+				previewId: previewId(args.previewId),
+				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
+			}),
+		);
+	}
+	private async handlePreviewForward(command: CommandFrame): Promise<CommandOutcome> {
+		return this.handlePreviewNavigation(command, (args, sessionId) =>
+			this.#previewService!.forward({
+				sessionId,
+				previewId: previewId(args.previewId),
+				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
+			}),
+		);
+	}
+	private async handlePreviewReload(command: CommandFrame): Promise<CommandOutcome> {
+		return this.handlePreviewNavigation(command, (args, sessionId) =>
+			this.#previewService!.reload({
+				sessionId,
+				previewId: previewId(args.previewId),
+				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
+			}),
+		);
+	}
+	private async handlePreviewClose(command: CommandFrame): Promise<CommandOutcome> {
+		return this.handlePreviewNavigation(command, (args, sessionId) =>
+			this.#previewService!.close({
+				sessionId,
+				previewId: previewId(args.previewId),
+				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
+			}),
+		);
+	}
+	private async handlePreviewCapture(command: CommandFrame): Promise<CommandOutcome> {
+		return this.handlePreviewNavigation(command, (args, sessionId) =>
+			this.#previewService!.capture({
+				sessionId,
+				previewId: previewId(args.previewId),
+				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
+			}),
+		);
+	}
+	private handlePreviewCaptureRead(command: CommandFrame): CommandOutcome {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const result = this.#previewService!.captureRead({
+				sessionId: command.sessionId!,
+				previewId: previewId(args.previewId),
+				captureId: previewCaptureId(args.captureId),
+				offset: args.offset as number,
+			});
+			return { frame: response(this.hostId, command, true, result) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private async handlePreviewClick(command: CommandFrame): Promise<CommandOutcome> {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const snapshot = await this.#previewService!.click({
+				sessionId: command.sessionId!,
+				previewId: previewId(args.previewId),
+				...(args.selector !== undefined ? { selector: args.selector as string } : {}),
+				...(args.x !== undefined ? { x: args.x as number } : {}),
+				...(args.y !== undefined ? { y: args.y as number } : {}),
+				...(args.button !== undefined ? { button: args.button as "left" | "middle" | "right" } : {}),
+				...(args.clickCount !== undefined ? { clickCount: args.clickCount as number } : {}),
+				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
+			});
+			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private async handlePreviewFill(command: CommandFrame): Promise<CommandOutcome> {
+		return this.handlePreviewTextInput(command, (args, sessionId) =>
+			this.#previewService!.fill({
+				sessionId,
+				previewId: previewId(args.previewId),
+				selector: args.selector as string,
+				text: args.text as string,
+				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
+			}),
+		);
+	}
+	private async handlePreviewType(command: CommandFrame): Promise<CommandOutcome> {
+		return this.handlePreviewTextInput(command, (args, sessionId) =>
+			this.#previewService!.type({
+				sessionId,
+				previewId: previewId(args.previewId),
+				text: args.text as string,
+				...(args.selector !== undefined ? { selector: args.selector as string } : {}),
+				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
+			}),
+		);
+	}
+	private async handlePreviewScroll(command: CommandFrame): Promise<CommandOutcome> {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const snapshot = await this.#previewService!.scroll({
+				sessionId: command.sessionId!,
+				previewId: previewId(args.previewId),
+				deltaX: args.deltaX as number,
+				deltaY: args.deltaY as number,
+				...(args.selector !== undefined ? { selector: args.selector as string } : {}),
+				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
+			});
+			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private async handlePreviewSelect(command: CommandFrame): Promise<CommandOutcome> {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const snapshot = await this.#previewService!.selectOption({
+				sessionId: command.sessionId!,
+				previewId: previewId(args.previewId),
+				selector: args.selector as string,
+				value: args.value as string,
+				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
+			});
+			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private async handlePreviewPress(command: CommandFrame): Promise<CommandOutcome> {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const snapshot = await this.#previewService!.press({
+				sessionId: command.sessionId!,
+				previewId: previewId(args.previewId),
+				key: args.key as string,
+				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
+			});
+			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private async handlePreviewUpload(command: CommandFrame): Promise<CommandOutcome> {
+		return this.previewError(command, new PreviewServiceError("unsupported", "preview upload is not yet implemented"));
+	}
+	private handlePreviewPolicyCheck(command: CommandFrame): CommandOutcome {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const result = this.#previewService!.policyCheck({
+				action: args.action as PreviewAction,
+				...(args.previewId !== undefined ? { previewId: previewId(args.previewId) } : {}),
+				...(args.url !== undefined ? { url: args.url as string } : {}),
+				...(args.authorityId !== undefined ? { authorityId: args.authorityId as string } : {}),
+			});
+			return { frame: response(this.hostId, command, true, result) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private handlePreviewLeaseAcquire(command: CommandFrame): CommandOutcome {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const result = this.#previewService!.leaseAcquire({
+				sessionId: command.sessionId!,
+				previewId: previewId(args.previewId),
+				...(args.ttlMs !== undefined ? { ttlMs: args.ttlMs as number } : {}),
+			});
+			return { frame: response(this.hostId, command, true, result) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private handlePreviewLeaseRenew(command: CommandFrame): CommandOutcome {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const result = this.#previewService!.leaseRenew({
+				sessionId: command.sessionId!,
+				previewId: previewId(args.previewId),
+				leaseId: args.leaseId as never,
+				...(args.ttlMs !== undefined ? { ttlMs: args.ttlMs as number } : {}),
+			});
+			return { frame: response(this.hostId, command, true, result) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private handlePreviewLeaseRelease(command: CommandFrame): CommandOutcome {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const result = this.#previewService!.leaseRelease({
+				sessionId: command.sessionId!,
+				previewId: previewId(args.previewId),
+				leaseId: args.leaseId as never,
+			});
+			return { frame: response(this.hostId, command, true, result) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private async handlePreviewHandoff(command: CommandFrame): Promise<CommandOutcome> {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const snapshot = await this.#previewService!.handoff({
+				sessionId: command.sessionId!,
+				previewId: previewId(args.previewId),
+				message: args.message as string,
+				...(args.mode !== undefined ? { mode: args.mode as "manual" | "selector" | "url" | "text" } : {}),
+				...(args.selector !== undefined ? { selector: args.selector as string } : {}),
+				...(args.urlSubstring !== undefined ? { urlSubstring: args.urlSubstring as string } : {}),
+				...(args.text !== undefined ? { text: args.text as string } : {}),
+				...(args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs as number } : {}),
+				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
+			});
+			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private async handlePreviewNavigation(
+		command: CommandFrame,
+		action: (args: Record<string, unknown>, sessionId: SessionId) => Promise<PreviewSnapshot>,
+	): Promise<CommandOutcome> {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const snapshot = await action(args, command.sessionId!);
+			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
+		} catch (error) {
+			return this.previewError(command, error);
+		}
+	}
+	private async handlePreviewTextInput(
+		command: CommandFrame,
+		action: (args: Record<string, unknown>, sessionId: SessionId) => Promise<PreviewSnapshot>,
+	): Promise<CommandOutcome> {
+		try {
+			const args = decodeCommandArguments(command.command, command.args);
+			const snapshot = await action(args, command.sessionId!);
+			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
+		} catch (error) {
+			return this.previewError(command, error);
 		}
 	}
 	private finish(
@@ -3754,6 +4237,74 @@ export class LocalAppserver implements AppserverHandle {
 			if (this.#releaseMessageLifecycle(sessionId, lifecycle, reason)) released = true;
 		return released;
 	}
+	/** Prompt lifecycles registered before the idle-supervisor grace window
+	 * elapsed. A wedged turn keeps these pending past grace without ever
+	 * emitting the settling event the normal release path waits on. */
+	#stalePromptLifecycles(sessionId: SessionId): PromptLifecycle[] {
+		const now = this.#clock.now().getTime();
+		const lifecycles = this.#messageLifecycles.get(sessionId);
+		if (!lifecycles || lifecycles.length === 0) return [];
+		return lifecycles.filter(lifecycle => now - lifecycle.registeredAt >= this.#idleSupervisorGraceMs);
+	}
+	/** Reconcile wedged prompt lifecycles after a successful state refresh: OMP
+	 * finished the turn (isStreaming=false) but never emitted turn.end, so the
+	 * normal settling path never fired. Release the stale transients honestly. */
+	#reconcileStalePromptLifecycles(
+		sessionId: SessionId,
+		supervisor: RpcChildSupervisor,
+		isStreaming: boolean,
+		requestId: string,
+	): boolean {
+		if (isStreaming) return false;
+		const stale = this.#stalePromptLifecycles(sessionId);
+		if (stale.length === 0) return false;
+		for (const lifecycle of stale)
+			this.#releaseMessageLifecycle(sessionId, lifecycle, "completed-without-entry");
+		this.#projectTerminalStatus(sessionId, supervisor, `${requestId}:reconciled`);
+		return true;
+	}
+	/** Idle-supervisor watchdog: a child that trapped SIGTERM goes mute while
+	 * holding OMP's session lock and never emits turn.end. After the grace
+	 * window of RPC silence with prompt lifecycles still pending, SIGKILL the
+	 * child (SIGTERM is trapped by OMP) and run the crash cleanup so the session
+	 * accepts new prompts. */
+	#runIdleSupervisorWatchdog(): void {
+		if (this.#stopping || this.#draining) return;
+		const now = this.#clock.now().getTime();
+		for (const [sessionId, supervisor] of this.#supervisors) {
+			if (now - supervisor.lastActivityAt() < this.#idleSupervisorGraceMs) continue;
+			if (this.#stalePromptLifecycles(sessionId).length === 0) continue;
+			// Only dispose when the last state refresh reported the turn not
+			// streaming (the documented wedge: OMP finished but went mute). A
+			// session still marked streaming is left alone; unknown is fail-closed.
+			if (this.#projections.get(sessionId)?.value.ref.liveState?.isStreaming === true) continue;
+			if (this.#supervisors.get(sessionId) !== supervisor) continue;
+		this.markSupervisorCrashed(sessionId, supervisor);
+		supervisor.stop("SIGKILL");
+		this.#watchdogActions++;
+		this.#log("watchdog.action", { sessionId, action: "sigkill", graceMs: this.#idleSupervisorGraceMs });
+		this.#log("supervisor.killed", { sessionId, signal: "SIGKILL", reason: "watchdog" });
+		}
+	}
+	#startIdleSupervisorWatchdog(): void {
+		clearInterval(this.#idleSupervisorTimer);
+		this.#idleSupervisorTimer = setInterval(() => this.#runIdleSupervisorWatchdog(), this.#idleSupervisorTickMs);
+		this.#idleSupervisorTimer.unref?.();
+	}
+	#healthSnapshot(): HealthSnapshot {
+		const now = this.#clock.now().getTime();
+		return {
+			ok: true,
+			hostId: this.hostId,
+			epoch: this.epoch,
+			draining: this.#draining,
+			version: this.#appserverVersion,
+			uptimeSec: this.#startedAt > 0 ? Math.max(0, Math.floor((now - this.#startedAt) / 1000)) : 0,
+			sessions: this.#projections.size,
+			supervisors: this.#supervisors.size,
+			watchdog: { graceMs: this.#idleSupervisorGraceMs, actions: this.#watchdogActions },
+		};
+	}
 	#projectTerminalStatus(
 		sessionId: SessionId,
 		supervisor = this.#supervisors.get(sessionId),
@@ -3856,6 +4407,10 @@ export class LocalAppserver implements AppserverHandle {
 		const projection = this.#projections.get(sessionId);
 		if (!projection) throw new Error("unknown session");
 		if (this.#stateRefreshGenerations.get(sessionId) !== generation) return state;
+		// Reconcile wedged prompt lifecycles before computing the status override
+		// so a session OMP finished (isStreaming=false) without emitting turn.end
+		// settles to idle instead of staying forever "active" / session_busy.
+		this.#reconcileStalePromptLifecycles(sessionId, supervisor, state.isStreaming, requestId);
 		const statusOverride = preserveProjectedStatus
 			? projection.value.ref.status
 			: this.#pendingMessageCount(sessionId) > 0
@@ -3913,7 +4468,12 @@ export class LocalAppserver implements AppserverHandle {
 		const record = this.#records.get(sessionId);
 		if (!record) throw new Error("unknown session");
 		if (this.sessionArchived(sessionId)) throw new Error("session is archived");
-		await this.#lockCheck(record);
+		try {
+			await this.#lockCheck(record);
+		} catch (error) {
+			this.#log("lockCheck.failed", { sessionId, where: "startSupervisor", error: error instanceof Error ? error.message : String(error) });
+			throw error;
+		}
 		if (this.#stopping || this.#closedSessions.has(sessionId)) throw new Error("session is closed");
 		if (
 			(!ignoreLifecycleFence && this.#lifecycleMutations.has(sessionId)) ||
@@ -4058,10 +4618,11 @@ export class LocalAppserver implements AppserverHandle {
 		);
 		this.#supervisors.set(sessionId, supervisor);
 		try {
-			await supervisor.start();
-			if (this.#supervisors.get(sessionId) !== supervisor) throw new Error("rpc child exited during startup");
-			this.releaseSupervisorAfterExit(sessionId, supervisor);
-			return supervisor;
+		await supervisor.start();
+		if (this.#supervisors.get(sessionId) !== supervisor) throw new Error("rpc child exited during startup");
+		this.releaseSupervisorAfterExit(sessionId, supervisor);
+		this.#log("supervisor.spawn", { sessionId });
+		return supervisor;
 		} catch (error) {
 			if (this.#supervisors.get(sessionId) === supervisor) this.#supervisors.delete(sessionId);
 			this.#releaseAllMessageLifecycles(sessionId, "failed");
@@ -4070,16 +4631,17 @@ export class LocalAppserver implements AppserverHandle {
 			// Await the process, not just the supervisor. `stop()` signals and
 			// returns, so a caller that cleans up the session's files immediately
 			// would race a child still holding — and able to rewrite — its lock.
-			const child = supervisor.child();
-			supervisor.stop("SIGTERM");
-			if (child && !(await this.childExitedWithinLifecycleTimeout(child))) {
-				supervisor.stop("SIGKILL");
-				if (!(await this.childExitedWithinLifecycleTimeout(child)))
-					// A child that survives SIGKILL still owns its lock and can
-					// rewrite the file, so its session must not be deleted.
-					throw new SessionRuntimeStuckError(error);
-			}
-			throw error;
+		const child = supervisor.child();
+		supervisor.stop("SIGTERM");
+		if (child && !(await this.childExitedWithinLifecycleTimeout(child))) {
+			supervisor.stop("SIGKILL");
+			this.#log("supervisor.killed", { sessionId, signal: "SIGKILL" });
+			if (!(await this.childExitedWithinLifecycleTimeout(child)))
+				// A child that survives SIGKILL still owns its lock and can
+				// rewrite the file, so its session must not be deleted.
+				throw new SessionRuntimeStuckError(error);
+		}
+		throw error;
 		}
 	}
 	private async message(ws: AppWs, raw: string | Uint8Array): Promise<void> {
@@ -4104,6 +4666,7 @@ export class LocalAppserver implements AppserverHandle {
 					if (!connection || !this.#remotePolicy) throw new Error("remote connection is unavailable");
 					decision = await this.#remotePolicy.authenticate(connection, frame);
 					if (!decision.authenticated && decision.authentication !== "pairing-required") {
+						this.#log("pair.denied", { connectionId: ws.connectionId, reason: "authentication", authentication: decision.authentication });
 						ws.close(1008, "remote authentication denied");
 						return;
 					}
@@ -4119,6 +4682,7 @@ export class LocalAppserver implements AppserverHandle {
 				if (!connection || !this.#remotePolicy?.pairStart) throw new Error("pairing unavailable");
 				const result = await this.#remotePolicy.pairStart(connection, frame);
 				if (!result) {
+					this.#log("pair.denied", { connectionId: ws.connectionId, reason: "pairStart", requestId: frame.requestId });
 					await this.#sendFrame(ws, {
 						v: "omp-app/1",
 						type: "pair.error",
@@ -4128,6 +4692,7 @@ export class LocalAppserver implements AppserverHandle {
 					});
 					return;
 				}
+				this.#log("pair.ok", { connectionId: ws.connectionId, requestId: frame.requestId });
 				await this.#sendFrame(ws, result);
 				return;
 			}
@@ -4148,6 +4713,7 @@ export class LocalAppserver implements AppserverHandle {
 					...(remoteProjection ? { sessionRevision: remoteProjection.value.revision } : {}),
 				});
 				if (!allowed) {
+					this.#log("command.denied", { connectionId: ws.connectionId, frame: frame.type, ...(frame.type === "command" ? { command: frame.command } : {}) });
 					if (!this.#remotePolicy.isClosed?.(connection)) ws.close(1008, "remote policy denied");
 					return;
 				}
@@ -4535,6 +5101,7 @@ export class LocalAppserver implements AppserverHandle {
 		this.#deviceIds.set(transport, transport.deviceId);
 		this.#abortControllers.set(transport, new Set());
 		this.#connectionIdempotency.set(transport, new IdempotencyStore());
+		this.#log("connection.open", { connectionId: connection.connectionId, peer: connection.peer.identity.nodeId, source: connection.peer.source });
 	}
 	async #remoteMessage(connection: RemoteConnection, message: string | Uint8Array): Promise<void> {
 		const transport = this.#remoteTransports.get(connection.connectionId);
@@ -4546,6 +5113,7 @@ export class LocalAppserver implements AppserverHandle {
 			const transport = this.#remoteTransports.get(connection.connectionId);
 			if (transport) await this.disconnectClient(transport);
 			if (this.#remotePolicy?.disconnected) await this.#remotePolicy.disconnected(connection);
+		this.#log("connection.close", { connectionId: connection.connectionId, peer: connection.peer.identity.nodeId });
 		} finally {
 			this.#inflightLifecycleMutations -= 1;
 		}

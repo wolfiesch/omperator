@@ -296,6 +296,22 @@ describe("app-wire authority", () => {
 		])
 			expect(() => decodeSessionRef({ ...base, runtime }, "session")).toThrow(AppWireError);
 	});
+	test("session mode is an optional bounded additive field", () => {
+		const base = {
+			hostId: "h",
+			sessionId: "s",
+			project: { projectId: "p" },
+			revision: "r",
+			title: "Task",
+			status: "idle",
+			updatedAt: "2026-07-18T12:00:00.000Z",
+		};
+		for (const mode of ["build", "plan", "readOnly"] as const)
+			expect(decodeSessionRef({ ...base, mode }, "session").mode).toBe(mode);
+		expect(decodeSessionRef(base, "session").mode).toBeUndefined();
+		for (const mode of ["edit", "PLAN", "read-only", ""])
+			expect(() => decodeSessionRef({ ...base, mode }, "session")).toThrow(AppWireError);
+	});
 	test("hello and durable lineage decode in string and parsed modes", () => {
 		expect(decodeClientFrame(hello).type).toBe("hello");
 		for (const protocol of [
@@ -1214,6 +1230,7 @@ describe("app-wire authority", () => {
 			"session.model.set": "session",
 			"session.thinking.set": "session",
 			"session.fast.set": "session",
+			"session.mode.set": "session",
 			"session.ui.respond": "session",
 			"controller.lease.acquire": "session",
 			"controller.lease.renew": "session",
@@ -1302,6 +1319,7 @@ describe("app-wire authority", () => {
 			"session.model.set",
 			"session.thinking.set",
 			"session.fast.set",
+			"session.mode.set",
 			"session.cancel",
 			"usage.read",
 		];
@@ -1396,6 +1414,16 @@ describe("app-wire authority", () => {
 		expect(() => decodeCommandArguments("session.thinking.set", { level: "unsupported" })).toThrow(AppWireError);
 		expect(decodeCommandArguments("session.fast.set", { enabled: true })).toMatchObject({ enabled: true });
 		expect(() => decodeCommandArguments("session.fast.set", { enabled: "yes" })).toThrow(AppWireError);
+		for (const mode of ["build", "plan", "readOnly"] as const)
+			expect(decodeCommandArguments("session.mode.set", { mode })).toMatchObject({ mode });
+		expect(() => decodeCommandArguments("session.mode.set", { mode: "edit" })).toThrow(AppWireError);
+		expect(() => decodeCommandArguments("session.mode.set", { mode: "plan", extra: true })).toThrow(AppWireError);
+		expect(() => decodeCommandArguments("session.mode.set", {})).toThrow(AppWireError);
+		for (const mode of ["build", "plan", "readOnly"] as const)
+			expect(decodeCommandResult("session.mode.set", { mode })).toEqual({ mode });
+		expect(() => decodeCommandResult("session.mode.set", { mode: "edit" })).toThrow(AppWireError);
+		expect(() => decodeCommandResult("session.mode.set", { mode: "plan", extra: true })).toThrow(AppWireError);
+		expect(() => decodeCommandResult("session.mode.set", {})).toThrow(AppWireError);
 		expect(() => decodeCommandArguments("settings.write", { apiKey: "secret" })).toThrow(AppWireError);
 		const state = {
 			isStreaming: false,
@@ -1433,6 +1461,44 @@ describe("app-wire authority", () => {
 			{ ...semanticState, thinkingLevels: ["low", "low"] },
 			{ ...semanticState, thinkingLevels: ["inherit"] },
 			{ ...semanticState, fastAvailable: "yes" },
+		])
+			expect(() => decodeCommandResult("session.state.get", malformed)).toThrow(AppWireError);
+		const baseState = {
+			...state,
+			todoPhases: [
+				{
+					name: "Research",
+					tasks: [
+						{ content: "Map the call sites", status: "completed" },
+						{ content: "Note the shared helper", status: "in_progress" },
+						{ content: "Sketch the contract", status: "pending" },
+					],
+				},
+				{
+					name: "Implement",
+					tasks: [{ content: "Wire the decoder", status: "custom_status" }],
+				},
+			],
+		};
+		expect(decodeCommandResult("session.state.get", baseState)).toEqual(baseState);
+		// Absent todoPhases decodes cleanly and omits the field.
+		expect(decodeCommandResult("session.state.get", state)).toEqual(state);
+		expect(decodeCommandResult("session.state.get", state).todoPhases).toBeUndefined();
+		// Unknown statuses are preserved verbatim, not failed.
+		expect(
+			decodeCommandResult("session.state.get", baseState).todoPhases?.[1]?.tasks?.[0]?.status,
+		).toBe("custom_status");
+		for (const malformed of [
+			{ ...state, todoPhases: [{ name: "x", tasks: [{ content: "c", status: "pending", extra: 1 }] }] },
+			{ ...state, todoPhases: [{ name: "x", tasks: [{ content: "c" }] }] },
+			{ ...state, todoPhases: [{ name: "x", extra: 1 }] },
+			{ ...state, todoPhases: [{ tasks: [] }] },
+			{ ...state, todoPhases: [{ name: "x", tasks: "nope" }] },
+			{ ...state, todoPhases: "nope" },
+			{ ...state, todoPhases: [{ name: "x".repeat(1024), tasks: [] }] },
+			{ ...state, todoPhases: Array.from({ length: 33 }, () => ({ name: "p", tasks: [] })) },
+			{ ...state, todoPhases: [{ name: "p", tasks: Array.from({ length: 65 }, () => ({ content: "c", status: "pending" })) }] },
+			{ ...state, todoPhases: [{ name: "p", tasks: [{ content: "c", status: "pen\u0000ding" }] }] },
 		])
 			expect(() => decodeCommandResult("session.state.get", malformed)).toThrow(AppWireError);
 		expect(() =>
