@@ -30,6 +30,16 @@ export type TranscriptMessageDiscardedEvent = {
 	reason: "rejected" | "local-only" | "failed" | "cancelled" | "completed-without-entry";
 	at: string;
 };
+export type TranscriptAssistantBlockUpdateEvent = {
+	type: "assistant.block.update";
+	entryId: string;
+	blockIndex: number;
+	blockKind: "text" | "thinking" | "tool-input";
+	content: string;
+	callId?: string;
+	tool?: string;
+	at: string;
+};
 export type TranscriptToolStartEvent = {
 	type: "tool.start";
 	callId: string;
@@ -73,6 +83,7 @@ export type TranscriptEvent =
 	| TranscriptMessageEvent
 	| TranscriptMessageSettledEvent
 	| TranscriptMessageDiscardedEvent
+	| TranscriptAssistantBlockUpdateEvent
 	| TranscriptToolInputUpdateEvent
 	| TranscriptToolStartEvent
 	| TranscriptToolProgressEvent
@@ -393,6 +404,53 @@ function toolInputChunk(
 	const tool = safeOptionalDisplay(block.name, MAX_EVENT_LABEL_BYTES);
 	if (!delta || callId === undefined || tool === undefined) return undefined;
 	return { callId, tool, delta };
+}
+function assistantBlockUpdate(
+	frame: Record<string, unknown>,
+	entryId: string,
+	at: string,
+	toolInput?: { callId: string; tool: string; content: string },
+): TranscriptAssistantBlockUpdateEvent | undefined {
+	const event = asFrame(frame.assistantMessageEvent);
+	const blockIndex = asFiniteNumber(event.contentIndex);
+	if (!Number.isSafeInteger(blockIndex) || blockIndex === undefined || blockIndex < 0 || blockIndex > MAX_EVENT_COUNT)
+		return undefined;
+	if (toolInput) {
+		return {
+			type: "assistant.block.update",
+			entryId,
+			blockIndex,
+			blockKind: "tool-input",
+			content: toolInput.content,
+			callId: toolInput.callId,
+			tool: toolInput.tool,
+			at,
+		};
+	}
+	const partial = asFrame(event.partial);
+	const content = Array.isArray(partial.content) ? partial.content : [];
+	const block = asFrame(content[blockIndex]);
+	if (event.type === "text_delta" && block.type === TEXT_BLOCK && typeof block.text === "string") {
+		return {
+			type: "assistant.block.update",
+			entryId,
+			blockIndex,
+			blockKind: "text",
+			content: cleanText(block.text, 65_536),
+			at,
+		};
+	}
+	if (event.type === "thinking_delta" && block.type === THINKING_BLOCK && typeof block.thinking === "string") {
+		return {
+			type: "assistant.block.update",
+			entryId,
+			blockIndex,
+			blockKind: "thinking",
+			content: cleanText(block.thinking, 65_536),
+			at,
+		};
+	}
+	return undefined;
 }
 function sourceId(message: unknown): string | undefined {
 	if (!isRecord(message)) return undefined;
@@ -987,16 +1045,26 @@ export class TranscriptEventTranslator {
 		if (!correlated || correlated.active.ended) return [];
 		const messageEvents = this.emitMessage(snapshot);
 		const chunk = toolInputChunk(frame);
-		if (chunk === undefined) return messageEvents;
+		if (chunk === undefined) {
+			const block = assistantBlockUpdate(frame, correlated.active.entryId, snapshot.at);
+			return block ? [...messageEvents, block] : messageEvents;
+		}
 		const raw = `${this.#toolInputs.get(chunk.callId) ?? ""}${chunk.delta}`.slice(0, 65_536);
 		this.#toolInputs.set(chunk.callId, raw);
+		const safeInput = safeToolInput(raw);
+		const block = assistantBlockUpdate(frame, correlated.active.entryId, snapshot.at, {
+			callId: chunk.callId,
+			tool: chunk.tool,
+			content: safeInput,
+		});
 		return [
 			...messageEvents,
+			...(block ? [block] : []),
 			{
 				type: "tool.input.update",
 				callId: chunk.callId,
 				tool: chunk.tool,
-				input: safeToolInput(raw),
+				input: safeInput,
 				at: snapshot.at,
 			},
 		];

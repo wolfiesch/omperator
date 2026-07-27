@@ -140,6 +140,104 @@ struct LiveTranscriptTests {
         #expect(projection.calls.first?.result.hasPrefix("…") == true)
     }
 
+    @Test func liveTurnPreservesThinkingTextAndToolBlockOrder() {
+        var timeline = LiveTurnTimeline()
+        timeline.apply(block(entryId: "assistant-1", index: 2, kind: "tool-input",
+                             content: "{\"content\":\"hello\"}", callId: "call-1", tool: "write"))
+        timeline.apply(block(entryId: "assistant-1", index: 0, kind: "thinking",
+                             content: "Checking"))
+        timeline.apply(block(entryId: "assistant-1", index: 1, kind: "text",
+                             content: "I will update it."))
+
+        #expect(timeline.blocks.map(\.kind) == [.thinking, .text, .toolInput])
+        #expect(timeline.blocks.map(\.blockIndex) == [0, 1, 2])
+    }
+
+    @Test func liveTurnRevealsWholeGraphemesAndDoesNotDuplicateSnapshots() {
+        var timeline = LiveTurnTimeline()
+        let update = block(entryId: "assistant-1", index: 0, kind: "text",
+                           content: "A👨‍👩‍👧‍👦B")
+        timeline.apply(update)
+        timeline.apply(update)
+
+        #expect(timeline.blocks.count == 1)
+        timeline.advance(maxCatchUpFrames: 100)
+        #expect(timeline.blocks[0].content == "A")
+        timeline.advance(maxCatchUpFrames: 100)
+        #expect(timeline.blocks[0].content == "A👨‍👩‍👧‍👦")
+        timeline.advance(maxCatchUpFrames: 100)
+        #expect(timeline.blocks[0].content == "A👨‍👩‍👧‍👦B")
+        #expect(timeline.isCaughtUp)
+    }
+
+    @Test func liveWritePreviewGrowsBeforeArgumentsFormValidJSON() {
+        var timeline = LiveTurnTimeline()
+        timeline.apply(block(
+            entryId: "assistant-1",
+            index: 0,
+            kind: "tool-input",
+            content: "{\"path\":\"notes.md\",\"content\":\"Hello\\nwor",
+            callId: "call-write",
+            tool: "write"
+        ))
+        while timeline.advance(maxCatchUpFrames: 100) {}
+
+        #expect(timeline.blocks[0].previewText == "Hello\nwor")
+
+        timeline.apply(block(
+            entryId: "assistant-1",
+            index: 0,
+            kind: "tool-input",
+            content: "{\"path\":\"notes.md\",\"content\":\"Hello\\nworld\"}",
+            callId: "call-write",
+            tool: "write"
+        ))
+        while timeline.advance(maxCatchUpFrames: 100) {}
+        #expect(timeline.blocks[0].previewText == "Hello\nworld")
+    }
+
+    @Test func liveTurnKeepsMultipleToolCallsAndStartDoesNotSnapInput() {
+        var timeline = LiveTurnTimeline()
+        timeline.apply(block(entryId: "assistant-1", index: 0, kind: "tool-input",
+                             content: "{\"content\":\"first\"}", callId: "call-1", tool: "write"))
+        timeline.apply(block(entryId: "assistant-1", index: 1, kind: "tool-input",
+                             content: "{\"content\":\"second\"}", callId: "call-2", tool: "write"))
+        timeline.advance(maxCatchUpFrames: 100)
+        let partial = timeline.blocks[0].content
+
+        #expect(timeline.blocks.count == 2)
+        let applied = timeline.applyToolLifecycle(event("tool.start", [
+            "callId": .string("call-1"),
+            "tool": .string("write"),
+            "title": .string("Write notes.md"),
+            "args": .object(["content": .string("first")]),
+        ]))
+        #expect(applied)
+        #expect(timeline.blocks[0].content == partial)
+        #expect(timeline.blocks[0].phase == .running)
+        #expect(timeline.blocks[0].title == "Write notes.md")
+        #expect(timeline.blocks[1].toolCallId == "call-2")
+    }
+
+    private func block(
+        entryId: String,
+        index: Int,
+        kind: String,
+        content: String,
+        callId: String? = nil,
+        tool: String? = nil
+    ) -> SessionEvent {
+        var fields: [String: JSONValue] = [
+            "entryId": .string(entryId),
+            "blockIndex": .number(Double(index)),
+            "blockKind": .string(kind),
+            "content": .string(content),
+        ]
+        if let callId { fields["callId"] = .string(callId) }
+        if let tool { fields["tool"] = .string(tool) }
+        return event("assistant.block.update", fields)
+    }
+
     private func event(_ type: String, _ fields: [String: JSONValue]) -> SessionEvent {
         SessionEvent(type: type, fields: ["type": .string(type)].merging(fields) { _, new in new })
     }

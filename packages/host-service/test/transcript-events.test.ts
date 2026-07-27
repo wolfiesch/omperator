@@ -122,6 +122,16 @@ describe("appserver transcript event translator", () => {
 
 		expect(events).toEqual([
 			{
+				type: "assistant.block.update",
+				entryId: "assistant:1",
+				blockIndex: 0,
+				blockKind: "tool-input",
+				content: "{\"path\":\"src/",
+				callId: "call-stream",
+				tool: "read",
+				at: "1970-01-01T00:00:00.010Z",
+			},
+			{
 				type: "tool.input.update",
 				callId: "call-stream",
 				tool: "read",
@@ -129,6 +139,66 @@ describe("appserver transcript event translator", () => {
 				at: "1970-01-01T00:00:00.010Z",
 			},
 		]);
+	});
+
+	test("preserves ordered text and thinking block snapshots from raw provider deltas", () => {
+		const translator = new TranscriptEventTranslator(() => 99);
+		translator.translate({ type: "message_start", message: { role: "assistant", content: [] } });
+		const thinking = translator.translate({
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "thinking_delta",
+				contentIndex: 0,
+				delta: "ning",
+				partial: {
+					role: "assistant",
+					content: [{ type: "thinking", thinking: "Planning" }],
+				},
+			},
+			message: {
+				role: "assistant",
+				timestamp: 10,
+				content: [{ type: "thinking", thinking: "Planning" }],
+			},
+		});
+		const text = translator.translate({
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "text_delta",
+				contentIndex: 1,
+				delta: "lo",
+				partial: {
+					role: "assistant",
+					content: [
+						{ type: "thinking", thinking: "Planning" },
+						{ type: "text", text: "Hello" },
+					],
+				},
+			},
+			message: {
+				role: "assistant",
+				timestamp: 10,
+				content: [
+					{ type: "thinking", thinking: "Planning" },
+					{ type: "text", text: "Hello" },
+				],
+			},
+		});
+
+		expect(thinking.at(-1)).toMatchObject({
+			type: "assistant.block.update",
+			entryId: "assistant:1",
+			blockIndex: 0,
+			blockKind: "thinking",
+			content: "Planning",
+		});
+		expect(text.at(-1)).toMatchObject({
+			type: "assistant.block.update",
+			entryId: "assistant:1",
+			blockIndex: 1,
+			blockKind: "text",
+			content: "Hello",
+		});
 	});
 
 	test("redacts accumulated tool input even when a secret spans provider chunks", () => {
@@ -154,8 +224,13 @@ describe("appserver transcript event translator", () => {
 		update("{\"password\":");
 		const events = update("\"super-secret-value\"}");
 
-		expect(events).toHaveLength(1);
+		expect(events).toHaveLength(2);
 		expect(events[0]).toMatchObject({
+			type: "assistant.block.update",
+			callId: "call-secret",
+			content: "{\"password\":[redacted]}",
+		});
+		expect(events[1]).toMatchObject({
 			type: "tool.input.update",
 			callId: "call-secret",
 			input: "{\"password\":[redacted]}",

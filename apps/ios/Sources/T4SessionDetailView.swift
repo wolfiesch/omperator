@@ -65,6 +65,7 @@ struct T4SessionDetailView: View {
                         if showFacts { facts }
                         Divider().overlay(t.lineFaint)
                         T4TranscriptView(entries: store.transcript(for: session.sessionId),
+                                         liveTurn: store.liveTurns[session.sessionId],
                                          streamingMessage: store.streamingMessages[session.sessionId],
                                          liveTools: store.liveTools[session.sessionId] ?? LiveToolProjection(),
                                          theme: t)
@@ -98,6 +99,10 @@ struct T4SessionDetailView: View {
                     }
                 }
                 .onChange(of: store.streamingMessages[session.sessionId]) { _, _ in
+                    guard store.prependingSession != session.sessionId else { return }
+                    proxy.scrollTo("transcript-bottom", anchor: .bottom)
+                }
+                .onChange(of: store.liveTurns[session.sessionId]) { _, _ in
                     guard store.prependingSession != session.sessionId else { return }
                     proxy.scrollTo("transcript-bottom", anchor: .bottom)
                 }

@@ -9,6 +9,7 @@ import HostWire
 
 struct T4TranscriptView: View {
     let entries: [TranscriptEntry]
+    var liveTurn: LiveTurnTimeline?
     var streamingMessage: StreamingAssistantBuffer?
     var liveTools: LiveToolProjection
     let theme: Theme
@@ -25,15 +26,22 @@ struct T4TranscriptView: View {
                     T4TranscriptRow(entry: entry, theme: theme)
                 }
             }
-            if let streamingMessage, !streamingMessage.isEmpty {
-                T4StreamingMessage(
-                    text: streamingMessage.text,
-                    reasoning: streamingMessage.reasoning,
-                    theme: theme
-                )
-            }
-            ForEach(liveTools.calls) { call in
-                T4LiveToolRow(call: call, theme: theme)
+            if let liveTurn, !liveTurn.isEmpty {
+                ForEach(liveTurn.blocks) { block in
+                    T4LiveTurnBlockView(block: block, theme: theme)
+                }
+                T4StreamingIndicator(theme: theme)
+            } else {
+                if let streamingMessage, !streamingMessage.isEmpty {
+                    T4StreamingMessage(
+                        text: streamingMessage.text,
+                        reasoning: streamingMessage.reasoning,
+                        theme: theme
+                    )
+                }
+                ForEach(liveTools.calls) { call in
+                    T4LiveToolRow(call: call, theme: theme)
+                }
             }
         }
     }
@@ -200,6 +208,136 @@ struct T4StreamingMessage: View {
         .padding(.top, 6)
         .accessibilityLabel("Assistant is typing: \(text)")
         .onAppear { pulse = true }
+    }
+}
+
+struct T4StreamingIndicator: View {
+    let theme: Theme
+    @State private var pulse = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(theme.accent)
+                .frame(width: 6, height: 6)
+                .opacity(pulse ? 0.9 : 0.25)
+                .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulse)
+            Text("streaming")
+                .font(.system(size: 9))
+                .foregroundStyle(theme.txtLabel)
+        }
+        .onAppear { pulse = true }
+    }
+}
+
+/// An OMP-native live block. Separate rows retain the provider's real block
+/// order, so thinking can lead into text and multiple generated tool calls
+/// remain visible together instead of being flattened into one tail message.
+struct T4LiveTurnBlockView: View {
+    let block: LiveTurnBlock
+    let theme: Theme
+    @State private var pulse = false
+
+    private var isActiveTool: Bool {
+        block.phase == .generating || block.phase == .running
+    }
+
+    private var toolColor: Color {
+        switch block.phase {
+        case .generating, .running: return theme.cBash
+        case .succeeded: return theme.diffAdd
+        case .failed: return theme.diffDel
+        }
+    }
+
+    private var toolStatus: String {
+        switch block.phase {
+        case .generating: return "preparing"
+        case .running: return "running"
+        case .succeeded: return "completed"
+        case .failed: return "failed"
+        }
+    }
+
+    var body: some View {
+        switch block.kind {
+        case .thinking:
+            if !block.content.isEmpty {
+                Text(block.content)
+                    .font(.system(size: 13))
+                    .italic()
+                    .foregroundStyle(theme.txtMuted)
+                    .textSelection(.enabled)
+                    .accessibilityLabel("Assistant thinking: \(block.content)")
+            }
+        case .text:
+            if !block.content.isEmpty {
+                Text(block.content)
+                    .font(.system(size: 15))
+                    .foregroundStyle(theme.txt)
+                    .textSelection(.enabled)
+                    .accessibilityLabel("Assistant is typing: \(block.content)")
+            }
+        case .toolInput:
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 7) {
+                    Image(systemName: toolIcon)
+                        .font(.system(size: 11))
+                        .foregroundStyle(toolColor)
+                    Text(block.title.isEmpty ? block.tool : block.title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(theme.txtBody)
+                    Spacer()
+                    Circle()
+                        .fill(toolColor)
+                        .frame(width: 6, height: 6)
+                        .opacity(isActiveTool && pulse ? 0.9 : 0.35)
+                    Text(toolStatus)
+                        .font(.system(size: 9))
+                        .foregroundStyle(theme.txtLabel)
+                }
+                if !block.previewText.isEmpty {
+                    Text(String(block.previewText.prefix(2_400)))
+                        .font(.term(11.5))
+                        .foregroundStyle(theme.txt)
+                        .textSelection(.enabled)
+                }
+                if !block.progress.isEmpty {
+                    Text(String(block.progress.suffix(1_600)))
+                        .font(.term(11.5))
+                        .foregroundStyle(theme.txtMuted)
+                        .textSelection(.enabled)
+                }
+                if !block.result.isEmpty && !isActiveTool {
+                    Text(String(block.result.prefix(1_600)))
+                        .font(.term(11.5))
+                        .foregroundStyle(theme.txtMuted)
+                        .textSelection(.enabled)
+                }
+            }
+            .padding(10)
+            .background(theme.glassFill2, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(toolColor.opacity(0.35), lineWidth: 1)
+            )
+            .animation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true), value: pulse)
+            .onAppear { pulse = true }
+            .accessibilityLabel("\(block.tool) \(toolStatus): \(block.previewText)")
+        }
+    }
+
+    private var toolIcon: String {
+        switch block.tool.lowercased() {
+        case "read": return "doc.text"
+        case "write": return "doc.badge.plus"
+        case "edit", "patch": return "rectangle.and.pencil.and.ellipsis"
+        case "bash", "shell", "terminal": return "terminal"
+        case "task", "agent": return "person.3"
+        case "search", "find", "grep": return "magnifyingglass"
+        case "todo": return "checklist"
+        default: return "wrench.and.screwdriver"
+        }
     }
 }
 
