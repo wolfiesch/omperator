@@ -340,6 +340,7 @@ final class T4SessionStore: ObservableObject {
         if let endpointSeam = seamArg("T4Endpoint"),
            let seamDeviceId = seamArg("T4DeviceId"), let seamToken = seamArg("T4DeviceToken"),
            let seamEndpoint = URL(string: endpointSeam), !connected, !connecting {
+            ephemeralCredentials = true
             await connect(endpoint: seamEndpoint, identity: ClientIdentity(name: "t4-ios", version: "0.1", build: "dev", platform: "ios"),
                           authentication: DeviceAuthentication(deviceId: seamDeviceId, deviceToken: seamToken))
             return
@@ -357,7 +358,14 @@ final class T4SessionStore: ObservableObject {
         await connect(endpoint: endpoint, identity: ClientIdentity(name: "t4-ios", version: "0.1", build: "dev", platform: "ios"), authentication: auth)
     }
 
+    /// True when the session's credentials came from -T4Endpoint/-T4DeviceId/
+    /// -T4DeviceToken launch seams: nothing may touch the Keychain this run
+    /// (delete-then-add against another signer's items triggers the macOS
+    /// consent dialog, which can block the main thread indefinitely).
+    private var ephemeralCredentials = false
+
     private func persist(endpoint: URL, authentication: DeviceAuthentication?) {
+        if ephemeralCredentials { return }
         // nil/empty values clear the item, matching the prior UserDefaults
         // semantics (an open host persists only the endpoint, no creds).
         Keychain.set(endpoint.absoluteString, forKey: Self.savedEndpointKey)
