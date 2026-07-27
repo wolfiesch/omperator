@@ -240,11 +240,7 @@ jobs:
   private-maintainer:
     name: vps-maintainer
     needs: changes
-    if: >-
-      needs.changes.outputs.maintainer == 'true' &&
-      github.event_name == 'pull_request' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      vars.PRIVATE_CI_ENABLED == 'true'
+    if: ${{ needs.changes.outputs.maintainer == 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.PRIVATE_CI_ENABLED == 'true' }}
     runs-on: [self-hosted, Linux, X64, wolfie-vps, omperator-primary, trusted]
     timeout-minutes: 30
     steps:
@@ -633,13 +629,7 @@ jobs:
 
   maintainer:
     needs: changes
-    if: >-
-      needs.changes.outputs.maintainer == 'true' &&
-      (
-        github.event_name != 'pull_request' ||
-        github.event.pull_request.head.repo.full_name != github.repository ||
-        vars.PRIVATE_CI_ENABLED != 'true'
-      )
+    if: ${{ needs.changes.outputs.maintainer == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || vars.PRIVATE_CI_ENABLED != 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:

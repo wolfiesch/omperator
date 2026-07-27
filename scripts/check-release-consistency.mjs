@@ -1038,9 +1038,9 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
         errors.push(`.github/workflows/ci.yml ${job} must run unconditionally`);
     }
     const hostedMaintainerCondition =
-      "needs.changes.outputs.maintainer == 'true' && (\n  github.event_name != 'pull_request' ||\n  github.event.pull_request.head.repo.full_name != github.repository ||\n  vars.PRIVATE_CI_ENABLED != 'true'\n)";
+      "${{ needs.changes.outputs.maintainer == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || vars.PRIVATE_CI_ENABLED != 'true') }}";
     const privateMaintainerCondition =
-      "needs.changes.outputs.maintainer == 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.PRIVATE_CI_ENABLED == 'true'";
+      "${{ needs.changes.outputs.maintainer == 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.PRIVATE_CI_ENABLED == 'true' }}";
     if (workflow?.jobs?.["build-e2e"]?.if !== undefined)
       errors.push(".github/workflows/ci.yml hosted build-e2e must run unconditionally");
     if (workflow?.jobs?.maintainer?.if !== hostedMaintainerCondition)
