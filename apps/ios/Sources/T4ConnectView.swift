@@ -160,7 +160,12 @@ struct T4ConnectView: View {
             ? DeviceAuthentication(deviceId: deviceId, deviceToken: deviceToken) : nil
         await store.connect(
             endpoint: url,
-            identity: ClientIdentity(name: "t4-ios", version: "0.1", build: "dev", platform: "ios"),
+            identity: ClientIdentity(
+                name: platformClientName,
+                version: "0.1",
+                build: "dev",
+                platform: platformClientPlatform
+            ),
             authentication: auth
         )
         if store.connected { dismiss() }

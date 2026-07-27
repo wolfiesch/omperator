@@ -252,6 +252,51 @@ export class OfficialOmpProfileAuthority implements SessionAuthority, SessionDis
 		return { sessionId: sessionId(id), path, cwd: canonicalCwd, title, entries: [] };
 	}
 
+	/**
+	 * Copy a session's durable history into a new session file this host owns.
+	 * The source file is only read — its writer (if any) never sees a second
+	 * writer, and the copy lands in the host-owned `-t4` directory exactly like
+	 * `create`. Only the header line is rewritten (new id, fresh timestamp, and
+	 * `cwd` when the caller chose a different working directory); every
+	 * transcript record after it is copied verbatim, so the copy opens with the
+	 * source's full history.
+	 */
+	async fork(source: SessionRecord, cwd?: string): Promise<SessionAuthoritySession> {
+		await this.#assertLease();
+		const sourcePath = await this.#assertOwnedSession(source);
+		const body = await readFile(sourcePath, "utf8");
+		// A session may still be appending while it is forked. Only copy the
+		// durable newline-terminated prefix so the fork never ends with a
+		// partially written JSONL record.
+		const durableBody = body.endsWith("\n") ? body : body.slice(0, body.lastIndexOf("\n") + 1);
+		const id = Bun.randomUUIDv7();
+		const timestamp = new Date().toISOString();
+		const canonicalCwd = await realpath(cwd ?? source.cwd);
+		if (!(await stat(canonicalCwd)).isDirectory()) throw new Error("official OMP session cwd is unavailable");
+		let headerSeen = false;
+		const lines = durableBody.split("\n");
+		for (let index = 0; index < lines.length; index += 1) {
+			const line = lines[index]!;
+			if (!line.startsWith('{"type":"session"')) continue;
+			lines[index] = JSON.stringify({ type: "session", version: 3, id, timestamp, cwd: canonicalCwd });
+			headerSeen = true;
+			break;
+		}
+		if (!headerSeen) throw new Error("source session file has no header record");
+		const configuredDirectory = join(this.#sessionsRoot, "-t4");
+		await mkdir(configuredDirectory, { recursive: true, mode: 0o700 });
+		const directory = await this.#assertOwnedDirectory(configuredDirectory);
+		const path = join(directory, `session-${id}.jsonl`);
+		const handle = await open(path, "wx", 0o600);
+		try {
+			await handle.writeFile(lines.join("\n"), "utf8");
+			await handle.sync();
+		} finally {
+			await handle.close();
+		}
+		return { sessionId: sessionId(id), path, cwd: canonicalCwd, title: source.title, entries: [] };
+	}
+
 	async archive(session: SessionRecord, archivedAt: string): Promise<void> {
 		await this.#assertLease();
 		await this.#assertOwnedSession(session);

@@ -76,32 +76,52 @@ struct T4SessionsView: View {
 
     @ViewBuilder
     private func rowContextMenu(for session: SessionRef) -> some View {
-        Button {
-            renameText = session.title
-            renaming = session
-        } label: {
-            Label("Rename", systemImage: "pencil")
-        }
-        Button {
-            Task { await store.compactSession(sessionId: session.sessionId) }
-        } label: {
-            Label("Compact", systemImage: "rectangle.compress.vertical")
-        }
-        Button {
-            Task { await store.retrySession(sessionId: session.sessionId) }
-        } label: {
-            Label("Retry", systemImage: "arrow.clockwise")
-        }
-        Button {
-            Task { await store.closeSession(sessionId: session.sessionId) }
-        } label: {
-            Label("Close", systemImage: "xmark.circle")
-        }
-        .disabled(session.status == "closed")
-        Button(role: .destructive) {
-            Task { await store.deleteSession(sessionId: session.sessionId) }
-        } label: {
-            Label("Delete", systemImage: "trash")
+        if let control = session.sessionControl {
+            let presentation = control.t4Presentation
+            Label(presentation.railLabel, systemImage: presentation.systemImage)
+                .disabled(true)
+            if presentation.canFork && store.canForkSessions {
+                Button {
+                    Task { await store.forkSession(sessionId: session.sessionId) }
+                } label: {
+                    Label("Continue in a Copy", systemImage: "doc.on.doc")
+                }
+            }
+            if case .released = control {
+                Button {
+                    Task { await store.reclaimSession(sessionId: session.sessionId) }
+                } label: {
+                    Label("Bring Back to App", systemImage: "arrow.uturn.backward")
+                }
+            }
+        } else {
+            Button {
+                renameText = session.title
+                renaming = session
+            } label: {
+                Label("Rename", systemImage: "pencil")
+            }
+            Button {
+                Task { await store.compactSession(sessionId: session.sessionId) }
+            } label: {
+                Label("Compact", systemImage: "rectangle.compress.vertical")
+            }
+            Button {
+                Task { await store.retrySession(sessionId: session.sessionId) }
+            } label: {
+                Label("Retry", systemImage: "arrow.clockwise")
+            }
+            Button {
+                Task { await store.closeSession(sessionId: session.sessionId) }
+            } label: {
+                Label("Close", systemImage: "xmark.circle")
+            }
+            .disabled(session.status == "closed")
+            Button(role: .destructive) {
+                Task { await store.deleteSession(sessionId: session.sessionId) }
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
         }
     }
 
@@ -126,7 +146,14 @@ struct T4SessionRow: View {
                     .foregroundStyle(theme.txt)
                     .lineLimit(1)
                 Spacer(minLength: 8)
-                StatusPill(status: session.status, theme: theme)
+                if let control = session.sessionControl {
+                    Text(control.t4Presentation.railLabel)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(theme.cAdvisor)
+                        .lineLimit(1)
+                } else {
+                    StatusPill(status: session.status, theme: theme)
+                }
             }
             HStack(spacing: 10) {
                 if let model = session.model {

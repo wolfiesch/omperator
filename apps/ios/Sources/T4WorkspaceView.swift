@@ -92,14 +92,15 @@ struct T4WorkspaceView: View {
                     await store.pairAndConnect(
                         endpoint: endpoint,
                         code: args[codeIndex + 1],
-                        deviceName: "sim-ui-test"
+                        deviceName: platformDeviceName()
                     )
                 }
             }
             .task {
-                // UI-test seam: launch with -T4Send <message> to send one prompt
-                // from the app's own send path once connected (proves the Swift
-                // lease flow end-to-end without touch injection).
+                // UI-test seam: launch with -T4Send <message> and optionally
+                // -T4SendSession <id> to send one prompt from the app's own
+                // path once connected (proves the Swift lease flow end-to-end
+                // without touch injection).
                 let args = ProcessInfo.processInfo.arguments
                 guard let index = args.firstIndex(of: "-T4Send"), args.indices.contains(index + 1) else { return }
                 let text = args[index + 1]
@@ -110,7 +111,16 @@ struct T4WorkspaceView: View {
                 for _ in 0..<40 where !store.sessions.contains(where: { $0.hostId != "studio-mac" }) {
                     try? await Task.sleep(for: .milliseconds(500))
                 }
-                guard store.connected, let session = store.selectedSession ?? store.sessions.first else { return }
+                let requestedSessionId = args.firstIndex(of: "-T4SendSession")
+                    .flatMap { args.indices.contains($0 + 1) ? args[$0 + 1] : nil }
+                let session = requestedSessionId
+                    .flatMap { id in store.sessions.first(where: { $0.sessionId == id }) }
+                    ?? store.selectedSession.flatMap { selected in
+                        store.sessions.first(where: { $0.sessionId == selected.sessionId })
+                    }
+                    ?? store.sessions.first(where: { $0.hostId != "studio-mac" })
+                guard store.connected, let session else { return }
+                store.select(session)
                 // The socket can be mid-reconnect when we get here; retry a few
                 // times before giving up (errors surface via store.lastError).
                 for attempt in 0..<3 {

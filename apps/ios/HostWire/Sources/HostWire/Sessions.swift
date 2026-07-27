@@ -36,6 +36,28 @@ public struct ContextUsage: Decodable, Equatable, Sendable {
     }
 }
 
+public enum SessionObserverLockStatus: String, Equatable, Sendable {
+    case live
+    case suspect
+    case malformed
+}
+
+public enum SessionObserverTranscript: String, Equatable, Sendable {
+    case live
+    case snapshot
+}
+
+/// Categorical session ownership state from
+/// `SessionRef.liveState.sessionControl`. A present shape that this client
+/// cannot prove it understands becomes `.unknown`, which keeps writes gated.
+public enum SessionControlState: Equatable, Sendable {
+    case observer(lockStatus: SessionObserverLockStatus, transcript: SessionObserverTranscript)
+    case reconciling(transcript: SessionObserverTranscript)
+    case unverified(transcript: SessionObserverTranscript)
+    case released(transcript: SessionObserverTranscript, resumeCommand: String)
+    case unknown
+}
+
 public struct SessionRef: Decodable, Equatable, Sendable {
     public let hostId: HostId
     public let sessionId: SessionId
@@ -91,6 +113,52 @@ public struct SessionRef: Decodable, Equatable, Sendable {
         contextUsage = try c.decodeIfPresent(ContextUsage.self, forKey: .contextUsage)
         attention = try c.decodeIfPresent(JSONValue.self, forKey: .attention)
         runtime = try c.decodeIfPresent(JSONValue.self, forKey: .runtime)
+    }
+
+    /// A missing control field means ordinary writable appserver ownership.
+    /// Malformed, additive, or future control shapes remain safely read-only.
+    public var sessionControl: SessionControlState? {
+        guard let liveState else { return nil }
+        guard case .object(let live) = liveState else { return .unknown }
+        guard let raw = live["sessionControl"] else { return nil }
+        guard case .object(let control) = raw,
+              case .string(let mode) = control["mode"] ?? .null
+        else { return .unknown }
+
+        func transcript() -> SessionObserverTranscript? {
+            guard case .string(let raw) = control["transcript"] ?? .null else { return nil }
+            return SessionObserverTranscript(rawValue: raw)
+        }
+
+        switch mode {
+        case "observer":
+            guard Set(control.keys) == ["mode", "lockStatus", "transcript"],
+                  case .string(let rawLock) = control["lockStatus"] ?? .null,
+                  let lock = SessionObserverLockStatus(rawValue: rawLock),
+                  let transcript = transcript()
+            else { return .unknown }
+            return .observer(lockStatus: lock, transcript: transcript)
+        case "reconciling":
+            guard Set(control.keys) == ["mode", "transcript"],
+                  let transcript = transcript()
+            else { return .unknown }
+            return .reconciling(transcript: transcript)
+        case "unverified":
+            guard Set(control.keys) == ["mode", "transcript"],
+                  let transcript = transcript()
+            else { return .unknown }
+            return .unverified(transcript: transcript)
+        case "released":
+            guard Set(control.keys) == ["mode", "transcript", "resumeCommand"],
+                  let transcript = transcript(),
+                  case .string(let resumeCommand) = control["resumeCommand"] ?? .null,
+                  !resumeCommand.isEmpty,
+                  (try? Bounded.controlFree(resumeCommand, path: "liveState.sessionControl.resumeCommand", maxBytes: 1024)) != nil
+            else { return .unknown }
+            return .released(transcript: transcript, resumeCommand: resumeCommand)
+        default:
+            return .unknown
+        }
     }
 }
 

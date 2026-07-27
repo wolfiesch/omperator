@@ -95,8 +95,15 @@ export async function discoverTailscaleExecutable(env: NodeJS.ProcessEnv = proce
 	throw new Error("tailscale executable not found");
 }
 
+export function noninteractiveProcessEnvironment(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+	return { ...env, TERM: env.TERM || "dumb" };
+}
+
 export class BunProcessRunner implements ProcessRunner {
-	constructor(private readonly executable?: string) {}
+	constructor(
+		private readonly executable?: string,
+		private readonly environment: NodeJS.ProcessEnv = process.env,
+	) {}
 	async run(argv: string[], options: ProcessRunOptions): Promise<{ stdout: string; exitCode: number }> {
 		if (
 			!Array.isArray(argv) ||
@@ -112,7 +119,11 @@ export class BunProcessRunner implements ProcessRunner {
 		)
 			throw new Error("process limits invalid");
 		const command = this.executable ? [this.executable, ...argv.slice(1)] : argv;
-		const child = Bun.spawn(command, { stdout: "pipe", stderr: "pipe" });
+		const child = Bun.spawn(command, {
+			env: noninteractiveProcessEnvironment(this.environment),
+			stdout: "pipe",
+			stderr: "pipe",
+		});
 		const stdout = child.stdout as unknown as AsyncIterable<Uint8Array>;
 		const stderr = child.stderr as unknown as AsyncIterable<Uint8Array>;
 		const drain = (async () => {

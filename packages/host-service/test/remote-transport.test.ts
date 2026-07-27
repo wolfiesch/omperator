@@ -41,12 +41,13 @@ type FakeServeConfig = {
 class FakeBunServer {
 	readonly config: FakeServeConfig;
 	readonly stopCalls: boolean[] = [];
+	requestAddress = "100.64.0.1";
 	lastUpgrade?: { data: FakeSocketData };
 	constructor(config: FakeServeConfig) {
 		this.config = config;
 	}
 	requestIP(): { address: string } {
-		return { address: "100.64.0.1" };
+		return { address: this.requestAddress };
 	}
 	upgrade(_request: Request, options: { data: FakeSocketData }): boolean {
 		this.lastUpgrade = options;
@@ -266,6 +267,44 @@ async function grantedFeatures(options: AppserverOptions): Promise<string[]> {
 }
 
 describe("remote socket lifecycle", () => {
+	test("a native client on the host gets a stable local Tailnet identity", async () => {
+		const harness = new FakeBunHarness();
+		try {
+			harness.install();
+			const resolved: string[] = [];
+			const listener = new BunRemoteListener(
+				createListenerPlan({ address: "100.64.0.1", port: 1 }),
+				{},
+				{ address: "100.64.0.1", port: 1 },
+				{
+					resolve: async address => {
+						resolved.push(address);
+						return peerIdentity("local-node");
+					},
+				},
+			);
+			listener.start();
+			const server = harness.remote();
+			const sockets: FakeSocket[] = [];
+			for (const address of ["127.0.0.1", "100.64.0.1"]) {
+				server.requestAddress = address;
+				sockets.push(await openRemote(server));
+			}
+			expect(resolved).toEqual([]);
+			for (const socket of sockets) {
+				expect(socket.data.peer.address).toBe("100.64.0.1");
+				expect(socket.data.peer.identity).toEqual({
+					nodeId: "local:100.64.0.1",
+					addresses: ["100.64.0.1"],
+					source: "direct",
+				});
+			}
+			await listener.stop();
+		} finally {
+			harness.restore();
+		}
+	});
+
 	test("IDs are unique, peer snapshots immutable, sends are bounded, and close cleans the map", async () => {
 		const harness = new FakeBunHarness();
 		try {
@@ -603,6 +642,7 @@ describe("remote appserver policy transport", () => {
 			});
 			local.config.websocket?.close?.(localSocket);
 			const remote = harness.remote();
+			remote.requestAddress = "100.64.0.2";
 			const pairingSocket = await openRemote(remote);
 			await remote.config.websocket?.message?.(pairingSocket, hello(["prompt.lease"]));
 			await remote.config.websocket?.message?.(

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { chromium } from "playwright-core";
+import type { chromium as ChromiumLauncher } from "playwright-core";
 import {
 	type Cursor,
 	type LeaseId,
@@ -17,6 +17,29 @@ import {
 	type SessionId,
 } from "@t4-code/host-wire";
 import { validatePreviewUrl } from "./url-policy.ts";
+
+let chromiumPromise: Promise<typeof ChromiumLauncher> | undefined;
+
+/**
+ * playwright-core is loaded lazily: it cannot be bundled into the compiled
+ * single-file host (dynamic deep requires), so a deployed binary resolves it
+ * from node_modules only when a preview is actually launched. Without it the
+ * host boots and serves everything else; preview commands fail with a clear
+ * `unavailable` instead of a startup crash.
+ */
+function loadChromium(): Promise<typeof ChromiumLauncher> {
+	if (!chromiumPromise)
+		chromiumPromise = import("playwright-core").then(
+			module => module.chromium,
+			(error: unknown) => {
+				throw new PreviewServiceError(
+					"unavailable",
+					`playwright-core is unavailable: ${error instanceof Error ? error.message : String(error)}`,
+				);
+			},
+		);
+	return chromiumPromise;
+}
 import type {
 	BrowserContext,
 	PreviewCaptureRecord,
@@ -222,6 +245,7 @@ export class PreviewService {
 			throw new PreviewServiceError("busy", "maximum concurrent previews reached");
 		const chromiumInfo = await this.#resolveChromium();
 		const previewId = makePreviewId();
+		const chromium = await loadChromium();
 		const browser = await chromium.launch({
 			executablePath: chromiumInfo.path,
 			headless: true,
