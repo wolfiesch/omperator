@@ -32,11 +32,20 @@ struct T4SessionDetailView: View {
     @State private var sending = false
     @State private var showFacts = false
     @State private var planExpanded = false
-    @State private var showTerminal = false
-    /// One enum-driven sheet: multiple .sheet modifiers on one view stack
-    /// and merge toolbars (the triple-Done bug).
-    enum ActiveSheet: String, Identifiable { case files, agents, usage, review, artifacts, settings, browser, searchDiff; var id: String { rawValue } }
+    /// Bottom terminal open flag is persisted per-session in the layout
+    /// (store.layout.terminalOpen); toggling writes through the store so a
+    /// relaunch restores the terminal alongside the dock.
+    private var showTerminal: Bool { store.layout(for: session.sessionId).terminalOpen }
+    /// Modal sheets only — the region migration moved browser/files/agents/
+    /// review/searchDiff/artifacts into dock tiles. Settings + usage stay
+    /// modal (inbox is owned by the workspace, not the session detail).
+    enum ActiveSheet: String, Identifiable { case settings, usage; var id: String { rawValue } }
     @State private var activeSheet: ActiveSheet?
+    #if os(macOS)
+    /// Owns the floating NSPanels for popped-out dock tiles. Synced to the
+    /// layout's `floatingPanes` on every change; closed on disappear.
+    @StateObject private var floatingPanels: T4FloatingPaneManager
+    #endif
     @State private var attachments: [ComposerAttachment] = []
     @State private var pickerItems: [PhotosPickerItem] = []
     @State private var askDraft = ""
@@ -46,65 +55,124 @@ struct T4SessionDetailView: View {
     private var t: Theme { theme.t }
     private static let maxImages = 8   // PROMPT_IMAGE_MAX_COUNT on the wire
 
+    /// Custom init: the macOS floating-pane manager is a @StateObject with a
+    /// session/store/theme dependency, so it must be seeded here.
+    init(session: SessionRef, store: T4SessionStore) {
+        self.session = session
+        self.store = store
+        #if os(macOS)
+        // theme is an @EnvironmentObject (unavailable in init); the floating
+        // pane manager receives it via sync(theme:) from the body.
+        _floatingPanels = StateObject(wrappedValue: T4FloatingPaneManager(session: session, store: store))
+        #endif
+    }
+    private func toggleTerminal() {
+        let next = !showTerminal
+        withAnimation(.easeInOut(duration: 0.2)) { store.setTerminalOpen(next, for: session.sessionId) }
+    }
+
+    /// Open a pane into the right dock (replaces the old sheet assignment).
+    private func openPane(_ pane: DockPane) {
+        store.openDockPane(pane, for: session.sessionId)
+    }
+
     private func sheetBinding(_ sheet: ActiveSheet) -> Binding<Bool> {
         Binding(get: { activeSheet == sheet }, set: { if !$0 { activeSheet = nil } })
     }
 
-    var body: some View {
+    /// Region layout: center transcript + right dock + bottom terminal. macOS
+    /// gets true concurrent regions (HStack transcript+dock, terminal below);
+    /// iOS gets the transcript + terminal with the dock as a right-edge
+    /// slide-over overlay (mirrors the left session rail).
+    @ViewBuilder
+    private var regionContainer: some View {
+        #if os(macOS)
         VStack(spacing: 0) {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        loadEarlierSection
-                        header
-                        if let challenge = store.pendingConfirmation {
-                            confirmationBanner(challenge)
-                        }
-                        if showFacts { facts }
-                        Divider().overlay(t.lineFaint)
-                        T4TranscriptView(entries: store.transcript(for: session.sessionId),
-                                         streamingText: store.streamingText[session.sessionId] ?? "",
-                                         theme: t)
-                        // Live asks belong at the transcript's tail — the
-                        // newest thing demanding attention, always in view.
-                        if let ask = store.pendingAsk, ask.sessionId == session.sessionId {
-                            T4AskCard(ask: ask, theme: t) { value in
-                                Task { await store.respondAsk(value: value) }
-                            }
-                        }
-                        Color.clear
-                            .frame(height: 1)
-                            .id("transcript-bottom")
-                    }
-                    .padding()
-                }
-                .onAppear { proxy.scrollTo("transcript-bottom", anchor: .bottom) }
-                // Native iOS 26 scroll-edge fade at the bottom, like the nav
-                // bar's top-of-screen effect — lines dissolve under the
-                // floating composer instead of hard-clipping.
-                #if os(iOS)
-                .scrollEdgeEffectStyle(.soft, for: .bottom)
-                #endif
-                .onChange(of: store.transcript(for: session.sessionId).count) { _, _ in
-                    // A page prepend increases the count too; suppress the
-                    // scroll-to-bottom follow while the store is prepending
-                    // older history so the viewport stays put.
-                    guard store.prependingSession != session.sessionId else { return }
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo("transcript-bottom", anchor: .bottom)
-                    }
-                }
-                .onChange(of: store.streamingText[session.sessionId] ?? "") { _, _ in
-                    // Keep the live streaming tail in view as tokens arrive.
-                    guard store.prependingSession != session.sessionId else { return }
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo("transcript-bottom", anchor: .bottom)
-                    }
+            HStack(spacing: 0) {
+                transcriptCenter
+                let layout = store.layout(for: session.sessionId)
+                if layout.dockVisible {
+                    T4RightDockRegion(
+                        session: session, store: store, dockWidth: layout.dockWidth,
+                        onPopOut: { store.floatDockPane($0, for: session.sessionId) },
+                        onResize: { store.setDockWidth($0, for: session.sessionId) }
+                    )
+                    .environmentObject(theme)
                 }
             }
             T4TerminalDrawer(session: session, store: store, isOpen: showTerminal)
                 .environmentObject(theme)
         }
+        #else
+        VStack(spacing: 0) {
+            transcriptCenter
+            T4TerminalDrawer(session: session, store: store, isOpen: showTerminal)
+                .environmentObject(theme)
+        }
+        .overlay {
+            T4RightDockSlideOver(session: session, store: store)
+                .environmentObject(theme)
+        }
+        #endif
+    }
+
+    /// The center transcript region (scrollable, with the live ask tail). This
+    /// is the star — the right dock and bottom terminal run alongside it.
+    private var transcriptCenter: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    loadEarlierSection
+                    header
+                    if let challenge = store.pendingConfirmation {
+                        confirmationBanner(challenge)
+                    }
+                    if showFacts { facts }
+                    Divider().overlay(t.lineFaint)
+                    T4TranscriptView(entries: store.transcript(for: session.sessionId),
+                                     streamingText: store.streamingText[session.sessionId] ?? "",
+                                     theme: t)
+                    // Live asks belong at the transcript's tail — the newest
+                    // thing demanding attention, always in view.
+                    if let ask = store.pendingAsk, ask.sessionId == session.sessionId {
+                        T4AskCard(ask: ask, theme: t) { value in
+                            Task { await store.respondAsk(value: value) }
+                        }
+                    }
+                    Color.clear
+                        .frame(height: 1)
+                        .id("transcript-bottom")
+                }
+                .padding()
+            }
+            .onAppear { proxy.scrollTo("transcript-bottom", anchor: .bottom) }
+            // Native iOS 26 scroll-edge fade at the bottom, like the nav bar's
+            // top-of-screen effect — lines dissolve under the floating composer
+            // instead of hard-clipping.
+            #if os(iOS)
+            .scrollEdgeEffectStyle(.soft, for: .bottom)
+            #endif
+            .onChange(of: store.transcript(for: session.sessionId).count) { _, _ in
+                // A page prepend increases the count too; suppress the
+                // scroll-to-bottom follow while the store is prepending older
+                // history so the viewport stays put.
+                guard store.prependingSession != session.sessionId else { return }
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo("transcript-bottom", anchor: .bottom)
+                }
+            }
+            .onChange(of: store.streamingText[session.sessionId] ?? "") { _, _ in
+                // Keep the live streaming tail in view as tokens arrive.
+                guard store.prependingSession != session.sessionId else { return }
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo("transcript-bottom", anchor: .bottom)
+                }
+            }
+        }
+    }
+
+    var body: some View {
+        regionContainer
         .background(t.bg.ignoresSafeArea())
         // Floating glass: plan strip + composer hover over the transcript,
         // which scrolls underneath. No floor, no divider.
@@ -139,16 +207,21 @@ struct T4SessionDetailView: View {
         .task(id: session.sessionId) { await store.attach(sessionId: session.sessionId) }
         .onAppear {
             // UI-test seams: boot with a pane/drawer/card visible for screenshots.
+            // The old -T4ShowFiles/Browser/Agents seams now open region tiles
+            // (kept working for the parent's screenshot harness).
             let args = ProcessInfo.processInfo.arguments
-            if args.contains("-T4ShowFiles") { activeSheet = .files }
-            if args.contains("-T4ShowBrowser") { activeSheet = .browser }
-            if args.contains("-T4ShowAgents") { activeSheet = .agents }
-            if args.contains("-T4ShowTerminal") { showTerminal = true }
+            if args.contains("-T4ShowFiles") { openPane(.files) }
+            if args.contains("-T4ShowBrowser") { openPane(.browser) }
+            if args.contains("-T4ShowAgents") { openPane(.agents) }
+            if args.contains("-T4ShowTerminal") { store.setTerminalOpen(true, for: session.sessionId) }
             if args.contains("-T4ShowPlan") { planExpanded = true }
-            // Generic: -T4ShowSheet=usage|review|artifacts|settings|searchDiff|files|browser|agents
-            if let raw = args.first(where: { $0.hasPrefix("-T4ShowSheet=") }),
-               let sheet = ActiveSheet(rawValue: String(raw.dropFirst("-T4ShowSheet=".count))) {
-                activeSheet = sheet
+            // Generic: -T4ShowSheet=usage|settings|<dockpane>. Dock panes
+            // (files/browser/agents/review/searchDiff/artifacts) open as
+            // region tiles; settings/usage stay modal sheets.
+            if let raw = args.first(where: { $0.hasPrefix("-T4ShowSheet=") }) {
+                let value = String(raw.dropFirst("-T4ShowSheet=".count))
+                if let pane = DockPane(rawValue: value) { openPane(pane) }
+                else if let sheet = ActiveSheet(rawValue: value) { activeSheet = sheet }
             }
             // UI-test seam: -T4Fork forks the current session at boot and selects the copy.
             if args.contains("-T4Fork") {
@@ -178,41 +251,30 @@ struct T4SessionDetailView: View {
             Text("Enter a new title for this session.")
         }
         .sheet(item: $activeSheet) { sheet in
-            Group {
+            // Only settings + usage remain as modal sheets — the region
+            // migration moved every dockable pane into the right dock tile.
             switch sheet {
-            case .files:
-                T4FilesPane(session: session, store: store, isPresented: sheetBinding(.files))
-                    .environmentObject(theme)
-            case .agents:
-                T4AgentsPane(session: session, store: store, isPresented: sheetBinding(.agents))
-                    .environmentObject(theme)
             case .usage:
                 T4UsagePane(store: store, isPresented: sheetBinding(.usage))
-                    .environmentObject(theme)
-            case .review:
-                T4ReviewPane(session: session, store: store, isPresented: sheetBinding(.review))
-                    .environmentObject(theme)
-            case .artifacts:
-                T4ArtifactsPane(session: session, store: store, isPresented: sheetBinding(.artifacts))
                     .environmentObject(theme)
             case .settings:
                 T4SettingsPane(store: store, isPresented: sheetBinding(.settings))
                     .environmentObject(theme)
-            case .browser:
-                T4BrowserPane(session: session, store: store, isPresented: sheetBinding(.browser))
-                    .environmentObject(theme)
-            case .searchDiff:
-                T4SearchPane(session: session, store: store, isPresented: sheetBinding(.searchDiff))
-                    .environmentObject(theme)
             }
-            }
-            // iOS sheets size from the screen; macOS sheets size from content,
-            // which left panes (browser especially) as cramped little popovers.
-            // Give them a real floor on the Mac.
             #if os(macOS)
-            .frame(minWidth: 720, idealWidth: 860, minHeight: 520, idealHeight: 640)
+            .frame(minWidth: 520, idealWidth: 640, minHeight: 480, idealHeight: 600)
             #endif
         }
+        #if os(macOS)
+        // Keep the floating NSPanels in sync with the layout's floatingPanes:
+        // pop-out opens a panel, dock-back / panel × closes it. Re-runs on
+        // every layout change (including active-pane switches, which are
+        // no-ops here since the panel set is unchanged).
+        .task(id: store.layout(for: session.sessionId).floatingPanes) {
+            floatingPanels.sync(with: store.layout(for: session.sessionId), theme: theme)
+        }
+        .onDisappear { floatingPanels.closeAll() }
+        #endif
     }
 
     /// Confirmation challenge: summary + approve/deny, matching the desktop
@@ -420,7 +482,7 @@ struct T4SessionDetailView: View {
                     Label("New Session in Project", systemImage: "plus.square")
                 }
                 Button {
-                    activeSheet = .agents
+                    openPane(.agents)
                 } label: {
                     Label("Agents", systemImage: "person.3.sequence")
                 }
@@ -431,17 +493,17 @@ struct T4SessionDetailView: View {
                     Label("Usage", systemImage: "chart.bar.xaxis")
                 }
                 Button {
-                    activeSheet = .review
+                    openPane(.review)
                 } label: {
                     Label("Review", systemImage: "checkmark.shield")
                 }
                 Button {
-                    activeSheet = .artifacts
+                    openPane(.artifacts)
                 } label: {
                     Label("Artifacts", systemImage: "paperclip")
                 }
                 Button {
-                    activeSheet = .searchDiff
+                    openPane(.searchDiff)
                 } label: {
                     Label("Search & Diff", systemImage: "magnifyingglass.and.list.bullet.indent")
                 }
@@ -467,7 +529,7 @@ struct T4SessionDetailView: View {
             }
             .press()
             .accessibilityLabel("Session details")
-            Button { activeSheet = .files } label: {
+            Button { openPane(.files) } label: {
                 Image(systemName: "folder")
                     .font(.system(size: 16))
                     .foregroundStyle(t.txtMuted)
@@ -475,7 +537,7 @@ struct T4SessionDetailView: View {
             }
             .press()
             .accessibilityLabel("Browse files")
-            Button { withAnimation(.easeInOut(duration: 0.2)) { showTerminal.toggle() } } label: {
+            Button { toggleTerminal() } label: {
                 Image(systemName: showTerminal ? "terminal.fill" : "terminal")
                     .font(.system(size: 16))
                     .foregroundStyle(showTerminal ? t.cBash : t.txtMuted)
@@ -483,7 +545,7 @@ struct T4SessionDetailView: View {
             }
             .press()
             .accessibilityLabel("Toggle terminal")
-            Button { activeSheet = .browser } label: {
+            Button { openPane(.browser) } label: {
                 Image(systemName: "safari")
                     .font(.system(size: 16))
                     .foregroundStyle(t.txtMuted)

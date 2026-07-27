@@ -105,6 +105,24 @@ struct MacCommands: SwiftUI.Commands {
                 .keyboardShortcut("u", modifiers: [.command, .option])
                 .disabled(store?.unreadSessions.isEmpty ?? true)
 
+            Divider()
+
+            // Right-dock tab switching: ⌘⌥1…⌘⌥6 select the Nth docked pane for
+            // the focused session (Browser/Files/Agents/Review/Search&Diff/
+            // Artifacts in dock order). ⌘1…⌘9 stays session selection.
+            Button("Dock Tab 1") { selectDockTab(0) }
+                .keyboardShortcut("1", modifiers: [.command, .option])
+            Button("Dock Tab 2") { selectDockTab(1) }
+                .keyboardShortcut("2", modifiers: [.command, .option])
+            Button("Dock Tab 3") { selectDockTab(2) }
+                .keyboardShortcut("3", modifiers: [.command, .option])
+            Button("Dock Tab 4") { selectDockTab(3) }
+                .keyboardShortcut("4", modifiers: [.command, .option])
+            Button("Dock Tab 5") { selectDockTab(4) }
+                .keyboardShortcut("5", modifiers: [.command, .option])
+            Button("Dock Tab 6") { selectDockTab(5) }
+                .keyboardShortcut("6", modifiers: [.command, .option])
+
         }
 
         CommandMenu("Host") {
@@ -143,6 +161,13 @@ struct MacCommands: SwiftUI.Commands {
     private func selectByIndex(_ i: Int) {
         guard let store, flatSessions.indices.contains(i) else { return }
         store.select(flatSessions[i])
+    }
+
+    /// ⌘⌥1…⌘⌥6: select the Nth docked pane (1-based index → 0-based here) for
+    /// the focused window's selected session. No-op out of range / no session.
+    private func selectDockTab(_ index: Int) {
+        guard let store, let session = selected else { return }
+        store.selectDockPane(at: index + 1, for: session.sessionId)
     }
 
     /// ⌘⌥U: cycle selection to the next session with an unread dot, in rail

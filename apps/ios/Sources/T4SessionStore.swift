@@ -255,6 +255,12 @@ final class T4SessionStore: ObservableObject {
     /// browser pane and transcript render these as image rows.
     @Published private(set) var previewCaptureRowsBySession: [String: [PreviewCaptureRow]] = [:]
 
+    /// Per-session region/tile layouts (right-dock panes, active tab, terminal
+    /// open, dock width, floating panes). Persisted to UserDefaults as JSON
+    /// (see T4SessionLayout.swift). Mutated through the extension methods so
+    /// persistence is centralized.
+    @Published var layoutBySession: [String: T4SessionLayout] = [:]
+
     /// True once a live host has spoken (refresh or push). Drives the boot
     /// splash: saved-connection devices see "Connecting…", not fake chat.
     @Published private(set) var hasLiveInventory = false
@@ -689,6 +695,9 @@ final class T4SessionStore: ObservableObject {
     init() {
         Self.migrateCredentialsToKeychainIfNeeded()
         self.sessions = Self.demoMode ? Self.sample : []
+        // Per-session region/tile layouts (UserDefaults JSON) — restored once
+        // at init so the first detail view reads persisted dock state.
+        loadLayouts()
     }
 
     /// Filtered + project-grouped view of the inventory (the rail model).
