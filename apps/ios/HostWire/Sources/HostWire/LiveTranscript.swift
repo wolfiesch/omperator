@@ -103,8 +103,8 @@ public struct LiveToolCall: Equatable, Identifiable, Sendable {
             if let value = event.string("tool"), !value.isEmpty { tool = value }
             title = event.string("title").flatMap { $0.isEmpty ? nil : $0 } ?? tool
             if let args = event.fields["args"] {
-                input = Self.display(args)
-                targetInput = input
+                targetInput = Self.compactDisplay(args)
+                if !targetInput.hasPrefix(input) { input = targetInput }
             }
             phase = .running
         case "tool.progress":
@@ -142,8 +142,15 @@ public struct LiveToolCall: Equatable, Identifiable, Sendable {
         return retained(output, limit: 65_536)
     }
 
+    private static func compactDisplay(_ value: JSONValue) -> String {
+        if case .string(let value) = value { return retained(value, limit: 65_536) }
+        guard let data = try? JSONEncoder.sortedCompact.encode(value),
+              let output = String(data: data, encoding: .utf8) else { return "" }
+        return retained(output, limit: 65_536)
+    }
+
     private static func retained(_ value: String, limit: Int) -> String {
-        value.count <= limit ? value : "…\(value.suffix(limit))"
+        value.count <= limit ? value : "…\(value.suffix(max(0, limit - 1)))"
     }
 }
 
@@ -205,6 +212,12 @@ private extension JSONEncoder {
     static var sortedPretty: JSONEncoder {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        return encoder
+    }
+
+    static var sortedCompact: JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return encoder
     }
 }

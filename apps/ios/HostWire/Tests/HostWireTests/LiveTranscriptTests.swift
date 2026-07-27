@@ -24,6 +24,29 @@ struct LiveTranscriptTests {
         #expect(buffer.isCaughtUp)
     }
 
+    @Test func assistantBufferHandlesBurstyMarkdownCodeAndEmoji() {
+        var buffer = StreamingAssistantBuffer()
+        buffer.receive(text: "# Result\n", reasoning: "Checking…")
+        buffer.advance(maxCatchUpFrames: 12)
+        buffer.receive(
+            text: "# Result\n\n👨‍👩‍👧‍👦 café\n```swift\nprint(\"✅\")\n```",
+            reasoning: "Checking… done"
+        )
+
+        var frames: [String] = [buffer.text]
+        while buffer.advance(maxCatchUpFrames: 12) {
+            frames.append(buffer.text)
+        }
+        frames.append(buffer.text)
+
+        #expect(buffer.text == "# Result\n\n👨‍👩‍👧‍👦 café\n```swift\nprint(\"✅\")\n```")
+        #expect(buffer.reasoning == "Checking… done")
+        #expect(frames.count > 2)
+        for (before, after) in zip(frames, frames.dropFirst()) {
+            #expect(after.hasPrefix(before))
+        }
+    }
+
     @Test func toolProjectionFollowsGenerationExecutionAndSettlement() {
         var projection = LiveToolProjection()
         projection.apply(event("tool.input.update", [
@@ -67,6 +90,46 @@ struct LiveTranscriptTests {
 
         projection.remove(callId: "call-1")
         #expect(projection.calls.isEmpty)
+    }
+
+    @Test func toolStartDoesNotJumpPastPendingArgumentFrames() {
+        var projection = LiveToolProjection()
+        projection.apply(event("tool.input.update", [
+            "callId": .string("call-1"),
+            "tool": .string("bash"),
+            "input": .string("{\"cmd\":\"p"),
+        ]))
+        projection.advance()
+        let partial = projection.calls.first?.input
+
+        projection.apply(event("tool.start", [
+            "callId": .string("call-1"),
+            "tool": .string("bash"),
+            "args": .object(["cmd": .string("pnpm verify:affected")]),
+        ]))
+
+        #expect(projection.calls.first?.input == partial)
+        #expect(projection.isCaughtUp == false)
+        while projection.advance() {}
+        #expect(projection.calls.first?.input.contains("pnpm verify:affected") == true)
+    }
+
+    @Test func largeToolArgumentsStayBoundedAndFinishWithoutDuplicates() {
+        var projection = LiveToolProjection()
+        let large = String(repeating: "x", count: 70_000)
+        let update = event("tool.input.update", [
+            "callId": .string("call-large"),
+            "tool": .string("write"),
+            "input": .string(large),
+        ])
+        projection.apply(update)
+        projection.apply(update)
+        while projection.advance() {}
+
+        #expect(projection.calls.count == 1)
+        #expect(projection.calls.first?.input.count == 65_536)
+        #expect(projection.calls.first?.input.hasPrefix("…") == true)
+        #expect(projection.isCaughtUp)
     }
 
     private func event(_ type: String, _ fields: [String: JSONValue]) -> SessionEvent {

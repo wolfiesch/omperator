@@ -120,6 +120,10 @@ final class T4SessionStore: ObservableObject {
     @Published private(set) var streamingMessages: [String: StreamingAssistantBuffer] = [:]
     /// Transient tool arguments, execution progress, and results by session.
     @Published private(set) var liveTools: [String: LiveToolProjection] = [:]
+    /// Durable rows that arrived before their frame-paced live projection
+    /// finished. They replace the transient row only after its final frame.
+    private var pendingAssistantEntries: [String: TranscriptEntry] = [:]
+    private var pendingToolEntries: [String: [String: TranscriptEntry]] = [:]
     /// Sessions with a turn in flight, from turn.start/turn.end events — the
     /// composer's stop button keys off this (the ref's `status` sticks at
     /// "active" long after the turn actually ends).
@@ -300,7 +304,10 @@ final class T4SessionStore: ObservableObject {
             while !Task.isCancelled, var next = self.streamingMessages[sessionId] {
                 let hasMore = next.advance()
                 self.streamingMessages[sessionId] = next
-                if !hasMore { break }
+                if !hasMore {
+                    self.finishPendingAssistantEntry(sessionId: sessionId)
+                    break
+                }
                 try? await Task.sleep(nanoseconds: 16_666_667)
             }
             if !Task.isCancelled { self.streamingTasks[sessionId] = nil }
@@ -310,6 +317,20 @@ final class T4SessionStore: ObservableObject {
 
     private func clearStreamingMessage(sessionId: String) {
         streamingTasks.removeValue(forKey: sessionId)?.cancel()
+        streamingMessages.removeValue(forKey: sessionId)
+        pendingAssistantEntries.removeValue(forKey: sessionId)
+    }
+
+    private func appendDurableEntry(_ entry: TranscriptEntry, sessionId: String) {
+        var entries = liveEntries[sessionId] ?? []
+        guard !entries.contains(where: { $0.id == entry.id }) else { return }
+        entries.append(entry)
+        liveEntries[sessionId] = entries
+    }
+
+    private func finishPendingAssistantEntry(sessionId: String) {
+        guard let entry = pendingAssistantEntries.removeValue(forKey: sessionId) else { return }
+        appendDurableEntry(entry, sessionId: sessionId)
         streamingMessages.removeValue(forKey: sessionId)
     }
 
@@ -324,12 +345,25 @@ final class T4SessionStore: ObservableObject {
             while !Task.isCancelled, var next = self.liveTools[sessionId] {
                 let hasMore = next.advance()
                 self.liveTools[sessionId] = next
-                if !hasMore { break }
+                if !hasMore {
+                    self.finishPendingToolEntries(sessionId: sessionId)
+                    break
+                }
                 try? await Task.sleep(nanoseconds: 16_666_667)
             }
             if !Task.isCancelled { self.toolStreamingTasks[sessionId] = nil }
         }
         toolStreamingTasks[sessionId] = task
+    }
+
+    private func finishPendingToolEntries(sessionId: String) {
+        guard let pending = pendingToolEntries.removeValue(forKey: sessionId) else { return }
+        for entry in pending.values.sorted(by: { $0.timestamp < $1.timestamp }) {
+            appendDurableEntry(entry, sessionId: sessionId)
+            if let callId = entry.toolCallId {
+                settleTool(sessionId: sessionId, callId: callId)
+            }
+        }
     }
 
     private func settleTool(sessionId: String, callId: String) {
@@ -1810,6 +1844,7 @@ final class T4SessionStore: ObservableObject {
                 reconcileSelection()
             case .snapshot(let snapshot):
                 clearStreamingMessage(sessionId: snapshot.sessionId)
+                pendingToolEntries.removeValue(forKey: snapshot.sessionId)
                 toolStreamingTasks.removeValue(forKey: snapshot.sessionId)?.cancel()
                 liveTools.removeValue(forKey: snapshot.sessionId)
                 liveEntries[snapshot.sessionId] = snapshot.entries.map { TranscriptEntry(from: $0) }
@@ -1817,18 +1852,27 @@ final class T4SessionStore: ObservableObject {
                 // history paging restarts from unknown (hasMore = nil).
                 pagingState[snapshot.sessionId] = TranscriptPaging(nextCursor: nil, hasMore: nil, loading: false)
             case .entry(let entryFrame):
-                var entries = liveEntries[entryFrame.sessionId] ?? []
                 let entry = TranscriptEntry(from: entryFrame.entry)
-                if !entries.contains(where: { $0.id == entry.id }) {
-                    entries.append(entry)
-                    liveEntries[entryFrame.sessionId] = entries
-                }
-                // Durable rows replace their transient counterparts.
-                if entry.kind == .message, entry.role != "user" {
-                    clearStreamingMessage(sessionId: entryFrame.sessionId)
-                }
-                if let callId = entry.toolCallId {
-                    settleTool(sessionId: entryFrame.sessionId, callId: callId)
+                let sid = entryFrame.sessionId
+                // A settled row can arrive in the same provider burst as its
+                // final delta. Keep it pending until the live projection has
+                // revealed that final snapshot, then swap rows atomically.
+                if entry.kind == .message, entry.role != "user",
+                   let buffer = streamingMessages[sid], !buffer.isCaughtUp {
+                    pendingAssistantEntries[sid] = entry
+                } else if entry.kind == .toolUse, let callId = entry.toolCallId,
+                          let projection = liveTools[sid], !projection.isCaughtUp {
+                    var pending = pendingToolEntries[sid] ?? [:]
+                    pending[callId] = entry
+                    pendingToolEntries[sid] = pending
+                } else {
+                    appendDurableEntry(entry, sessionId: sid)
+                    if entry.kind == .message, entry.role != "user" {
+                        clearStreamingMessage(sessionId: sid)
+                    }
+                    if let callId = entry.toolCallId {
+                        settleTool(sessionId: sid, callId: callId)
+                    }
                 }
             case .confirmation(let challenge):
                 pendingConfirmation = challenge
@@ -1849,6 +1893,7 @@ final class T4SessionStore: ObservableObject {
                     activeTurns.insert(sid)
                 case "turn.end", "turn.error":
                     activeTurns.remove(sid)
+                    finishPendingToolEntries(sessionId: sid)
                     toolStreamingTasks.removeValue(forKey: sid)?.cancel()
                     liveTools.removeValue(forKey: sid)
                     Task { await refreshTodos(sessionId: sid) }
@@ -1860,7 +1905,11 @@ final class T4SessionStore: ObservableObject {
                         else { reasoning = "" }
                         receiveStreamingMessage(sessionId: sid, text: text, reasoning: reasoning)
                     }
-                case "message.settled", "message.discarded":
+                case "message.settled":
+                    // The durable entry is the replacement signal. Clearing
+                    // here would skip the remaining paced frames.
+                    break
+                case "message.discarded":
                     clearStreamingMessage(sessionId: sid)
                 case "tool.input.update", "tool.start", "tool.progress", "tool.result":
                     receiveToolEvent(sessionId: sid, event: frame.event)
@@ -1981,6 +2030,8 @@ final class T4SessionStore: ObservableObject {
         toolStreamingTasks.removeAll()
         streamingMessages.removeAll()
         liveTools.removeAll()
+        pendingAssistantEntries.removeAll()
+        pendingToolEntries.removeAll()
         // Drop any open terminals — the transport is gone, no close frame.
         terminalOutput.removeAll()
         terminalExits.removeAll()
