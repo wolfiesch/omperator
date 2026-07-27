@@ -727,6 +727,15 @@ final class T4SessionStore: ObservableObject {
         return entries.map { TranscriptEntry(from: $0) }
     }
 
+    /// Features negotiated in every hello: the HostWire defaults plus the
+    /// command-gating feature names for the panes (preview, search, watch).
+    private static let clientFeatures = [
+        "resume", "prompt.lease", "controller.lease", "prompt.images", "transcript.page",
+        "session.delta", "files.list", "terminal.io",
+        "preview.control", "preview.read", "files.search", "transcript.search",
+        "artifact.read", "session.watch", "host.watch", "runtime.list", "project.reveal",
+    ]
+
     /// Transport for an endpoint. `wss://` gets a pinning session (TOFU leaf
     /// fingerprint in the Keychain); everything else uses the shared session.
     private func makeTransport(endpoint: URL) -> URLSessionHostWireTransport {
@@ -747,7 +756,7 @@ final class T4SessionStore: ObservableObject {
         connecting = true
         defer { connecting = false }
         let transport = makeTransport(endpoint: endpoint)
-        let c = HostClient(transport: transport, config: HostClient.Config(identity: identity, authentication: authentication))
+        let c = HostClient(transport: transport, config: HostClient.Config(identity: identity, authentication: authentication, requestedFeatures: Self.clientFeatures))
         client = c
         do {
             let welcome = try await c.connect()
@@ -781,7 +790,7 @@ final class T4SessionStore: ObservableObject {
         defer { connecting = false }
         let transport = makeTransport(endpoint: endpoint)
         let identity = ClientIdentity(name: "t4-ios", version: "0.1", build: "dev", platform: "ios")
-        let c = HostClient(transport: transport, config: HostClient.Config(identity: identity, authentication: nil))
+        let c = HostClient(transport: transport, config: HostClient.Config(identity: identity, authentication: nil, requestedFeatures: Self.clientFeatures))
         client = c
         do {
             let welcome = try await c.connect()
@@ -803,7 +812,7 @@ final class T4SessionStore: ObservableObject {
                 deviceId: "ios-\(slug)",
                 deviceName: deviceName,
                 platform: "ios",
-                requestedCapabilities: ["sessions.read", "sessions.prompt", "sessions.control", "sessions.manage", "catalog.read", "files.list", "files.read", "files.search", "term.open", "term.input", "term.resize", "preview.control", "preview.read", "usage.read", "transcript.search", "artifact.read", "session.watch", "host.watch", "runtime.list", "project.reveal", "agents.control"]
+                requestedCapabilities: ["sessions.read", "sessions.prompt", "sessions.control", "sessions.manage", "catalog.read", "files.list", "files.read", "files.diff", "term.open", "term.input", "term.resize", "preview.control", "preview.read", "usage.read", "agents.control", "audit.read", "config.read"]
             )
             let ok = try await c.pair(intent)
             // The paired connection is inert by design (the host rejects
