@@ -1,0 +1,14 @@
+{
+	"name": "@t4-code/t4-cli",
+	"version": "0.1.0",
+	"private": true,
+	"description": "t4 — terminal UI for T4 Code hosts (cmux-grade TUI over omp-app/1)",
+	"bin": {
+		"t4": "./dist/t4"
+	},
+	"scripts": {
+		"build": "bun build --compile src/main.ts --outfile dist/t4",
+		"check": "tsgo -p tsconfig.json --noEmit",
+		"dev": "bun run src/main.ts"
+	}
+}
