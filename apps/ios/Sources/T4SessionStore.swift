@@ -287,8 +287,14 @@ final class T4SessionStore: ObservableObject {
     /// then deletes the UserDefaults entries and sets the migrated flag so
     /// it never runs again. Called from `init()` so `hasSavedConnection`
     /// reflects migrated state before the first view reads it.
-    private static func migrateCredentialsToKeychainIfNeeded() {
-        let defaults = UserDefaults.standard
+    static func migrateCredentialsToKeychainIfNeeded(
+        arguments: [String] = ProcessInfo.processInfo.arguments,
+        defaults: UserDefaults = .standard
+    ) {
+        // A fresh-state test launch must leave legacy credentials intact for a
+        // later normal launch to migrate. Keychain writes are deliberately
+        // disabled in this mode, so deleting the source values would lose them.
+        guard Keychain.usesPersistentStore(arguments: arguments) else { return }
         if defaults.bool(forKey: keychainMigratedKey) { return }
         for key in [savedEndpointKey, savedDeviceIdKey, savedDeviceTokenKey] {
             if Keychain.get(key) == nil,
