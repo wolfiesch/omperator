@@ -132,7 +132,13 @@ struct T4FilesPane: View {
 
     /// Navigation stack of directory paths, root-first. The last element is
     /// the currently displayed directory; "" is the workspace root.
-    @State private var pathStack: [String] = [""]
+    /// UI-test seam: -T4FilesPath=rel/dir opens the pane at that directory.
+    @State private var pathStack: [String] = {
+        if let raw = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("-T4FilesPath=") }) {
+            return ["", String(raw.dropFirst("-T4FilesPath=".count))]
+        }
+        return [""]
+    }()
     @State private var presentation: FilesPresentation?
     @State private var loading = true
     @State private var error: String?
