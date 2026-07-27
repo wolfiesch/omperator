@@ -1405,6 +1405,9 @@ final class T4SessionStore: ObservableObject {
             lastError = "Not connected to a host."
             return nil
         }
+        // Official-mode hosts don't implement usage.read; firing it anyway
+        // makes the host close the connection (remote-policy denial).
+        guard grantedCapabilities.contains("usage.read") else { return nil }
         do {
             let result = try await client.sendCommand(CommandIntent(
                 hostId: hostId, command: "usage.read"))
@@ -1478,6 +1481,9 @@ final class T4SessionStore: ObservableObject {
             lastError = "Not connected to a host."
             return nil
         }
+        // Same guard as usageRead: hosts without a settings backend close
+        // the connection on unauthorized commands.
+        guard grantedCapabilities.contains("config.read") else { return nil }
         do {
             let result = try await client.sendCommand(CommandIntent(
                 hostId: hostId, command: "settings.read"))
