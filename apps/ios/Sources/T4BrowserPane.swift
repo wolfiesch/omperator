@@ -472,6 +472,12 @@ struct T4BrowserWebView: View {
             loading: $loading,
             annotating: annotating,
             onNavigated: onNavigated,
+            onTapCapture: onTapCapture
+        )
+        #endif
+    }
+}
+
 final class T4BrowserCoordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     let webView: WKWebView
 
@@ -515,15 +521,6 @@ final class T4BrowserCoordinator: NSObject, WKNavigationDelegate, WKScriptMessag
         // Drop the handler ref so a reused userContentController doesn't leak
         // the coordinator (retain-cycle) once the pane is dismissed.
         webView.configuration.userContentController.removeScriptMessageHandler(forName: Self.tapMessageName)
-    }
-        #endif
-        self.webView = WKWebView(frame: .zero, configuration: config)
-        self.canGoBack = canGoBack
-        self.canGoForward = canGoForward
-        self.loading = loading
-        self.onNavigated = onNavigated
-        super.init()
-        webView.navigationDelegate = self
     }
 
     /// Sync SwiftUI state from the webview. MUST be deferred: apply() runs
