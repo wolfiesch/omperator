@@ -304,6 +304,14 @@ final class T4SessionStore: ObservableObject {
     func restore() async {
         // UI-test seam: -T4NoRestore forces the offline sample inventory.
         if ProcessInfo.processInfo.arguments.contains("-T4NoRestore") { return }
+        // UI-test seam: -T4ForgetCreds wipes saved connection credentials so
+        // the boot lands on real onboarding (fresh-install path).
+        if ProcessInfo.processInfo.arguments.contains("-T4ForgetCreds") {
+            Keychain.remove(forKey: Self.savedEndpointKey)
+            Keychain.remove(forKey: Self.savedDeviceIdKey)
+            Keychain.remove(forKey: Self.savedDeviceTokenKey)
+            return
+        }
         // Dev seam: -T4Endpoint=wss://host:port/v1/ws overrides the saved
         // endpoint (the one-time UserDefaults migration otherwise shadows
         // `defaults write` tweaks between runs).
@@ -795,7 +803,7 @@ final class T4SessionStore: ObservableObject {
                 deviceId: "ios-\(slug)",
                 deviceName: deviceName,
                 platform: "ios",
-                requestedCapabilities: ["sessions.read", "sessions.prompt", "sessions.control", "sessions.manage", "catalog.read", "files.list", "files.read", "term.open", "term.input", "term.resize", "preview.control", "preview.read"]
+                requestedCapabilities: ["sessions.read", "sessions.prompt", "sessions.control", "sessions.manage", "catalog.read", "files.list", "files.read", "files.search", "term.open", "term.input", "term.resize", "preview.control", "preview.read", "usage.read", "transcript.search", "artifact.read", "session.watch", "host.watch", "runtime.list", "project.reveal", "agents.control"]
             )
             let ok = try await c.pair(intent)
             // The paired connection is inert by design (the host rejects
