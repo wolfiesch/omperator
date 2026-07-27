@@ -95,8 +95,17 @@ export class Tui implements HostEvents {
 	}
 	error(message: string): void {
 		this.state.statusLine = message.slice(0, 120);
+		// Errors decay back to the steady state instead of sticking forever.
+		clearTimeout(this.statusTimer);
+		this.statusTimer = setTimeout(() => {
+			if (this.state.connected) {
+				this.state.statusLine = "connected";
+				this.draw();
+			}
+		}, 6_000);
 		this.draw();
 	}
+	private statusTimer: Timer | undefined;
 	open(): void {}
 	close(reason: string): void {
 		this.state.connected = false;
@@ -362,8 +371,9 @@ export class Tui implements HostEvents {
 		const cursor = focused ? `${FG(p.accent)}▌${RESET}` : " ";
 		this.screen.line([
 			{ text: focused ? "› " : "  ", fg: focused ? p.accent : p.label, bold: focused },
-			{ text: clip(s.composer, w - 6), fg: s.composer ? p.ink : p.ghost },
-			{ text: s.composer ? "" : clip("message the agent…  (tab to focus)", w - 6), fg: p.ghost, dim: true },
+			{ text: clip(s.composer, w - 14), fg: s.composer ? p.ink : p.ghost },
+			{ text: s.composer ? "" : clip("message the agent…  (tab to focus)", w - 14), fg: p.ghost, dim: true },
+			{ text: focused && s.composer ? "enter ↵" : "", fg: p.label },
 			{ text: cursor },
 		]);
 		this.screen.line([
