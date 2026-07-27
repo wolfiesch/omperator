@@ -230,6 +230,11 @@ struct T4SessionDetailView: View {
                     _ = await store.forkSession(sessionId: session.sessionId)
                 }
             }
+            // UI-test seam: -T4FloatBrowser docks the browser and floats it (macOS pop-out path).
+            if args.contains("-T4FloatBrowser") {
+                store.openDockPane(.browser, for: session.sessionId)
+                store.floatDockPane(.browser, for: session.sessionId)
+            }
         }
         .task(id: session.sessionId) {
             // -T4ShowAsk: demo ask pinned to whatever session is current (the
