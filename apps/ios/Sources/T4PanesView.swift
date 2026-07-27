@@ -15,7 +15,9 @@
 //   • artifact.read → ArtifactReadChunk { artifactId, kind, mediaType, size,
 //       offset, nextOffset, complete, content (base64) }
 //   • settings.read → SettingsReadResult { revision, settings {[String: JSONValue]} }
-//   • settings.write → opaque metadata object echo (confirmation-challenged).
+//   • settings.write → { written: true, revision: <new> } (confirmation-challenged,
+//     expectedRevision required); partial settings object args, per-key merge for
+//     providerKeys (host masks values on read).
 
 import SwiftUI
 import HostWire
@@ -580,12 +582,15 @@ struct T4ArtifactsPane: View {
 
 // MARK: - Settings pane
 
-/// Host settings (settings.read): key/value list with inline string editing
-/// via settings.write. Reads on appear; tapping a string row turns it into a
-/// text field with a save button. Non-string values are read-only. Write
-/// requires the settings revision (captured by settings.read) and may trigger
-/// a confirmation challenge (handled by the store's pendingConfirmation
-/// banner in the session detail view).
+/// Host settings (settings.read / settings.write), sectioned:
+/// MODELS (per-role model selector), BEHAVIOR (thinking level, tool approval),
+/// PROVIDERS & KEYS (masked provider keys + add-key flow), CONNECTION
+/// (endpoint, wss fingerprint + forget, disconnect), APPEARANCE (theme).
+/// Reads on appear; every mutation goes through store.settingsWrite(patch:)
+/// with the captured revision. The pane keeps a local optimistic mirror of
+/// the snapshot — mutated immediately on write and reverted from the store on
+/// failure. settings.write may trigger a confirmation challenge, surfaced as
+/// store.pendingConfirmation by observe() and handled by the session banner.
 struct T4SettingsPane: View {
     @ObservedObject var store: T4SessionStore
     @EnvironmentObject var theme: ThemeStore
@@ -593,13 +598,28 @@ struct T4SettingsPane: View {
 
     @State private var loading = true
     @State private var error: String?
-    @State private var editingKey: String?
-    @State private var editDraft = ""
+    /// Local optimistic mirror of store.settingsSnapshot — applied immediately
+    /// on write, reverted to the store's value on failure.
+    @State private var snapshot: [String: JSONValue] = [:]
     @State private var saving = false
+    /// Add-provider-key sheet state.
+    @State private var addingKey = false
+    @State private var newKeyProvider = ""
+    @State private var newKeyValue = ""
     private var t: Theme { theme.t }
 
-    private var settings: [String: JSONValue]? { store.settingsSnapshot }
-    private var sortedKeys: [String] { (settings?.keys).map { $0.sorted() } ?? [] }
+    // Known model roles (host modelRoles keys). "default" is the fallback when
+    // a role is unset, so it doubles as the clear sentinel in the picker.
+    private let roles: [(id: String, label: String)] = [
+        ("default", "Default"), ("smol", "Smol"), ("slow", "Slow"),
+        ("vision", "Vision"), ("plan", "Plan"), ("designer", "Designer"),
+        ("commit", "Commit"), ("tiny", "Tiny"), ("task", "Task"),
+        ("advisor", "Advisor")
+    ]
+    private let thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"]
+    private let approvalModes: [(id: String, label: String)] = [
+        ("always-ask", "Always ask"), ("write", "Write"), ("yolo", "Yolo")
+    ]
 
     var body: some View {
         NavigationStack {
@@ -613,7 +633,7 @@ struct T4SettingsPane: View {
                     paneError(error, t)
                     Spacer()
                 } else {
-                    settingsList(settings ?? [:])
+                    settingsList
                 }
             }
             .background(t.bg.ignoresSafeArea())
@@ -627,24 +647,26 @@ struct T4SettingsPane: View {
                         .font(.system(size: 14, weight: .semibold))
                 }
                 ToolbarItem(placement: platformLeadingPlacement) {
-                    Button {
-                        Task { await load() }
-                    } label: {
+                    Button { Task { await load() } } label: {
                         Image(systemName: "arrow.clockwise")
                     }
                     .disabled(loading || !store.connected)
                 }
             }
+            .sheet(isPresented: $addingKey) {
+                addKeySheet
+            }
         }
         .task { await load() }
     }
 
-    private func settingsList(_ settings: [String: JSONValue]) -> some View {
+    private var settingsList: some View {
         List {
-            hostSection
-            ForEach(sortedKeys, id: \.self) { key in
-                settingRow(key, settings[key] ?? .null)
-            }
+            modelsSection
+            behaviorSection
+            providersSection
+            connectionSection
+            appearanceSection
         }
         #if os(iOS)
         .listStyle(.insetGrouped)
@@ -653,13 +675,160 @@ struct T4SettingsPane: View {
         #endif
         .scrollContentBackground(.hidden)
     }
-    /// Host identity/version + connection controls, always shown at the top
-    /// of the settings list so the user can inspect or cut the connection
-    /// even before settings.read succeeds. `store.hostInfo` is captured from
-    /// the WelcomeFrame on connect; `pairedEndpoint` is the live ws URL.
+
+    // MARK: MODELS
+
     @ViewBuilder
-    private var hostSection: some View {
-        Section(header: Text("Host").font(.system(size: 12, weight: .bold)).foregroundStyle(t.txtLabel)) {
+    private var modelsSection: some View {
+        Section(header: sectionHeader("Models")) {
+            if store.catalogModels.isEmpty {
+                Text("No models in catalog")
+                    .font(.system(size: 12))
+                    .foregroundStyle(t.txtMuted)
+            } else {
+                ForEach(roles, id: \.id) { role in
+                    Picker(selection: Binding(
+                        get: { roleValue(role.id) },
+                        set: { new in Task { await setRole(role.id, new) } }
+                    )) {
+                        Text("default").tag("default")
+                        ForEach(store.catalogModels, id: \.id) { m in
+                            Text(m.id).tag(m.id)
+                        }
+                    } label: {
+                        Text(role.label)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(t.txt)
+                    }
+                    .pickerStyle(.menu)
+                    .tint(t.accent)
+                }
+            }
+        }
+    }
+
+    // MARK: BEHAVIOR
+
+    @ViewBuilder
+    private var behaviorSection: some View {
+        Section(header: sectionHeader("Behavior")) {
+            Picker(selection: Binding(
+                get: { thinkingLevel() },
+                set: { new in Task { await setThinkingLevel(new) } }
+            )) {
+                ForEach(thinkingLevels, id: \.self) { Text($0).tag($0) }
+            } label: {
+                Text("Thinking")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(t.txt)
+            }
+            .pickerStyle(.menu)
+            .tint(t.accent)
+
+            Picker(selection: Binding(
+                get: { approvalMode() },
+                set: { new in Task { await setApprovalMode(new) } }
+            )) {
+                ForEach(approvalModes, id: \.id) { Text($0.label).tag($0.id) }
+            } label: {
+                Text("Tool approval")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(t.txt)
+            }
+            .pickerStyle(.menu)
+            .tint(t.accent)
+        }
+    }
+
+    // MARK: PROVIDERS & KEYS
+
+    @ViewBuilder
+    private var providersSection: some View {
+        Section(header: sectionHeader("Providers & Keys")) {
+            let keys = providerKeys()
+            if keys.isEmpty {
+                Text("No provider keys set")
+                    .font(.system(size: 12))
+                    .foregroundStyle(t.txtMuted)
+            } else {
+                ForEach(keys, id: \.provider) { entry in
+                    HStack {
+                        Text(entry.provider)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(t.txt)
+                        Spacer()
+                        Text(entry.masked)
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(t.txtMuted)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+            }
+            Button {
+                addingKey = true
+            } label: {
+                Label("Add provider key", systemImage: "plus")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(t.accent)
+            }
+            .disabled(saving)
+        }
+    }
+
+    /// Add-provider-key sheet: provider name + write-only SecureField. The key
+    /// is sent as a single-key providerKeys patch; the host masks on read, so
+    /// the saved row never shows the raw key.
+    private var addKeySheet: some View {
+        NavigationStack {
+            Form {
+                Section("Provider") {
+                    TextField("e.g. openai", text: $newKeyProvider)
+                        .autocorrectionDisabled(true)
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        #endif
+                }
+                Section("API key") {
+                    SecureField("sk-…", text: $newKeyValue)
+                        .autocorrectionDisabled(true)
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        #endif
+                }
+                if let error {
+                    Section {
+                        Text(error)
+                            .font(.system(size: 12))
+                            .foregroundStyle(t.cAdvisor)
+                    }
+                }
+            }
+            .navigationTitle("Add provider key")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: platformLeadingPlacement) {
+                    Button("Cancel") { addingKey = false }
+                }
+                ToolbarItem(placement: platformTrailingPlacement) {
+                    Button("Save") { Task { await addKey() } }
+                        .font(.system(size: 14, weight: .semibold))
+                        .disabled(saving || newKeyProvider.isEmpty || newKeyValue.isEmpty)
+                }
+            }
+        }
+        #if os(macOS)
+        .frame(minWidth: 360, minHeight: 240)
+        #endif
+    }
+
+    // MARK: CONNECTION
+
+    @ViewBuilder
+    private var connectionSection: some View {
+        Section(header: sectionHeader("Connection")) {
             if let info = store.hostInfo {
                 hostRow("Host ID", info.hostId)
                 hostRow("OMP version", info.ompVersion)
@@ -670,8 +839,28 @@ struct T4SettingsPane: View {
                 hostRow("Appserver", "—")
             }
             hostRow("Endpoint", store.pairedEndpoint?
+                .replacingOccurrences(of: "wss://", with: "")
                 .replacingOccurrences(of: "ws://", with: "")
                 .replacingOccurrences(of: "/v1/ws", with: "") ?? "Not connected")
+            if let fp = pinnedFingerprint {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("wss fingerprint")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(t.txt)
+                    Spacer()
+                    Text(String(fp.prefix(16)) + "…")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(t.txtMuted)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Button(role: .destructive) {
+                    forgetPin()
+                } label: {
+                    Label("Forget pinned cert", systemImage: "lock.slash")
+                        .font(.system(size: 13))
+                }
+            }
             Button(role: .destructive) {
                 Task { await store.disconnect() }
             } label: {
@@ -679,6 +868,34 @@ struct T4SettingsPane: View {
             }
             .disabled(!store.connected)
         }
+    }
+
+    // MARK: APPEARANCE
+
+    @ViewBuilder
+    private var appearanceSection: some View {
+        Section(header: sectionHeader("Appearance")) {
+            Picker(selection: $theme.mode) {
+                Text("System").tag(Appearance.system)
+                Text("Dark").tag(Appearance.dark)
+                Text("Light").tag(Appearance.light)
+            } label: {
+                Text("Theme")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(t.txt)
+            }
+            .pickerStyle(.menu)
+            .tint(t.accent)
+        }
+    }
+
+    // MARK: Helpers
+
+    @ViewBuilder
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 12, weight: .bold))
+            .foregroundStyle(t.txtLabel)
     }
 
     @ViewBuilder
@@ -696,91 +913,143 @@ struct T4SettingsPane: View {
         }
     }
 
-    @ViewBuilder
-    private func settingRow(_ key: String, _ value: JSONValue) -> some View {
-        if editingKey == key {
-            HStack(spacing: 8) {
-                TextField(key, text: $editDraft)
-                    .font(.system(size: 13))
-                    .textFieldStyle(.plain)
-                    .onSubmit { Task { await save(key) } }
-                if saving {
-                    ProgressView().scaleEffect(0.7).tint(t.txtMuted)
-                } else {
-                    Button("Save") { Task { await save(key) } }
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(t.accent)
-                }
-                Button("Cancel") {
-                    editingKey = nil
-                    editDraft = ""
-                }
-                .font(.system(size: 13))
-                .foregroundStyle(t.txtMuted)
-            }
-        } else {
-            Button {
-                if case .string(let s) = value {
-                    editingKey = key
-                    editDraft = s
-                }
-            } label: {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(key)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(t.txt)
-                        Text(valueLabel(value))
-                            .font(.system(size: 12))
-                            .foregroundStyle(t.txtMuted)
-                            .lineLimit(2)
-                    }
-                    Spacer()
-                    if case .string = value {
-                        Image(systemName: "pencil")
-                            .font(.system(size: 11))
-                            .foregroundStyle(t.txtLabel)
-                    }
-                }
-            }
-            .buttonStyle(.plain)
+    /// modelRoles as a plain String→String map from the local snapshot.
+    private var modelRolesDict: [String: String] {
+        guard case .object(let o) = snapshot["modelRoles"] ?? .null else { return [:] }
+        return o.compactMapValues { v in
+            if case .string(let s) = v { return s } else { return nil }
         }
+    }
+
+    /// Current selector for a role, "default" when unset.
+    private func roleValue(_ role: String) -> String {
+        modelRolesDict[role] ?? "default"
+    }
+
+    /// Write one role. Sends the full merged modelRoles object (values are not
+    /// masked, so round-tripping them is safe regardless of merge semantics).
+    private func setRole(_ role: String, _ selector: String) async {
+        var roles = modelRolesDict
+        if selector == "default" { roles.removeValue(forKey: role) }
+        else { roles[role] = selector }
+        let obj = roles.mapValues { JSONValue.string($0) }
+        let patch: [String: JSONValue] = roles.isEmpty
+            ? ["modelRoles": .object([:])]
+            : ["modelRoles": .object(obj)]
+        await write(patch) { s in
+            if roles.isEmpty { s.removeValue(forKey: "modelRoles") }
+            else { s["modelRoles"] = .object(obj) }
+        }
+    }
+
+    private func thinkingLevel() -> String {
+        if case .string(let s) = snapshot["defaultThinkingLevel"] ?? .null { return s }
+        return "auto"
+    }
+
+    private func setThinkingLevel(_ level: String) async {
+        await write(["defaultThinkingLevel": .string(level)]) { s in
+            s["defaultThinkingLevel"] = .string(level)
+        }
+    }
+
+    private func approvalMode() -> String {
+        if case .string(let s) = snapshot["tools.approvalMode"] ?? .null { return s }
+        return "always-ask"
+    }
+
+    private func setApprovalMode(_ mode: String) async {
+        await write(["tools.approvalMode": .string(mode)]) { s in
+            s["tools.approvalMode"] = .string(mode)
+        }
+    }
+
+    /// Sorted (provider, masked) pairs from the local snapshot.
+    private func providerKeys() -> [(provider: String, masked: String)] {
+        guard case .object(let o) = snapshot["providerKeys"] ?? .null else { return [] }
+        return o.compactMap { k, v -> (provider: String, masked: String)? in
+            if case .string(let s) = v { return (provider: k, masked: s) } else { return nil }
+        }.sorted { $0.provider < $1.provider }
+    }
+
+    /// Add a provider key. Sends a single-key providerKeys patch so the host
+    /// merges per-key — never echo masked values back, which would clobber the
+    /// real key. The re-read after write surfaces the host's masked form.
+    private func addKey() async {
+        let provider = newKeyProvider.trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = newKeyValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !provider.isEmpty, !value.isEmpty else { return }
+        let patch: [String: JSONValue] = ["providerKeys": .object([provider: .string(value)])]
+        await write(patch) { s in
+            // Read existing masked keys from the in-progress snapshot so the
+            // optimistic row list includes the new key alongside the others.
+            var keys: [String: String] = [:]
+            if case .object(let o) = s["providerKeys"] ?? .null {
+                for (k, v) in o where case .string(let m) = v { keys[k] = m }
+            }
+            keys[provider] = "sk-…\(value.suffix(4))"
+            s["providerKeys"] = .object(keys.mapValues { .string($0) })
+        }
+        if error == nil {
+            addingKey = false
+            newKeyProvider = ""
+            newKeyValue = ""
+        }
+    }
+
+    /// Optimistic write: mutate the local snapshot immediately, send the patch,
+    /// then sync from the store on success or revert on failure.
+    private func write(
+        _ patch: [String: JSONValue],
+        optimistic: (inout [String: JSONValue]) -> Void
+    ) async {
+        saving = true
+        error = nil
+        let backup = snapshot
+        var next = snapshot
+        optimistic(&next)
+        snapshot = next
+        let ok = await store.settingsWrite(patch: patch)
+        if ok {
+            snapshot = store.settingsSnapshot ?? [:]
+        } else {
+            snapshot = backup
+            if let err = store.lastError { error = err }
+        }
+        saving = false
+    }
+
+    /// Pinned wss leaf-cert fingerprint for the current endpoint, if any.
+    private var pinnedFingerprint: String? {
+        guard let endpoint = store.pairedEndpoint,
+              let comps = URLComponents(string: endpoint),
+              let host = comps.host else { return nil }
+        let port = comps.port ?? (comps.scheme == "wss" ? 443 : 80)
+        return T4CertPinner.pinnedFingerprint(host: host, port: port)
+    }
+
+    private func forgetPin() {
+        guard let endpoint = store.pairedEndpoint,
+              let comps = URLComponents(string: endpoint),
+              let host = comps.host else { return }
+        let port = comps.port ?? (comps.scheme == "wss" ? 443 : 80)
+        T4CertPinner.forget(host: host, port: port)
     }
 
     private func load() async {
         loading = true
         error = nil
         if !store.connected {
+            snapshot = [:]
             loading = false
             return
         }
-        if await store.settingsRead() == nil, let err = store.lastError {
-            error = err
-        }
-        loading = false
-    }
-
-    private func save(_ key: String) async {
-        saving = true
-        error = nil
-        let ok = await store.settingsWrite(key: key, value: .string(editDraft))
-        if ok {
-            editingKey = nil
-            editDraft = ""
+        if let read = await store.settingsRead() {
+            snapshot = read
         } else if let err = store.lastError {
             error = err
         }
-        saving = false
-    }
-
-    private func valueLabel(_ v: JSONValue) -> String {
-        switch v {
-        case .string(let s): return s
-        case .bool(let b): return b ? "true" : "false"
-        case .number(let n): return String(n)
-        case .null: return "null"
-        case .array, .object: return "…"
-        }
+        loading = false
     }
 }
 
