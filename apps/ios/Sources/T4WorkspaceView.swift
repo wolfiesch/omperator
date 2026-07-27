@@ -92,7 +92,7 @@ struct T4WorkspaceView: View {
                     await store.pairAndConnect(
                         endpoint: endpoint,
                         code: args[codeIndex + 1],
-                        deviceName: "sim-ui-test"
+                        deviceName: platformDeviceName()
                     )
                 }
             }

@@ -331,7 +331,16 @@ final class T4SessionStore: ObservableObject {
         let token = Keychain.get(Self.savedDeviceTokenKey) ?? ""
         let auth: DeviceAuthentication? = (!deviceId.isEmpty && !token.isEmpty)
             ? DeviceAuthentication(deviceId: deviceId, deviceToken: token) : nil
-        await connect(endpoint: endpoint, identity: ClientIdentity(name: "t4-ios", version: "0.1", build: "dev", platform: "ios"), authentication: auth)
+        await connect(
+            endpoint: endpoint,
+            identity: ClientIdentity(
+                name: platformClientName,
+                version: "0.1",
+                build: "dev",
+                platform: platformClientPlatform
+            ),
+            authentication: auth
+        )
     }
 
     private func persist(endpoint: URL, authentication: DeviceAuthentication?) {
@@ -435,7 +444,7 @@ final class T4SessionStore: ObservableObject {
             do {
                 let result = try await client.sendCommand(CommandIntent(
                     hostId: hostId, command: "\(kind.rawValue).acquire",
-                    args: ["ownerId": .string("t4-ios")],
+                    args: ["ownerId": .string(platformClientName)],
                     sessionId: sessionId, expectedRevision: revision))
                 return try result.leaseResult()
             } catch {
@@ -794,7 +803,12 @@ final class T4SessionStore: ObservableObject {
         connecting = true
         defer { connecting = false }
         let transport = makeTransport(endpoint: endpoint)
-        let identity = ClientIdentity(name: "t4-ios", version: "0.1", build: "dev", platform: "ios")
+        let identity = ClientIdentity(
+            name: platformClientName,
+            version: "0.1",
+            build: "dev",
+            platform: platformClientPlatform
+        )
         let c = HostClient(transport: transport, config: HostClient.Config(identity: identity, authentication: nil, requestedFeatures: Self.clientFeatures))
         client = c
         do {
@@ -814,9 +828,9 @@ final class T4SessionStore: ObservableObject {
             let slug = Self.slugify(deviceName)
             let intent = PairStartIntent(
                 code: code,
-                deviceId: "ios-\(slug)",
+                deviceId: "\(platformDeviceIdPrefix)-\(slug)",
                 deviceName: deviceName,
-                platform: "ios",
+                platform: platformClientPlatform,
                 requestedCapabilities: ["sessions.read", "sessions.prompt", "sessions.control", "sessions.manage", "catalog.read", "files.list", "files.read", "files.diff", "term.open", "term.input", "term.resize", "preview.control", "preview.read", "usage.read", "agents.control", "audit.read", "config.read"]
             )
             let ok = try await c.pair(intent)
