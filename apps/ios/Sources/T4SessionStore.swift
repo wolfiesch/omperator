@@ -1275,6 +1275,9 @@ final class T4SessionStore: ObservableObject {
     /// button can target it.
     func openPreview(sessionId: String, url: String) async {
         guard let client, connected, !hostId.isEmpty else { return }
+        // Devices paired before preview caps existed get connection-killed on
+        // unauthorized commands — skip instead (the pane renders the URL fine).
+        guard grantedCapabilities.contains("preview.control") else { return }
         let priorError = lastError
         do {
             let result = try await client.sendCommand(CommandIntent(
@@ -1307,6 +1310,7 @@ final class T4SessionStore: ObservableObject {
             lastError = "Not connected to a host."
             return nil
         }
+        guard grantedCapabilities.contains("preview.control") else { return nil }
         let pid = previewId ?? previewIdBySession[sessionId]
         guard let pid else {
             lastError = "No preview available for this session."
