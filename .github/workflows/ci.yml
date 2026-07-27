@@ -669,18 +669,15 @@ jobs:
       - name: Verify unsigned Android debug application
         run: pnpm --filter @t4-code/mobile check:android:debug
 
-  # Runs on macOS, so it stays out of the required `verify` gate below and is
-  # aggregated into `release-gates` instead: a queued macOS runner must not
-  # hold branch protection. Unlike the other deferred gates this one is not
-  # restricted to push events, because a pull request that changes Swift is
-  # exactly when the result is worth having.
+  # A same-repository pull request can use the provisioned M1 when its circuit
+  # breaker is enabled. Forks, pushes, merge groups, and disabled-M1 runs stay
+  # on an ephemeral hosted runner. GitHub does not reassign a queued
+  # self-hosted job automatically, so disable M1_CI_ENABLED and rerun if the
+  # machine is offline.
   ios:
     needs: changes
     if: ${{ needs.changes.outputs.ios == 'true' }}
-    # macos-15 preselects Xcode 16.4, whose simulator SDK compiles only to
-    # iOS 18.5, while project.yml targets iOS 26 and the UI uses iOS 26 APIs.
-    # macos-26 ships an Xcode 26 toolchain.
-    runs-on: macos-26
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.M1_CI_ENABLED == 'true' && '["self-hosted","macOS","ARM64","wolfie-m1","trusted"]' || '"macos-26"') }}
     timeout-minutes: 30
     steps:
       - name: Check out source
@@ -691,7 +688,26 @@ jobs:
         with:
           node-version: 24.13.1
 
+      - name: Validate the provisioned Apple toolchain
+        if: ${{ runner.name == 'wolfie-m1-omperator' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x /opt/homebrew/bin/xcodegen
+          test -d /Applications/Xcode-26.3.0.app/Contents/Developer
+          echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
+          {
+            echo "DEVELOPER_DIR=/Applications/Xcode-26.3.0.app/Contents/Developer"
+            echo "ARCHS=arm64"
+            echo "ONLY_ACTIVE_ARCH=YES"
+          } >> "$GITHUB_ENV"
+          xcodebuild -version
+          /opt/homebrew/bin/xcodegen --version
+          xcodebuild -showComponent MetalToolchain -json
+          xcrun simctl list runtimes available | grep -F "iOS 26.3"
+
       - name: Install XcodeGen
+        if: ${{ runner.name != 'wolfie-m1-omperator' }}
         run: brew install xcodegen
 
       - name: Report the toolchain under test
