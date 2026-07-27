@@ -469,6 +469,7 @@ async function main(): Promise<void> {
   let failure: unknown;
   let hostStdout: Promise<string> | undefined;
   let hostStderr: Promise<string> | undefined;
+  let terminalIdBeforeReconnect: string | undefined;
 
   try {
     await Promise.all([
@@ -553,49 +554,67 @@ async function main(): Promise<void> {
           throw new Error("streamed dogfood prompt was not durable");
         }
       }
+      const streamRevision = String(primaryEntry.revision);
       const terminal = await confirmedCommand(
         primary,
         streamSession.sessionId,
         "term.open",
         { cols: 80, rows: 24 },
         journal,
-        String(primaryEntry.revision),
+        streamRevision,
       );
       requireSuccess(terminal, "term.open");
       const terminalResult = terminal.result as { terminalId?: unknown } | undefined;
       const terminalId =
         typeof terminalResult?.terminalId === "string" ? terminalResult.terminalId : undefined;
       if (terminalId === undefined) throw new Error("term.open omitted the terminal id");
+      terminalIdBeforeReconnect = terminalId;
+      primary.client.sendJson({
+        v: "omp-app/1",
+        type: "terminal.resize",
+        hostId: primary.welcome.hostId,
+        sessionId: streamSession.sessionId,
+        terminalId,
+        cols: 113,
+        rows: 37,
+      });
       primary.client.sendJson({
         v: "omp-app/1",
         type: "terminal.input",
         hostId: primary.welcome.hostId,
         sessionId: streamSession.sessionId,
         terminalId,
-        data: "exit\n",
+        data: "printf 'DOGFOOD_TERMINAL_SIZE='; stty size\n",
       });
+      let terminalOutput = "";
       for (;;) {
-        const frame = await next(primary.client, "terminal exit");
+        const frame = await next(primary.client, "terminal resize output");
         journal.push(frame);
-        if (frame.type === "terminal.exit" && frame.terminalId === terminalId) break;
+        if (frame.type === "terminal.output" && frame.terminalId === terminalId) {
+          terminalOutput += frame.data;
+          if (terminalOutput.includes("DOGFOOD_TERMINAL_SIZE=") && terminalOutput.includes("37 113")) break;
+        }
       }
       scenarioResults.stream = {
         durable: streamSession.path !== undefined,
         convergedEntryId: String(primaryEntry.entry.id),
         terminalOpened: true,
+        terminalResized: true,
       };
-      if (options.scenario === "full") {
-        requireSuccess(
-          await confirmedCommand(
-            primary,
-            streamSession.sessionId,
-            "session.close",
-            {},
-            journal,
-            String(primaryEntry.revision),
-          ),
-          "session.close",
-        );
+      if (options.scenario === "stream") {
+        primary.client.sendJson({
+          v: "omp-app/1",
+          type: "terminal.input",
+          hostId: primary.welcome.hostId,
+          sessionId: streamSession.sessionId,
+          terminalId,
+          data: "exit\n",
+        });
+        for (;;) {
+          const frame = await next(primary.client, "terminal exit");
+          journal.push(frame);
+          if (frame.type === "terminal.exit" && frame.terminalId === terminalId) break;
+        }
       }
     }
 
@@ -629,8 +648,72 @@ async function main(): Promise<void> {
       if (!snapshot.entries.some((entry) => entry.kind === "message" && entry.data.role === "assistant" && entry.data.text === "Gate 0 response 1")) {
         throw new Error("reconnect snapshot lost the durable assistant response");
       }
+      if (terminalIdBeforeReconnect === undefined) throw new Error("reconnect scenario did not open a terminal");
+      const reopened = await confirmedCommand(
+        reconnect,
+        streamSession.sessionId,
+        "term.open",
+        { cols: 113, rows: 37 },
+        journal,
+        String(snapshot.revision),
+      );
+      requireSuccess(reopened, "term.open after reconnect");
+      const reopenedResult = reopened.result as { terminalId?: unknown } | undefined;
+      const reopenedTerminalId =
+        typeof reopenedResult?.terminalId === "string" ? reopenedResult.terminalId : undefined;
+      if (reopenedTerminalId === undefined) throw new Error("reconnected term.open omitted the terminal id");
+      if (reopenedTerminalId === terminalIdBeforeReconnect) {
+        throw new Error("reconnected term.open reused the disconnected terminal id");
+      }
+      reconnect.client.sendJson({
+        v: "omp-app/1",
+        type: "terminal.input",
+        hostId: reconnect.welcome.hostId,
+        sessionId: streamSession.sessionId,
+        terminalId: reopenedTerminalId,
+        data: "echo DOGFOOD_TERMINAL_RECONNECTED_$PPID\n",
+      });
+      let reconnectedOutput = "";
+      for (;;) {
+        const frame = await next(reconnect.client, "reconnected terminal output");
+        journal.push(frame);
+        if (frame.type === "terminal.output" && frame.terminalId === reopenedTerminalId) {
+          reconnectedOutput += frame.data;
+          if (/DOGFOOD_TERMINAL_RECONNECTED_\d+/.test(reconnectedOutput)) break;
+        }
+      }
+      reconnect.client.sendJson({
+        v: "omp-app/1",
+        type: "terminal.input",
+        hostId: reconnect.welcome.hostId,
+        sessionId: streamSession.sessionId,
+        terminalId: reopenedTerminalId,
+        data: "exit\n",
+      });
+      for (;;) {
+        const frame = await next(reconnect.client, "reconnected terminal exit");
+        journal.push(frame);
+        if (frame.type === "terminal.exit" && frame.terminalId === reopenedTerminalId) break;
+      }
       scenarioResults.stream = { ...(scenarioResults.stream as Record<string, unknown>), durable: true };
-      scenarioResults.reconnect = { uniqueEntries: entryIds.length, revision: String(snapshot.revision) };
+      scenarioResults.reconnect = {
+        uniqueEntries: entryIds.length,
+        revision: String(snapshot.revision),
+        terminalReopened: true,
+      };
+      if (options.scenario === "full") {
+        requireSuccess(
+          await confirmedCommand(
+            reconnect,
+            streamSession.sessionId,
+            "session.close",
+            {},
+            journal,
+            String(snapshot.revision),
+          ),
+          "session.close",
+        );
+      }
     }
 
     if (options.scenario === "full" || options.scenario === "lifecycle") {
