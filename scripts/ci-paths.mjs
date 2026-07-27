@@ -102,6 +102,7 @@ const GROUP_PATTERNS = Object.freeze({
     /^apps\/ios\//u,
     /^packages\/host-wire\//u,
     /^packages\/protocol\//u,
+    /^scripts\/prepare-ios-ci-cache\.mjs$/u,
     /^scripts\/verify-ios\.mjs$/u,
   ],
   android_debug: [

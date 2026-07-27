@@ -700,7 +700,11 @@ jobs:
             echo "DEVELOPER_DIR=/Applications/Xcode-26.3.0.app/Contents/Developer"
             echo "ARCHS=arm64"
             echo "ONLY_ACTIVE_ARCH=YES"
+            echo "T4_IOS_DERIVED_DATA_PATH=$HOME/Library/Caches/omperator-ci/ios/xcode-26.3/derived-data"
           } >> "$GITHUB_ENV"
+          T4_IOS_CACHE_MIN_FREE_GIB=11 \
+            T4_IOS_CACHE_ROOT="$HOME/Library/Caches/omperator-ci/ios/xcode-26.3" \
+            node scripts/prepare-ios-ci-cache.mjs
           xcodebuild -version
           /opt/homebrew/bin/xcodegen --version
           xcodebuild -showComponent MetalToolchain -json
@@ -716,7 +720,27 @@ jobs:
           xcrun simctl list runtimes available
 
       - name: Build the application and run its XCUITest bundle
+        env:
+          T4_IOS_TIMINGS_PATH: ${{ runner.temp }}/omperator-ios-timings.json
         run: node scripts/verify-ios.mjs
+
+      - name: Report iOS phase timings
+        if: ${{ always() }}
+        shell: bash
+        env:
+          T4_IOS_TIMINGS_PATH: ${{ runner.temp }}/omperator-ios-timings.json
+        run: |
+          if [[ ! -f "$T4_IOS_TIMINGS_PATH" ]]; then
+            echo "No completed iOS timing report was produced."
+            exit 0
+          fi
+          cat "$T4_IOS_TIMINGS_PATH"
+          {
+            echo "### iOS phase timings"
+            echo '```json'
+            cat "$T4_IOS_TIMINGS_PATH"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # The branch-protection gate. It waits only on legs that run on ubuntu-24.04
   # for a pull request, so a merge run's macOS and arm64 matrix cannot hold the
