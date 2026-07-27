@@ -505,15 +505,15 @@ final class T4BrowserCoordinator: NSObject, WKNavigationDelegate, WKScriptMessag
         config.allowsInlineMediaPlayback = true
         config.allowsAirPlayForMediaPlayback = true
         #endif
-        // Register the design-mode tap bridge before the webview copies the
-        // config; the coordinator receives postMessage calls here.
-        config.userContentController.add(self, name: Self.tapMessageName)
         self.webView = WKWebView(frame: .zero, configuration: config)
         self.canGoBack = canGoBack
         self.canGoForward = canGoForward
         self.loading = loading
         self.onNavigated = onNavigated
         super.init()
+        // Register the design-mode tap bridge; the webview's configuration
+        // shares this userContentController, so postMessage calls land here.
+        webView.configuration.userContentController.add(self, name: Self.tapMessageName)
         webView.navigationDelegate = self
     }
 
