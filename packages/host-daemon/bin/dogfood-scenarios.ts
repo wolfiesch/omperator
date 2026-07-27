@@ -86,7 +86,16 @@ async function connectClient(socketPath: string, label: string): Promise<Connect
     client: { name: label, version: "1", build: "dogfood", platform: process.platform },
     requestedFeatures: ["session.delta"],
     capabilities: {
-      client: ["sessions.read", "sessions.prompt", "sessions.control", "sessions.manage", "catalog.read"],
+      client: [
+        "sessions.read",
+        "sessions.prompt",
+        "sessions.control",
+        "sessions.manage",
+        "catalog.read",
+        "term.open",
+        "term.input",
+        "term.resize",
+      ],
     },
     savedCursors: [],
   });
@@ -544,9 +553,36 @@ async function main(): Promise<void> {
           throw new Error("streamed dogfood prompt was not durable");
         }
       }
+      const terminal = await confirmedCommand(
+        primary,
+        streamSession.sessionId,
+        "term.open",
+        { cols: 80, rows: 24 },
+        journal,
+        String(primaryEntry.revision),
+      );
+      requireSuccess(terminal, "term.open");
+      const terminalResult = terminal.result as { terminalId?: unknown } | undefined;
+      const terminalId =
+        typeof terminalResult?.terminalId === "string" ? terminalResult.terminalId : undefined;
+      if (terminalId === undefined) throw new Error("term.open omitted the terminal id");
+      primary.client.sendJson({
+        v: "omp-app/1",
+        type: "terminal.input",
+        hostId: primary.welcome.hostId,
+        sessionId: streamSession.sessionId,
+        terminalId,
+        data: "exit\n",
+      });
+      for (;;) {
+        const frame = await next(primary.client, "terminal exit");
+        journal.push(frame);
+        if (frame.type === "terminal.exit" && frame.terminalId === terminalId) break;
+      }
       scenarioResults.stream = {
         durable: streamSession.path !== undefined,
         convergedEntryId: String(primaryEntry.entry.id),
+        terminalOpened: true,
       };
       if (options.scenario === "full") {
         requireSuccess(
