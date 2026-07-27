@@ -708,8 +708,6 @@ jobs:
     if: ${{ needs.changes.outputs.ios == 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.M1_CI_ENABLED == 'true' }}
     runs-on: [self-hosted, macOS, ARM64, wolfie-m1, trusted]
     timeout-minutes: 30
-    env:
-      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
     steps:
       - name: Check out source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -718,6 +716,18 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24.13.1
+
+      - name: Select the newest installed Xcode
+        shell: bash
+        run: |
+          xcode_app=
+          for candidate in /Applications/Xcode*.app; do
+            [[ -d "$candidate" ]] && xcode_app="$candidate"
+          done
+          test -n "$xcode_app"
+          test -d "$xcode_app/Contents/Developer"
+          echo "using $xcode_app"
+          echo "DEVELOPER_DIR=$xcode_app/Contents/Developer" >> "$GITHUB_ENV"
 
       - name: Install XcodeGen when missing
         run: command -v xcodegen >/dev/null || brew install xcodegen
