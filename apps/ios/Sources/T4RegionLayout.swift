@@ -405,19 +405,19 @@ final class T4FloatingPaneManager: ObservableObject {
     /// (isPresented → false → dockFloatingPane → sync closes the panel).
     private func makePanel(for pane: DockPane) -> NSPanel {
         let sessionId = session.sessionId
-        let onDockBack = { [weak store] in store?.dockFloatingPane(pane, for: sessionId) }
+        let onDockBack: () -> Void = { [weak store] in store?.dockFloatingPane(pane, for: sessionId) }
         let content = T4FloatingPaneContent(pane: pane, session: session, store: store, onDockBack: onDockBack)
             .environmentObject(theme ?? ThemeStore())
             .environmentObject(store)
         let hosting = NSHostingController(rootView: content)
-        let panel = NSPanel(contentViewController: hosting,
+        let panel = NSPanel(contentRect: NSRect(x: 220, y: 220, width: 760, height: 540),
                             styleMask: [.titled, .closable, .resizable, .miniaturizable],
                             backing: .buffered, defer: false)
+        panel.contentViewController = hosting
         panel.title = pane.label
         panel.isFloatingPanel = true
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
-        panel.setFrame(NSRect(x: 220, y: 220, width: 760, height: 540), display: true)
         // Closing the panel via its titlebar × docks the pane back (restores
         // it to the dock instead of orphaning it). Retained in
         // `closeDelegates` since NSWindow.delegate is weak.

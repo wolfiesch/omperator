@@ -1552,25 +1552,25 @@ final class T4SessionStore: ObservableObject {
         }
     }
 
-    /// Write one host setting (settings.write, host scope, revision required).
-    /// The host echoes the written metadata object; on success the store
-    /// refreshes `settingsSnapshot` with the echo and returns true. Returns
-    /// false on failure (lastError is set). `value` is sent as a JSONValue
-    /// (string/bool/number); the pane shapes string values as `.string`.
+    /// Write a partial settings object (settings.write, host scope, revision
+    /// required). `patch` is merged into the host settings; the host may answer
+    /// with a confirmation challenge instead of a result — that surfaces as
+    /// `pendingConfirmation` via observe() and the banner handles approve/deny.
+    /// Send without a confirmationId so the host issues the challenge; the
+    /// store's pendingConfirmation banner then drives the confirm() flow.
+    /// On success the new revision is captured from the result and the
+    /// snapshot re-read so masked values (providerKeys) stay authoritative.
+    /// Returns false on failure (lastError is set).
     @discardableResult
-    func settingsWrite(key: String, value: JSONValue) async -> Bool {
+    func settingsWrite(patch: [String: JSONValue]) async -> Bool {
         guard let client, connected, !hostId.isEmpty else {
             lastError = "Not connected to a host."
             return false
         }
-        // settings.write is host-scope, revision required, confirmation
-        // challenge. The revision is the settings revision captured by the
-        // last settings.read (`settingsRevision`); the host may answer with a
-        // confirmation challenge instead of a result — that surfaces as
-        // `pendingConfirmation` via observe() and the banner handles approve/
-        // deny. Send without a confirmationId so the host issues the
-        // challenge; the store's pendingConfirmation banner then drives the
-        // confirm() flow.
+        guard grantedCapabilities.contains("config.write") else {
+            lastError = "Settings writes require the config.write capability."
+            return false
+        }
         guard let revision = settingsRevision else {
             lastError = "Settings revision unknown — load settings first."
             return false
@@ -1578,10 +1578,16 @@ final class T4SessionStore: ObservableObject {
         do {
             let result = try await client.sendCommand(CommandIntent(
                 hostId: hostId, command: "settings.write",
-                args: [key: value], expectedRevision: revision))
-            if let echo = try result.settingsWriteResult() {
-                settingsSnapshot = echo
+                args: patch, expectedRevision: revision))
+            // Result body: {written: true, revision: <new>}. Capture the new
+            // revision so the next write is conflict-free, then re-read to
+            // refresh the snapshot (the host is the source of truth, esp. for
+            // masked providerKeys).
+            if let echo = try result.settingsWriteResult(),
+               case .string(let newRev) = echo["revision"] ?? .null, !newRev.isEmpty {
+                settingsRevision = newRev
             }
+            await settingsRead()
             return true
         } catch {
             t4log.error("settings.write failed: \(error)")
