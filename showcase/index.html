@@ -173,6 +173,82 @@
 	}
 	.macframe .term-chrome { border-bottom: 1px solid var(--line); }
 	.macframe img { display: block; width: 100%; }
+
+	/* ── carousels ─────────────────────────────────────────────── */
+	.carousel { position: relative; margin-top: 20px; }
+	.car-track {
+		display: flex; gap: 14px;
+		overflow-x: auto;
+		scroll-snap-type: x mandatory;
+		scrollbar-width: none;
+		padding-bottom: 8px;
+	}
+	.car-track::-webkit-scrollbar { display: none; }
+	.car-slide {
+		flex: 0 0 min(340px, 78vw);
+		scroll-snap-align: start;
+		background: var(--panel);
+		border: 1px solid var(--line);
+		border-radius: 14px;
+		overflow: hidden;
+		cursor: zoom-in;
+		transition: border-color 120ms, transform 120ms;
+	}
+	.car-slide:hover { border-color: var(--ghost); transform: translateY(-2px); }
+	.car-slide img { display: block; width: 100%; background: var(--line-faint); }
+	.car-slide figcaption { padding: 10px 14px 12px; color: var(--muted); font-size: 13px; }
+	.car-slide figcaption b { color: var(--ink); }
+	.car-btn {
+		position: absolute; top: 38%; z-index: 2;
+		width: 34px; height: 34px; border-radius: 50%;
+		border: 1px solid var(--line);
+		background: rgba(12,12,14,0.9);
+		color: var(--body); cursor: pointer;
+		font-size: 15px; line-height: 1;
+		display: grid; place-items: center;
+		transition: border-color 120ms;
+	}
+	.car-btn:hover { border-color: var(--accent); color: var(--accent); }
+	.car-btn.prev { left: -14px; }
+	.car-btn.next { right: -14px; }
+	.car-btn.prev::before { content: "←"; }
+	.car-btn.next::before { content: "→"; }
+	.car-dots { display: flex; gap: 6px; justify-content: center; padding-top: 10px; }
+	.car-dots button {
+		width: 7px; height: 7px; border-radius: 50%;
+		border: none; background: var(--ghost); cursor: pointer; padding: 0;
+		transition: background 120ms, transform 120ms;
+	}
+	.car-dots button.on { background: var(--accent); transform: scale(1.25); }
+
+	/* ── lightbox ──────────────────────────────────────────────── */
+	.lightbox {
+		position: fixed; inset: 0; z-index: 50;
+		background: rgba(0,0,0,0.88);
+		display: none;
+		align-items: center; justify-content: center;
+		flex-direction: column;
+		padding: 40px;
+		cursor: zoom-out;
+	}
+	.lightbox.open { display: flex; }
+	.lightbox img {
+		max-width: 92vw; max-height: 82vh;
+		border-radius: 12px;
+		border: 1px solid var(--line);
+		box-shadow: 0 32px 120px rgba(0,0,0,0.7);
+	}
+	.lightbox .lb-cap { color: var(--muted); font-size: 13px; margin-top: 14px; }
+	.lightbox .lb-nav {
+		position: absolute; top: 50%; transform: translateY(-50%);
+		width: 42px; height: 42px; border-radius: 50%;
+		border: 1px solid var(--line); background: rgba(12,12,14,0.9);
+		color: var(--body); font-size: 18px; cursor: pointer;
+		display: grid; place-items: center;
+	}
+	.lightbox .lb-nav:hover { border-color: var(--accent); color: var(--accent); }
+	.lightbox .lb-prev { left: 24px; }
+	.lightbox .lb-next { right: 24px; }
 </style>
 </head>
 <body>
@@ -208,21 +284,47 @@ all speaking the same <code>omp-app/1</code> wire to your <code>t4-host</code>, 
 </div>
 
 <h2><span class="dot">●</span> iOS</h2>
-<div class="grid">
-	<div class="card"><img src="../screenshots/feature-02-rail.png" alt="session rail"><div class="body"><span class="tag tag-ios">iOS</span><h3>Session rail</h3><p>Swipe-right drawer with project groups, status pills, unread dots.</p></div></div>
-	<div class="card"><img src="../screenshots/feature-03-session.png" alt="session detail"><div class="body"><span class="tag tag-ios">iOS</span><h3>Live transcript</h3><p>Real-time entries from the host, role-colored, streaming.</p></div></div>
-	<div class="card"><img src="../screenshots/feature-06-ask.png" alt="ask card"><div class="body"><span class="tag tag-ios">iOS</span><h3>Approvals</h3><p>Ask cards for plan review and confirmations, in-line.</p></div></div>
-	<div class="card"><img src="../screenshots/feature-09-terminal.png" alt="terminal"><div class="body"><span class="tag tag-ios">iOS</span><h3>Terminal</h3><p>Host PTY drawer, four tabs per session, mouse reporting.</p></div></div>
-	<div class="card"><img src="../screenshots/feature-10-browser.png" alt="browser"><div class="body"><span class="tag tag-ios">iOS</span><h3>Browser + design mode</h3><p>WKWebView with host preview captures and element annotation.</p></div></div>
-	<div class="card"><img src="../screenshots/parity-files.png" alt="files gallery"><div class="body"><span class="tag tag-new">new</span><h3>Files gallery</h3><p>Image thumbnails inline, full-screen preview.</p></div></div>
+<div class="carousel" data-carousel>
+	<button class="car-btn prev" aria-label="previous"></button>
+	<div class="car-track">
+		<figure class="car-slide"><img src="../screenshots/feature-01-onboarding.png" alt="onboarding"><figcaption><b>Onboarding</b> — pair a host with a code, QR, or deep link.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/feature-02-rail.png" alt="session rail"><figcaption><b>Session rail</b> — swipe-right drawer, project groups, unread dots.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/feature-03-session.png" alt="session"><figcaption><b>Live transcript</b> — real-time entries, streaming.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/feature-04-inbox.png" alt="inbox"><figcaption><b>Inbox</b> — everything that needs attention, one tap away.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/feature-05-plan.png" alt="plan"><figcaption><b>Plan panel</b> — phase progress inline in the session.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/feature-06-ask.png" alt="ask"><figcaption><b>Approvals</b> — ask cards for plan review and confirmations.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/feature-07-files.png" alt="files"><figcaption><b>Files</b> — the session workspace, browsable.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/feature-08-agents.png" alt="agents"><figcaption><b>Agents</b> — subagents spawned by the session.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/feature-09-terminal.png" alt="terminal"><figcaption><b>Terminal</b> — host PTY drawer, four tabs, mouse reporting.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/feature-10-browser.png" alt="browser"><figcaption><b>Browser + design mode</b> — live pages, element annotation.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/parity-files.png" alt="files gallery"><figcaption><b>Files gallery</b> — real image thumbnails, full-screen preview.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/feature-11-usage.png" alt="usage"><figcaption><b>Usage</b> — token and cost accounting when the host has it.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/feature-12-review.png" alt="review"><figcaption><b>Review</b> — turn diffs when the session produces them.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/feature-13-artifacts.png" alt="artifacts"><figcaption><b>Artifacts</b> — files the agent produced.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/feature-14-settings.png" alt="settings"><figcaption><b>Settings</b> — host info and connection controls.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/feature-15-searchdiff.png" alt="search and diff"><figcaption><b>Search & diff</b> — find any file in the workspace.</figcaption></figure>
+	</div>
+	<button class="car-btn next" aria-label="next"></button>
+	<div class="car-dots"></div>
 </div>
 
 <h2><span class="dot">●</span> macOS</h2>
-<div class="grid">
-	<div class="card"><div class="macframe"><div class="term-chrome"><span class="tl"></span><span class="tl"></span><span class="tl"></span><span class="term-title">T4 Code</span></div><img src="../screenshots/mac-01-session.png" alt="mac session"></div><div class="body"><span class="tag tag-mac">macOS</span><h3>Same codebase</h3><p>One SwiftUI tree drives both apps; split view on the Mac, drawer on iOS.</p></div></div>
-	<div class="card"><div class="macframe"><div class="term-chrome"><span class="tl"></span><span class="tl"></span><span class="tl"></span><span class="term-title">T4 Code</span></div><img src="../screenshots/mac-04-terminal.png" alt="mac terminal"></div><div class="body"><span class="tag tag-mac">macOS</span><h3>Terminal</h3><p>Live host PTY docked in the session — <code>omperator git:(t4code-ios)</code>.</p></div></div>
-	<div class="card"><div class="macframe"><div class="term-chrome"><span class="tl"></span><span class="tl"></span><span class="tl"></span><span class="term-title">T4 Code</span></div><img src="../screenshots/mac-05-browser.png" alt="mac browser"></div><div class="body"><span class="tag tag-mac">macOS</span><h3>Browser</h3><p>Live page at localhost:3000, served by the host preview pipeline.</p></div></div>
-	<div class="card"><div class="macframe"><div class="term-chrome"><span class="tl"></span><span class="tl"></span><span class="tl"></span><span class="term-title">T4 Code</span></div><img src="../screenshots/mac-07-ask.png" alt="mac ask"></div><div class="body"><span class="tag tag-mac">macOS</span><h3>Plan review</h3><p>The same ask cards, with real keyboard shortcuts.</p></div></div>
+<div class="carousel" data-carousel>
+	<button class="car-btn prev" aria-label="previous"></button>
+	<div class="car-track">
+		<figure class="car-slide"><img src="../screenshots/mac-01-session.png" alt="session"><figcaption><b>Session</b> — same codebase, split view, live transcript.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/mac-02-files.png" alt="files"><figcaption><b>Files</b> — workspace browser.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/mac-03-agents.png" alt="agents"><figcaption><b>Agents</b> — subagent roster.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/mac-04-terminal.png" alt="terminal"><figcaption><b>Terminal</b> — host PTY, docked, live.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/mac-05-browser.png" alt="browser"><figcaption><b>Browser</b> — live page via the host preview pipeline.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/mac-06-plan.png" alt="plan"><figcaption><b>Plan panel</b> — phase tracking inline.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/mac-07-ask.png" alt="ask"><figcaption><b>Plan review</b> — approvals with real shortcuts.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/mac-08-usage.png" alt="usage"><figcaption><b>Usage</b> — token and cost pane.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/mac-09-settings.png" alt="settings"><figcaption><b>Settings</b> — host and connection.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/mac-10-inbox.png" alt="inbox"><figcaption><b>Inbox</b> — attention queue.</figcaption></figure>
+	</div>
+	<button class="car-btn next" aria-label="next"></button>
+	<div class="car-dots"></div>
 </div>
 
 <h2><span class="dot">●</span> terminal</h2>
@@ -270,13 +372,88 @@ all speaking the same <code>omp-app/1</code> wire to your <code>t4-host</code>, 
 </div>
 
 <div class="grid" style="margin-top:16px;">
-	<div class="card" style="grid-column: 1 / -1;"><img src="../screenshots/tui-live.png" alt="t4 TUI, real capture"><div class="body"><span class="tag tag-tui">real capture</span><h3><code>t4</code> — the terminal client</h3><p>The mockup above isn't marketing gloss — it's the actual UI, one-to-one. Session rail, live transcript, composer with history, fork, help. A 62 MB self-contained binary speaking <code>omp-app/1</code> over UDS or pinned wss. <code>packages/t4-cli</code>.</p></div></div>
+	<div class="card" style="grid-column: 1 / -1;"><img src="../screenshots/tui-hero.png" alt="t4 TUI, real capture"><div class="body"><span class="tag tag-tui">real capture</span><h3><code>t4</code> — the terminal client</h3><p>The mockup above isn't marketing gloss — it's the actual UI, one-to-one. Session rail, live transcript, composer with history, fork, help. A 62 MB self-contained binary speaking <code>omp-app/1</code> over UDS or pinned wss. <code>packages/t4-cli</code>.</p></div></div>
 </div>
 
 <footer>
 	<span>t4 code · omperator</span>
 	<span>Rosé Pine · omp-app/1 · tailnet + pinned wss</span>
 </footer>
+
+<div class="lightbox" id="lb" role="dialog" aria-modal="true">
+	<button class="lb-nav lb-prev" aria-label="previous">←</button>
+	<img id="lb-img" alt="">
+	<div class="lb-cap" id="lb-cap"></div>
+	<button class="lb-nav lb-next" aria-label="next">→</button>
+</div>
+
+<script>
+// Carousels: scroll-snap + buttons + dots + keyboard. Lightbox: click any
+// slide (or the TUI hero) to expand; arrows/esc navigate.
+(() => {
+	const lb = document.getElementById("lb");
+	const lbImg = document.getElementById("lb-img");
+	const lbCap = document.getElementById("lb-cap");
+	const shots = []; // {src, cap}
+	let lbIndex = 0;
+
+	const openLb = i => {
+		lbIndex = (i + shots.length) % shots.length;
+		lbImg.src = shots[lbIndex].src;
+		lbCap.textContent = shots[lbIndex].cap;
+		lb.classList.add("open");
+		document.body.style.overflow = "hidden";
+	};
+	const closeLb = () => {
+		lb.classList.remove("open");
+		document.body.style.overflow = "";
+	};
+	lb.addEventListener("click", e => { if (e.target === lb || e.target === lbImg) closeLb(); });
+	document.querySelector(".lb-prev").addEventListener("click", e => { e.stopPropagation(); openLb(lbIndex - 1); });
+	document.querySelector(".lb-next").addEventListener("click", e => { e.stopPropagation(); openLb(lbIndex + 1); });
+	document.addEventListener("keydown", e => {
+		if (!lb.classList.contains("open")) return;
+		if (e.key === "Escape") closeLb();
+		if (e.key === "ArrowLeft") openLb(lbIndex - 1);
+		if (e.key === "ArrowRight") openLb(lbIndex + 1);
+	});
+
+	// Register shots in page order: carousels first, then hero/terminal shots.
+	const register = img => {
+		const idx = shots.length;
+		shots.push({ src: img.src, cap: img.alt });
+		img.closest(".car-slide, .card").addEventListener("click", () => openLb(idx));
+	};
+	document.querySelectorAll(".car-slide img, .grid .card img").forEach(register);
+
+	// Carousels.
+	document.querySelectorAll("[data-carousel]").forEach(root => {
+		const track = root.querySelector(".car-track");
+		const slides = [...root.querySelectorAll(".car-slide")];
+		const dots = root.querySelector(".car-dots");
+		const step = () => slides[0].getBoundingClientRect().width + 14;
+		const at = i => track.scrollTo({ left: i * step(), behavior: "smooth" });
+		root.querySelector(".prev").addEventListener("click", () => track.scrollBy({ left: -step(), behavior: "smooth" }));
+		root.querySelector(".next").addEventListener("click", () => track.scrollBy({ left: step(), behavior: "smooth" }));
+		slides.forEach((_, i) => {
+			const b = document.createElement("button");
+			b.addEventListener("click", () => at(i));
+			dots.appendChild(b);
+		});
+		const mark = () => {
+			const i = Math.round(track.scrollLeft / step());
+			dots.querySelectorAll("button").forEach((b, j) => b.classList.toggle("on", j === i));
+		};
+		track.addEventListener("scroll", mark, { passive: true });
+		mark();
+		root.tabIndex = 0;
+		root.addEventListener("keydown", e => {
+			if (e.key === "ArrowLeft") track.scrollBy({ left: -step(), behavior: "smooth" });
+			if (e.key === "ArrowRight") track.scrollBy({ left: step(), behavior: "smooth" });
+		});
+	});
+})();
+</script>
 
 </body>
 </html>
