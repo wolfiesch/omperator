@@ -742,6 +742,13 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Enforce iOS cache bounds
+        if: ${{ always() && runner.name == 'wolfie-m1-omperator' }}
+        run: |
+          T4_IOS_CACHE_MIN_FREE_GIB=11 \
+            T4_IOS_CACHE_ROOT="$HOME/Library/Caches/omperator-ci/ios/xcode-26.3" \
+            node scripts/prepare-ios-ci-cache.mjs
+
   # The branch-protection gate. It waits only on legs that run on ubuntu-24.04
   # for a pull request, so a merge run's macOS and arm64 matrix cannot hold the
   # required check behind a queued runner. The deferred release gates are
