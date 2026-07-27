@@ -762,8 +762,43 @@ final class T4SessionStore: ObservableObject {
     /// Subagents for a session: live host state when connected, sample rows
     /// otherwise (agents-pane preview without a host).
     func agents(for sessionId: String) -> [AgentState] {
-        if connected { return agentsBySession[sessionId] ?? [] }
+        if connected {
+            if let live = agentsBySession[sessionId], !live.isEmpty { return live }
+            return projectedTaskAgents(for: sessionId)
+        }
         return Self.demoMode ? Self.sampleAgents : []
+    }
+
+    /// Fallback agent source: some runtimes stream no agent.* frames at all,
+    /// leaving the pane empty even while `task` subagents are visibly working
+    /// in the transcript. Project one row per named task-subagent from
+    /// tool-use entries (args.tasks[].name); a finished call (result present)
+    /// reads "completed", an open one "running".
+    private func projectedTaskAgents(for sessionId: String) -> [AgentState] {
+        var slots: [String: AgentState] = [:]
+        var order: [String] = []
+        for entry in liveEntries[sessionId] ?? [] {
+            guard entry.kind == .toolUse,
+                  case .object(let data) = entry.data,
+                  case .string("task") = data["tool"],
+                  case .object(let args)? = data["args"],
+                  case .array(let tasks)? = args["tasks"] else { continue }
+            let done: String
+            if case .bool(let ok)? = data["ok"] { done = ok ? "completed" : "failed" }
+            else if data["result"] != nil { done = "completed" }
+            else { done = "running" }
+            let intent: String?
+            if case .string(let i)? = args["i"] { intent = i } else { intent = nil }
+            for task in tasks {
+                guard case .object(let t) = task, case .string(let name)? = t["name"] else { continue }
+                if slots[name] == nil { order.append(name) }
+                var slot = slots[name] ?? AgentState(agentId: name, state: "running")
+                slot.state = done
+                slot.detail = intent
+                slots[name] = slot
+            }
+        }
+        return order.suffix(12).compactMap { slots[$0] }
     }
 
     /// Transcript entries for a session: the live host log when attached,
