@@ -101,6 +101,11 @@ struct MacCommands: SwiftUI.Commands {
             Button("Close Sheet") { commands?.dismissPresented() }
                 .keyboardShortcut(.escape, modifiers: [])
 
+            // ⌘J: raise/lower the host-terminal drawer for the focused session.
+            Button("Toggle Terminal") { toggleTerminalDrawer() }
+                .keyboardShortcut("j", modifiers: .command)
+                .disabled(selected == nil)
+
             Button("Next Unread") { selectNextUnread() }
                 .keyboardShortcut("u", modifiers: [.command, .option])
                 .disabled(store?.unreadSessions.isEmpty ?? true)
@@ -161,6 +166,14 @@ struct MacCommands: SwiftUI.Commands {
     private func selectByIndex(_ i: Int) {
         guard let store, flatSessions.indices.contains(i) else { return }
         store.select(flatSessions[i])
+    }
+
+    /// ⌘J: flip the host-terminal drawer for the focused session. The flag
+    /// lives in the per-session layout, so the drawer animates via the store.
+    private func toggleTerminalDrawer() {
+        guard let store, let session = selected else { return }
+        let open = store.layout(for: session.sessionId).terminalOpen
+        store.setTerminalOpen(!open, for: session.sessionId)
     }
 
     /// ⌘⌥1…⌘⌥6: select the Nth docked pane (1-based index → 0-based here) for
