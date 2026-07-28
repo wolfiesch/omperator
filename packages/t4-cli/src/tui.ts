@@ -147,6 +147,39 @@ export class Tui implements HostEvents {
 	private reconnectDelay = 1;
 	private searchTimer: Timer | undefined;
 	private termScreen = new TermScreen();
+	/** Tail of an incomplete escape sequence held across stdin chunks. */
+	private inputBuf = "";
+	private inputFlushTimer: Timer | undefined;
+
+	private feedInput(data: string): void {
+		if (this.inputFlushTimer) { clearTimeout(this.inputFlushTimer); this.inputFlushTimer = undefined; }
+		this.inputBuf += data;
+		// Parse as much as possible; hold a trailing incomplete escape.
+		let consumed = this.inputBuf.length;
+		for (let i = 0; i < this.inputBuf.length; i += 1) {
+			if (this.inputBuf[i] !== "\x1b") continue;
+			const rest = this.inputBuf.slice(i);
+			// Complete forms: CSI letter/~, SGR mouse M/m, SS3, or lone ESC.
+			if (/^\x1b\[[<0-9;?]*[A-Za-z~]/.test(rest) || /^\x1b[()][A-Z0-9]/i.test(rest) || /^\x1b[>=]/.test(rest)) continue;
+			if (/^\x1b\][^\x07\x1b]*(\x07|\x1b\\)/.test(rest)) continue;
+			if (rest.length === 1 || /^\x1b\[[<0-9;?]*$/.test(rest) || /^\x1b\][^\x07\x1b]*$/.test(rest)) {
+				consumed = i; // possibly incomplete — hold from here
+				break;
+			}
+		}
+		const head = this.inputBuf.slice(0, consumed);
+		this.inputBuf = this.inputBuf.slice(consumed);
+		if (head) this.input(head);
+		if (this.inputBuf) {
+			// If nothing more arrives quickly, treat the held bytes as Escape.
+			this.inputFlushTimer = setTimeout(() => {
+				const tail = this.inputBuf;
+				this.inputBuf = "";
+				if (tail === "\x1b") this.key("escape");
+				else this.input(tail);
+			}, 60);
+		}
+	}
 
 	setClient(client: T4Client): void {
 		this.client = client;
@@ -161,7 +194,7 @@ export class Tui implements HostEvents {
 		});
 		process.stdin.setRawMode(true);
 		process.stdin.resume();
-		process.stdin.on("data", d => this.input(d.toString("utf8")));
+		process.stdin.on("data", d => this.feedInput(d.toString("utf8")));
 		this.screen.enter();
 		// SGR mouse: button events + any-motion + SGR extended coords.
 		process.stdout.write("\x1b[?1000h\x1b[?1002h\x1b[?1006h");
