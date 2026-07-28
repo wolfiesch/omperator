@@ -50,7 +50,7 @@ final class T4Notifier: ObservableObject {
         // Turn-end detection: a sessionId that leaves activeTurns is a
         // turn.end/turn.error (the store removes it on those events). Notify
         // only for sessions the user isn't currently viewing.
-        store.$activeTurns
+        store.transcriptModel.$activeTurns
             .removeDuplicates()
             .sink { [weak self] active in
                 guard let self, let store = self.store else { return }
@@ -66,7 +66,7 @@ final class T4Notifier: ObservableObject {
         // Confirmation challenge: notify on a new challenge (by id) for an
         // unviewed or host-scoped session. The approve/deny banner handles the
         // in-view case; this catches the user's attention when they're elsewhere.
-        store.$pendingConfirmation
+        store.promptModel.$pendingConfirmation
             .removeDuplicates()
             .sink { [weak self] challenge in
                 guard let self, let store = self.store else { return }

@@ -32,6 +32,7 @@ enum T4BrowserAction: Equatable { case back, forward, reload }
 struct T4BrowserPane: View {
     let session: SessionRef
     @ObservedObject var store: T4SessionStore
+    @ObservedObject private var previewModel: T4PreviewBrowserModel
     @EnvironmentObject var theme: ThemeStore
     @Binding var isPresented: Bool
 
@@ -57,6 +58,7 @@ struct T4BrowserPane: View {
     init(session: SessionRef, store: T4SessionStore, isPresented: Binding<Bool>) {
         self.session = session
         self.store = store
+        self._previewModel = ObservedObject(wrappedValue: store.previewModel)
         self._isPresented = isPresented
         let initial = store.browserURL(for: session.sessionId)
         self._loadURL = State(initialValue: initial)
@@ -228,7 +230,7 @@ struct T4BrowserPane: View {
     /// Whether a host preview is tracked for this session (gates the Capture
     /// button). The pane still renders the URL directly when false.
     private var canCapture: Bool {
-        store.previewIdBySession[session.sessionId] != nil
+        previewModel.previewIdBySession[session.sessionId] != nil
     }
 
     /// Capture bar shown in place of the toolbar while the capture view is

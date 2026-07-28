@@ -23,7 +23,7 @@ import {
   type TerminalResult,
 } from "@t4-code/protocol/desktop-ipc";
 import { CLUSTER_OPERATOR_FEATURE, decodeCatalog, decodeCommandResult, decodeSessions, decodeWorkspaceInfrastructureProjection, hostId, revision, sessionId, type CatalogFrame, type Cursor, type SessionRef, type SettingsFrame, type WorkspaceInfrastructureProjection, type WorkspaceListResult } from "@t4-code/protocol";
-import type { Unsubscribe } from "./index.ts";
+import type { Unsubscribe } from "./omp-client-contracts.ts";
 import { ProjectionStore } from "./projection.ts";
 import {
   DesktopRuntimeError,

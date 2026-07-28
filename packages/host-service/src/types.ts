@@ -32,7 +32,7 @@ import type {
 	RemotePeerIdentity,
 } from "./remote/types.ts";
 import type { RuntimeAdapterRegistry } from "./runtime-adapter.ts";
-import type { RpcChildInvocation } from "./rpc-child.ts";
+import type { RpcChildInvocation } from "./rpc-child-contract.ts";
 import type { WorkspaceAuthority } from "./workspace-authority.ts";
 
 export interface ConnectionTransport {
