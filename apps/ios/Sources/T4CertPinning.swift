@@ -19,6 +19,56 @@ import Security
 
 private let t4pinLog = Logger(subsystem: "sh.t4code.ios", category: "pinning")
 
+/// Certificate pins follow the connection credential lifetime. Normal app
+/// launches persist them in the Keychain; explicit ephemeral dogfood profiles
+/// retain them only for this process, while still enforcing continuity across
+/// reconnects and newly-created URLSession delegates.
+final class T4CertificatePinStore: @unchecked Sendable {
+    private static let persistent = T4CertificatePinStore(usesKeychain: true)
+    private static let ephemeral = T4CertificatePinStore(usesKeychain: false)
+
+    private let usesKeychain: Bool
+    private let memoryLock = NSLock()
+    private var memoryPins: [String: String] = [:]
+
+    init(usesKeychain: Bool) {
+        self.usesKeychain = usesKeychain
+    }
+
+    static var current: T4CertificatePinStore {
+        forArguments(ProcessInfo.processInfo.arguments)
+    }
+
+    static func forArguments(_ arguments: [String]) -> T4CertificatePinStore {
+        Keychain.usesPersistentStore(arguments: arguments) ? persistent : ephemeral
+    }
+
+    func get(_ key: String) -> String? {
+        if usesKeychain { return Keychain.get(key) }
+        memoryLock.lock()
+        defer { memoryLock.unlock() }
+        return memoryPins[key]
+    }
+
+    @discardableResult
+    func set(_ value: String, forKey key: String) -> Bool {
+        if usesKeychain { return Keychain.set(value, forKey: key) }
+        memoryLock.lock()
+        defer { memoryLock.unlock() }
+        memoryPins[key] = value
+        return true
+    }
+
+    @discardableResult
+    func remove(_ key: String) -> Bool {
+        if usesKeychain { return Keychain.remove(forKey: key) }
+        memoryLock.lock()
+        defer { memoryLock.unlock() }
+        memoryPins.removeValue(forKey: key)
+        return true
+    }
+}
+
 /// URLSession delegate that pins the server leaf certificate per host:port.
 /// Only `wss://` endpoints should route through this; plain `ws://` carries no
 /// server trust challenge at all.
@@ -28,21 +78,27 @@ final class T4CertPinner: NSObject, URLSessionDelegate {
 
     private let key: String
     private let label: String
+    private let store: T4CertificatePinStore
 
-    init(host: String, port: Int) {
+    init(
+        host: String,
+        port: Int,
+        store: T4CertificatePinStore = .current
+    ) {
         self.key = Self.pinKey(host: host, port: port)
         self.label = "\(host):\(port)"
+        self.store = store
     }
 
     /// The currently pinned fingerprint for a host:port, if any (exposed for
     /// settings UI / debugging).
     static func pinnedFingerprint(host: String, port: Int) -> String? {
-        Keychain.get(pinKey(host: host, port: port))
+        T4CertificatePinStore.current.get(pinKey(host: host, port: port))
     }
 
     /// Forget a pin (e.g. after deliberate host cert rotation).
     static func forget(host: String, port: Int) {
-        Keychain.remove(forKey: pinKey(host: host, port: port))
+        T4CertificatePinStore.current.remove(pinKey(host: host, port: port))
     }
 
     func urlSession(
@@ -57,7 +113,7 @@ final class T4CertPinner: NSObject, URLSessionDelegate {
             completionHandler(.performDefaultHandling, nil)
             return
         }
-        if let stored = Keychain.get(key) {
+        if let stored = store.get(key) {
             if stored == fingerprint {
                 completionHandler(.useCredential, URLCredential(trust: trust))
             } else {
@@ -67,7 +123,7 @@ final class T4CertPinner: NSObject, URLSessionDelegate {
         } else {
             // TOFU: accept and pin. Logged loudly so a compromised first
             // connect is at least audible in the logs.
-            guard Keychain.set(fingerprint, forKey: key) else {
+            guard store.set(fingerprint, forKey: key) else {
                 t4pinLog.error("failed to persist cert pin for \(self.label, privacy: .public)")
                 completionHandler(.cancelAuthenticationChallenge, nil)
                 return
