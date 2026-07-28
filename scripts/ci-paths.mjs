@@ -15,6 +15,7 @@ const FORCE_ALL = [
   /^pnpm-lock\.yaml$/u,
   /^pnpm-workspace\.yaml$/u,
   /^scripts\/check-release-consistency(?:\.test)?\.mjs$/u,
+  /^scripts\/release-consistency\//u,
   /^scripts\/ci-baseline(?:\.test)?\.mjs$/u,
   /^scripts\/ci-paths(?:\.test)?\.mjs$/u,
   /^scripts\/read-bounded-response\.mjs$/u,
