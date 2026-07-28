@@ -41,8 +41,8 @@ const recordValue = (value: unknown): Record<string, unknown> | null =>
 	value !== null && typeof value === "object" && !Array.isArray(value)
 		? Object.fromEntries(Object.entries(value))
 		: null;
-const stringField = (row: Record<string, unknown>, key: string): string => {
-	const value = safe(row[key]);
+const stringField = (row: Record<string, unknown>, key: string, max = 256): string => {
+	const value = safe(row[key], max);
 	if (!value) throw new Error("invalid persisted row");
 	return value;
 };
@@ -212,11 +212,11 @@ export class SqliteDeviceRegistry implements DeviceRegistry {
 	private read(rowValue: unknown): DeviceRecord | null {
 		const row = recordValue(rowValue);
 		if (!row) return null;
-		const capabilityValue: unknown = JSON.parse(stringField(row, "capabilities"));
+		const capabilityValue: unknown = JSON.parse(stringField(row, "capabilities", 4096));
 		if (!Array.isArray(capabilityValue)) throw new Error("invalid persisted capability");
 		const validCapabilities = capabilityValue.filter((value): value is Capability => isCapability(value));
 		if (validCapabilities.length !== capabilityValue.length) throw new Error("invalid persisted capability");
-		const metadataValue: unknown = JSON.parse(stringField(row, "metadata"));
+		const metadataValue: unknown = JSON.parse(stringField(row, "metadata", 4096));
 		const metadata = recordValue(metadataValue);
 		if (
 			!metadata ||
