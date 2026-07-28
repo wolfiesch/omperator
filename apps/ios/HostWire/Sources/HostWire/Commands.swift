@@ -78,6 +78,8 @@ public enum Commands {
         "term.open":            .init(capability: .terminalOpen,  scope: .session, revision: .optional, confirmation: .challenge),
         "files.list":           .init(capability: .filesList,     scope: .session, revision: .optional, confirmation: .none),
         "files.read":           .init(capability: .filesRead,     scope: .session, revision: .optional, confirmation: .none),
+        "files.search":         .init(capability: .filesList,     scope: .session, revision: .optional, confirmation: .none),
+        "files.diff":           .init(capability: .filesDiff,     scope: .session, revision: .optional, confirmation: .none),
         // Panes: usage / review / settings (artifact.read is already above).
         "usage.read":           .init(capability: .usageRead,     scope: .host,    revision: .none,     confirmation: .none),
         "review.read":          .init(capability: .filesRead,     scope: .session, revision: .optional, confirmation: .none),
