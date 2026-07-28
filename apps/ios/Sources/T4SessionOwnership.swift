@@ -85,4 +85,17 @@ extension SessionRef {
     var t4IsWritable: Bool {
         sessionControl == nil && archivedAt == nil
     }
+
+    /// Archived sessions normally restore without a controller lease. A
+    /// reconciling state is also allowed so the host can re-check a stale or
+    /// missing lock; concrete observer states remain read-only.
+    var t4CanRestore: Bool {
+        guard archivedAt != nil else { return false }
+        switch sessionControl {
+        case nil, .some(.reconciling):
+            return true
+        default:
+            return false
+        }
+    }
 }

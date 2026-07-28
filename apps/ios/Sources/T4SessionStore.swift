@@ -41,6 +41,54 @@ struct PendingTranscriptQueue {
     }
 }
 
+enum T4SessionListView: String, CaseIterable, Identifiable {
+    case current
+    case archived
+
+    var id: String { rawValue }
+    var label: String { self == .current ? "Current" : "Archived" }
+}
+
+enum T4RailOrganization: String, CaseIterable, Identifiable {
+    case byProject
+    case flat
+
+    var id: String { rawValue }
+    var label: String { self == .byProject ? "By project" : "In one list" }
+}
+
+enum T4RailSort: String, CaseIterable, Identifiable {
+    case priority
+    case updated
+    case manual
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .priority: "Priority"
+        case .updated: "Last updated"
+        case .manual: "Manual order"
+        }
+    }
+}
+
+enum T4RailFilter: String, CaseIterable, Identifiable {
+    case all
+    case attention
+    case running
+    case errors
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .all: "All"
+        case .attention: "Attention"
+        case .running: "Running"
+        case .errors: "Errors"
+        }
+    }
+}
+
 @MainActor
 final class T4SessionStore: ObservableObject {
     let connectionModel = T4ConnectionInventoryModel()
@@ -54,9 +102,10 @@ final class T4SessionStore: ObservableObject {
     private var domainModelSubscriptions = Set<AnyCancellable>()
 
     struct Group: Identifiable {
+        let projectId: String
         let project: String
         let sessions: [SessionRef]
-        var id: String { project }
+        var id: String { projectId }
     }
 
     /// A host-asked question awaiting the user's answer (question mode).
@@ -143,6 +192,15 @@ final class T4SessionStore: ObservableObject {
         set { connectionModel.sessions = newValue }
     }
     @Published var query: String = ""
+    /// Search and quick-filter state is deliberately ephemeral so relaunching
+    /// can never make sessions appear to be missing.
+    @Published var railFilter: T4RailFilter = .all
+    @Published private(set) var sessionListView: T4SessionListView
+    @Published private(set) var railOrganization: T4RailOrganization
+    @Published private(set) var railSort: T4RailSort
+    @Published private(set) var pinnedSessionIds: Set<String>
+    @Published private(set) var projectManualOrder: [String]
+    @Published private(set) var sessionManualOrderByScope: [String: [String]]
     private(set) var connecting: Bool {
         get { connectionModel.connecting }
         set { connectionModel.connecting = newValue }
@@ -437,6 +495,12 @@ final class T4SessionStore: ObservableObject {
     private static let savedEndpointKey = "t4.endpoint"
     private static let savedDeviceIdKey = "t4.deviceId"
     private static let savedDeviceTokenKey = "t4.deviceToken"
+    private static let railListViewKey = "t4.rail.listView"
+    private static let railOrganizationKey = "t4.rail.organization"
+    private static let railSortKey = "t4.rail.sort"
+    private static let railPinnedSessionIdsKey = "t4.rail.pinnedSessionIds"
+    private static let railProjectManualOrderKey = "t4.rail.projectManualOrder"
+    private static let railSessionManualOrderKey = "t4.rail.sessionManualOrder"
     /// UserDefaults flag set once the legacy plist credentials have been
     /// copied into the Keychain and the plist entries deleted.
     private static let keychainMigratedKey = "t4.keychainMigrated"
@@ -843,6 +907,11 @@ final class T4SessionStore: ObservableObject {
         if connected, let session { Task { await attach(sessionId: session.sessionId) } }
     }
 
+    func selectDefaultVisibleSessionIfNeeded() {
+        guard selectedSession == nil else { return }
+        reconcileSelectionForVisibleList()
+    }
+
     /// Attach to a session's transcript stream. The host replies with a
     /// snapshot frame (full log at a cursor) and then live entry frames;
     /// `observe()` routes both into `liveEntries`. Safe to repeat.
@@ -1202,9 +1271,61 @@ final class T4SessionStore: ObservableObject {
         _ = await control(sessionId: sessionId, command: "session.close", args: [:])
     }
 
-    /// Delete a session (session.delete). Same confirmation flow as close.
+    /// Archive is reversible: the host retains the transcript and artifacts,
+    /// while Current stops rendering the session. Refresh after success so the
+    /// rail changes views immediately even before the next pushed inventory.
+    func archiveSession(sessionId: String) async {
+        guard sessions.first(where: { $0.sessionId == sessionId })?.t4IsWritable == true else {
+            return
+        }
+        if await runLeaseFreeLifecycleCommand(sessionId: sessionId, command: "session.archive") {
+            await refresh()
+        }
+    }
+
+    /// Restore an archived session to Current.
+    func restoreSession(sessionId: String) async {
+        guard sessions.first(where: { $0.sessionId == sessionId })?.t4CanRestore == true else {
+            return
+        }
+        if await runLeaseFreeLifecycleCommand(sessionId: sessionId, command: "session.restore") {
+            await refresh()
+        }
+    }
+
+    /// Archive, restore, and archived-session delete are lifecycle mutations
+    /// rather than in-session writes. They intentionally bypass controller
+    /// leases, matching the canonical web client and allowing actions while an
+    /// archived session cannot acquire a lease.
+    private func runLeaseFreeLifecycleCommand(sessionId: String, command: String) async -> Bool {
+        guard let client, connected, !hostId.isEmpty,
+              let revision = revision(of: sessionId) else { return false }
+        do {
+            _ = try await client.sendCommand(CommandIntent(
+                hostId: hostId,
+                command: command,
+                sessionId: sessionId,
+                expectedRevision: revision
+            ))
+            return true
+        } catch {
+            lastError = "\(error)"
+            return false
+        }
+    }
+
+    /// Delete a session (session.delete). Current sessions keep the existing
+    /// controller-lease path. Archived sessions cannot acquire a lease, so
+    /// they dispatch the challenged lifecycle command directly.
     func deleteSession(sessionId: String) async {
-        _ = await control(sessionId: sessionId, command: "session.delete", args: [:])
+        guard let session = sessions.first(where: { $0.sessionId == sessionId }) else { return }
+        if session.archivedAt != nil {
+            if await runLeaseFreeLifecycleCommand(sessionId: sessionId, command: "session.delete") {
+                await refresh()
+            }
+        } else {
+            _ = await control(sessionId: sessionId, command: "session.delete", args: [:])
+        }
     }
 
     /// Upload one JPEG: begin {mimeType,size,sha256} → chunk loop (base64,
@@ -1235,6 +1356,39 @@ final class T4SessionStore: ObservableObject {
     static let demoMode = ProcessInfo.processInfo.arguments.contains("-T4Demo")
 
     init() {
+        let defaults = UserDefaults.standard
+        if ProcessInfo.processInfo.arguments.contains("-T4ResetRailPreferences") {
+            for key in [
+                Self.railListViewKey,
+                Self.railOrganizationKey,
+                Self.railSortKey,
+                Self.railPinnedSessionIdsKey,
+                Self.railProjectManualOrderKey,
+                Self.railSessionManualOrderKey,
+            ] {
+                defaults.removeObject(forKey: key)
+            }
+        }
+        self.sessionListView = T4SessionListView(
+            rawValue: defaults.string(forKey: Self.railListViewKey) ?? ""
+        ) ?? .current
+        self.railOrganization = T4RailOrganization(
+            rawValue: defaults.string(forKey: Self.railOrganizationKey) ?? ""
+        ) ?? .byProject
+        self.railSort = T4RailSort(
+            rawValue: defaults.string(forKey: Self.railSortKey) ?? ""
+        ) ?? .priority
+        self.pinnedSessionIds = Set(
+            defaults.stringArray(forKey: Self.railPinnedSessionIdsKey) ?? []
+        )
+        self.projectManualOrder =
+            defaults.stringArray(forKey: Self.railProjectManualOrderKey) ?? []
+        if let data = defaults.data(forKey: Self.railSessionManualOrderKey),
+           let decoded = try? JSONDecoder().decode([String: [String]].self, from: data) {
+            self.sessionManualOrderByScope = decoded
+        } else {
+            self.sessionManualOrderByScope = [:]
+        }
         Self.migrateCredentialsToKeychainIfNeeded()
         connectionModel.sessions = Self.demoMode ? Self.sample : []
         connectionModel.objectWillChange
@@ -1247,23 +1401,216 @@ final class T4SessionStore: ObservableObject {
             .store(in: &domainModelSubscriptions)
     }
 
-    /// Filtered + project-grouped view of the inventory (the rail model).
-    var groups: [Group] {
-        let filtered: [SessionRef]
-        if query.isEmpty {
-            filtered = sessions
+    var currentSessionCount: Int {
+        sessions.lazy.filter { $0.archivedAt == nil }.count
+    }
+
+    var archivedSessionCount: Int {
+        sessions.lazy.filter { $0.archivedAt != nil }.count
+    }
+
+    var pinnedSessions: [SessionRef] {
+        sortSessions(filteredSessions.filter { pinnedSessionIds.contains($0.sessionId) }, scope: "__pinned__")
+    }
+
+    func setSessionListView(_ view: T4SessionListView) {
+        guard sessionListView != view else { return }
+        sessionListView = view
+        UserDefaults.standard.set(view.rawValue, forKey: Self.railListViewKey)
+        reconcileSelectionForVisibleList()
+    }
+
+    func setRailOrganization(_ organization: T4RailOrganization) {
+        guard railOrganization != organization else { return }
+        railOrganization = organization
+        UserDefaults.standard.set(organization.rawValue, forKey: Self.railOrganizationKey)
+    }
+
+    func setRailSort(_ sort: T4RailSort) {
+        guard railSort != sort else { return }
+        railSort = sort
+        UserDefaults.standard.set(sort.rawValue, forKey: Self.railSortKey)
+    }
+
+    func setRailFilter(_ filter: T4RailFilter) {
+        railFilter = filter
+    }
+
+    func setSessionPinned(_ sessionId: String, pinned: Bool) {
+        if pinned {
+            pinnedSessionIds.insert(sessionId)
         } else {
-            let q = query
-            filtered = sessions.filter {
-                $0.title.localizedCaseInsensitiveContains(q)
-                    || ($0.project.name ?? $0.project.projectId).localizedCaseInsensitiveContains(q)
-                    || $0.status.localizedCaseInsensitiveContains(q)
-                    || ($0.model ?? "").localizedCaseInsensitiveContains(q)
-            }
+            pinnedSessionIds.remove(sessionId)
         }
-        let keyed = Dictionary(grouping: filtered) { $0.project.name ?? $0.project.projectId }
-        return keyed.sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
-            .map { Group(project: $0.key, sessions: $0.value.sorted { $0.updatedAt > $1.updatedAt }) }
+        UserDefaults.standard.set(
+            pinnedSessionIds.sorted(),
+            forKey: Self.railPinnedSessionIdsKey
+        )
+    }
+
+    func moveSession(_ session: SessionRef, direction: Int) {
+        guard railSort == .manual, direction == -1 || direction == 1 else { return }
+        let scope = manualScope(for: session)
+        let visibleIds: [String]
+        if railOrganization == .flat {
+            visibleIds = filteredSessions.map(\.sessionId)
+        } else {
+            visibleIds = filteredSessions
+                .filter { $0.project.projectId == session.project.projectId }
+                .map(\.sessionId)
+        }
+        var order = normalizedManualOrder(
+            stored: sessionManualOrderByScope[scope] ?? [],
+            visibleIds: visibleIds
+        )
+        guard let index = order.firstIndex(of: session.sessionId) else { return }
+        let target = index + direction
+        guard target >= 0, target < visibleIds.count else { return }
+        order.swapAt(index, target)
+        sessionManualOrderByScope[scope] = order
+        persistSessionManualOrder()
+    }
+
+    func moveProject(_ projectId: String, direction: Int) {
+        guard railSort == .manual, railOrganization == .byProject,
+              direction == -1 || direction == 1 else { return }
+        let visibleIds = groups.map(\.projectId)
+        var order = normalizedManualOrder(stored: projectManualOrder, visibleIds: visibleIds)
+        guard let index = order.firstIndex(of: projectId) else { return }
+        let target = index + direction
+        guard target >= 0, target < visibleIds.count else { return }
+        order.swapAt(index, target)
+        projectManualOrder = order
+        UserDefaults.standard.set(order, forKey: Self.railProjectManualOrderKey)
+    }
+
+    private var filteredSessions: [SessionRef] {
+        let queryText = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return sessions.filter { session in
+            let archived = session.archivedAt != nil
+            guard archived == (sessionListView == .archived) else { return false }
+            guard matchesFilter(session) else { return false }
+            guard !queryText.isEmpty else { return true }
+            return [
+                session.title,
+                session.project.name ?? session.project.projectId,
+                session.status,
+                session.model ?? "",
+                session.hostId,
+            ].contains { $0.localizedCaseInsensitiveContains(queryText) }
+        }
+    }
+
+    /// Filtered + organized view of the inventory (the rail model).
+    var groups: [Group] {
+        let filtered = filteredSessions
+        if railOrganization == .flat {
+            return [
+                Group(
+                    projectId: "__flat__",
+                    project: sessionListView == .current ? "All current sessions" : "All archived sessions",
+                    sessions: sortSessions(filtered, scope: "__flat__")
+                ),
+            ].filter { !$0.sessions.isEmpty }
+        }
+        let keyed = Dictionary(grouping: filtered) { $0.project.projectId }
+        return keyed.compactMap { projectId, sessions -> Group? in
+            guard let first = sessions.first else { return nil }
+            return Group(
+                projectId: projectId,
+                project: first.project.name ?? first.project.projectId,
+                sessions: sortSessions(sessions, scope: projectId)
+            )
+        }.sorted(by: compareGroups)
+    }
+
+    private func matchesFilter(_ session: SessionRef) -> Bool {
+        switch railFilter {
+        case .all:
+            return true
+        case .attention:
+            return session.pendingApproval == true
+                || session.pendingUserInput == true
+                || ["pendingApproval", "awaitingInput", "planReady"].contains(session.status)
+        case .running:
+            return ["active", "working"].contains(session.status)
+        case .errors:
+            return ["error", "failed"].contains(session.status)
+        }
+    }
+
+    private func sessionPriority(_ session: SessionRef) -> Int {
+        if session.pendingApproval == true || session.status == "pendingApproval" { return 6 }
+        if session.pendingUserInput == true || session.status == "awaitingInput" { return 5 }
+        if ["active", "working"].contains(session.status) { return 4 }
+        if ["error", "failed"].contains(session.status) { return 2 }
+        if session.proposedPlan != nil || session.status == "planReady" { return 1 }
+        return 0
+    }
+
+    private func sortSessions(_ input: [SessionRef], scope: String) -> [SessionRef] {
+        let manualOrder = sessionManualOrderByScope[scope] ?? []
+        return input.sorted { left, right in
+            if railSort == .manual {
+                let leftRank = manualOrder.firstIndex(of: left.sessionId) ?? Int.max
+                let rightRank = manualOrder.firstIndex(of: right.sessionId) ?? Int.max
+                if leftRank != rightRank { return leftRank < rightRank }
+            }
+            if railSort == .priority {
+                let leftPriority = sessionPriority(left)
+                let rightPriority = sessionPriority(right)
+                if leftPriority != rightPriority { return leftPriority > rightPriority }
+            }
+            if left.updatedAt != right.updatedAt { return left.updatedAt > right.updatedAt }
+            return left.sessionId < right.sessionId
+        }
+    }
+
+    private func compareGroups(_ left: Group, _ right: Group) -> Bool {
+        if railSort == .manual {
+            let leftRank = projectManualOrder.firstIndex(of: left.projectId) ?? Int.max
+            let rightRank = projectManualOrder.firstIndex(of: right.projectId) ?? Int.max
+            if leftRank != rightRank { return leftRank < rightRank }
+        }
+        if railSort == .priority {
+            let leftPriority = left.sessions.map(sessionPriority).max() ?? 0
+            let rightPriority = right.sessions.map(sessionPriority).max() ?? 0
+            if leftPriority != rightPriority { return leftPriority > rightPriority }
+        }
+        let leftUpdated = left.sessions.map(\.updatedAt).max() ?? ""
+        let rightUpdated = right.sessions.map(\.updatedAt).max() ?? ""
+        if leftUpdated != rightUpdated { return leftUpdated > rightUpdated }
+        let nameOrder = left.project.localizedCaseInsensitiveCompare(right.project)
+        if nameOrder != .orderedSame { return nameOrder == .orderedAscending }
+        return left.projectId < right.projectId
+    }
+
+    private func manualScope(for session: SessionRef) -> String {
+        railOrganization == .flat ? "__flat__" : session.project.projectId
+    }
+
+    private func normalizedManualOrder(stored: [String], visibleIds: [String]) -> [String] {
+        var seen = Set<String>()
+        let visible = Set(visibleIds)
+        var result = stored.filter { visible.contains($0) && seen.insert($0).inserted }
+        result.append(contentsOf: visibleIds.filter { seen.insert($0).inserted })
+        result.append(contentsOf: stored.filter { !visible.contains($0) && seen.insert($0).inserted })
+        return result
+    }
+
+    private func persistSessionManualOrder() {
+        guard let data = try? JSONEncoder().encode(sessionManualOrderByScope) else { return }
+        UserDefaults.standard.set(data, forKey: Self.railSessionManualOrderKey)
+    }
+
+    private func reconcileSelectionForVisibleList() {
+        if let selectedSession,
+           (selectedSession.archivedAt != nil) == (sessionListView == .archived) {
+            return
+        }
+        select(sessions.first {
+            ($0.archivedAt != nil) == (sessionListView == .archived)
+        })
     }
 
     // MARK: - Attention inbox
@@ -1487,13 +1834,14 @@ final class T4SessionStore: ObservableObject {
     /// the most recent live session; a surviving one gets the fresh ref.
     private func reconcileSelection() {
         guard let selected = selectedSession else {
-            selectedSession = sessions.first
+            reconcileSelectionForVisibleList()
             return
         }
-        if let fresh = sessions.first(where: { $0.sessionId == selected.sessionId }) {
+        if let fresh = sessions.first(where: { $0.sessionId == selected.sessionId }),
+           (fresh.archivedAt != nil) == (sessionListView == .archived) {
             selectedSession = fresh
         } else {
-            selectedSession = sessions.first
+            reconcileSelectionForVisibleList()
         }
     }
 
@@ -1740,7 +2088,8 @@ final class T4SessionStore: ObservableObject {
         {"hostId":"studio-mac","sessionId":"s1","project":{"projectId":"t4code","name":"T4 Code"},"revision":"r1","title":"iOS session rail","status":"active","updatedAt":"2026-07-24T11:00:00Z","model":"gpt-5.2","pendingUserInput":true,"contextUsage":{"used":7,"limit":200}},
         {"hostId":"studio-mac","sessionId":"s2","project":{"projectId":"t4code","name":"T4 Code"},"revision":"r2","title":"Host-wire Swift port","status":"closed","updatedAt":"2026-07-20T08:00:00Z","model":"gpt-5.2"},
         {"hostId":"studio-mac","sessionId":"s3","project":{"projectId":"t4code","name":"T4 Code"},"revision":"r3","title":"Agent view","status":"idle","updatedAt":"2026-07-24T08:30:00Z","model":"devin/swe-1-7","contextUsage":{"used":88,"limit":200}},
-        {"hostId":"studio-mac","sessionId":"s4","project":{"projectId":"t4code","name":"T4 Code"},"revision":"r4","title":"Hosts & usage","status":"active","updatedAt":"2026-07-24T12:10:00Z","model":"gpt-5.2","pendingApproval":true,"contextUsage":{"used":33,"limit":200}}
+        {"hostId":"studio-mac","sessionId":"s4","project":{"projectId":"t4code","name":"T4 Code"},"revision":"r4","title":"Hosts & usage","status":"active","updatedAt":"2026-07-24T12:10:00Z","model":"gpt-5.2","pendingApproval":true,"contextUsage":{"used":33,"limit":200}},
+        {"hostId":"studio-mac","sessionId":"s5","project":{"projectId":"archive","name":"Archived work"},"revision":"r5","title":"Finished release audit","status":"closed","updatedAt":"2026-07-18T17:00:00Z","archivedAt":"2026-07-19T09:00:00.000Z","model":"gpt-5.2"}
         ]
         """
         let decoder = JSONDecoder()
