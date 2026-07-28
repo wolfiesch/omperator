@@ -6,7 +6,7 @@ import WebSocket from "ws";
 
 const [url, code, deviceName] = process.argv.slice(2);
 if (!url || !code) { console.error("usage: pair-t4-device.mjs <ws-url> <code>"); process.exit(2); }
-const CAPS = ["sessions.read", "sessions.prompt", "sessions.control", "sessions.manage", "catalog.read", "files.list", "files.read", "files.diff", "term.open", "term.input", "term.resize", "settings.read", "settings.write", "preview.control", "preview.read", "usage.read", "agents.control", "audit.read", "config.read", "config.write"];
+const CAPS = ["sessions.read", "sessions.prompt", "sessions.control", "sessions.manage", "catalog.read", "files.list", "files.read", "files.diff", "term.open", "term.input", "term.resize", "preview.control", "preview.read", "usage.read", "agents.control", "audit.read", "config.read", "config.write"];
 
 function connect(authentication) {
   return new Promise((resolve, reject) => {
