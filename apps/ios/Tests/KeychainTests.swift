@@ -44,6 +44,62 @@ final class KeychainTests: XCTestCase {
     }
 
     @MainActor
+    func testCompleteEphemeralCredentialsOverrideNoRestore() {
+        let arguments = [
+            "T4Code",
+            "-T4NoRestore",
+            "-T4Endpoint=wss://example.test/v1/ws",
+            "-T4DeviceId=device-id",
+            "-T4DeviceToken=device-token",
+        ]
+
+        XCTAssertFalse(T4SessionStore.shouldSkipRestore(arguments: arguments))
+        XCTAssertFalse(Keychain.usesPersistentStore(arguments: arguments))
+    }
+
+    @MainActor
+    func testNoRestoreStillSkipsWithoutCompleteEphemeralCredentials() {
+        XCTAssertTrue(
+            T4SessionStore.shouldSkipRestore(arguments: [
+                "T4Code",
+                "-T4NoRestore",
+                "-T4Endpoint=wss://example.test/v1/ws",
+                "-T4DeviceId=device-id",
+            ])
+        )
+    }
+
+    func testEphemeralCertificatePinsSurviveReconnectStoreLookup() {
+        let key = "test-certpin-\(UUID().uuidString)"
+        let arguments = [
+            "T4Code",
+            "-T4NoRestore",
+            "-T4Endpoint=wss://example.test/v1/ws",
+            "-T4DeviceId=device-id",
+            "-T4DeviceToken=device-token",
+        ]
+        let firstConnection = T4CertificatePinStore.forArguments(arguments)
+        let reconnect = T4CertificatePinStore.forArguments(arguments)
+        defer { reconnect.remove(key) }
+
+        XCTAssertTrue(firstConnection === reconnect)
+        XCTAssertNil(firstConnection.get(key))
+        XCTAssertTrue(firstConnection.set("fingerprint-a", forKey: key))
+        XCTAssertEqual(reconnect.get(key), "fingerprint-a")
+    }
+
+    func testEphemeralCertificatePinRemovalIsShared() {
+        let key = "test-certpin-\(UUID().uuidString)"
+        let arguments = ["T4Code", "-T4NoRestore"]
+        let firstConnection = T4CertificatePinStore.forArguments(arguments)
+        let reconnect = T4CertificatePinStore.forArguments(arguments)
+
+        XCTAssertTrue(firstConnection.set("fingerprint-a", forKey: key))
+        XCTAssertTrue(reconnect.remove(key))
+        XCTAssertNil(firstConnection.get(key))
+    }
+
+    @MainActor
     func testSuccessfulConnectionClearsStaleEndpointError() {
         let store = T4SessionStore()
         store.lastError = """

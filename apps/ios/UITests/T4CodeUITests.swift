@@ -89,4 +89,29 @@ final class T4CodeUITests: XCTestCase {
         // Pairing lives in onboarding/palette, not the rail.
         XCTAssertFalse(app.buttons["Connect to a T4 Code host"].exists)
     }
+
+    @MainActor
+    func testStreamingProofRevealsThinkingAndWriteIntermediateFrames() throws {
+        let app = launch(arguments: ["-T4StreamingProof"])
+        var thinkingFrames = Set<String>()
+        var writeFrames = Set<String>()
+        let deadline = Date().addingTimeInterval(18)
+
+        while Date() < deadline {
+            let thinking = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "label BEGINSWITH %@", "Assistant thinking:"))
+                .firstMatch
+            if thinking.exists { thinkingFrames.insert(thinking.label) }
+
+            let write = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "label BEGINSWITH %@", "write preparing:"))
+                .firstMatch
+            if write.exists { writeFrames.insert(write.label) }
+            if thinkingFrames.count >= 3 && writeFrames.count >= 3 { break }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+
+        XCTAssertGreaterThanOrEqual(thinkingFrames.count, 3)
+        XCTAssertGreaterThanOrEqual(writeFrames.count, 3)
+    }
 }
