@@ -1377,18 +1377,24 @@ final class T4SessionStore: ObservableObject {
         // unauthorized commands — skip instead (the pane renders the URL fine).
         guard grantedCapabilities.contains("preview.control") else { return }
         let priorError = lastError
-        do {
-            let result = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "preview.launch",
-                args: ["url": .string(url)], sessionId: sessionId))
-            let snapshot = try result.previewMutationResult()
-            previewIdBySession[sessionId] = snapshot.previewId
-        } catch {
-            // Unsupported hosts (no preview.control capability) error here —
-            // swallow so the pane keeps rendering the URL directly. Preserve
-            // the prior error so a preview failure never surfaces a spurious
-            // error to the user.
-            lastError = priorError
+        // preview.launch is a mutation: the host requires a live controller
+        // lease and denies (closing the connection) without one.
+        await withLease(sessionId: sessionId, kind: .controller) { leaseId in
+            guard let revision = revision(of: sessionId) else { return }
+            do {
+                let result = try await client.sendCommand(CommandIntent(
+                    hostId: hostId, command: "preview.launch",
+                    args: ["url": .string(url), "leaseId": .string(leaseId)],
+                    sessionId: sessionId, expectedRevision: revision))
+                let snapshot = try result.previewMutationResult()
+                previewIdBySession[sessionId] = snapshot.previewId
+            } catch {
+                // Unsupported hosts (no preview.control capability) error here —
+                // swallow so the pane keeps rendering the URL directly. Preserve
+                // the prior error so a preview failure never surfaces a spurious
+                // error to the user.
+                lastError = priorError
+            }
         }
     }
 
