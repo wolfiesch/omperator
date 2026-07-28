@@ -10,7 +10,7 @@ import HostWire
 import CryptoKit
 import os
 
-private let t4log = Logger(subsystem: "sh.t4code.ios", category: "store")
+let t4log = Logger(subsystem: "sh.t4code.ios", category: "store")
 
 struct PendingTranscriptQueue {
     private(set) var entries: [TranscriptEntry] = []
@@ -142,7 +142,7 @@ final class T4SessionStore: ObservableObject {
     /// Live transcripts by sessionId (snapshot + streamed entries). Present
     /// only for attached sessions while connected; the sample rail falls back
     /// to `sampleTranscript` when disconnected.
-    @Published private(set) var liveEntries: [String: [TranscriptEntry]] = [:]
+    @Published var liveEntries: [String: [TranscriptEntry]] = [:]
     /// Frame-paced assistant text/reasoning by session. Host snapshots remain
     /// authoritative; the display buffer reveals them by whole graphemes.
     @Published private(set) var streamingMessages: [String: StreamingAssistantBuffer] = [:]
@@ -209,11 +209,11 @@ final class T4SessionStore: ObservableObject {
     /// Per-session transcript paging state (transcript.page). `hasMore` is
     /// nil until the first older page resolves (unknown); the "Load earlier"
     /// button shows when hasMore is true OR (unknown and entries ≥ 50).
-    @Published private(set) var pagingState: [String: TranscriptPaging] = [:]
+    @Published var pagingState: [String: TranscriptPaging] = [:]
     /// Session currently prepending a paged history block. The detail view
     /// suppresses its scroll-to-bottom follow while this matches its session
     /// so prepended older rows don't yank the viewport to the bottom.
-    @Published private(set) var prependingSession: String?
+    @Published var prependingSession: String?
     /// Subagents per session, fed by .agent/.agentState/.agentLifecycle/
     /// .agentProgress/.agentEvent frames in observe(). The agents pane
     /// renders this; empty when the host has no subagents for a session.
@@ -221,23 +221,23 @@ final class T4SessionStore: ObservableObject {
     /// Per-terminal buffered output, keyed by terminalId. `terminal.output`
     /// frames append here (capped ~200KB per terminal, dropping the oldest
     /// chunk when exceeded). The terminal drawer feeds this to SwiftTerm.
-    @Published private(set) var terminalOutput: [String: String] = [:]
+    @Published var terminalOutput: [String: String] = [:]
     /// Per-terminal exit code, set when a `terminal.exit` frame arrives.
     /// Presence of a key means the pty has exited; nil value means exited
     /// with code 0 recorded as absent until exit.
-    @Published private(set) var terminalExits: [String: Int] = [:]
+    @Published var terminalExits: [String: Int] = [:]
     /// Per-session ordered terminal ids (max 4), in the order `openTerminal`
     /// opened them. The drawer renders one tab per id; the active id is the
     /// tab whose buffered output is rendered and whose keystrokes are sent.
-    @Published private(set) var openTerminalIds: [String: [String]] = [:]
+    @Published var openTerminalIds: [String: [String]] = [:]
     /// The active terminal id for a session — the tab the drawer renders and
     /// the target of `sendTerminalInput`/`resizeTerminal`. Set by `openTerminal`
     /// (new terminal becomes active) and `selectTerminal` (tab switch), and
     /// reselected to a neighbor when the active terminal is closed.
-    @Published private(set) var activeTerminalId: [String: String] = [:]
+    @Published var activeTerminalId: [String: String] = [:]
     /// Per-terminal last error (e.g. a denied term.open command). Cleared
     /// on a successful open or explicit close.
-    @Published private(set) var terminalErrors: [String: String] = [:]
+    @Published var terminalErrors: [String: String] = [:]
     /// Per-session browser URL for the browser pane (T4BrowserPane). The
     /// pane persists the URL field here so reopening a session's browser
     /// returns to the last visited page. Defaults to localhost:3000 via
@@ -250,36 +250,36 @@ final class T4SessionStore: ObservableObject {
     /// Last fetched usage snapshot (usage.read, host scope). nil until the
     /// usage pane first loads it; refreshed on demand. `generatedAt` is the
     /// host's epoch-millis timestamp.
-    @Published private(set) var usageSnapshot: UsageReadResult?
+    @Published var usageSnapshot: UsageReadResult?
     /// Last fetched host settings (settings.read, host scope). Carried as an
     /// opaque object map (boundedSettings) — keys are setting names, values
     /// are strings/bools/numbers. nil until the settings pane first loads it.
-    @Published private(set) var settingsSnapshot: [String: JSONValue]?
+    @Published var settingsSnapshot: [String: JSONValue]?
     /// Last fetched host settings revision (settings.read result.revision),
     /// required as `expectedRevision` for settings.write. nil until the
     /// settings pane first loads it.
-    @Published private(set) var settingsRevision: String?
+    @Published var settingsRevision: String?
     /// Cached artifact chunks by artifactId, populated by artifact.read.
     /// The artifacts pane taps a descriptor to load+preview content; the
     /// first chunk (offset 0) is enough for inline text/patch previews.
-    @Published private(set) var artifactChunks: [String: ArtifactReadChunk] = [:]
+    @Published var artifactChunks: [String: ArtifactReadChunk] = [:]
     /// Latest preview id per session, tracked from `preview.launch`/`state`/
     /// `navigation`/`capture` push frames and the `preview.launch` command
     /// result. `previewCapture(sessionId:previewId:)` uses this when no
     /// explicit previewId is given; the browser pane's Capture button is
     /// enabled while a preview is tracked.
-    @Published private(set) var previewIdBySession: [String: String] = [:]
+    @Published var previewIdBySession: [String: String] = [:]
     /// Decoded capture images by captureId, populated by `previewCapture`
     /// (the Capture button) and by the async fetch kicked off when a
     /// `preview.capture` push frame arrives. The browser pane renders the
     /// latest one full-fit; transcript capture rows look their image up here
     /// by `data.captureId`.
-    @Published private(set) var previewCaptureImages: [String: PlatformImage] = [:]
+    @Published var previewCaptureImages: [String: PlatformImage] = [:]
     /// Ordered capture rows per session — one per `preview.capture` push
     /// frame or explicit `preview.capture` command. Each carries the capture
     /// metadata plus the decoded image once the chunked fetch resolves. The
     /// browser pane and transcript render these as image rows.
-    @Published private(set) var previewCaptureRowsBySession: [String: [PreviewCaptureRow]] = [:]
+    @Published var previewCaptureRowsBySession: [String: [PreviewCaptureRow]] = [:]
 
     /// True once a live host has spoken (refresh or push). Drives the boot
     /// splash: saved-connection devices see "Connecting…", not fake chat.
@@ -299,15 +299,15 @@ final class T4SessionStore: ObservableObject {
             .sorted { $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending }
     }
 
-    private var client: HostClient?
-    private var hostId: String = ""
+    var client: HostClient?
+    var hostId: String = ""
     private var streamingTasks: [String: Task<Void, Never>] = [:]
     private var liveTurnTasks: [String: Task<Void, Never>] = [:]
     private var toolStreamingTasks: [String: Task<Void, Never>] = [:]
     /// Capabilities the host granted at welcome — gates optional commands
     /// (e.g. catalog.get needs catalog.read; an unauthorized command gets
     /// the connection closed by the remote policy).
-    private var grantedCapabilities: [String] = []
+    var grantedCapabilities: [String] = []
     /// Negotiated additive protocol features. Ownership UI uses these to
     /// expose safe copy/adoption actions only when the host supports them.
     private var grantedFeatures: Set<ProtocolFeature> = []
@@ -1298,750 +1298,10 @@ final class T4SessionStore: ObservableObject {
         }
     }
 
-    // MARK: - Files (read-only workspace browser)
 
-    /// List a directory in the session workspace (files.list). `path` is a
-    /// safe relative POSIX path; pass "" for the project root — the host
-    /// treats an absent/empty path as the workspace root. Returns the
-    /// entries (folders and files) or nil on failure (lastError is set).
-    /// NOTE: files.* is a desktop-bridge operation — standalone official
-    /// hosts don't implement it; the pane shows the honest failure.
-    func listFiles(sessionId: String, path: String) async -> [FileListEntry]? {
-        guard let client, connected, !hostId.isEmpty else {
-            lastError = "Not connected to a host."
-            return nil
-        }
-        var args: [String: JSONValue] = [:]
-        if !path.isEmpty { args["path"] = .string(path) }
-        do {
-            let result = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "files.list", args: args, sessionId: sessionId))
-            return try result.filesListResult()
-        } catch {
-            t4log.error("files.list failed: \(error)")
-            lastError = "This host has no files bridge (desktop hosts only)."
-            return nil
-        }
-    }
 
-    /// Read a file from the session workspace (files.read). `path` is a safe
-    /// relative POSIX path. Returns the content string (already decoded from
-    /// base64 when the host used that encoding) or nil on failure (lastError
-    /// is set). The host bounds content to MAX_FILE_BYTES.
-    func readFile(sessionId: String, path: String) async -> String? {
-        guard let client, connected, !hostId.isEmpty else {
-            lastError = "Not connected to a host."
-            return nil
-        }
-        do {
-            let result = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "files.read",
-                args: ["path": .string(path)], sessionId: sessionId))
-            let (content, _) = try result.filesReadResult()
-            return content
-        } catch {
-            t4log.error("files.read failed: \(error)")
-            lastError = "\(error)"
-            return nil
-        }
-    }
 
-    // MARK: - Files search & diff
-    // files.search (capability files.list, session scope, revision optional)
-    // searches the workspace by file-name substring; the host returns up to
-    // PROJECT_FILE_SEARCH_MAX_RESULTS (50) matches as safe relative paths plus
-    // a `truncated` flag. files.diff (capability files.diff) returns either
-    // `{diff}` patch text (no turnId) or a turn review snapshot `{turnId,
-    // baseTree, headTree, changes, patch?}` (turnId set); the snapshot's patch
-    // artifact is read via artifact.read. Both are desktop-bridge operations —
-    // standalone hosts don't implement them; the pane shows the honest failure.
 
-    /// Search the session workspace by file name (files.search). `query` is a
-    /// substring; the host returns up to 50 matches as safe relative paths.
-    /// Returns the matches or nil on failure (lastError is set).
-    func filesSearch(sessionId: String, query: String) async -> FilesSearchResult? {
-        guard let client, connected, !hostId.isEmpty else {
-            lastError = "Not connected to a host."
-            return nil
-        }
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return FilesSearchResult(matches: [], truncated: false) }
-        do {
-            let result = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "files.search",
-                args: ["query": .string(trimmed)], sessionId: sessionId))
-            return Self.decodeFilesSearchResult(result)
-        } catch {
-            t4log.error("files.search failed: \(error)")
-            lastError = "This host has no files bridge (desktop hosts only)."
-            return nil
-        }
-    }
-
-    /// Fetch a unified diff for the session workspace (files.diff). With no
-    /// `turnId` the host returns `{diff}` patch text; with a `turnId` it
-    /// returns a turn review snapshot whose `patch` artifact is read via
-    /// artifact.read. Returns the patch text (and change list when available)
-    /// or nil on failure (lastError is set).
-    func filesDiff(sessionId: String, turnId: String? = nil) async -> FilesDiffResult? {
-        guard let client, connected, !hostId.isEmpty else {
-            lastError = "Not connected to a host."
-            return nil
-        }
-        var args: [String: JSONValue] = [:]
-        if let turnId, !turnId.isEmpty { args["turnId"] = .string(turnId) }
-        do {
-            let result = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "files.diff", args: args, sessionId: sessionId))
-            guard result.ok, let body = result.result, case .object(let o) = body else {
-                lastError = "files.diff returned no result."
-                return nil
-            }
-            // {diff} patch-text shape (no turnId).
-            if case .string(let diff) = o["diff"] ?? .null {
-                return FilesDiffResult(patchText: diff, changes: [])
-            }
-            // Turn review snapshot shape (turnId present).
-            let changes = Self.parseTurnChanges(o["changes"] ?? .null)
-            var patchText: String?
-            if case .object(let pd) = o["patch"] ?? .null,
-               case .string(let artifactId) = pd["artifactId"] ?? .null {
-                if let chunk = await artifactRead(sessionId: sessionId, artifactId: artifactId),
-                   let data = chunk.decodedBytes {
-                    patchText = String(data: data, encoding: .utf8)
-                }
-            }
-            return FilesDiffResult(patchText: patchText, changes: changes)
-        } catch {
-            t4log.error("files.diff failed: \(error)")
-            lastError = "This host has no files bridge (desktop hosts only)."
-            return nil
-        }
-    }
-
-    /// Decode a files.search result body `{matches: [{path}], truncated}`.
-    private static func decodeFilesSearchResult(_ result: ResultFrame) -> FilesSearchResult? {
-        guard result.ok, let body = result.result, case .object(let o) = body else { return nil }
-        let truncated = (o["truncated"] ?? .null) == .bool(true)
-        let matches: [FilesSearchMatch] = {
-            guard case .array(let arr) = o["matches"] ?? .null else { return [] }
-            return arr.compactMap { v in
-                guard case .object(let m) = v, case .string(let p) = m["path"] ?? .null else { return nil }
-                return FilesSearchMatch(path: p)
-            }
-        }()
-        return FilesSearchResult(matches: matches, truncated: truncated)
-    }
-
-    /// Parse a turn review snapshot's `changes` array into typed rows.
-    private static func parseTurnChanges(_ value: JSONValue) -> [TurnFileChange] {
-        guard case .array(let arr) = value else { return [] }
-        return arr.compactMap { v in
-            guard case .object(let c) = v,
-                  case .string(let path) = c["path"] ?? .null,
-                  case .string(let status) = c["status"] ?? .null,
-                  case .string(let kind) = c["kind"] ?? .null else { return nil }
-            return TurnFileChange(path: path, status: status, kind: kind,
-                                  additions: intField(c["additions"]),
-                                  deletions: intField(c["deletions"]))
-        }
-    }
-
-    /// Extract a non-negative integer from a JSON number field (0 otherwise).
-    private static func intField(_ value: JSONValue?) -> Int {
-        if case .number(let n) = value, n.isFinite, n >= 0 { return Int(n) }
-        return 0
-    }
-
-    // MARK: - Terminal drawer
-    // term.open is a session-scoped command (capability term.open, revision
-    // optional) that opens a pty and returns {terminalId}. Output arrives as
-    // terminal.output additive frames (routed in observe()); the client sends
-    // terminal.input/terminal.resize/terminal.close as raw additive frames
-    // via HostClient.sendFrame (no requestId, no response). If the host denies
-    // term.open (the paired device lacks the capability), the command throws
-    // and lastError surfaces — the drawer shows an error row.
-
-    /// Open another terminal for a session (term.open {cols, rows}). Appends
-    /// the new terminalId to the session's ordered list (max 4) and makes it
-    /// the active tab. Returns the new terminalId, or nil on failure
-    /// (lastError / terminalErrors set). Callers that only need *a* terminal
-    /// should check `activeTerminal(sessionId:)` first and call this solely to
-    /// add a new tab — this method always opens a fresh pty.
-    @discardableResult
-    func openTerminal(sessionId: String, cols: Int = 80, rows: Int = 24) async -> String? {
-        guard let client, connected, !hostId.isEmpty else {
-            lastError = "Not connected to a host."
-            return nil
-        }
-        let ids = openTerminalIds[sessionId] ?? []
-        guard ids.count < 4 else {
-            lastError = "Terminal limit reached (4)."
-            terminalErrors[sessionId] = "Terminal limit reached (4)."
-            return nil
-        }
-        do {
-            let result = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "term.open",
-                args: ["cols": .number(Double(cols)), "rows": .number(Double(rows))],
-                sessionId: sessionId))
-            let terminalId = try result.termOpenResult()
-            openTerminalIds[sessionId, default: []].append(terminalId)
-            activeTerminalId[sessionId] = terminalId
-            terminalOutput[terminalId] = ""
-            terminalErrors.removeValue(forKey: sessionId)
-            t4log.notice("term.open \(terminalId, privacy: .public) for \(sessionId, privacy: .public)")
-            return terminalId
-        } catch {
-            t4log.error("term.open failed: \(error)")
-            lastError = "\(error)"
-            terminalErrors[sessionId] = "\(error)"
-            return nil
-        }
-    }
-
-    /// The active terminal id for a session (the tab the drawer renders and
-    /// the target of input/resize), or nil when no terminal is open.
-    func activeTerminal(sessionId: String) -> String? { activeTerminalId[sessionId] }
-
-    /// Switch the active tab for a session. No-op if `terminalId` is not in
-    /// the session's open list. Instant for the drawer — it re-renders the
-    /// active terminal's buffered output without re-opening the pty.
-    func selectTerminal(sessionId: String, terminalId: String) {
-        guard (openTerminalIds[sessionId] ?? []).contains(terminalId) else { return }
-        activeTerminalId[sessionId] = terminalId
-    }
-
-    /// Send user keystrokes to the session's active pty (terminal.input). No-op
-    /// when no terminal is active or not connected. `data` is UTF-8 text.
-    func sendTerminalInput(sessionId: String, data: String) async {
-        guard let client, let terminalId = activeTerminalId[sessionId] else { return }
-        let frame = TerminalInputFrame(hostId: hostId, sessionId: sessionId, terminalId: terminalId, data: data)
-        try? await client.sendFrame(frame)
-    }
-
-    /// Resize the session's active pty (terminal.resize {cols, rows}). No-op
-    /// when no terminal is active for the session.
-    func resizeTerminal(sessionId: String, cols: Int, rows: Int) async {
-        guard let client, let terminalId = activeTerminalId[sessionId] else { return }
-        let frame = TerminalResizeFrame(hostId: hostId, sessionId: sessionId, terminalId: terminalId, cols: cols, rows: rows)
-        try? await client.sendFrame(frame)
-    }
-
-    /// Close the session's active pty (terminal.close). Convenience for the
-    /// drawer's close control on the active tab; delegates to the per-terminal
-    /// close, which removes the id and selects a neighbor as active.
-    func closeTerminal(sessionId: String, reason: String? = nil) async {
-        guard let terminalId = activeTerminalId[sessionId] else { return }
-        await closeTerminal(terminalId: terminalId, reason: reason)
-    }
-
-    /// Close a specific pty by terminalId (terminal.close). Removes the id
-    /// from its session's ordered list and, if it was active, selects a
-    /// neighbor (the next tab, or the previous when closing the last) as the
-    /// new active tab. When the last terminal closes, the session has no
-    /// active terminal and the drawer shows its empty state.
-    func closeTerminal(terminalId: String, reason: String? = nil) async {
-        guard let sessionId = openTerminalIds.first(where: { $0.value.contains(terminalId) })?.key else { return }
-        if let client {
-            let frame = TerminalCloseFrame(hostId: hostId, sessionId: sessionId, terminalId: terminalId, reason: reason)
-            try? await client.sendFrame(frame)
-        }
-        removeTerminal(terminalId, sessionId: sessionId)
-    }
-
-    /// Remove a terminal from a session's list and reselect the active tab.
-    /// Shared by `closeTerminal(terminalId:)` and `clearTerminal`. Does not
-    /// send terminal.close — callers handle the wire frame (or transport is
-    /// gone, in the clear case).
-    private func removeTerminal(_ terminalId: String, sessionId: String) {
-        var ids = openTerminalIds[sessionId] ?? []
-        guard let removed = ids.firstIndex(where: { $0 == terminalId }) else { return }
-        ids.remove(at: removed)
-        terminalOutput.removeValue(forKey: terminalId)
-        terminalExits.removeValue(forKey: terminalId)
-        if ids.isEmpty {
-            openTerminalIds.removeValue(forKey: sessionId)
-            activeTerminalId.removeValue(forKey: sessionId)
-        } else {
-            openTerminalIds[sessionId] = ids
-            // Reselect only when the closed tab was active (or active is
-            // missing); otherwise leave the user's selection alone.
-            if activeTerminalId[sessionId] == nil || activeTerminalId[sessionId] == terminalId {
-                let neighborIdx = min(removed, ids.count - 1)
-                activeTerminalId[sessionId] = ids[neighborIdx]
-            }
-        }
-    }
-
-    /// Drop all terminal state for a session (e.g. on disconnect). Does not
-    /// send terminal.close — the transport is gone.
-    func clearTerminal(sessionId: String) {
-        for terminalId in openTerminalIds[sessionId] ?? [] {
-            terminalOutput.removeValue(forKey: terminalId)
-            terminalExits.removeValue(forKey: terminalId)
-        }
-        openTerminalIds.removeValue(forKey: sessionId)
-        activeTerminalId.removeValue(forKey: sessionId)
-        terminalErrors.removeValue(forKey: sessionId)
-    }
-
-    // MARK: - Browser pane
-    // The browser pane (T4BrowserPane) renders any http(s) URL directly in a
-    // WKWebView — it needs no host support. When the host DOES offer previews
-    // (capability preview.control/preview.read), `openPreview` opportunistically
-    // fires `preview.launch {url}` so the host's own preview pipeline (captures,
-    // navigation state) tracks the same URL, and records the returned previewId
-    // so the pane's Capture button can fire `preview.capture`. If the host lacks
-    // preview support, `preview.launch` errors and we no-op gracefully — the
-    // pane keeps rendering the URL directly regardless. `previewCapture`
-    // triggers a capture and reassembles its chunked bytes into a PlatformImage;
-    // `preview.capture` push frames (observe()) flow into the transcript as
-    // image rows and auto-fetch their bytes.
-
-    /// The default URL a session's browser opens to when none is persisted.
-    /// A dev server on localhost:3000 is the common case for T4 sessions.
-    static let defaultBrowserURL = "http://localhost:3000"
-
-    /// The persisted browser URL for a session, or the default when unset.
-    func browserURL(for sessionId: String) -> String {
-        browserURLBySession[sessionId] ?? Self.defaultBrowserURL
-    }
-
-    /// Persist the browser URL for a session (the pane's URL field calls this
-    /// on submit and on navigation). Idempotent; no host round-trip.
-    func setBrowserURL(for sessionId: String, url: String) {
-        browserURLBySession[sessionId] = url
-    }
-
-    /// Opportunistically ask the host to launch a preview for `url`
-    /// (preview.launch). No-op when not connected or when the host lacks
-    /// preview support — the pane renders the URL directly in WKWebView
-    /// regardless of the outcome here. A failure is expected for unsupported
-    /// hosts and is swallowed (lastError is preserved) so an unsupported
-    /// preview never surfaces a spurious error to the user. On success the
-    /// returned previewId is recorded in `previewIdBySession` so the Capture
-    /// button can target it.
-    func openPreview(sessionId: String, url: String) async {
-        guard let client, connected, !hostId.isEmpty else { return }
-        let priorError = lastError
-        do {
-            let result = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "preview.launch",
-                args: ["url": .string(url)], sessionId: sessionId))
-            let snapshot = try result.previewMutationResult()
-            previewIdBySession[sessionId] = snapshot.previewId
-        } catch {
-            // Unsupported hosts (no preview.control capability) error here —
-            // swallow so the pane keeps rendering the URL directly. Preserve
-            // the prior error so a preview failure never surfaces a spurious
-            // error to the user.
-            lastError = priorError
-        }
-    }
-
-    /// Capture a preview screenshot and reassemble its bytes into a platform
-    /// image. Sends `preview.capture` (which triggers a capture and returns
-    /// the snapshot + capture metadata), then streams the bytes via repeated
-    /// `preview.capture.read` calls (≤256KiB base64 chunks, ordered by
-    /// offset) until `complete`. The reassembled bytes are sha256-verified
-    /// against the metadata, decoded to a `PlatformImage`, cached by
-    /// captureId, and appended as a transcript capture row. `previewId`
-    /// defaults to the session's latest tracked preview. Returns nil when not
-    /// connected, the host lacks preview support, or the bytes fail to decode
-    /// (lastError is set).
-    @discardableResult
-    func previewCapture(sessionId: String, previewId: String? = nil) async -> PlatformImage? {
-        guard let client, connected, !hostId.isEmpty else {
-            lastError = "Not connected to a host."
-            return nil
-        }
-        let pid = previewId ?? previewIdBySession[sessionId]
-        guard let pid else {
-            lastError = "No preview available for this session."
-            return nil
-        }
-        do {
-            let result = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "preview.capture",
-                args: ["previewId": .string(pid)], sessionId: sessionId))
-            let snapshot = try result.previewMutationResult()
-            previewIdBySession[sessionId] = snapshot.previewId
-            guard let meta = snapshot.capture else {
-                lastError = "Preview returned no capture."
-                return nil
-            }
-            recordCapture(sessionId: sessionId, metadata: meta, previewId: snapshot.previewId)
-            return await fetchCaptureBytes(sessionId: sessionId, previewId: snapshot.previewId, metadata: meta)
-        } catch {
-            t4log.error("preview.capture failed: \(error)")
-            lastError = "\(error)"
-            return nil
-        }
-    }
-
-    /// The latest decoded capture image for a session (the browser pane's
-    /// Capture view renders this), or nil when no capture has resolved yet.
-    func latestCaptureImage(for sessionId: String) -> PlatformImage? {
-        guard let row = previewCaptureRowsBySession[sessionId]?.last else { return nil }
-        return row.image ?? previewCaptureImages[row.captureId]
-    }
-
-    /// Record a capture as it arrives: append a transcript image row (so
-    /// captures flow into the transcript) and a capture row (image pending).
-    /// Idempotent per captureId — re-arriving frames update in place.
-    private func recordCapture(sessionId: String, metadata: PreviewCaptureMetadata, previewId: String) {
-        upsertCaptureRow(sessionId: sessionId, metadata: metadata, previewId: previewId, image: nil)
-        appendCaptureTranscriptRow(sessionId: sessionId, metadata: metadata, previewId: previewId)
-    }
-
-    /// Insert or update the capture row for a session (keyed by captureId).
-    /// When the image resolves, the matching row's `image` is set so the
-    /// transcript / pane render pixels.
-    private func upsertCaptureRow(sessionId: String, metadata: PreviewCaptureMetadata, previewId: String, image: PlatformImage?) {
-        var rows = previewCaptureRowsBySession[sessionId] ?? []
-        if let index = rows.firstIndex(where: { $0.captureId == metadata.captureId }) {
-            rows[index].image = image
-        } else {
-            rows.append(PreviewCaptureRow(metadata: metadata, previewId: previewId, image: image))
-        }
-        previewCaptureRowsBySession[sessionId] = rows
-    }
-
-    /// Append a synthetic `preview-capture` transcript entry for a capture so
-    /// it flows into the transcript as an image row. The entry's `data`
-    /// carries `captureId`/`previewId`/`mimeType`/`width`/`height`; the
-    /// transcript view renders the image by looking up `data.captureId` in
-    /// `previewCaptureImages`. Idempotent per captureId (de-duped by id).
-    private func appendCaptureTranscriptRow(sessionId: String, metadata: PreviewCaptureMetadata, previewId: String) {
-        let entryId = metadata.captureId
-        let payload: JSONValue = .object([
-            "id": .string(entryId),
-            "hostId": .string(hostId),
-            "sessionId": .string(sessionId),
-            "kind": .string("preview-capture"),
-            "timestamp": .string("\(metadata.capturedAt)"),
-            "data": .object([
-                "captureId": .string(metadata.captureId),
-                "previewId": .string(previewId),
-                "mimeType": .string(metadata.mimeType.rawValue),
-                "width": .number(Double(metadata.width)),
-                "height": .number(Double(metadata.height)),
-            ]),
-        ])
-        guard let data = try? JSONEncoder().encode(payload),
-              let entry = try? TranscriptEntry.decode(data) else { return }
-        var entries = liveEntries[sessionId] ?? []
-        if !entries.contains(where: { $0.id == entryId }) {
-            entries.append(entry)
-            liveEntries[sessionId] = entries
-        }
-    }
-
-    /// Stream a capture's bytes via `preview.capture.read` (ordered chunks) and
-    /// reassemble into a `PlatformImage`. Verifies the sha256 digest, decodes
-    /// the bytes, caches the image by captureId, and updates the session's
-    /// capture row. Returns nil on a bounds/hash/decode mismatch (lastError
-    /// is set).
-    private func fetchCaptureBytes(sessionId: String, previewId: String, metadata: PreviewCaptureMetadata) async -> PlatformImage? {
-        guard let client else { return nil }
-        do {
-            var bytes = Data()
-            bytes.reserveCapacity(metadata.size)
-            var offset = 0
-            while offset < metadata.size {
-                let result = try await client.sendCommand(CommandIntent(
-                    hostId: hostId, command: "preview.capture.read",
-                    args: ["previewId": .string(previewId),
-                           "captureId": .string(metadata.captureId),
-                           "offset": .number(Double(offset))],
-                    sessionId: sessionId))
-                let chunk = try result.previewCaptureReadResult()
-                guard chunk.previewId == previewId, chunk.captureId == metadata.captureId,
-                      chunk.offset == offset, chunk.size == metadata.size else {
-                    throw T4WireError.invalidFrame(path: "result", reason: "preview capture chunk identity or offset mismatch")
-                }
-                guard let part = chunk.decodedBytes, part.count == chunk.nextOffset - offset else {
-                    throw T4WireError.invalidFrame(path: "result.content", reason: "preview capture chunk size mismatch")
-                }
-                bytes.append(part)
-                offset = chunk.nextOffset
-            }
-            guard bytes.count == metadata.size else {
-                throw T4WireError.bounds(path: "result", reason: "preview capture size mismatch")
-            }
-            let digest = SHA256.hash(data: bytes)
-            let hex = digest.map { String(format: "%02x", $0) }.joined()
-            guard hex == metadata.sha256 else {
-                throw T4WireError.invalidFrame(path: "capture.sha256", reason: "preview capture hash mismatch")
-            }
-            guard let image = platformImage(data: bytes) else {
-                lastError = "Preview capture bytes did not decode to an image."
-                return nil
-            }
-            previewCaptureImages[metadata.captureId] = image
-            upsertCaptureRow(sessionId: sessionId, metadata: metadata, previewId: previewId, image: image)
-            return image
-        } catch {
-            t4log.error("preview.capture.read failed: \(error)")
-            lastError = "\(error)"
-            return nil
-        }
-    }
-
-    // MARK: - Panes data
-    // Four detail-ellipsis panes — Usage, Review, Artifacts, Settings — each
-    // backed by a host-wire command. usage.read and settings.read/write are
-    // host-scope (no sessionId); review.read and artifact.read are session-
-    // scoped. review.read takes the latest reviewId from `reviewsBySession`
-    // (fed by `review` additive frames in observe()); artifact.read takes an
-    // artifactId from a transcript entry's `data.artifacts` descriptor list.
-    // All five degrade to a clear error banner when the host denies the
-    // command (e.g. the paired device lacks the capability).
-
-    /// Fetch the host usage snapshot (usage.read, host scope). Stores the
-    /// result in `usageSnapshot` and returns it; nil on failure (lastError
-    /// is set). Safe to repeat — the pane refreshes on demand.
-    @discardableResult
-    func usageRead() async -> UsageReadResult? {
-        guard let client, connected, !hostId.isEmpty else {
-            lastError = "Not connected to a host."
-            return nil
-        }
-        // Official-mode hosts don't implement usage.read; firing it anyway
-        // makes the host close the connection (remote-policy denial).
-        guard grantedCapabilities.contains("usage.read") else { return nil }
-        do {
-            let result = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "usage.read"))
-            let snapshot = try result.usageReadResult()
-            usageSnapshot = snapshot
-            return snapshot
-        } catch {
-            t4log.error("usage.read failed: \(error)")
-            lastError = "\(error)"
-            return nil
-        }
-    }
-
-    /// Fetch one code review (review.read, session scope). `reviewId` defaults
-    /// to the latest review frame's id for the session when nil. Returns the
-    /// typed result or nil on failure (lastError is set).
-    @discardableResult
-    func reviewRead(sessionId: String, reviewId: String? = nil) async -> ReviewReadResult? {
-        guard let client, connected, !hostId.isEmpty else {
-            lastError = "Not connected to a host."
-            return nil
-        }
-        let id = reviewId ?? reviewsBySession[sessionId]?.last?.reviewId
-        guard let id else {
-            lastError = "No review available for this session."
-            return nil
-        }
-        do {
-            let result = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "review.read",
-                args: ["reviewId": .string(id)], sessionId: sessionId))
-            return try result.reviewReadResult()
-        } catch {
-            t4log.error("review.read failed: \(error)")
-            lastError = "\(error)"
-            return nil
-        }
-    }
-
-    /// Read one chunk of a session-retained artifact (artifact.read, session
-    /// scope). `offset` defaults to 0 (the first chunk, enough for inline
-    // text/patch previews). Caches the chunk in `artifactChunks` and returns
-    // it; nil on failure (lastError is set).
-    @discardableResult
-    func artifactRead(sessionId: String, artifactId: String, offset: Int = 0) async -> ArtifactReadChunk? {
-        guard let client, connected, !hostId.isEmpty else {
-            lastError = "Not connected to a host."
-            return nil
-        }
-        do {
-            let result = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "artifact.read",
-                args: ["artifactId": .string(artifactId), "offset": .number(Double(offset))],
-                sessionId: sessionId))
-            let chunk = try result.artifactReadResult()
-            artifactChunks[artifactId] = chunk
-            return chunk
-        } catch {
-            t4log.error("artifact.read failed: \(error)")
-            lastError = "\(error)"
-            return nil
-        }
-    }
-
-    /// The wire's settings.read carries metadata entries ({type, effective}),
-    /// not bare values. Unwrap to the raw map the panes consume — entries that
-    /// are already bare (bridge hosts) pass through untouched.
-    private static func unwrapSettingsMetadata(_ settings: [String: JSONValue]) -> [String: JSONValue] {
-        settings.mapValues { value in
-            guard case .object(let entry) = value,
-                  entry["type"] != nil,
-                  let effective = entry["effective"]
-            else { return value }
-            return effective
-        }
-    }
-
-    /// Fetch the host settings map (settings.read, host scope). Stores the
-    /// map in `settingsSnapshot` and returns it; nil on failure (lastError
-    /// is set).
-    @discardableResult
-    func settingsRead() async -> [String: JSONValue]? {
-        guard let client, connected, !hostId.isEmpty else {
-            lastError = "Not connected to a host."
-            return nil
-        }
-        // Same guard as usageRead: hosts without a settings backend close
-        // the connection on unauthorized commands.
-        guard grantedCapabilities.contains("config.read") else { return nil }
-        do {
-            let result = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "settings.read"))
-            let read = try result.settingsReadResult()
-            let settings = Self.unwrapSettingsMetadata(read.settings)
-            settingsSnapshot = settings
-            settingsRevision = read.revision
-            return settings
-        } catch {
-            t4log.error("settings.read failed: \(error)")
-            lastError = "\(error)"
-            return nil
-        }
-    }
-
-    /// Write a partial settings object (settings.write, host scope, revision
-    /// required). `patch` is merged into the host settings; the host may answer
-    /// with a confirmation challenge instead of a result — that surfaces as
-    /// `pendingConfirmation` via observe() and the banner handles approve/deny.
-    /// On success the new revision is captured and the snapshot re-read so
-    /// masked provider keys stay authoritative.
-    @discardableResult
-    func settingsWrite(patch: [String: JSONValue]) async -> Bool {
-        guard let client, connected, !hostId.isEmpty else {
-            lastError = "Not connected to a host."
-            return false
-        }
-        guard grantedCapabilities.contains("config.write") else {
-            lastError = "Settings writes require the config.write capability."
-            return false
-        }
-        guard let revision = settingsRevision else {
-            lastError = "Settings revision unknown — load settings first."
-            return false
-        }
-        do {
-            let result = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "settings.write",
-                args: patch, expectedRevision: revision))
-            if let echo = try result.settingsWriteResult(),
-               case .string(let newRevision) = echo["revision"] ?? .null,
-               !newRevision.isEmpty {
-                settingsRevision = newRevision
-            }
-            await settingsRead()
-            return true
-        } catch {
-            t4log.error("settings.write failed: \(error)")
-            lastError = "\(error)"
-            return false
-        }
-    }
-
-    /// Code reviews for a session: live review frames when connected, sample
-    /// rows otherwise (review-pane preview without a host).
-    func reviews(for sessionId: String) -> [ReviewFrame] {
-        if connected { return reviewsBySession[sessionId] ?? [] }
-        return Self.sampleReviews
-    }
-
-    /// Artifact descriptors referenced by a session's transcript entries.
-    /// Scans `data.artifacts` (an array of {artifactId, kind, mediaType, ...}
-    // descriptors) on every durable entry and de-dupes by artifactId. The
-    // artifacts pane lists these; tapping one calls `artifactRead` to load
-    // its first chunk for inline preview.
-    func artifacts(for sessionId: String) -> [ArtifactDescriptor] {
-        let entries = transcript(for: sessionId)
-        var seen = Set<String>()
-        var out: [ArtifactDescriptor] = []
-        for entry in entries {
-            guard let arr = entry.data.array("artifacts") else { continue }
-            for value in arr {
-                guard case .object(let obj) = value,
-                      case .string(let aid) = obj["artifactId"] ?? .null,
-                      !seen.contains(aid) else { continue }
-                seen.insert(aid)
-                if let descriptor = ArtifactDescriptor(from: value) {
-                    out.append(descriptor)
-                }
-            }
-        }
-        return out
-    }
-
-    // MARK: - Transcript paging (transcript.page)
-
-    /// Load one older transcript page for a session and prepend it to the
-    /// live transcript. The `before` cursor is the opaque `nextCursor` the
-    /// host returned from the previous `transcript.page` call; it is omitted
-    /// on the first page (the host then returns the newest page plus a cursor
-    /// for older history). Idempotent while a page is already in flight.
-    /// The host's `transcript-page-reader` decrypts `before` as an opaque
-    /// cursor payload — NOT an entry id — so the cursor from the prior result
-    /// is the only valid `before` value.
-    func loadEarlier(sessionId: String) async {
-        guard let client, connected, !hostId.isEmpty else { return }
-        // Idempotent: never overlap two page requests for one session.
-        if pagingState[sessionId]?.loading == true { return }
-        // Stop once the host has told us there is no more history.
-        if pagingState[sessionId]?.hasMore == false { return }
-
-        var state = pagingState[sessionId] ?? TranscriptPaging(nextCursor: nil, hasMore: nil, loading: false)
-        state.loading = true
-        pagingState[sessionId] = state
-
-        var args: [String: JSONValue] = ["limit": .number(50)]
-        if let before = state.nextCursor { args["before"] = .string(before) }
-
-        do {
-            let result = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "transcript.page", args: args, sessionId: sessionId))
-            let page = try result.transcriptPageResult()
-
-            // Prepend the decoded older rows, dropping any that overlap the
-            // already-known live tail (the first page commonly overlaps the
-            // attach snapshot). The host returns entries oldest→newest.
-            let existing = liveEntries[sessionId] ?? []
-            let existingIds = Set(existing.map { $0.id })
-            let older = page.entries.map { TranscriptEntry(from: $0) }
-                .filter { !existingIds.contains($0.id) }
-
-            // Flag the prepend so the detail view suppresses its scroll-to-
-            // bottom follow; clear it on the next runloop tick so the
-            // count-change render still sees the flag set.
-            prependingSession = sessionId
-            if !older.isEmpty {
-                liveEntries[sessionId] = older + existing
-            }
-            pagingState[sessionId] = TranscriptPaging(
-                nextCursor: page.nextCursor,
-                hasMore: page.hasMore,
-                loading: false)
-            Task { @MainActor in prependingSession = nil }
-        } catch {
-            t4log.error("transcript.page failed: \(error)")
-            lastError = "\(error)"
-            var failed = pagingState[sessionId] ?? TranscriptPaging(nextCursor: nil, hasMore: nil, loading: false)
-            failed.loading = false
-            pagingState[sessionId] = failed
-            Task { @MainActor in prependingSession = nil }
-        }
-    }
 
     /// Live frames keep the inventory, transcripts, and confirmations current.
     private func observe() async {
@@ -2285,7 +1545,7 @@ final class T4SessionStore: ObservableObject {
     /// Sample code reviews — offline preview for the review pane (one
     /// pending review with a warning finding) so the sheet renders without
     /// a live host. Built by decoding a minimal `review` frame.
-    private static let sampleReviews: [ReviewFrame] = {
+    static let sampleReviews: [ReviewFrame] = {
         let json = """
         {"v":"omp-app/1","type":"review","hostId":"studio-mac","sessionId":"s1","reviewId":"review-sample","status":"pending","path":"src/fixture.ts","findings":[{"severity":"warning","message":"Fixture review finding for the mobile application flow.","line":12}]}
         """

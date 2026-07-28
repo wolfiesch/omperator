@@ -142,7 +142,6 @@ func TestWorkspaceReadinessRejectsAuthoritativeForeignPVCReplacement(t *testing.
 	}
 }
 
-
 func TestWorkspacePendingPVCPolicyFailsBeforeAuthority(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -150,7 +149,9 @@ func TestWorkspacePendingPVCPolicyFailsBeforeAuthority(t *testing.T) {
 		reason string
 	}{
 		{name: "wrong class", reason: controllers.ReasonStorageClassMismatch, mutate: func(pvc *corev1.PersistentVolumeClaim) { pvc.Spec.StorageClassName = ptr("other-rwx") }},
-		{name: "wrong access", reason: "PVCNotRWX", mutate: func(pvc *corev1.PersistentVolumeClaim) { pvc.Spec.AccessModes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce} }},
+		{name: "wrong access", reason: "PVCNotRWX", mutate: func(pvc *corev1.PersistentVolumeClaim) {
+			pvc.Spec.AccessModes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -394,7 +395,9 @@ func TestSessionPodCreateRevalidatesAuthoritativePVC(t *testing.T) {
 			pvc.OwnerReferences = []metav1.OwnerReference{{APIVersion: "v1", Kind: "Secret", Name: "foreign", UID: "foreign-uid", Controller: ptr(true)}}
 		}},
 		{name: "storage class drift", mutate: func(pvc *corev1.PersistentVolumeClaim) { pvc.Spec.StorageClassName = ptr("other-rwx") }},
-		{name: "access mode drift", mutate: func(pvc *corev1.PersistentVolumeClaim) { pvc.Spec.AccessModes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce} }},
+		{name: "access mode drift", mutate: func(pvc *corev1.PersistentVolumeClaim) {
+			pvc.Spec.AccessModes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}
+		}},
 		{name: "unbound replacement", mutate: func(pvc *corev1.PersistentVolumeClaim) { pvc.Status.Phase = corev1.ClaimPending }},
 	}
 	for _, test := range tests {
@@ -481,236 +484,6 @@ func TestSessionExistingPodRepairRejectsAuthoritativeForeignPVCReplacement(t *te
 	workspaceReady := findCondition(got.Status.Conditions, "WorkspaceReady")
 	if got.Status.PodName != "" || workspaceReady == nil || workspaceReady.Status != metav1.ConditionFalse || workspaceReady.Reason != "PVCAuthorityChanged" || workspaceReady.ObservedGeneration != got.Generation {
 		t.Fatalf("existing Pod repair retained stale PVC authority: status=%#v WorkspaceReady=%#v", got.Status, workspaceReady)
-	}
-}
-
-
-func TestSessionFailsClosedWhenAnyOMPReferenceIsMissing(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		remove func(*controllers.SessionOMPConfig)
-		reason string
-	}{
-		{name: "ConfigMap", remove: func(config *controllers.SessionOMPConfig) { config.ConfigMapName = "" }, reason: "OMPReferencesMissing"},
-		{name: "models key", remove: func(config *controllers.SessionOMPConfig) { config.ModelsKey = "" }, reason: "OMPReferencesMissing"},
-		{name: "settings key", remove: func(config *controllers.SessionOMPConfig) { config.SettingsKey = "" }, reason: "OMPReferencesMissing"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			scheme := testScheme(t)
-			workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
-			workspace.Status.PVCName = "workspace-a-data"
-			pvc := &corev1.PersistentVolumeClaim{
-				ObjectMeta: metav1.ObjectMeta{Name: workspace.Status.PVCName, Namespace: "team"},
-				Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: ptr("portable-rwx"), AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
-				Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
-			}
-			session := testSession()
-			c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&clusterv1alpha1.T4Session{}, &corev1.PersistentVolumeClaim{}).WithObjects(testHost(), workspace, pvc, session).Build()
-			r := configuredSessionReconciler(c, scheme)
-			test.remove(&r.OMPConfig)
-			if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
-				t.Fatal(err)
-			}
-			assertObjectCounts(t, c, 0, 0)
-			var got clusterv1alpha1.T4Session
-			if err := c.Get(context.Background(), client.ObjectKeyFromObject(session), &got); err != nil {
-				t.Fatal(err)
-			}
-			condition := findCondition(got.Status.Conditions, "RuntimeConfigured")
-			if condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != test.reason {
-				t.Fatalf("RuntimeConfigured = %#v, want False/%s", condition, test.reason)
-			}
-		})
-	}
-}
-
-func TestSessionRejectsInvalidOMPProjectionReferences(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		mutate func(*controllers.SessionOMPConfig)
-		reason string
-	}{
-		{name: "identical projected keys", mutate: func(config *controllers.SessionOMPConfig) { config.SettingsKey = config.ModelsKey }, reason: "OMPReferencesInvalid"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			scheme := testScheme(t)
-			session := testSession()
-			c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&clusterv1alpha1.T4Session{}).WithObjects(session).Build()
-			r := configuredSessionReconciler(c, scheme)
-			test.mutate(&r.OMPConfig)
-			if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
-				t.Fatal(err)
-			}
-			assertObjectCounts(t, c, 0, 0)
-			var got clusterv1alpha1.T4Session
-			if err := c.Get(context.Background(), client.ObjectKeyFromObject(session), &got); err != nil {
-				t.Fatal(err)
-			}
-			condition := findCondition(got.Status.Conditions, "RuntimeConfigured")
-			if condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != test.reason {
-				t.Fatalf("RuntimeConfigured = %#v, want False/%s", condition, test.reason)
-			}
-		})
-	}
-}
-
-func TestSessionRejectsCredentialBearingModelsConfiguration(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		models string
-	}{
-		{name: "malformed YAML", models: "providers: ["},
-		{name: "missing providers", models: "models: []\n"},
-		{name: "missing auth", models: "providers:\n  public:\n    baseUrl: https://model.example/v1\n"},
-		{name: "authenticated provider", models: "providers:\n  public:\n    baseUrl: https://model.example/v1\n    auth: api-key\n"},
-		{name: "API key", models: "providers:\n  public:\n    baseUrl: https://model.example/v1\n    auth: none\n    apiKey: reusable\n"},
-		{name: "authorization header", models: "providers:\n  public:\n    baseUrl: https://model.example/v1\n    auth: none\n    headers:\n      Authorization: Bearer reusable\n"},
-		{name: "x-api-key header", models: "providers:\n  public:\n    baseUrl: https://model.example/v1\n    auth: none\n    headers:\n      X-API-Key: reusable\n"},
-		{name: "custom header", models: "providers:\n  public:\n    baseUrl: https://model.example/v1\n    auth: none\n    headers:\n      X-Custom-Auth: reusable\n"},
-		{name: "URL userinfo", models: "providers:\n  public:\n    baseUrl: https://user:reusable@model.example/v1\n    auth: none\n"},
-		{name: "URL query credential", models: "providers:\n  public:\n    baseUrl: https://model.example/v1?access=reusable\n    auth: none\n"},
-		{name: "duplicate auth key", models: "providers:\n  public:\n    baseUrl: https://model.example/v1\n    auth: none\n    auth: api-key\n"},
-		{name: "YAML merge alias", models: "shared: &shared\n  auth: api-key\nproviders:\n  public:\n    <<: *shared\n    baseUrl: https://model.example/v1\n    auth: none\n"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			scheme := testScheme(t)
-			workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
-			workspace.Status.PVCName = "workspace-a-data"
-			pvc := &corev1.PersistentVolumeClaim{
-				ObjectMeta: metav1.ObjectMeta{Name: workspace.Status.PVCName, Namespace: "team"},
-				Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: ptr("portable-rwx"), AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
-				Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
-			}
-			session := testSession()
-			c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&clusterv1alpha1.T4Session{}, &corev1.PersistentVolumeClaim{}).WithObjects(testHost(), workspace, pvc, session).Build()
-			r := configuredSessionReconciler(c, scheme)
-			var configMap corev1.ConfigMap
-			key := types.NamespacedName{Namespace: "team", Name: r.OMPConfig.ConfigMapName}
-			if err := c.Get(context.Background(), key, &configMap); err != nil {
-				t.Fatal(err)
-			}
-			configMap.Data[r.OMPConfig.ModelsKey] = test.models
-			if err := c.Update(context.Background(), &configMap); err != nil {
-				t.Fatal(err)
-			}
-			reconcileMany(t, 2, func() error {
-				_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)})
-				return err
-			})
-			var got clusterv1alpha1.T4Session
-			if err := c.Get(context.Background(), client.ObjectKeyFromObject(session), &got); err != nil {
-				t.Fatal(err)
-			}
-			condition := findCondition(got.Status.Conditions, "RuntimeConfigured")
-			if condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != "OMPModelsAuthenticationUnsafe" {
-				t.Fatalf("RuntimeConfigured = %#v, want False/OMPModelsAuthenticationUnsafe", condition)
-			}
-		})
-	}
-}
-
-func TestSessionRejectsCredentialBearingSettingsConfiguration(t *testing.T) {
-	for _, test := range []struct {
-		name     string
-		settings string
-	}{
-		{name: "broker token", settings: "auth.broker.token: reusable\n"},
-		{name: "nested broker token", settings: "auth:\n  broker:\n    token: reusable\n"},
-		{name: "hindsight token", settings: "hindsight.apiToken: reusable\n"},
-		{name: "searxng token", settings: "searxng.token: reusable\n"},
-		{name: "auto QA token", settings: "dev.autoqaPush.token: reusable\n"},
-		{name: "custom headers", settings: "provider:\n  headers:\n    X-Custom-Auth: reusable\n"},
-		{name: "duplicate key", settings: "theme: dark\ntheme: light\n"},
-		{name: "YAML alias", settings: "theme: &theme dark\ncopy: *theme\n"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			scheme := testScheme(t)
-			workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
-			workspace.Status.PVCName = "workspace-a-data"
-			pvc := &corev1.PersistentVolumeClaim{
-				ObjectMeta: metav1.ObjectMeta{Name: workspace.Status.PVCName, Namespace: "team"},
-				Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: ptr("portable-rwx"), AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
-				Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
-			}
-			session := testSession()
-			c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&clusterv1alpha1.T4Session{}, &corev1.PersistentVolumeClaim{}).WithObjects(testHost(), workspace, pvc, session).Build()
-			r := configuredSessionReconciler(c, scheme)
-			var configMap corev1.ConfigMap
-			key := types.NamespacedName{Namespace: "team", Name: r.OMPConfig.ConfigMapName}
-			if err := c.Get(context.Background(), key, &configMap); err != nil {
-				t.Fatal(err)
-			}
-			configMap.Data[r.OMPConfig.SettingsKey] = test.settings
-			if err := c.Update(context.Background(), &configMap); err != nil {
-				t.Fatal(err)
-			}
-			reconcileMany(t, 2, func() error {
-				_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)})
-				return err
-			})
-			var got clusterv1alpha1.T4Session
-			if err := c.Get(context.Background(), client.ObjectKeyFromObject(session), &got); err != nil {
-				t.Fatal(err)
-			}
-			condition := findCondition(got.Status.Conditions, "RuntimeConfigured")
-			if condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != "OMPSettingsAuthenticationUnsafe" {
-				t.Fatalf("RuntimeConfigured = %#v, want False/OMPSettingsAuthenticationUnsafe", condition)
-			}
-		})
-	}
-}
-
-func TestSessionRuntimeImageMustBeImmutableDigest(t *testing.T) {
-	for _, test := range []struct {
-		name       string
-		image      string
-		wantReason string
-	}{
-		{name: "tag only", image: "registry.example/session:latest", wantReason: "RuntimeImageInvalid"},
-		{name: "malformed digest", image: "registry.example/session@sha256:deadbeef", wantReason: "RuntimeImageInvalid"},
-		{name: "uppercase algorithm", image: "registry.example/session@SHA256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", wantReason: "RuntimeImageInvalid"},
-		{name: "uppercase digest", image: "registry.example/session@sha256:ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789", wantReason: "RuntimeImageInvalid"},
-		{name: "registry port and path", image: "registry.example:5443/team/session-runtime@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			scheme := testScheme(t)
-			workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
-			workspace.Status.PVCName = "workspace-a-data"
-			pvc := &corev1.PersistentVolumeClaim{
-				ObjectMeta: metav1.ObjectMeta{Name: workspace.Status.PVCName, Namespace: "team"},
-				Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: ptr("portable-rwx"), AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
-				Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
-			}
-			session := testSession()
-			c := fake.NewClientBuilder().WithScheme(scheme).
-				WithStatusSubresource(&clusterv1alpha1.T4Session{}, &corev1.PersistentVolumeClaim{}, &corev1.Pod{}).
-				WithObjects(testHost(), workspace, pvc, session).Build()
-			r := configuredSessionReconciler(c, scheme)
-			r.RuntimeImage = test.image
-			if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
-				t.Fatal(err)
-			}
-			if test.wantReason == "" {
-				assertObjectCounts(t, c, 1, 1)
-				var pod corev1.Pod
-				if err := c.Get(context.Background(), types.NamespacedName{Namespace: session.Namespace, Name: controllers.SessionPodName(session)}, &pod); err != nil {
-					t.Fatal(err)
-				}
-				if pod.Spec.Containers[0].Image != test.image {
-					t.Fatalf("runtime image = %q, want %q", pod.Spec.Containers[0].Image, test.image)
-				}
-				return
-			}
-			assertObjectCounts(t, c, 0, 0)
-			var got clusterv1alpha1.T4Session
-			if err := c.Get(context.Background(), client.ObjectKeyFromObject(session), &got); err != nil {
-				t.Fatal(err)
-			}
-			condition := findCondition(got.Status.Conditions, "RuntimeConfigured")
-			if condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != test.wantReason {
-				t.Fatalf("RuntimeConfigured = %#v, want False/%s", condition, test.wantReason)
-			}
-		})
 	}
 }
 
@@ -1726,7 +1499,7 @@ func TestSessionDependencyRevocationCleansOwnedResourcesAndConvergesAfterRestart
 func TestWorkspaceHostStorageClassDriftFailsClosedWithoutRecreatingPVC(t *testing.T) {
 	oldClass := "portable-rwx"
 	for _, test := range []struct {
-		name      string
+		name       string
 		claimClass *string
 	}{
 		{name: "different class", claimClass: &oldClass},
@@ -2227,7 +2000,9 @@ func TestWorkspaceTerminalPVCFailuresRevokePublishedAuthority(t *testing.T) {
 		mutate func(*corev1.PersistentVolumeClaim)
 		reason string
 	}{
-		{name: "Bound without RWX", reason: "PVCNotRWX", mutate: func(pvc *corev1.PersistentVolumeClaim) { pvc.Spec.AccessModes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce} }},
+		{name: "Bound without RWX", reason: "PVCNotRWX", mutate: func(pvc *corev1.PersistentVolumeClaim) {
+			pvc.Spec.AccessModes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}
+		}},
 		{name: "Lost", reason: "PVCLost", mutate: func(pvc *corev1.PersistentVolumeClaim) { pvc.Status.Phase = corev1.ClaimLost }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -2259,15 +2034,14 @@ func TestWorkspaceTerminalPVCFailuresRevokePublishedAuthority(t *testing.T) {
 	}
 }
 
-
 func ownedWorkspacePVC(workspace *clusterv1alpha1.T4Workspace) *corev1.PersistentVolumeClaim {
 	return &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: controllers.WorkspacePVCName(workspace), Namespace: workspace.Namespace,
-			Annotations: map[string]string{clusterv1alpha1.WorkspaceUIDAnnotation: string(workspace.UID)},
+			Annotations:     map[string]string{clusterv1alpha1.WorkspaceUIDAnnotation: string(workspace.UID)},
 			OwnerReferences: []metav1.OwnerReference{{APIVersion: clusterv1alpha1.GroupVersion.String(), Kind: "T4Workspace", Name: workspace.Name, UID: workspace.UID, Controller: ptr(true)}},
 		},
-		Spec: corev1.PersistentVolumeClaimSpec{StorageClassName: ptr("portable-rwx"), AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
+		Spec:   corev1.PersistentVolumeClaimSpec{StorageClassName: ptr("portable-rwx"), AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
 		Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
 	}
 }

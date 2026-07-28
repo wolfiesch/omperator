@@ -15,11 +15,9 @@ import {
   PROTOCOL_VERSION,
   revision as brandRevision,
   sessionId as brandSessionId,
-  type CatalogItem,
   type DurableEntry,
   type Revision,
   type SessionEvent,
-  type SessionRef,
   type SessionSnapshotFrame,
 } from "@t4-code/protocol";
 
@@ -61,7 +59,6 @@ import {
   THINKING_SET_COMMAND,
   type PendingControl,
 } from "./session-controls.ts";
-import { sessionIsWorking } from "./session-management.ts";
 import {
   CACHED_WRITE_REASON,
   gateComposerControls,
@@ -71,7 +68,31 @@ import {
   sessionControlForLink,
   WriteGateError,
 } from "./session-observer.ts";
-import { sessionRefIsCurrent, sessionWriteLink } from "./session-inventory.ts";
+import { sessionWriteLink } from "./session-inventory.ts";
+import {
+  CONTROL_REJECTED,
+  CONTROL_UNKNOWN,
+  findCancelCommand,
+  UNKNOWN_PROMPT_REASON as UNKNOWN_REASON,
+} from "./live-controls.ts";
+import {
+  activePendingPromptId,
+  authoritativeWorkingState,
+  getQueuedFollowUps,
+  isTranscriptEvent,
+  retiredPendingPromptId,
+  sessionRefIsCompacting,
+  sessionIsWorkingWithPendingPrompts,
+} from "./live-session-state.ts";
+import {
+  INITIAL_TRANSCRIPT_PAGE_BYTES,
+  INITIAL_TRANSCRIPT_PAGE_ENTRIES,
+  MAX_PAGED_TRANSCRIPT_ENTRIES,
+  OLDER_TRANSCRIPT_PAGE_BYTES,
+  OLDER_TRANSCRIPT_PAGE_ENTRIES,
+  prependTranscriptPage,
+  presentPagedTranscript,
+} from "./live-transcript-history.ts";
 
 export interface LiveRuntimeOptions {
   readonly controller: DesktopRuntimeController;
@@ -80,161 +101,7 @@ export interface LiveRuntimeOptions {
   readonly sessionId: string;
 }
 
-const UNKNOWN_REASON =
-  "The connection dropped before the host answered. Your draft is safe. Check the transcript before resending so you do not send it twice.";
-
-/** Bounded failure copy per control; the label itself never lies. */
-const CONTROL_REJECTED: Record<PendingControl, string> = {
-  model: "The host declined the model change. The session keeps its current model.",
-  thinking: "The host declined the thinking change. The session keeps its current level.",
-  fast: "The host declined the fast-mode change.",
-  mode: "The host declined the mode change. The session keeps its current mode.",
-};
-const CONTROL_UNKNOWN =
-  "The connection dropped before the host answered. The control shows the host's last confirmed value.";
 const MAX_RETIRED_PENDING_PROMPTS = 128;
-const INITIAL_TRANSCRIPT_PAGE_ENTRIES = 64;
-const INITIAL_TRANSCRIPT_PAGE_BYTES = 256 * 1024;
-const OLDER_TRANSCRIPT_PAGE_ENTRIES = 128;
-const OLDER_TRANSCRIPT_PAGE_BYTES = 512 * 1024;
-const MAX_PAGED_TRANSCRIPT_ENTRIES = 4_096;
-
-function prependTranscriptPage(
-  current: readonly DurableEntry[],
-  older: readonly DurableEntry[],
-): readonly DurableEntry[] {
-  const existing = new Set(current.map((entry) => entry.id));
-  const added: DurableEntry[] = [];
-  for (const entry of older) {
-    if (existing.has(entry.id)) continue;
-    existing.add(entry.id);
-    added.push(entry);
-  }
-  return [...added, ...current];
-}
-
-function presentPagedTranscript(
-  projection: TranscriptProjection,
-  pagedEntries: readonly DurableEntry[],
-): TranscriptProjection {
-  if (pagedEntries.length === 0) return projection;
-  if (projection.entries.length === 0) return { ...projection, entries: pagedEntries };
-  // The host page is authority for the range it covers, but the warm projection can
-  // extend past that range on both sides. Splice the page between the live entries
-  // that sit outside it, keyed on the shared anchors, so a gappy warm projection is
-  // repaired without reordering history the page never described.
-  const pagedIds = new Set(pagedEntries.map((entry) => entry.id));
-  const firstAnchor = projection.entries.findIndex((entry) => pagedIds.has(entry.id));
-  if (firstAnchor < 0) {
-    // No overlap: the page is strictly older than everything the projection holds.
-    return { ...projection, entries: [...pagedEntries, ...projection.entries] };
-  }
-  const lastAnchor = projection.entries.findLastIndex((entry) => pagedIds.has(entry.id));
-  const before = projection.entries.slice(0, firstAnchor);
-  const after = projection.entries.slice(lastAnchor + 1);
-  return { ...projection, entries: [...before, ...pagedEntries, ...after] };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** Event kinds the transcript reducer accepts; mirrors the subscription. */
-const TRANSCRIPT_EVENT_KINDS: ReadonlySet<string> = new Set(["snapshot", "entry", "event", "gap"]);
-
-function isTranscriptEvent(event: { readonly kind: string }): event is TranscriptServerEvent {
-  return TRANSCRIPT_EVENT_KINDS.has(event.kind);
-}
-
-/** Follow-ups the host reports as queued, read strictly from the ref. */
-function getQueuedFollowUps(ref: SessionRef | undefined): readonly string[] {
-  if (!isRecord(ref?.liveState)) return [];
-  const queuedMessages = ref.liveState.queuedMessages;
-  if (!isRecord(queuedMessages)) return [];
-  const followUp = queuedMessages.followUp;
-  if (!Array.isArray(followUp)) return [];
-  const result: string[] = [];
-  for (const item of followUp) {
-    if (typeof item === "string") result.push(item);
-  }
-  return result;
-}
-
-function retiredPendingPromptId(event: SessionEvent): string | null {
-  if (event.type !== "message.settled" && event.type !== "message.discarded") return null;
-  const candidate =
-    typeof event.transientEntryId === "string"
-      ? event.transientEntryId
-      : event.type === "message.discarded" && typeof event.entryId === "string"
-        ? event.entryId
-        : null;
-  return candidate !== null && candidate.length > 0 && candidate.length <= 512 ? candidate : null;
-}
-
-function activePendingPromptId(event: SessionEvent): string | null {
-  if (
-    (event.type !== "message.update" && event.type !== "message.delta") ||
-    event.role !== "user" ||
-    typeof event.entryId !== "string"
-  ) {
-    return null;
-  }
-  return event.entryId.length > 0 && event.entryId.length <= 512 ? event.entryId : null;
-}
-
-function sessionIsWorkingWithPendingPrompts(
-  ref: SessionRef | undefined,
-  pendingPrompts: ReturnType<typeof pendingPromptsFromRef>,
-): boolean {
-  if (ref === undefined) return false;
-  const liveState = isRecord(ref.liveState) ? ref.liveState : {};
-  return sessionIsWorking({
-    ...ref,
-    // A present plural value is authoritative over any lagging singular
-    // fallback, while every independent queue/stream/compaction signal stays.
-    liveState: { ...liveState, pendingPrompts },
-  } as SessionRef);
-}
-
-function sessionRefIsCompacting(ref: SessionRef | undefined): boolean {
-  if (!isRecord(ref?.liveState)) return false;
-  return ref.liveState.isCompacting === true || ref.liveState.phase === "compacting";
-}
-
-/**
- * Return working truth only when this connected host supplied this session's
- * ref after the latest reconnect. A bounded/truncated inventory can still be
- * authoritative for rows it actually returned.
- */
-function authoritativeWorkingState(
-  runtime: DesktopRuntimeSnapshot,
-  targetId: string,
-  hostId: string,
-  sessionId: string,
-  projectionKey: string,
-  retiredPendingPromptIds: ReadonlySet<string>,
-): boolean | null {
-  if (runtime.connections.get(targetId) !== "connected") return null;
-  if (runtime.targetHosts.get(targetId) !== hostId) return null;
-  if (!sessionRefIsCurrent(runtime, hostId, sessionId)) return null;
-  const ref = runtime.projection.sessionIndex.get(projectionKey);
-  if (ref === undefined) return null;
-  const pendingPrompts = pendingPromptsFromRef(ref).filter(
-    (prompt) => !retiredPendingPromptIds.has(prompt.entryId),
-  );
-  return sessionIsWorkingWithPendingPrompts(ref, pendingPrompts);
-}
-
-/** Commands the runtime recognizes as this session's abort affordance. */
-function findCancelCommand(items: readonly CatalogItem[]): CatalogItem | undefined {
-  return items.find(
-    (item) =>
-      item.kind === "command" &&
-      (String(item.id) === "session.cancel" ||
-        item.name === "session.cancel" ||
-        item.name === "cancel"),
-  );
-}
 
 interface PendingChallenge {
   readonly challenge: SessionProjection["confirmations"] extends ReadonlyMap<string, infer Value>
