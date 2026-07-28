@@ -42,6 +42,19 @@ final class KeychainTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testSuccessfulConnectionClearsStaleEndpointError() {
+        let store = T4SessionStore()
+        store.lastError = """
+        Error Domain=NSURLErrorDomain Code=-1004 \
+        "Could not connect to the server."
+        """
+
+        store.clearErrorAfterSuccessfulConnection()
+
+        XCTAssertNil(store.lastError)
+    }
+
     func testPendingTranscriptQueueKeepsEveryAssistantEntry() throws {
         var queue = PendingTranscriptQueue()
 

@@ -1134,6 +1134,13 @@ final class T4SessionStore: ObservableObject {
         return URLSessionHostWireTransport(endpoint: endpoint, session: session)
     }
 
+    /// A later healthy connection supersedes any earlier endpoint failure.
+    /// Keep this transition explicit so a transient restore/pair attempt cannot
+    /// leave a stale transport error pinned above a live session inventory.
+    func clearErrorAfterSuccessfulConnection() {
+        lastError = nil
+    }
+
     /// Connect to a t4-host over host-wire, handshake, and load the inventory.
     func connect(endpoint: URL, identity: ClientIdentity, authentication: DeviceAuthentication? = nil) async {
         connecting = true
@@ -1151,6 +1158,7 @@ final class T4SessionStore: ObservableObject {
             if connected {
                 pairedEndpoint = endpoint.absoluteString
                 persist(endpoint: endpoint, authentication: authentication)
+                clearErrorAfterSuccessfulConnection()
                 await refresh()
                 await loadCatalog()
                 Task { await observe() }
@@ -1197,6 +1205,7 @@ final class T4SessionStore: ObservableObject {
                 connected = true
                 pairedEndpoint = endpoint.absoluteString
                 persist(endpoint: endpoint, authentication: nil)
+                clearErrorAfterSuccessfulConnection()
                 await refresh()
                 await loadCatalog()
                 Task { await observe() }
