@@ -39,7 +39,8 @@ struct T4SessionDetailView: View {
     /// Modal sheets only — the region migration moved browser/files/agents/
     /// review/searchDiff/artifacts into dock tiles. Settings + usage stay
     /// modal (inbox is owned by the workspace, not the session detail).
-    enum ActiveSheet: String, Identifiable { case settings, usage; var id: String { rawValue } }
+    /// details is the iOS session-facts card (macOS uses a chrome popover).
+    enum ActiveSheet: String, Identifiable { case settings, usage, details; var id: String { rawValue } }
     @State private var activeSheet: ActiveSheet?
     #if os(macOS)
     /// Owns the floating NSPanels for popped-out dock tiles. Synced to the
@@ -125,13 +126,11 @@ struct T4SessionDetailView: View {
                     loadEarlierSection
                     #if os(iOS)
                     // macOS carries the status pill in the window toolbar;
-                    // iOS keeps it as a slim transcript-top row.
+                    // iOS keeps it as a slim transcript-top row. Approval
+                    // challenges dock above the composer on both platforms;
+                    // session facts live in the details sheet (iOS) / chrome
+                    // popover (macOS), never in the scrollback.
                     statusRow
-                    if let challenge = store.pendingConfirmation {
-                        confirmationBanner(challenge)
-                    }
-                    if showFacts { facts }
-                    Divider().overlay(t.lineFaint)
                     #endif
                     T4TranscriptView(entries: store.transcript(for: session.sessionId),
                                      streamingText: store.streamingText[session.sessionId] ?? "",
@@ -276,7 +275,7 @@ struct T4SessionDetailView: View {
             #else
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    Button { withAnimation(.easeInOut(duration: 0.2)) { showFacts.toggle() } } label: {
+                    Button { activeSheet = .details } label: {
                         Label("Session details", systemImage: "info.circle")
                     }
                     Button { openPane(.files) } label: { Label("Files", systemImage: "folder") }
@@ -355,6 +354,26 @@ struct T4SessionDetailView: View {
             case .settings:
                 T4SettingsPane(store: store, isPresented: sheetBinding(.settings))
                     .environmentObject(theme)
+            case .details:
+                // iOS session facts: a swipe-down card, not transcript
+                // scrollback. macOS never sets this — it uses the popover.
+                NavigationStack {
+                    facts
+                        .padding(18)
+                        .navigationTitle("Session details")
+                        #if os(iOS)
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .topBarTrailing) {
+                                Button("Done") { activeSheet = nil }
+                                    .font(.system(size: 14, weight: .semibold))
+                            }
+                        }
+                        #endif
+                }
+                #if os(iOS)
+                .presentationDetents([.medium, .large])
+                #endif
             }
             }
             #if os(macOS)
