@@ -474,7 +474,10 @@ export const COMMAND_DESCRIPTORS: Readonly<Record<string, CommandDescriptor>> = 
 		scope: "session",
 		revision: "optional",
 		revisionOwner: "session",
-		confirmation: "challenge",
+		// No interactive challenge: opening a pty is routine, not destructive,
+		// and the capability grant is the security boundary. A per-open
+		// Approve/Deny card only stalled clients behind a 60s expiry.
+		confirmation: "none",
 	},
 	"audit.read": {
 		capability: "audit.read",
