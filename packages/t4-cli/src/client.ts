@@ -227,7 +227,7 @@ export class T4Client {
 	async prompt(sessionId: string, text: string) {
 		await this.withLease(sessionId, "prompt.lease", async (leaseId, revision) => {
 			await this.command("session.prompt",
-				{ input: [{ type: "text", text }], leaseId }, sessionId, revision);
+				{ message: text, leaseId }, sessionId, revision);
 		});
 	}
 	fork(sessionId: string) { return this.command<{ session: SessionRef }>("session.fork", {}, sessionId); }
