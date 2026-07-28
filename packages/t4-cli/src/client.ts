@@ -105,6 +105,12 @@ export class T4Client {
 				const p = this.pending.get(f.requestId)!;
 				this.pending.delete(f.requestId);
 				clearTimeout(p.timer);
+				// Command responses that carry the inventory also refresh revisions.
+				if (f.command === "session.list" && f.ok !== false && Array.isArray(f.result?.sessions)) {
+					for (const s of f.result.sessions as SessionRef[]) {
+						if (s.revision) this.revisions.set(s.sessionId, s.revision);
+					}
+				}
 				f.ok === false ? p.reject(new Error(f.error?.message ?? f.error?.code ?? "command failed")) : p.resolve(f);
 				return;
 			}
