@@ -569,3 +569,55 @@ test("routes an external runtime session through appserver-owned workspace ident
 		await rm(root, { recursive: true, force: true });
 	}
 }, 15_000);
+
+test("local clients open a terminal without a confirmation round trip", async () => {
+	const root = await realpath(await mkdtemp(join(tmpdir(), "t4-terminal-local-")));
+	const openedTerminal = crypto.randomUUID();
+	const appserver = createAppserver({
+		hostId: host,
+		epoch: "terminal-local-test",
+		socketPath: join(root, "run", "app.sock"),
+		discovery: {
+			async list() {
+				return [
+					{
+						sessionId: sessionId("session-local"),
+						path: "/tmp/session-local.jsonl",
+						cwd: "/tmp",
+						projectId: "project-local" as never,
+						title: "session-local",
+						updatedAt: "2026-01-01T00:00:00.000Z",
+						status: "idle",
+						entries: [],
+					},
+				];
+			},
+		},
+		operationsAuthority: {
+			termOpen: async () => ({ terminalId: openedTerminal }),
+			terminalInput: async () => undefined,
+			terminalResize: async () => undefined,
+			terminalClose: async () => undefined,
+		},
+	});
+	let client: RawUdsWebSocket | undefined;
+	try {
+		await appserver.start();
+		client = await RawUdsWebSocket.connect(appserver.socketPath);
+		client.sendJson({ ...hello(), capabilities: { client: ["term.open"] } });
+		await client.nextServer();
+		client.sendJson({
+			...command("term-open-1", "term.open", { cols: 80, rows: 24 }),
+			sessionId: "session-local",
+		});
+		expect(await response(client, "term-open-1")).toMatchObject({
+			ok: true,
+			result: { terminalId: openedTerminal },
+		});
+	} finally {
+		client?.destroy();
+		if (client) await client.closed();
+		await appserver.stop();
+		await rm(root, { recursive: true, force: true });
+	}
+});
