@@ -631,6 +631,7 @@ describe("app-wire authority", () => {
 			}),
 		).toThrow(AppWireError);
 		expect(COMMAND_DESCRIPTORS["workspace.archive"]?.confirmation).toBe("challenge");
+		expect(COMMAND_DESCRIPTORS["term.open"]?.confirmation).toBe("none");
 		const runtimeResult = {
 			id: "omp",
 			displayName: "Oh My Pi",

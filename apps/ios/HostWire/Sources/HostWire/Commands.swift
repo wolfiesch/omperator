@@ -77,7 +77,7 @@ public enum Commands {
         "controller.lease.renew":    .init(capability: .sessionsControl, scope: .session, revision: .required, confirmation: .none),
         "controller.lease.release":  .init(capability: .sessionsControl, scope: .session, revision: .required, confirmation: .none),
         "catalog.get":          .init(capability: .catalogRead,   scope: .host,    revision: .none,     confirmation: .none),
-        "term.open":            .init(capability: .terminalOpen,  scope: .session, revision: .optional, confirmation: .challenge),
+        "term.open":            .init(capability: .terminalOpen,  scope: .session, revision: .optional, confirmation: .none),
         "files.list":           .init(capability: .filesList,     scope: .session, revision: .optional, confirmation: .none),
         "files.read":           .init(capability: .filesRead,     scope: .session, revision: .optional, confirmation: .none),
         // Panes: usage / review / settings (artifact.read is already above).
