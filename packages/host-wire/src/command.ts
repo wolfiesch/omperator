@@ -1778,7 +1778,7 @@ export const COMMAND_ARGUMENT_DECODERS: Readonly<Record<string, (value: unknown)
 			turnId(x.turnId, "args.turnId");
 			return x;
 		}
-		safeRelativePath(x.path);
+		if (x.path !== undefined) safeRelativePath(x.path);
 		return x;
 	},
 	"review.read": value => {
