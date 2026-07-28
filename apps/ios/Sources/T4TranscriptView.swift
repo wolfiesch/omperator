@@ -269,6 +269,7 @@ struct T4LiveTurnBlockView: View {
                     .foregroundStyle(theme.txtMuted)
                     .textSelection(.enabled)
                     .accessibilityLabel("Assistant thinking: \(block.content)")
+                    .accessibilityIdentifier("live-turn-thinking")
             }
         case .text:
             if !block.content.isEmpty {
@@ -324,6 +325,7 @@ struct T4LiveTurnBlockView: View {
             .animation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true), value: pulse)
             .onAppear { pulse = true }
             .accessibilityLabel("\(block.tool) \(toolStatus): \(block.previewText)")
+            .accessibilityIdentifier("live-turn-tool-\(block.tool.lowercased())")
         }
     }
 
