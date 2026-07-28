@@ -349,6 +349,12 @@ struct AppKitTerminalSurface: NSViewRepresentable {
         return tv
     }
 
+    static func dismantleNSView(_ nsView: TerminalView, coordinator: T4TerminalCoordinator) {
+        // Resign on close — otherwise the hidden pty keeps swallowing
+        // keystrokes meant for the composer.
+        if nsView.window?.firstResponder === nsView { nsView.window?.makeFirstResponder(nil) }
+    }
+
     func updateNSView(_ tv: TerminalView, context: Context) {
         feedTail(tv, output: output, coordinator: context.coordinator)
         tv.nativeBackgroundColor = NSColor(theme.bg2)
