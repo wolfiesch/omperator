@@ -11,7 +11,7 @@ const execFileAsync = promisify(execFile);
  * Capabilities requested on every pairing ticket. These match the read/prompt/
  * manage surface the iOS companion needs to drive sessions over the wire.
  */
-const PAIR_CAPABILITIES = ["sessions.read", "sessions.prompt", "sessions.control", "sessions.manage", "catalog.read", "files.list", "files.read", "files.diff", "term.open", "term.input", "term.resize", "preview.control", "preview.read", "usage.read", "agents.control", "audit.read", "config.read"] as const;
+const PAIR_CAPABILITIES = ["sessions.read", "sessions.prompt", "sessions.control", "sessions.manage", "catalog.read", "files.list", "files.read", "files.diff", "term.open", "term.input", "term.resize", "preview.control", "preview.read", "usage.read", "agents.control", "audit.read", "config.read", "config.write"] as const;
 
 /** Default ticket lifetime (10 minutes), matching the admin endpoint maximum. */
 export const DEFAULT_PAIR_TTL_MS = 600_000;
