@@ -77,6 +77,14 @@ struct T4WorkspaceView: View {
                 notifier.attach(store)
                 await store.restore()
             }
+            #if DEBUG
+            .task {
+                if ProcessInfo.processInfo.arguments.contains("-T4StreamingProof") {
+                    if store.selectedSession == nil { store.select(store.sessions.first) }
+                    await store.runStreamingProofFixture()
+                }
+            }
+            #endif
             .task {
                 // UI-test seam: launch with
                 // -T4PairCode <code> -T4PairEndpoint <ws-or-wss-url>

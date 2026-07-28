@@ -371,6 +371,89 @@ final class T4SessionStore: ObservableObject {
         scheduleLiveTurnFrames(sessionId: sessionId)
     }
 
+    #if DEBUG
+    /// Deterministic visual-proof seam shared by the macOS and iOS targets.
+    /// It enters through the same SessionEvent projection as live host frames,
+    /// then lets the production 60 fps pacing tasks reveal each snapshot.
+    func runStreamingProofFixture() async {
+        guard let sessionId = selectedSession?.sessionId ?? sessions.first?.sessionId else { return }
+        let entryId = "assistant:native-stream-proof"
+        let blocks: [(Int, String, String, String?, String?)] = [
+            (0, "thinking", "I’ll preserve block order while every character appears smoothly.", nil, nil),
+            (1, "text", "I’m updating the implementation first.", nil, nil),
+            (
+                2,
+                "tool-input",
+                #"{"path":"Sources/Streaming.swift","content":"struct StreamState {\n    let isSmooth = true\n}"}"#,
+                "proof-write",
+                "write"
+            ),
+        ]
+        activeTurns.insert(sessionId)
+        for (index, kind, content, callId, tool) in blocks {
+            var length = 3
+            while length < content.count {
+                receiveLiveTurnBlock(
+                    sessionId: sessionId,
+                    event: Self.streamingProofEvent(
+                        entryId: entryId,
+                        blockIndex: index,
+                        blockKind: kind,
+                        content: String(content.prefix(length)),
+                        callId: callId,
+                        tool: tool
+                    )
+                )
+                try? await Task.sleep(for: .milliseconds(180))
+                length += 3
+            }
+            receiveLiveTurnBlock(
+                sessionId: sessionId,
+                event: Self.streamingProofEvent(
+                    entryId: entryId,
+                    blockIndex: index,
+                    blockKind: kind,
+                    content: content,
+                    callId: callId,
+                    tool: tool
+                )
+            )
+        }
+    }
+
+    private static func streamingProofEvent(
+        entryId: String,
+        blockIndex: Int,
+        blockKind: String,
+        content: String,
+        callId: String?,
+        tool: String?
+    ) -> SessionEvent {
+        var fields: [String: JSONValue] = [
+            "type": .string("assistant.block.update"),
+            "entryId": .string(entryId),
+            "blockIndex": .number(Double(blockIndex)),
+            "blockKind": .string(blockKind),
+            "content": .string(content),
+        ]
+        if let callId { fields["callId"] = .string(callId) }
+        if let tool { fields["tool"] = .string(tool) }
+        let frame: JSONValue = .object([
+            "v": .string("omp-app/1"),
+            "type": .string("event"),
+            "cursor": .object(["epoch": .string("native-stream-proof"), "seq": .number(1)]),
+            "hostId": .string("native-stream-proof-host"),
+            "sessionId": .string("native-stream-proof-session"),
+            "event": .object(fields),
+        ])
+        let data = try! JSONEncoder().encode(frame)
+        guard case .event(let decoded) = try! ServerFrame.decode(data) else {
+            preconditionFailure("streaming proof event did not decode")
+        }
+        return decoded.event
+    }
+    #endif
+
     private func receiveLiveTurnToolLifecycle(sessionId: String, event: SessionEvent) -> Bool {
         guard var timeline = liveTurns[sessionId],
               timeline.applyToolLifecycle(event) else { return false }
@@ -569,12 +652,11 @@ final class T4SessionStore: ObservableObject {
 
     /// Auto-reconnect on launch with the last successful connection, if any.
     func restore() async {
-        // UI-test seam: -T4NoRestore forces the offline sample inventory.
-        if ProcessInfo.processInfo.arguments.contains("-T4NoRestore") { return }
+        let arguments = ProcessInfo.processInfo.arguments
         // Harness seam: a complete endpoint/device/token triple is an
         // in-memory connection profile. It never reads, writes, migrates, or
         // deletes the developer's Keychain credentials.
-        if let ephemeral = EphemeralConnectionCredentials(),
+        if let ephemeral = EphemeralConnectionCredentials(arguments: arguments),
            let endpoint = URL(string: ephemeral.endpoint),
            !connected, !connecting {
             await connect(
@@ -592,6 +674,9 @@ final class T4SessionStore: ObservableObject {
             )
             return
         }
+        // UI-test seam: -T4NoRestore forces the offline sample inventory only
+        // when no complete in-memory connection profile was supplied.
+        if Self.shouldSkipRestore(arguments: arguments) { return }
         // UI-test seam: -T4ForgetCreds wipes saved connection credentials so
         // the boot lands on real onboarding (fresh-install path).
         if ProcessInfo.processInfo.arguments.contains("-T4ForgetCreds") {
@@ -623,6 +708,11 @@ final class T4SessionStore: ObservableObject {
             ),
             authentication: auth
         )
+    }
+
+    static func shouldSkipRestore(arguments: [String]) -> Bool {
+        arguments.contains("-T4NoRestore")
+            && EphemeralConnectionCredentials(arguments: arguments) == nil
     }
 
     private func persist(endpoint: URL, authentication: DeviceAuthentication?) {
