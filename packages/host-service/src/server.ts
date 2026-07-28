@@ -52,6 +52,7 @@ import { ArtifactReader } from "./artifact-reader.ts";
 import { completeAttachOutput, prepareAttachOutput } from "./attach-output.ts";
 import { AttentionOutcomeStore } from "./attention-outcome-store.ts";
 import { AppserverCommandHandlers } from "./command-handler.ts";
+import { registerCoreCommandHandlers } from "./core-command-handlers.ts";
 import {
 	AGENT_CANCEL_COMMAND,
 	ARCHIVED_SESSION_COMMANDS,
@@ -1153,30 +1154,50 @@ export class LocalAppserver implements AppserverHandle {
 		if (requested.some(capability => !implemented.has(capability)))
 			throw new Error("unsupported capability has no handler");
 		this.#supportedCapabilities = new Set(requested);
-		this.#handlers.register("session.create", command => this.handleCreate(command));
-		if (this.#authority?.fork && this.#discovery.load)
-			this.#handlers.register("session.fork", command => this.handleFork(command));
-		if (this.#runtimeAdapters) this.#handlers.register("runtime.list", command => this.handleRuntimeList(command));
-		if (this.#workspaceAuthority) {
-			this.#handlers.register("workspace.list", command => this.handleWorkspaceList(command));
-			this.#handlers.register("workspace.archive", command => this.handleWorkspaceArchive(command));
-			this.#handlers.register("workspace.recover", command => this.handleWorkspaceRecover(command));
-			if (this.#workspaceTargetPathForProject && this.#projectRootForProject) {
-				this.#handlers.register("workspace.create", command => this.handleWorkspaceCreate(command));
-				this.#handlers.register("workspace.import", command => this.handleWorkspaceImport(command));
-			}
-		}
-		if (this.#projectRootForProject && this.#projectRevealer)
-			this.#handlers.register("project.reveal", command => this.handleProjectReveal(command));
-		this.#handlers.register("session.close", command => this.handleClose(command));
-		if (this.#sessionOwnership) {
-			this.#handlers.register("session.release", command => this.handleRelease(command));
-			this.#handlers.register("session.reclaim", command => this.handleReclaim(command));
-		}
-		this.#handlers.register("session.archive", command => this.handleArchive(command));
-		this.#handlers.register("session.restore", command => this.handleRestore(command));
-		this.#handlers.register("session.delete", command => this.handleDelete(command));
-		this.#handlers.register("session.mode.set", command => this.handleModeSet(command));
+		const workspaceMutationEnabled =
+			Boolean(this.#workspaceAuthority) &&
+			Boolean(this.#workspaceTargetPathForProject) &&
+			Boolean(this.#projectRootForProject);
+		registerCoreCommandHandlers(this.#handlers, {
+			sessionCreate: command => this.handleCreate(command),
+			sessionFork:
+				this.#authority?.fork && this.#discovery.load
+					? command => this.handleFork(command)
+					: undefined,
+			runtimeList: this.#runtimeAdapters
+				? command => this.handleRuntimeList(command)
+				: undefined,
+			workspaceList: this.#workspaceAuthority
+				? command => this.handleWorkspaceList(command)
+				: undefined,
+			workspaceArchive: this.#workspaceAuthority
+				? command => this.handleWorkspaceArchive(command)
+				: undefined,
+			workspaceRecover: this.#workspaceAuthority
+				? command => this.handleWorkspaceRecover(command)
+				: undefined,
+			workspaceCreate: workspaceMutationEnabled
+				? command => this.handleWorkspaceCreate(command)
+				: undefined,
+			workspaceImport: workspaceMutationEnabled
+				? command => this.handleWorkspaceImport(command)
+				: undefined,
+			projectReveal:
+				this.#projectRootForProject && this.#projectRevealer
+					? command => this.handleProjectReveal(command)
+					: undefined,
+			sessionClose: command => this.handleClose(command),
+			sessionRelease: this.#sessionOwnership
+				? command => this.handleRelease(command)
+				: undefined,
+			sessionReclaim: this.#sessionOwnership
+				? command => this.handleReclaim(command)
+				: undefined,
+			sessionArchive: command => this.handleArchive(command),
+			sessionRestore: command => this.handleRestore(command),
+			sessionDelete: command => this.handleDelete(command),
+			sessionModeSet: command => this.handleModeSet(command),
+		});
 		if (options.previewAuthority?.enabled === true) {
 			this.#previewService = new PreviewService({
 				chromiumResolver: options.previewAuthority?.chromiumResolver ?? createPreviewChromiumResolver(),
