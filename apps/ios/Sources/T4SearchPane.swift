@@ -127,6 +127,9 @@ struct T4SearchPane: View {
             if initialMode {
                 initialMode = false
                 mode = .diff
+            } else if !query.isEmpty {
+                // -T4SearchQuery seam: run the pre-filled search immediately.
+                Task { await runSearch(query) }
             }
         }
         .onChange(of: mode) { _, newMode in
