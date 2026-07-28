@@ -1,5 +1,6 @@
 import XCTest
 import HostWire
+import Combine
 @testable import T4Code
 
 final class KeychainTests: XCTestCase {
@@ -53,6 +54,24 @@ final class KeychainTests: XCTestCase {
         store.clearErrorAfterSuccessfulConnection()
 
         XCTAssertNil(store.lastError)
+    }
+
+    @MainActor
+    func testHighFrequencyDomainModelsDoNotInvalidateTheGlobalStore() {
+        let store = T4SessionStore()
+        var globalInvalidations = 0
+        let subscription = store.objectWillChange.sink {
+            globalInvalidations += 1
+        }
+
+        store.transcriptModel.activeTurns.insert("session-1")
+        store.terminalModel.output["terminal-1"] = "streamed output"
+
+        XCTAssertEqual(globalInvalidations, 0)
+
+        store.connectionModel.connected = true
+        XCTAssertEqual(globalInvalidations, 1)
+        withExtendedLifetime(subscription) {}
     }
 
     func testPendingTranscriptQueueKeepsEveryAssistantEntry() throws {

@@ -991,7 +991,7 @@ export class LocalAppserver implements AppserverHandle {
 		this.#runtimeAdapters = options.runtimeAdapters;
 		this.#workspaceAuthority = options.workspaceAuthority;
 		this.#workspaceRuntime = new WorkspaceRuntimeController({
-			hostId: this.hostId,
+			hostId: () => this.hostId,
 			runtimeAdapters: options.runtimeAdapters,
 			workspaceAuthority: options.workspaceAuthority,
 			projectRootForProject: options.projectRootForProject,
@@ -1130,7 +1130,7 @@ export class LocalAppserver implements AppserverHandle {
 			});
 			registerPreviewCommandHandlers({
 				handlers: this.#handlers,
-				hostId: this.hostId,
+				hostId: () => this.hostId,
 				service: this.#previewService,
 				log: (event, fields) => this.#log(event, fields),
 			});

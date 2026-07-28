@@ -1147,10 +1147,8 @@ final class T4SessionStore: ObservableObject {
         Self.migrateCredentialsToKeychainIfNeeded()
         connectionModel.sessions = Self.demoMode ? Self.sample : []
         connectionModel.objectWillChange
-            .merge(with: transcriptModel.objectWillChange)
             .merge(with: promptModel.objectWillChange)
             .merge(with: agentModel.objectWillChange)
-            .merge(with: terminalModel.objectWillChange)
             .merge(with: previewModel.objectWillChange)
             .merge(with: filesReviewModel.objectWillChange)
             .merge(with: catalogSettingsModel.objectWillChange)

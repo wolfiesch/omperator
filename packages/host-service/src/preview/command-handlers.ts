@@ -16,7 +16,7 @@ import { PreviewServiceError } from "./types.ts";
 
 export interface PreviewCommandHandlerOptions {
   readonly handlers: AppserverCommandHandlers;
-  readonly hostId: HostId;
+  readonly hostId: () => HostId;
   readonly service: PreviewService;
   readonly log: (event: string, data: Record<string, unknown>) => void;
 }
@@ -27,7 +27,7 @@ export function registerPreviewCommandHandlers(options: PreviewCommandHandlerOpt
 
 class PreviewCommandRouter {
   readonly #handlers: AppserverCommandHandlers;
-  readonly #hostId: HostId;
+  readonly #hostId: () => HostId;
   readonly #service: PreviewService;
   readonly #log: PreviewCommandHandlerOptions["log"];
 
@@ -64,19 +64,19 @@ class PreviewCommandRouter {
   }
 
   private response(command: CommandFrame, result: unknown): CommandOutcome {
-    return { frame: appserverResponse(this.#hostId, command, true, result) };
+    return { frame: appserverResponse(this.#hostId(), command, true, result) };
   }
 
   private error(command: CommandFrame, error: unknown): CommandOutcome {
     if (error instanceof PreviewServiceError)
       return {
-        frame: appserverResponse(this.#hostId, command, false, undefined, {
+        frame: appserverResponse(this.#hostId(), command, false, undefined, {
           code: error.code,
           message: error.message,
         }),
       };
     return {
-      frame: appserverResponse(this.#hostId, command, false, undefined, {
+      frame: appserverResponse(this.#hostId(), command, false, undefined, {
         code: "preview_failed",
         message: error instanceof Error ? error.message : "preview operation failed",
       }),

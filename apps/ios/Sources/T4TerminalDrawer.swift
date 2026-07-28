@@ -17,7 +17,7 @@ import HostWire
 /// `terminalOutput[terminalId]`, which this view feeds to SwiftTerm.
 struct T4TerminalDrawer: View {
     let session: SessionRef
-    @ObservedObject var store: T4SessionStore
+    let store: T4SessionStore
     @ObservedObject private var terminalModel: T4TerminalModel
     @EnvironmentObject var theme: ThemeStore
     let isOpen: Bool

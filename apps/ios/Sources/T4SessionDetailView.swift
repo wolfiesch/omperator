@@ -25,7 +25,8 @@ struct ComposerAttachment: Identifiable {
 
 struct T4SessionDetailView: View {
     let session: SessionRef
-    @ObservedObject var store: T4SessionStore
+    let store: T4SessionStore
+    @ObservedObject private var connectionModel: T4ConnectionInventoryModel
     @ObservedObject private var transcriptModel: T4TranscriptProjectionModel
     @ObservedObject private var promptModel: T4PromptLeaseModel
     @EnvironmentObject var theme: ThemeStore
@@ -52,6 +53,7 @@ struct T4SessionDetailView: View {
     init(session: SessionRef, store: T4SessionStore) {
         self.session = session
         self.store = store
+        self._connectionModel = ObservedObject(wrappedValue: store.connectionModel)
         self._transcriptModel = ObservedObject(wrappedValue: store.transcriptModel)
         self._promptModel = ObservedObject(wrappedValue: store.promptModel)
     }
@@ -631,7 +633,7 @@ struct T4SessionDetailView: View {
     }
 
     private var placeholder: String {
-        if !store.connected { return "Connect a host to message" }
+        if !connectionModel.connected { return "Connect a host to message" }
         if let control = session.sessionControl { return control.t4Presentation.railLabel }
         if session.archivedAt != nil { return "Restore this session to message" }
         if dictation.recording { return "Listening\u{2026}" }
@@ -703,7 +705,7 @@ struct T4SessionDetailView: View {
     }
 
     private var inputEnabled: Bool {
-        store.connected && session.t4IsWritable
+        connectionModel.connected && session.t4IsWritable
     }
 
     private func send() {

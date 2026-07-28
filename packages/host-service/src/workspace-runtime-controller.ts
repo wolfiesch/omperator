@@ -17,7 +17,7 @@ import {
 } from "./workspace-authority.ts";
 
 interface WorkspaceRuntimeControllerOptions {
-	readonly hostId: HostId;
+	readonly hostId: () => HostId;
 	readonly runtimeAdapters?: RuntimeAdapterRegistry;
 	readonly workspaceAuthority?: WorkspaceAuthority;
 	readonly projectRootForProject?: AppserverOptions["projectRootForProject"];
@@ -28,7 +28,7 @@ interface WorkspaceRuntimeControllerOptions {
 }
 
 export class WorkspaceRuntimeController {
-	readonly #hostId: HostId;
+	readonly #hostId: () => HostId;
 	readonly #runtimeAdapters?: RuntimeAdapterRegistry;
 	readonly #workspaceAuthority?: WorkspaceAuthority;
 	readonly #projectRootForProject?: AppserverOptions["projectRootForProject"];
@@ -84,7 +84,7 @@ export class WorkspaceRuntimeController {
 				}
 			}),
 		);
-		return { frame: response(this.#hostId, command, true, { runtimes }) };
+		return { frame: response(this.#hostId(), command, true, { runtimes }) };
 	}
 
 	workspaceList(command: CommandFrame): Promise<CommandOutcome> {
@@ -192,7 +192,7 @@ export class WorkspaceRuntimeController {
 		if (!this.#projectRevealer) throw new Error("project reveal is unavailable");
 		const root = await this.resolveProjectRoot(command.args.projectId);
 		const revealed = await this.#projectRevealer(root);
-		return { frame: response(this.#hostId, command, true, { revealed }) };
+		return { frame: response(this.#hostId(), command, true, { revealed }) };
 	}
 
 	async #workspaceCommand(
@@ -200,7 +200,7 @@ export class WorkspaceRuntimeController {
 		action: () => Promise<Record<string, unknown>> | Record<string, unknown>,
 	): Promise<CommandOutcome> {
 		try {
-			return { frame: response(this.#hostId, command, true, await action()) };
+			return { frame: response(this.#hostId(), command, true, await action()) };
 		} catch (cause) {
 			const code =
 				cause instanceof WorkspaceAuthorityError
@@ -211,7 +211,7 @@ export class WorkspaceRuntimeController {
 					? cause.message
 					: "workspace command failed";
 			return {
-				frame: response(this.#hostId, command, false, undefined, { code, message }),
+				frame: response(this.#hostId(), command, false, undefined, { code, message }),
 			};
 		}
 	}
