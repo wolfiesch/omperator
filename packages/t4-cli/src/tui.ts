@@ -251,6 +251,8 @@ export class Tui implements HostEvents {
 		}).catch(() => undefined), 1000);
 	}
 	error(message: string): void {
+		if (process.env.T4_DEBUG_ERR)
+			require("node:fs").appendFileSync("/tmp/t4err.log", message + "\n");
 		this.state.statusLine = `error: ${message}`;
 		this.draw();
 	}
