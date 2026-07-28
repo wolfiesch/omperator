@@ -6,7 +6,6 @@ import { resolveHighestPriorityStatus, type SessionStatus } from "@t4-code/ui";
 import {
   isSessionUnread,
   type RailFilter,
-  type RailOrganization,
   type RailSort,
 } from "./rail-model.ts";
 export type { RailFilter, RailOrganization, RailSort } from "./rail-model.ts";

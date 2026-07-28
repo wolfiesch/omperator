@@ -13,7 +13,6 @@ import {
 import {
 	COMMAND_DESCRIPTORS,
 	type CommandDescriptor,
-	type RevisionOwner,
 } from "./command-descriptors/index.js";
 export {
 	COMMAND_DESCRIPTORS,
@@ -34,7 +33,6 @@ import { fail } from "./errors.js";
 import { decodeTurnReviewSnapshot } from "./files-review.js";
 import {
 	boundedArray,
-	boundedBase64,
 	boundedMap,
 	boundedMetadata,
 	boundedSettings,

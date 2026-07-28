@@ -9,7 +9,6 @@ import { clampWidth } from "@t4-code/ui";
 import { createStore, type StoreApi } from "zustand/vanilla";
 
 import {
-  isSessionUnread,
   type RailFilter,
   type RailOrganization,
   type RailSort,

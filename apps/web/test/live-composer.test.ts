@@ -11,26 +11,16 @@ import {
   applyPublicFrame,
   createDesktopRuntimeController,
   createProjectionSnapshot,
-  decodeProjectionCache,
   encodeProjectionCache,
-  type DesktopRuntimeController,
   type DesktopRuntimeSnapshot,
 } from "@t4-code/client";
 import {
-  catalogId,
   commandId,
   confirmationId,
-  entryId,
   hostId,
   revision,
   sessionId,
-  type CatalogFrame,
-  type CatalogItem,
-  type DurableEntry,
-  type DurableEntryFrame,
-  type LiveEventFrame,
   type OperationCapability,
-  type SessionSnapshotFrame,
   type SessionsFrame,
 } from "@t4-code/protocol";
 import type {
@@ -53,14 +43,9 @@ import { obtainLiveRuntime } from "../src/features/session-runtime/useSessionRun
 import { deriveAttention, deriveTranscriptRows } from "../src/features/transcript/rows.ts";
 import { buildProjectGroups } from "../src/lib/session-tree.ts";
 import { deriveWorkspaceData, sessionViewId } from "../src/platform/live-workspace.ts";
-import {
-  acquireRuntimeController,
-  startRuntimeController,
-  type RuntimeSlotHolder,
-} from "../src/platform/desktop-runtime.ts";
 import { createMemoryPersistence } from "../src/state/persistence.ts";
 import { createWorkspaceStore, selectSessionView } from "../src/state/workspace-store.ts";
-import { bindProjectionInventoryResults, deferred, FakeShell, makeTarget, makeWelcome } from "./fake-shell.ts";
+import { deferred, FakeShell, makeTarget, makeWelcome } from "./fake-shell.ts";
 import {
   catalogFrame,
   commandItem,
