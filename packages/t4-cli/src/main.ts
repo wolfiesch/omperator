@@ -32,6 +32,6 @@ if (remote && (!auth!.deviceId || !auth!.deviceToken)) {
 }
 
 const tui = new Tui();
-const client = new T4Client(endpoint, auth, tui);
+const client = new T4Client(endpoint, auth, tui, !remote);
 tui.setClient(client);
 await tui.run();

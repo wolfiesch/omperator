@@ -68,6 +68,8 @@ export class T4Client {
 		private readonly endpoint: string,
 		private readonly auth: { deviceId: string; deviceToken: string } | undefined,
 		events: HostEvents,
+		/** Unix-socket connections are local and trusted: no lease dance. */
+		private readonly local = false,
 	) {
 		this.events = events;
 	}
@@ -205,6 +207,12 @@ export class T4Client {
 		kind: "prompt.lease" | "controller.lease",
 		fn: (leaseId: string, revision: string) => Promise<void>,
 	): Promise<void> {
+		// Local connections are trusted — mutations go bare, and the lease
+		// features aren't even supported on the unix-socket path.
+		if (this.local) {
+			await fn("", this.revisions.get(sessionId) ?? "");
+			return;
+		}
 		let revision = this.revisions.get(sessionId) ?? (await this.freshRevision(sessionId));
 		if (!revision) throw new Error("session revision unknown");
 		let leaseId: string | undefined;
@@ -233,18 +241,18 @@ export class T4Client {
 	async prompt(sessionId: string, text: string) {
 		await this.withLease(sessionId, "prompt.lease", async (leaseId, revision) => {
 			await this.command("session.prompt",
-				{ message: text, leaseId }, sessionId, revision);
+				{ message: text, ...(leaseId ? { leaseId } : {}) }, sessionId, revision || undefined);
 		});
 	}
 	fork(sessionId: string) { return this.command<{ session: SessionRef }>("session.fork", {}, sessionId); }
 	async cancel(sessionId: string) {
 		await this.withLease(sessionId, "controller.lease", async (leaseId, revision) => {
-			await this.command("session.cancel", { leaseId }, sessionId, revision);
+			await this.command("session.cancel", { ...(leaseId ? { leaseId } : {}) }, sessionId, revision || undefined);
 		});
 	}
 	async rename(sessionId: string, title: string) {
 		await this.withLease(sessionId, "controller.lease", async (leaseId, revision) => {
-			await this.command("session.rename", { title, leaseId }, sessionId, revision);
+			await this.command("session.rename", { name: title, ...(leaseId ? { leaseId } : {}) }, sessionId, revision || undefined);
 		});
 	}
 	stateGet(sessionId: string) { return this.command<Frame>("session.state.get", {}, sessionId); }
