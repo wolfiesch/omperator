@@ -538,7 +538,13 @@ export class TailscaleRemotePolicy implements RemoteConnectionPolicy {
 					frame.expectedRevision,
 				);
 			} catch {
-				return false;
+				// A live lease for this session+kind (any device, 30s TTL) is a
+				// transient conflict, not a policy violation: answer with an error
+				// response like stale_revision instead of denying the frame, which
+				// would close the whole connection mid-conversation.
+				return cacheResponse(
+					leaseErrorResponse(frame, "lease_held", "another active lease holds this session; retry shortly"),
+				);
 			}
 		} else if (
 			frame.command === "controller.lease.renew" ||

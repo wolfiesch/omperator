@@ -583,16 +583,21 @@ final class T4SessionStore: ObservableObject {
     /// Send a user prompt to a session (session.prompt), uploading any images
     /// first (session.image.begin/chunk → imageId refs). No-op with a clear
     /// error when not connected — the composer is disabled in that state.
-    func sendPrompt(sessionId: String, text: String, images: [Data] = []) async {
+    /// Send a prompt. Returns true only when the host accepted it — callers
+    /// restore the composer draft on false so a failed send never eats the
+    /// user's message (lease conflict, dropped connection, upload failure).
+    @discardableResult
+    func sendPrompt(sessionId: String, text: String, images: [Data] = []) async -> Bool {
         guard let client, connected, !hostId.isEmpty else {
             lastError = "Not connected to a host."
-            return
+            return false
         }
         do {
             var refs: [JSONValue] = []
             for image in images {
                 refs.append(.object(["imageId": .string(try await uploadImage(image, sessionId: sessionId))]))
             }
+            var accepted = false
             await withLease(sessionId: sessionId, release: false) { leaseId in
                 var args: [String: JSONValue] = ["message": .string(text), "leaseId": .string(leaseId)]
                 if !refs.isEmpty { args["images"] = .array(refs) }
@@ -602,14 +607,17 @@ final class T4SessionStore: ObservableObject {
                     _ = try await client.sendCommand(CommandIntent(
                         hostId: hostId, command: "session.prompt", args: args,
                         sessionId: sessionId))
+                    accepted = true
                     t4log.notice("prompt accepted for \(sessionId, privacy: .public)")
                 } catch {
                     t4log.error("prompt failed: \(error)")
                     lastError = "\(error)"
                 }
             }
+            return accepted
         } catch {
             lastError = "\(error)"
+            return false
         }
     }
 

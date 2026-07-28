@@ -231,6 +231,34 @@ test("stale lease acquire is typed and does not allocate before a fresh acquire"
 	policy.close();
 });
 
+test("held lease acquire is a soft error, never a connection-level denial", () => {
+	const registry = new Registry();
+	const policy = new TailscaleRemotePolicy({ registry, supportedFeatures: ["controller.lease"] });
+	const calls = { count: 0 };
+	const connectionValue = connection("held-acquire", calls);
+	policy.authenticate(connectionValue, hello("held-acquire", ["sessions.control"], ["controller.lease"]));
+	const context = {
+		connectionId: connectionValue.connectionId,
+		peer: connectionValue.peer,
+		sessionRevision: "fresh" as Revision,
+	};
+	const first = { ...command("first", "controller.lease.acquire"), expectedRevision: "fresh" } as CommandFrame;
+	expect(policy.authorize(connectionValue, first, context)).toBe(true);
+	expect(policy.handleCommand(connectionValue, first)).toMatchObject({ type: "response", ok: true });
+	// A second acquire while the first lease is live must answer with a typed
+	// error response — returning false here would close the connection (1008)
+	// mid-conversation and drop the user's message.
+	const second = { ...command("second", "controller.lease.acquire"), expectedRevision: "fresh" } as CommandFrame;
+	expect(policy.authorize(connectionValue, second, context)).toBe(true);
+	expect(policy.handleCommand(connectionValue, second)).toMatchObject({
+		type: "response",
+		ok: false,
+		error: { code: "lease_held" },
+	});
+	expect(calls.count).toBe(0);
+	policy.close();
+});
+
 test("registry invalidation closes once and clears authorization state", () => {
 	const registry = new Registry();
 	const calls = { count: 0 };

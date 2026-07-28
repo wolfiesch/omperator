@@ -123,7 +123,11 @@ struct T4SessionDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     loadEarlierSection
-                    header
+                    #if os(iOS)
+                    // macOS carries the status pill in the window toolbar;
+                    // iOS keeps it as a slim transcript-top row.
+                    statusRow
+                    #endif
                     if let challenge = store.pendingConfirmation {
                         confirmationBanner(challenge)
                     }
@@ -219,6 +223,63 @@ struct T4SessionDetailView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+        // Session chrome: on macOS the status pill rides next to the title
+        // and the actions are native toolbar items; on iOS everything folds
+        // into one top-right overflow menu.
+        .toolbar {
+            #if os(macOS)
+            ToolbarItem(placement: .navigation) {
+                HStack(spacing: 8) {
+                    StatusPill(status: session.status, theme: t)
+                    if let badge = modeBadgeText {
+                        Text(badge.text)
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(badge.color)
+                    }
+                }
+            }
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button { withAnimation(.easeInOut(duration: 0.2)) { showFacts.toggle() } } label: {
+                    Image(systemName: showFacts ? "info.circle.fill" : "info.circle")
+                }
+                .accessibilityLabel("Session details")
+                Button { openPane(.files) } label: {
+                    Image(systemName: "folder")
+                }
+                .accessibilityLabel("Browse files")
+                Button { toggleTerminal() } label: {
+                    Image(systemName: showTerminal ? "terminal.fill" : "terminal")
+                }
+                .accessibilityLabel("Toggle terminal")
+                Button { openPane(.browser) } label: {
+                    Image(systemName: "safari")
+                }
+                .accessibilityLabel("Open browser")
+                Menu { sessionMenuContent } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .accessibilityLabel("Session actions")
+            }
+            #else
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button { withAnimation(.easeInOut(duration: 0.2)) { showFacts.toggle() } } label: {
+                        Label("Session details", systemImage: "info.circle")
+                    }
+                    Button { openPane(.files) } label: { Label("Files", systemImage: "folder") }
+                    Button { openPane(.browser) } label: { Label("Browser", systemImage: "safari") }
+                    Button { toggleTerminal() } label: {
+                        Label(showTerminal ? "Close terminal" : "Open terminal", systemImage: "terminal")
+                    }
+                    Divider()
+                    sessionMenuContent
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .accessibilityLabel("Session actions")
+            }
+            #endif
+        }
         .task(id: session.sessionId) { await store.attach(sessionId: session.sessionId) }
         .onAppear {
             // UI-test seams: boot with a pane/drawer/card visible for screenshots.
@@ -449,8 +510,11 @@ struct T4SessionDetailView: View {
         }
     }
 
-    private var header: some View {
-
+    /// Slim transcript-top row (iOS only): status pill, model control, mode
+    /// badge. The action buttons that used to sit here moved to the toolbar —
+    /// macOS shows them as native chrome items, iOS folds them into the
+    /// top-right overflow menu.
+    private var statusRow: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             StatusPill(status: session.status, theme: t)
             if let model = session.model {
@@ -464,7 +528,14 @@ struct T4SessionDetailView: View {
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(badge.color)
             }
-            Menu {
+            Spacer()
+        }
+    }
+
+    /// Session actions shared by the macOS toolbar menu and the iOS
+    /// top-right overflow menu.
+    @ViewBuilder
+    private var sessionMenuContent: some View {
                 Button {
                     renameText = session.title
                     renaming = true
@@ -534,48 +605,6 @@ struct T4SessionDetailView: View {
                 } label: {
                     Label("Settings", systemImage: "gearshape")
                 }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-                    .font(.system(size: 16))
-                    .foregroundStyle(t.txtMuted)
-                    .frame(width: 34, height: 34)
-            }
-            .press()
-            .accessibilityLabel("Session actions")
-            Spacer()
-            Button { withAnimation(.easeInOut(duration: 0.2)) { showFacts.toggle() } } label: {
-                Image(systemName: showFacts ? "info.circle.fill" : "info.circle")
-                    .font(.system(size: 16))
-                    .foregroundStyle(t.txtMuted)
-                    .frame(width: 34, height: 34)
-            }
-            .press()
-            .accessibilityLabel("Session details")
-            Button { openPane(.files) } label: {
-                Image(systemName: "folder")
-                    .font(.system(size: 16))
-                    .foregroundStyle(t.txtMuted)
-                    .frame(width: 34, height: 34)
-            }
-            .press()
-            .accessibilityLabel("Browse files")
-            Button { toggleTerminal() } label: {
-                Image(systemName: showTerminal ? "terminal.fill" : "terminal")
-                    .font(.system(size: 16))
-                    .foregroundStyle(showTerminal ? t.cBash : t.txtMuted)
-                    .frame(width: 34, height: 34)
-            }
-            .press()
-            .accessibilityLabel("Toggle terminal")
-            Button { openPane(.browser) } label: {
-                Image(systemName: "safari")
-                    .font(.system(size: 16))
-                    .foregroundStyle(t.txtMuted)
-                    .frame(width: 34, height: 34)
-            }
-            .press()
-            .accessibilityLabel("Open browser")
-        }
     }
 
     private var facts: some View {
@@ -711,11 +740,18 @@ struct T4SessionDetailView: View {
         guard canSend else { return }
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let images = attachments.map(\.jpeg)
+        let sentAttachments = attachments
         draft = ""
         attachments = []
         sending = true
         Task {
-            await store.sendPrompt(sessionId: session.sessionId, text: text, images: images)
+            let accepted = await store.sendPrompt(sessionId: session.sessionId, text: text, images: images)
+            // Never eat the user's words: a failed send (lease conflict,
+            // dropped connection) puts the draft and attachments back.
+            if !accepted {
+                draft = text
+                attachments = sentAttachments
+            }
             sending = false
         }
     }
