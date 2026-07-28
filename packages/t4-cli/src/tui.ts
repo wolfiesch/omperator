@@ -56,8 +56,76 @@ interface State {
 	// term pane
 	terminalId: string | undefined;
 	termOpenedFor: string | undefined;
-	termBuf: string[];
 	termScroll: number;
+}
+
+// Minimal VT screen for the host terminal: a scrolling line grid with a
+// cursor. Handles the redraw vocabulary shells actually use (CR, LF, BS,
+// CUU/CUD/CUF/CUB, ED, EL) and drops everything else.
+class TermScreen {
+	lines: string[] = [];
+	private cx = 0;
+	private cy = 0;
+
+	feed(text: string): void {
+		// Strip OSC and charset/mode sequences we don't model.
+		const s = text
+			.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+			.replace(/\x1b[()][A-Z0-9]/gi, "")
+			.replace(/\x1b[>=]/g, "");
+		for (let i = 0; i < s.length; i += 1) {
+			const ch = s[i]!;
+			if (ch === "\x1b") {
+				const m = /^\x1b\[([0-9;]*)([A-Za-z])/.exec(s.slice(i));
+				if (m) {
+					const nums = m[1]!.split(";").map(v => (v === "" ? 0 : Number(v)));
+					const n = nums[0] ?? 0;
+					switch (m[2]) {
+						case "A": this.cy = Math.max(0, this.cy - (n || 1)); break;
+						case "B": this.cy += n || 1; break;
+						case "C": this.cx += n || 1; break;
+						case "D": this.cx = Math.max(0, this.cx - (n || 1)); break;
+						case "G": this.cx = Math.max(0, n - 1); break;
+						case "d": this.cy = Math.max(0, n - 1); break;
+						case "H": case "f":
+							this.cy = Math.max(0, (nums[0] ?? 1) - 1);
+							this.cx = Math.max(0, (nums[1] ?? 1) - 1);
+							break;
+						case "J":
+							if (n === 0) { this.setLine(this.cy, this.line().slice(0, this.cx)); this.lines.length = this.cy + 1; }
+							else if (n === 2) { this.lines = []; this.cy = 0; this.cx = 0; }
+							break;
+						case "K":
+							if (n === 0) this.setLine(this.cy, this.line().slice(0, this.cx));
+							else if (n === 1) this.setLine(this.cy, this.line().slice(this.cx));
+							else this.setLine(this.cy, "");
+							break;
+					}
+					i += m[0].length - 1;
+					continue;
+				}
+				i += 1;
+				continue;
+			}
+			if (ch === "\r") { this.cx = 0; continue; }
+			if (ch === "\n" || ch === "\x0b" || ch === "\f") { this.cy += 1; this.cx = 0; continue; }
+			if (ch === "\b") { this.cx = Math.max(0, this.cx - 1); continue; }
+			if (ch === "\t") { this.cx = (this.cx + 8) & ~7; continue; }
+			if (ch < " " || ch === "\x7f") continue;
+			const line = this.line();
+			const padded = line.length < this.cx ? line + " ".repeat(this.cx - line.length) : line;
+			this.setLine(this.cy, padded.slice(0, this.cx) + ch + padded.slice(this.cx + 1));
+			this.cx += 1;
+		}
+		if (this.lines.length > 2000) this.lines.splice(0, this.lines.length - 2000);
+	}
+
+	private line(): string {
+		return this.lines[this.cy] ?? "";
+	}
+	private setLine(y: number, text: string): void {
+		this.lines[y] = text;
+	}
 }
 
 export class Tui implements HostEvents {
@@ -70,13 +138,14 @@ export class Tui implements HostEvents {
 		filePath: "", fileEntries: [], fileSelected: 0, fileScroll: 0, fileView: undefined,
 		searchQuery: "", searchResults: [], searchSelected: 0, searchScroll: 0, searching: false,
 		diffLines: [], diffScroll: 0, diffLoadedFor: undefined,
-		terminalId: undefined, termOpenedFor: undefined, termBuf: [], termScroll: 0,
+		terminalId: undefined, termOpenedFor: undefined, termScroll: 0,
 	};
 	private screen = new Screen();
 	private attachedId: string | undefined;
 	private client!: T4Client;
 	private reconnectDelay = 1;
 	private searchTimer: Timer | undefined;
+	private termScreen = new TermScreen();
 
 	setClient(client: T4Client): void {
 		this.client = client;
@@ -175,22 +244,15 @@ export class Tui implements HostEvents {
 	}
 	termOutput(_sessionId: string, terminalId: string, _stream: string, data: string, encoding?: string): void {
 		if (terminalId !== this.state.terminalId) return;
-		if (process.env.T4_DEBUG_TERM)
-			require("node:fs").appendFileSync("/tmp/t4term.log", JSON.stringify({ stream: _stream, encoding, data: data.slice(0, 120) }) + "\n");
 		const text = encoding === "base64" ? Buffer.from(data, "base64").toString("utf8") : data;
-		// Strip ANSI control sequences for the tail view; keep it readable.
-		const clean = text.replace(/\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07/g, "");
-		for (const line of clean.split("\n")) {
-			this.state.termBuf.push(line);
-			if (this.state.termBuf.length > 2000) this.state.termBuf.shift();
-		}
+		this.termScreen.feed(text);
 		if (this.state.pane === "term") this.draw();
 	}
 	termExit(_sessionId: string, terminalId: string): void {
 		if (terminalId === this.state.terminalId) {
 			this.state.terminalId = undefined;
 			this.state.termOpenedFor = undefined;
-			this.state.termBuf.push("— terminal exited —");
+			this.termScreen.lines.push("— terminal exited —");
 			this.draw();
 		}
 	}
@@ -400,15 +462,15 @@ export class Tui implements HostEvents {
 	private async ensureTerminal(): Promise<void> {
 		const id = this.currentId();
 		if (!id || this.state.termOpenedFor === id) return;
-		this.state.termBuf = [`opening terminal for ${id.slice(0, 8)}…`];
+		this.termScreen.lines = [`opening terminal for ${id.slice(0, 8)}…`];
 		this.draw();
 		try {
 			const { terminalId } = await this.client.termOpen(id, this.termCols(), this.termRows());
 			this.state.terminalId = terminalId;
 			this.state.termOpenedFor = id;
-			this.state.termBuf = [];
+			this.termScreen.lines = [];
 		} catch (error) {
-			this.state.termBuf = [`term.open failed: ${error instanceof Error ? error.message : error}`];
+			this.termScreen.lines = [`term.open failed: ${error instanceof Error ? error.message : error}`];
 		}
 		this.draw();
 	}
@@ -479,7 +541,7 @@ export class Tui implements HostEvents {
 				else s.fileScroll = Math.max(0, Math.min(Math.max(0, s.fileEntries.length - 1), s.fileScroll + delta));
 			} else if (s.pane === "search") s.searchScroll = Math.max(0, Math.min(Math.max(0, s.searchResults.length - 1), s.searchScroll + delta));
 			else if (s.pane === "diff") s.diffScroll = Math.max(0, Math.min(Math.max(0, s.diffLines.length - 1), s.diffScroll + delta));
-			else if (s.pane === "term") s.termScroll = Math.max(0, Math.min(Math.max(0, s.termBuf.length - 1), s.termScroll + delta));
+			else if (s.pane === "term") s.termScroll = Math.max(0, Math.min(Math.max(0, this.termScreen.lines.length - 1), s.termScroll + delta));
 			this.draw();
 			return;
 		}
@@ -676,9 +738,9 @@ export class Tui implements HostEvents {
 		const tid = s.terminalId;
 		switch (name) {
 			case "escape": this.setPane("chat"); return;
-			case "up": s.termScroll = Math.min(Math.max(0, s.termBuf.length - 1), s.termScroll + 1); break;
+			case "up": s.termScroll = Math.min(Math.max(0, this.termScreen.lines.length - 1), s.termScroll + 1); break;
 			case "down": s.termScroll = Math.max(0, s.termScroll - 1); break;
-			case "pageup": s.termScroll = Math.min(Math.max(0, s.termBuf.length - 1), s.termScroll + this.bodyRows() - 2); break;
+			case "pageup": s.termScroll = Math.min(Math.max(0, this.termScreen.lines.length - 1), s.termScroll + this.bodyRows() - 2); break;
 			case "pagedown": s.termScroll = Math.max(0, s.termScroll - (this.bodyRows() - 2)); break;
 			case "enter": this.client.termInput(id, tid, "\r"); break;
 			case "backspace": this.client.termInput(id, tid, "\x7f"); break;
@@ -973,9 +1035,9 @@ export class Tui implements HostEvents {
 	private drawTerm(): void {
 		const s = this.state;
 		const bodyRows = this.bodyRows();
-		const start = Math.max(0, s.termBuf.length - bodyRows - s.termScroll);
-		const end = Math.max(0, s.termBuf.length - s.termScroll);
-		const slice = s.termBuf.slice(start, end);
+		const start = Math.max(0, this.termScreen.lines.length - bodyRows - s.termScroll);
+		const end = Math.max(0, this.termScreen.lines.length - s.termScroll);
+		const slice = this.termScreen.lines.slice(start, end);
 		for (let i = 0; i < bodyRows; i += 1) {
 			const line = slice[i];
 			if (line === undefined) { this.screen.blank(); continue; }
