@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { ClientFrame, CommandFrame, HelloFrame, Revision } from "@t4-code/host-wire";
+import type { ClientFrame, CommandFrame, HelloFrame, Revision, ServerFrame } from "@t4-code/host-wire";
 import { TailscaleRemotePolicy } from "../src/remote/policy.ts";
 import type { RemoteConnection } from "../src/remote/types.ts";
 import {
@@ -126,6 +126,54 @@ test("authenticated capability omission uses the explicit default, while empty i
 	]);
 	const empty = connection("empty", { count: 0 });
 	expect(policy.authenticate(empty, hello("empty", [] as string[])).grantedCapabilities).toEqual([]);
+	policy.close();
+});
+
+test("remote read responses preserve protocol-bounded large payload fields", () => {
+	const registry = new Registry();
+	const policy = new TailscaleRemotePolicy({ registry });
+	const remote = connection("large-reads", { count: 0 });
+	policy.authenticate(remote, hello(remote.connectionId));
+	const content = `/9j/${"A".repeat(70_000)}`;
+
+	for (const commandName of [
+		"files.read",
+		"session.image.read",
+		"artifact.read",
+		"preview.capture.read",
+	]) {
+		const frame = {
+			v: "omp-app/1",
+			type: "response",
+			requestId: `request-${commandName}`,
+			commandId: `command-${commandName}`,
+			command: commandName,
+			ok: true,
+			result: { content },
+		} as unknown as ServerFrame;
+		expect(policy.transformOutbound(remote, frame)).toMatchObject({ result: { content } });
+	}
+
+	const ordinary = {
+		v: "omp-app/1",
+		type: "response",
+		requestId: "ordinary-request",
+		commandId: "ordinary-command",
+		command: "session.list",
+		ok: true,
+		result: { content },
+	} as unknown as ServerFrame;
+	expect(policy.transformOutbound(remote, ordinary)).toBeUndefined();
+	const nested = {
+		v: "omp-app/1",
+		type: "response",
+		requestId: "nested-request",
+		commandId: "nested-command",
+		command: "files.read",
+		ok: true,
+		result: { metadata: { content } },
+	} as unknown as ServerFrame;
+	expect(policy.transformOutbound(remote, nested)).toBeUndefined();
 	policy.close();
 });
 
