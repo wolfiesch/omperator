@@ -8,6 +8,7 @@
 import SwiftUI
 import HostWire
 import CryptoKit
+import Combine
 import os
 
 let t4log = Logger(subsystem: "sh.t4code.ios", category: "store")
@@ -42,6 +43,16 @@ struct PendingTranscriptQueue {
 
 @MainActor
 final class T4SessionStore: ObservableObject {
+    let connectionModel = T4ConnectionInventoryModel()
+    let transcriptModel = T4TranscriptProjectionModel()
+    let promptModel = T4PromptLeaseModel()
+    let agentModel = T4AgentInventoryModel()
+    let terminalModel = T4TerminalModel()
+    let previewModel = T4PreviewBrowserModel()
+    let filesReviewModel = T4FilesReviewModel()
+    let catalogSettingsModel = T4CatalogSettingsModel()
+    private var domainModelSubscriptions = Set<AnyCancellable>()
+
     struct Group: Identifiable {
         let project: String
         let sessions: [SessionRef]
@@ -127,31 +138,61 @@ final class T4SessionStore: ObservableObject {
         let appserverVersion: String
     }
 
-    @Published private(set) var sessions: [SessionRef]
+    private(set) var sessions: [SessionRef] {
+        get { connectionModel.sessions }
+        set { connectionModel.sessions = newValue }
+    }
     @Published var query: String = ""
-    @Published private(set) var connecting = false
-    @Published private(set) var connected = false
-    @Published var lastError: String?
+    private(set) var connecting: Bool {
+        get { connectionModel.connecting }
+        set { connectionModel.connecting = newValue }
+    }
+    private(set) var connected: Bool {
+        get { connectionModel.connected }
+        set { connectionModel.connected = newValue }
+    }
+    var lastError: String? {
+        get { connectionModel.lastError }
+        set { connectionModel.lastError = newValue }
+    }
     /// Human-readable endpoint the store is currently paired/connected to
     /// (e.g. "ws://macbookpro.my-tailnet.ts.net:8787/v1/ws"), for UI display.
-    @Published private(set) var pairedEndpoint: String?
+    private(set) var pairedEndpoint: String? {
+        get { connectionModel.pairedEndpoint }
+        set { connectionModel.pairedEndpoint = newValue }
+    }
     /// Host version/identity from the WelcomeFrame (hostId, OMP version,
     /// appserver version). Captured on connect, cleared on disconnect.
-    @Published private(set) var hostInfo: HostInfo?
+    private(set) var hostInfo: HostInfo? {
+        get { connectionModel.hostInfo }
+        set { connectionModel.hostInfo = newValue }
+    }
     @Published var selectedSession: SessionRef?
     /// Live transcripts by sessionId (snapshot + streamed entries). Present
     /// only for attached sessions while connected; the sample rail falls back
     /// to `sampleTranscript` when disconnected.
-    @Published var liveEntries: [String: [TranscriptEntry]] = [:]
+    var liveEntries: [String: [TranscriptEntry]] {
+        get { transcriptModel.entries }
+        set { transcriptModel.entries = newValue }
+    }
     /// Frame-paced assistant text/reasoning by session. Host snapshots remain
     /// authoritative; the display buffer reveals them by whole graphemes.
-    @Published private(set) var streamingMessages: [String: StreamingAssistantBuffer] = [:]
+    private(set) var streamingMessages: [String: StreamingAssistantBuffer] {
+        get { transcriptModel.streamingMessages }
+        set { transcriptModel.streamingMessages = newValue }
+    }
     /// Ordered OMP-native assistant blocks. Unlike the compatibility buffers,
     /// this keeps thinking, response text, and generated tool input interleaved
     /// exactly as the model emitted them.
-    @Published private(set) var liveTurns: [String: LiveTurnTimeline] = [:]
+    private(set) var liveTurns: [String: LiveTurnTimeline] {
+        get { transcriptModel.liveTurns }
+        set { transcriptModel.liveTurns = newValue }
+    }
     /// Transient tool arguments, execution progress, and results by session.
-    @Published private(set) var liveTools: [String: LiveToolProjection] = [:]
+    private(set) var liveTools: [String: LiveToolProjection] {
+        get { transcriptModel.liveTools }
+        set { transcriptModel.liveTools = newValue }
+    }
     /// Durable rows that arrived before their frame-paced live projection
     /// finished. A per-session queue preserves wire order across assistant and
     /// tool rows, and only drains a ready prefix.
@@ -159,10 +200,16 @@ final class T4SessionStore: ObservableObject {
     /// Sessions with a turn in flight, from turn.start/turn.end events — the
     /// composer's stop button keys off this (the ref's `status` sticks at
     /// "active" long after the turn actually ends).
-    @Published private(set) var activeTurns: Set<String> = []
+    private(set) var activeTurns: Set<String> {
+        get { transcriptModel.activeTurns }
+        set { transcriptModel.activeTurns = newValue }
+    }
     /// OMP todo phases by sessionId (the plan strip's data), refreshed on
     /// attach and after streamed entries.
-    @Published private(set) var todoPhasesBySession: [String: [PlanPhase]] = [:]
+    private(set) var todoPhasesBySession: [String: [PlanPhase]] {
+        get { transcriptModel.todoPhasesBySession }
+        set { transcriptModel.todoPhasesBySession = newValue }
+    }
 
     /// Todo phases for a session (live when connected, empty otherwise).
     func todoPhases(for sessionId: String) -> [PlanPhase] {
@@ -199,91 +246,157 @@ final class T4SessionStore: ObservableObject {
         return out
     }
     /// Host catalog (models etc.) from catalog.get, fetched after connect.
-    @Published private(set) var catalog: [CatalogItem] = []
+    private(set) var catalog: [CatalogItem] {
+        get { catalogSettingsModel.catalog }
+        set { catalogSettingsModel.catalog = newValue }
+    }
     /// A confirmation challenge awaiting the user's approve/deny decision.
-    @Published var pendingConfirmation: ConfirmationChallenge?
+    var pendingConfirmation: ConfirmationChallenge? {
+        get { promptModel.pendingConfirmation }
+        set { promptModel.pendingConfirmation = newValue }
+    }
     /// A host ask (question mode) awaiting the user's answer, if any.
-    @Published var pendingAsk: PendingAsk?
+    var pendingAsk: PendingAsk? {
+        get { promptModel.pendingAsk }
+        set { promptModel.pendingAsk = newValue }
+    }
     /// Optimistic fast-mode state per session (the wire has no fast field).
-    @Published private(set) var fastBySession: [String: Bool] = [:]
+    private(set) var fastBySession: [String: Bool] {
+        get { promptModel.fastBySession }
+        set { promptModel.fastBySession = newValue }
+    }
     /// Per-session transcript paging state (transcript.page). `hasMore` is
     /// nil until the first older page resolves (unknown); the "Load earlier"
     /// button shows when hasMore is true OR (unknown and entries ≥ 50).
-    @Published var pagingState: [String: TranscriptPaging] = [:]
+    var pagingState: [String: TranscriptPaging] {
+        get { transcriptModel.pagingState }
+        set { transcriptModel.pagingState = newValue }
+    }
     /// Session currently prepending a paged history block. The detail view
     /// suppresses its scroll-to-bottom follow while this matches its session
     /// so prepended older rows don't yank the viewport to the bottom.
-    @Published var prependingSession: String?
+    var prependingSession: String? {
+        get { transcriptModel.prependingSession }
+        set { transcriptModel.prependingSession = newValue }
+    }
     /// Subagents per session, fed by .agent/.agentState/.agentLifecycle/
     /// .agentProgress/.agentEvent frames in observe(). The agents pane
     /// renders this; empty when the host has no subagents for a session.
-    @Published private(set) var agentsBySession: [String: [AgentState]] = [:]
+    private(set) var agentsBySession: [String: [AgentState]] {
+        get { agentModel.agentsBySession }
+        set { agentModel.agentsBySession = newValue }
+    }
     /// Per-terminal buffered output, keyed by terminalId. `terminal.output`
     /// frames append here (capped ~200KB per terminal, dropping the oldest
     /// chunk when exceeded). The terminal drawer feeds this to SwiftTerm.
-    @Published var terminalOutput: [String: String] = [:]
+    var terminalOutput: [String: String] {
+        get { terminalModel.output }
+        set { terminalModel.output = newValue }
+    }
     /// Per-terminal exit code, set when a `terminal.exit` frame arrives.
     /// Presence of a key means the pty has exited; nil value means exited
     /// with code 0 recorded as absent until exit.
-    @Published var terminalExits: [String: Int] = [:]
+    var terminalExits: [String: Int] {
+        get { terminalModel.exits }
+        set { terminalModel.exits = newValue }
+    }
     /// Per-session ordered terminal ids (max 4), in the order `openTerminal`
     /// opened them. The drawer renders one tab per id; the active id is the
     /// tab whose buffered output is rendered and whose keystrokes are sent.
-    @Published var openTerminalIds: [String: [String]] = [:]
+    var openTerminalIds: [String: [String]] {
+        get { terminalModel.openIdsBySession }
+        set { terminalModel.openIdsBySession = newValue }
+    }
     /// The active terminal id for a session — the tab the drawer renders and
     /// the target of `sendTerminalInput`/`resizeTerminal`. Set by `openTerminal`
     /// (new terminal becomes active) and `selectTerminal` (tab switch), and
     /// reselected to a neighbor when the active terminal is closed.
-    @Published var activeTerminalId: [String: String] = [:]
+    var activeTerminalId: [String: String] {
+        get { terminalModel.activeIdBySession }
+        set { terminalModel.activeIdBySession = newValue }
+    }
     /// Per-terminal last error (e.g. a denied term.open command). Cleared
     /// on a successful open or explicit close.
-    @Published var terminalErrors: [String: String] = [:]
+    var terminalErrors: [String: String] {
+        get { terminalModel.errors }
+        set { terminalModel.errors = newValue }
+    }
     /// Per-session browser URL for the browser pane (T4BrowserPane). The
     /// pane persists the URL field here so reopening a session's browser
     /// returns to the last visited page. Defaults to localhost:3000 via
     /// `browserURL(for:)` when unset.
-    @Published var browserURLBySession: [String: String] = [:]
+    var browserURLBySession: [String: String] {
+        get { previewModel.urlBySession }
+        set { previewModel.urlBySession = newValue }
+    }
     /// Code reviews per session, fed by `review` additive frames in observe().
     /// The review pane reads the latest reviewId from here to call
     /// review.read; empty when the host has not pushed a review.
-    @Published private(set) var reviewsBySession: [String: [ReviewFrame]] = [:]
+    private(set) var reviewsBySession: [String: [ReviewFrame]] {
+        get { filesReviewModel.reviewsBySession }
+        set { filesReviewModel.reviewsBySession = newValue }
+    }
     /// Last fetched usage snapshot (usage.read, host scope). nil until the
     /// usage pane first loads it; refreshed on demand. `generatedAt` is the
     /// host's epoch-millis timestamp.
-    @Published var usageSnapshot: UsageReadResult?
+    var usageSnapshot: UsageReadResult? {
+        get { catalogSettingsModel.usageSnapshot }
+        set { catalogSettingsModel.usageSnapshot = newValue }
+    }
     /// Last fetched host settings (settings.read, host scope). Carried as an
     /// opaque object map (boundedSettings) — keys are setting names, values
     /// are strings/bools/numbers. nil until the settings pane first loads it.
-    @Published var settingsSnapshot: [String: JSONValue]?
+    var settingsSnapshot: [String: JSONValue]? {
+        get { catalogSettingsModel.settingsSnapshot }
+        set { catalogSettingsModel.settingsSnapshot = newValue }
+    }
     /// Last fetched host settings revision (settings.read result.revision),
     /// required as `expectedRevision` for settings.write. nil until the
     /// settings pane first loads it.
-    @Published var settingsRevision: String?
+    var settingsRevision: String? {
+        get { catalogSettingsModel.settingsRevision }
+        set { catalogSettingsModel.settingsRevision = newValue }
+    }
     /// Cached artifact chunks by artifactId, populated by artifact.read.
     /// The artifacts pane taps a descriptor to load+preview content; the
     /// first chunk (offset 0) is enough for inline text/patch previews.
-    @Published var artifactChunks: [String: ArtifactReadChunk] = [:]
+    var artifactChunks: [String: ArtifactReadChunk] {
+        get { filesReviewModel.artifactChunks }
+        set { filesReviewModel.artifactChunks = newValue }
+    }
     /// Latest preview id per session, tracked from `preview.launch`/`state`/
     /// `navigation`/`capture` push frames and the `preview.launch` command
     /// result. `previewCapture(sessionId:previewId:)` uses this when no
     /// explicit previewId is given; the browser pane's Capture button is
     /// enabled while a preview is tracked.
-    @Published var previewIdBySession: [String: String] = [:]
+    var previewIdBySession: [String: String] {
+        get { previewModel.previewIdBySession }
+        set { previewModel.previewIdBySession = newValue }
+    }
     /// Decoded capture images by captureId, populated by `previewCapture`
     /// (the Capture button) and by the async fetch kicked off when a
     /// `preview.capture` push frame arrives. The browser pane renders the
     /// latest one full-fit; transcript capture rows look their image up here
     /// by `data.captureId`.
-    @Published var previewCaptureImages: [String: PlatformImage] = [:]
+    var previewCaptureImages: [String: PlatformImage] {
+        get { previewModel.captureImages }
+        set { previewModel.captureImages = newValue }
+    }
     /// Ordered capture rows per session — one per `preview.capture` push
     /// frame or explicit `preview.capture` command. Each carries the capture
     /// metadata plus the decoded image once the chunked fetch resolves. The
     /// browser pane and transcript render these as image rows.
-    @Published var previewCaptureRowsBySession: [String: [PreviewCaptureRow]] = [:]
+    var previewCaptureRowsBySession: [String: [PreviewCaptureRow]] {
+        get { previewModel.captureRowsBySession }
+        set { previewModel.captureRowsBySession = newValue }
+    }
 
     /// True once a live host has spoken (refresh or push). Drives the boot
     /// splash: saved-connection devices see "Connecting…", not fake chat.
-    @Published private(set) var hasLiveInventory = false
+    private(set) var hasLiveInventory: Bool {
+        get { connectionModel.hasLiveInventory }
+        set { connectionModel.hasLiveInventory = newValue }
+    }
     /// True when a previous session's endpoint is persisted (restore will run).
     var hasSavedConnection: Bool {
         EphemeralConnectionCredentials() != nil
@@ -1032,7 +1145,17 @@ final class T4SessionStore: ObservableObject {
 
     init() {
         Self.migrateCredentialsToKeychainIfNeeded()
-        self.sessions = Self.demoMode ? Self.sample : []
+        connectionModel.sessions = Self.demoMode ? Self.sample : []
+        connectionModel.objectWillChange
+            .merge(with: transcriptModel.objectWillChange)
+            .merge(with: promptModel.objectWillChange)
+            .merge(with: agentModel.objectWillChange)
+            .merge(with: terminalModel.objectWillChange)
+            .merge(with: previewModel.objectWillChange)
+            .merge(with: filesReviewModel.objectWillChange)
+            .merge(with: catalogSettingsModel.objectWillChange)
+            .sink { [weak self] in self?.objectWillChange.send() }
+            .store(in: &domainModelSubscriptions)
     }
 
     /// Filtered + project-grouped view of the inventory (the rail model).

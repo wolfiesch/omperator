@@ -26,6 +26,8 @@ struct ComposerAttachment: Identifiable {
 struct T4SessionDetailView: View {
     let session: SessionRef
     @ObservedObject var store: T4SessionStore
+    @ObservedObject private var transcriptModel: T4TranscriptProjectionModel
+    @ObservedObject private var promptModel: T4PromptLeaseModel
     @EnvironmentObject var theme: ThemeStore
     @StateObject private var dictation = Dictation()
     @State private var draft = ""
@@ -47,6 +49,13 @@ struct T4SessionDetailView: View {
     private var t: Theme { theme.t }
     private static let maxImages = 8   // PROMPT_IMAGE_MAX_COUNT on the wire
 
+    init(session: SessionRef, store: T4SessionStore) {
+        self.session = session
+        self.store = store
+        self._transcriptModel = ObservedObject(wrappedValue: store.transcriptModel)
+        self._promptModel = ObservedObject(wrappedValue: store.promptModel)
+    }
+
     private func sheetBinding(_ sheet: ActiveSheet) -> Binding<Bool> {
         Binding(get: { activeSheet == sheet }, set: { if !$0 { activeSheet = nil } })
     }
@@ -59,19 +68,19 @@ struct T4SessionDetailView: View {
                         loadEarlierSection
                         header
                         ownershipBanner
-                        if let challenge = store.pendingConfirmation {
+                        if let challenge = promptModel.pendingConfirmation {
                             confirmationBanner(challenge)
                         }
                         if showFacts { facts }
                         Divider().overlay(t.lineFaint)
                         T4TranscriptView(entries: store.transcript(for: session.sessionId),
-                                         liveTurn: store.liveTurns[session.sessionId],
-                                         streamingMessage: store.streamingMessages[session.sessionId],
-                                         liveTools: store.liveTools[session.sessionId] ?? LiveToolProjection(),
+                                         liveTurn: transcriptModel.liveTurns[session.sessionId],
+                                         streamingMessage: transcriptModel.streamingMessages[session.sessionId],
+                                         liveTools: transcriptModel.liveTools[session.sessionId] ?? LiveToolProjection(),
                                          theme: t)
                         // Live asks belong at the transcript's tail — the
                         // newest thing demanding attention, always in view.
-                        if let ask = store.pendingAsk, ask.sessionId == session.sessionId {
+                        if let ask = promptModel.pendingAsk, ask.sessionId == session.sessionId {
                             T4AskCard(ask: ask, theme: t) { value in
                                 Task { await store.respondAsk(value: value) }
                             }
@@ -93,21 +102,21 @@ struct T4SessionDetailView: View {
                     // A page prepend increases the count too; suppress the
                     // scroll-to-bottom follow while the store is prepending
                     // older history so the viewport stays put.
-                    guard store.prependingSession != session.sessionId else { return }
+                    guard transcriptModel.prependingSession != session.sessionId else { return }
                     withAnimation(.easeOut(duration: 0.2)) {
                         proxy.scrollTo("transcript-bottom", anchor: .bottom)
                     }
                 }
-                .onChange(of: store.streamingMessages[session.sessionId]) { _, _ in
-                    guard store.prependingSession != session.sessionId else { return }
+                .onChange(of: transcriptModel.streamingMessages[session.sessionId]) { _, _ in
+                    guard transcriptModel.prependingSession != session.sessionId else { return }
                     proxy.scrollTo("transcript-bottom", anchor: .bottom)
                 }
-                .onChange(of: store.liveTurns[session.sessionId]) { _, _ in
-                    guard store.prependingSession != session.sessionId else { return }
+                .onChange(of: transcriptModel.liveTurns[session.sessionId]) { _, _ in
+                    guard transcriptModel.prependingSession != session.sessionId else { return }
                     proxy.scrollTo("transcript-bottom", anchor: .bottom)
                 }
-                .onChange(of: store.liveTools[session.sessionId]) { _, _ in
-                    guard store.prependingSession != session.sessionId else { return }
+                .onChange(of: transcriptModel.liveTools[session.sessionId]) { _, _ in
+                    guard transcriptModel.prependingSession != session.sessionId else { return }
                     proxy.scrollTo("transcript-bottom", anchor: .bottom)
                 }
             }
@@ -154,7 +163,7 @@ struct T4SessionDetailView: View {
             // -T4ShowAsk: demo ask pinned to whatever session is current (the
             // selection swaps from sample to live after connect).
             if ProcessInfo.processInfo.arguments.contains("-T4ShowAsk") {
-                store.pendingAsk = T4SessionStore.PendingAsk(
+                promptModel.pendingAsk = T4SessionStore.PendingAsk(
                     sessionId: session.sessionId,
                     request: AskRequest(askId: "demo-ask", question: "Apply the plan and make these changes?",
                                         options: [AskOption(id: "yes", label: "Yes, apply the plan"),
@@ -314,7 +323,7 @@ struct T4SessionDetailView: View {
     /// 50 rows (a full first page may still be fetchable). A spinner replaces
     /// the label while a page is in flight.
     private var loadEarlierSection: some View {
-        let paging = store.pagingState[session.sessionId]
+        let paging = transcriptModel.pagingState[session.sessionId]
         let entries = store.transcript(for: session.sessionId)
         let show = (paging?.hasMore == true)
             || (paging?.hasMore == nil && entries.count >= 50)
@@ -408,7 +417,7 @@ struct T4SessionDetailView: View {
                     } label: {
                         Label("Continue in Terminal", systemImage: "terminal")
                     }
-                    .disabled(store.activeTurns.contains(session.sessionId) || session.status == "closed")
+                    .disabled(transcriptModel.activeTurns.contains(session.sessionId) || session.status == "closed")
                     Button {
                         Task { await store.closeSession(sessionId: session.sessionId) }
                     } label: {
@@ -626,11 +635,11 @@ struct T4SessionDetailView: View {
         if let control = session.sessionControl { return control.t4Presentation.railLabel }
         if session.archivedAt != nil { return "Restore this session to message" }
         if dictation.recording { return "Listening\u{2026}" }
-        return store.activeTurns.contains(session.sessionId) ? "Steer the turn\u{2026}" : "Message the agent\u{2026}"
+        return transcriptModel.activeTurns.contains(session.sessionId) ? "Steer the turn\u{2026}" : "Message the agent\u{2026}"
     }
 
     @ViewBuilder private var sendOrStop: some View {
-        if inputEnabled && store.activeTurns.contains(session.sessionId) {
+        if inputEnabled && transcriptModel.activeTurns.contains(session.sessionId) {
             Button { Task { await store.cancel(sessionId: session.sessionId) } } label: {
                 Image(systemName: "stop.fill").font(.system(size: 15)).foregroundStyle(t.txt)
                     .frame(width: 34, height: 34)
