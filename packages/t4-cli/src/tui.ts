@@ -8,6 +8,8 @@ import { Screen, wrap, clip, type Cell } from "./render.ts";
 import { FG, palette as p, statusColor, RESET } from "./theme.ts";
 
 const RAIL_W = 28;
+/** Scrolled-up lines that still count as "following" the stream. */
+const FOLLOW_THRESHOLD = 4;
 const PANES = ["chat", "files", "search", "diff", "term"] as const;
 type Pane = (typeof PANES)[number];
 
@@ -31,6 +33,8 @@ interface State {
 	scroll: number;
 	sending: boolean;
 	showHelp: boolean;
+	/** Stream entries that arrived while the user was scrolled up. */
+	newBelow: number;
 	sessionStatus: Map<string, string>;
 	pane: Pane;
 	filter: string;
@@ -134,7 +138,7 @@ export class Tui implements HostEvents {
 		sessions: [], selected: 0, entries: [], unread: new Set(),
 		connected: false, connecting: true, statusLine: "connecting…",
 		focus: "rail", composer: "", cursorIdx: 0, history: [], historyIdx: -1, scroll: 0,
-		sending: false, showHelp: false, sessionStatus: new Map(),
+		sending: false, showHelp: false, newBelow: 0, sessionStatus: new Map(),
 		pane: "chat", filter: "", filtering: false, renameActive: false, pendingConfirm: undefined,
 		filePath: "", fileEntries: [], fileSelected: 0, fileScroll: 0, fileView: undefined,
 		searchQuery: "", searchResults: [], searchSelected: 0, searchScroll: 0, searching: false,
@@ -262,6 +266,10 @@ export class Tui implements HostEvents {
 	entry(sessionId: string, entry: TranscriptEntry): void {
 		if (sessionId === this.currentId()) {
 			this.state.entries.push(entry);
+			// Follow the stream only when the user is already at (or within a few
+			// lines of) the bottom; a deliberate scroll-up never gets yanked down.
+			if (this.state.scroll <= FOLLOW_THRESHOLD) this.state.scroll = 0;
+			else this.state.newBelow += 1;
 		} else {
 			this.state.unread.add(sessionId);
 		}
@@ -887,6 +895,7 @@ export class Tui implements HostEvents {
 
 	private draw(): void {
 		const s = this.state;
+		if (s.scroll === 0) s.newBelow = 0;
 		if (s.showHelp) return this.drawHelp();
 		this.drawHeader();
 		this.drawTabs();
@@ -935,7 +944,14 @@ export class Tui implements HostEvents {
 		const s = this.state;
 		const tStart = Math.max(0, transcript.length - bodyRows - s.scroll);
 		const tEnd = Math.max(0, transcript.length - s.scroll);
-		const tSlice = transcript.slice(tStart, tEnd);
+		let tSlice = transcript.slice(tStart, tEnd);
+		// Long single entry: when following and the newest entry alone exceeds
+		// the viewport, anchor to its start so the stream stays readable.
+		if (s.scroll === 0 && s.entries.length > 0) {
+			const last = this.entryLines(s.entries[s.entries.length - 1]!, this.screen.cols - RAIL_W - 4);
+			if (last.length > bodyRows && transcript.length > last.length)
+				tSlice = transcript.slice(transcript.length - last.length, transcript.length - last.length + bodyRows);
+		}
 
 		for (let i = 0; i < bodyRows; i += 1) {
 			const railRow = rows[i];
@@ -1099,9 +1115,11 @@ export class Tui implements HostEvents {
 			]);
 			const hint = s.filtering
 				? ` filter: ${s.filter}  (enter keep · esc clear)`
-				: s.scroll > 0
-					? ` scrolled ↑${s.scroll} — pgdn to follow · j/k move · 1-5 panes · ? help`
-					: " j/k move · enter open · tab composer · f fork · x cancel · e rename · n new · / filter · 1-5 panes · ? help";
+				: s.newBelow > 0
+					? ` ↓ ${s.newBelow} new — pgdn to follow · j/k move · 1-5 panes · ? help`
+					: s.scroll > 0
+						? ` scrolled ↑${s.scroll} — pgdn to follow · j/k move · 1-5 panes · ? help`
+						: " j/k move · enter open · tab composer · f fork · x cancel · e rename · n new · / filter · 1-5 panes · ? help";
 			this.screen.line([{ text: clip(hint, this.screen.cols - 2), fg: p.label }]);
 			return;
 		}
