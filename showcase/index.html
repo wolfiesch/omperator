@@ -196,6 +196,7 @@
 	}
 	.car-slide:hover { border-color: var(--ghost); transform: translateY(-2px); }
 	.car-slide img { display: block; width: 100%; background: var(--line-faint); }
+	video.motion { display: block; width: 100%; border-radius: 14px; background: var(--line-faint); }
 	.car-slide figcaption { padding: 10px 14px 12px; color: var(--muted); font-size: 13px; }
 	.car-slide figcaption b { color: var(--ink); }
 	.car-btn {
@@ -290,8 +291,8 @@ all speaking the same <code>omp-app/1</code> wire to your <code>t4-host</code>, 
 
 <h2><span class="dot"></span> in motion</h2>
 <div class="grid">
-	<div class="card"><video src="../screenshots/app-clip.webm" autoplay loop muted playsinline></video><div class="body"><span class="tag">live</span><h3>macOS, working</h3><p>Launch, connect, switch sessions — the real app, no cuts.</p></div></div>
-	<div class="card"><video src="../screenshots/t4-tour.webm" autoplay loop muted playsinline></video><div class="body"><span class="tag tag-tui">live</span><h3>t4, pane tour</h3><p>Chat → files → search → diff → terminal, in one take over tmux.</p></div></div>
+	<video class="motion" src="../screenshots/app-clip.webm" autoplay loop muted playsinline></video>
+	<video class="motion" src="../screenshots/t4-tour.webm" autoplay loop muted playsinline></video>
 </div>
 
 <h2><span class="dot"></span> iOS</h2>
