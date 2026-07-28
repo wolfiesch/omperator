@@ -3,6 +3,11 @@ import {
 	COMMAND_RESULT_DECODERS,
 } from "./command-codecs/registry.js";
 export {
+	decodeArtifactReadChunk,
+	decodeSessionPromptArguments,
+	decodeTurnReviewApplyResult,
+} from "./command-codecs/prompt-media.js";
+export {
 	COMMAND_ARGUMENT_DECODERS,
 	COMMAND_RESULT_DECODERS,
 } from "./command-codecs/registry.js";

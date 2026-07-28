@@ -107,6 +107,12 @@ import {
 	unlinkIfExists,
 } from "./ownership.ts";
 import { OfficialOmpCapabilityAdapter, OfficialOmpOperationError } from "./official-omp-capabilities.ts";
+import {
+	MAX_PENDING_PROMPTS,
+	type PromptDiscardReason,
+	type PromptLifecycle,
+	PromptLifecycleController,
+} from "./prompt-lifecycle-controller.ts";
 import { SessionProjection } from "./projection.ts";
 import { BunRemoteListener, createInternalListenerPlan, createListenerPlan, createServeProxyPlan } from "./remote/listener.ts";
 import type { HostLogger } from "./remote/logging.ts";
@@ -161,12 +167,6 @@ const SUBAGENT_TRANSCRIPT_RPC_BYTES = 384 * 1024;
 const REMOTE_OUTBOUND_TRANSFORM_TIMEOUT_MS = 10_000;
 const CATALOG_OPERATION_REFRESH_TIMEOUT_MS = 750;
 const DEFAULT_USAGE_READ_TIMEOUT_MS = 15_000;
-const PENDING_PROMPT_TEXT_BYTES = 8 * 1024;
-// cleanText removes most controls, but retained newlines, quotes, and
-// backslashes can double when JSON encoded. Keep enough room for that escaping
-// plus the event envelope under the 64 KiB transient-event budget.
-const PENDING_PROMPT_EVENT_TEXT_BYTES = 24 * 1024;
-const MAX_PENDING_PROMPTS = 16;
 const PLAN_MODE_PREFIX =
 	"[PLAN MODE — you may inspect but MUST NOT modify anything: no file writes, edits, patches, or state-changing commands. Analyze the request, then propose a concrete step-by-step plan and stop.]\n\n";
 const READONLY_MODE_PREFIX =
@@ -465,20 +465,6 @@ interface SessionLifecycleFailure {
 	message: string;
 	details?: Record<string, unknown>;
 }
-interface PromptLifecycle {
-	requestId: string;
-	commandId: string;
-	commandHash: string;
-	kind: "prompt" | "steer" | "followUp";
-	accepted?: true;
-	cancelRequested?: true;
-	internalId?: string;
-	transientEntryId?: string;
-	/** Epoch-ms when the lifecycle was registered, for idle-supervisor
-	 * watchdog and state-refresh reconciliation of wedged turns. */
-	registeredAt: number;
-}
-type PromptDiscardReason = "rejected" | "local-only" | "failed" | "cancelled" | "completed-without-entry";
 interface ExternalRuntimeOwner {
 	readonly runtimeId: string;
 	readonly workspaceInstanceId: string;
@@ -941,9 +927,14 @@ export class LocalAppserver implements AppserverHandle {
 	readonly #archivingWorkspaces = new Set<string>();
 	#externalPermissions = new Map<SessionId, Map<string, ExternalPermissionRequest>>();
 	#externalTurns = new Map<SessionId, ExternalTurnProjection>();
-	#promptLifecycles = new Map<SessionId, PromptLifecycle>();
-	#messageLifecycles = new Map<SessionId, PromptLifecycle[]>();
-	#messageLifecyclesByCommandId = new Map<string, PromptLifecycle>();
+	#promptLifecycle = new PromptLifecycleController({
+		now: () => this.#clock.now(),
+		projection: sessionId => this.#projections.get(sessionId),
+		broadcast: (sessionId, frame) => this.broadcast(sessionId, frame),
+		advanceStateRefreshGeneration: sessionId =>
+			this.advanceStateRefreshGeneration(sessionId),
+		idleGraceMs: () => this.#idleSupervisorGraceMs,
+	});
 	#stateRefreshGenerations = new Map<SessionId, number>();
 	#transcripts = new Map<SessionId, TranscriptEventTranslator>();
 	#subagents = new Map<SessionId, SubagentProjection>();
@@ -1516,9 +1507,7 @@ export class LocalAppserver implements AppserverHandle {
 			await Promise.allSettled(Array.from(this.#externalRuntimes.values(), owner => owner.session.dispose()));
 			this.#externalRuntimes.clear();
 			this.#externalTurns.clear();
-			this.#promptLifecycles.clear();
-			this.#messageLifecycles.clear();
-			this.#messageLifecyclesByCommandId.clear();
+			this.#promptLifecycle.clear();
 			this.#stateRefreshGenerations.clear();
 			this.#transcripts.clear();
 			this.#subagents.clear();
@@ -1848,7 +1837,7 @@ export class LocalAppserver implements AppserverHandle {
 			command.command === "transcript.search" ||
 			command.command === "transcript.context" ||
 			command.command === "files.search";
-		const acceptedLifecycle = this.#messageLifecyclesByCommandId.get(command.commandId);
+		const acceptedLifecycle = this.#promptLifecycle.lifecycleForCommand(command.commandId);
 		if (acceptedLifecycle?.accepted)
 			return acceptedLifecycle.commandHash === payloadHash(command)
 				? { frame: response(this.hostId, command, true, { accepted: true }) }
@@ -2096,7 +2085,7 @@ export class LocalAppserver implements AppserverHandle {
 					kind,
 					registeredAt: this.#clock.now().getTime(),
 				};
-				if (!this.#registerMessageLifecycle(command.sessionId!, lifecycle)) {
+				if (!this.#promptLifecycle.register(command.sessionId!, lifecycle)) {
 					outcome = {
 						frame: response(this.hostId, command, false, undefined, {
 							code: "message_queue_full",
@@ -2106,17 +2095,17 @@ export class LocalAppserver implements AppserverHandle {
 				} else {
 					messageLifecycle = lifecycle;
 					this.updateStatus(command.sessionId!, "active");
-					this.#emitPromptTransient(command.sessionId!, command, lifecycle, command.args.message as string, 0);
+					this.#promptLifecycle.emitTransient(command.sessionId!, command, lifecycle, command.args.message as string, 0);
 					const type = kind === "steer" ? "steer" : "follow_up";
 					const result = await supervisor.call(
 						{ type, message: this.shapePromptMessage(command.sessionId!, command.args.message as string) },
 						command.requestId,
 						undefined,
 						internalId => {
-							if (this.#hasMessageLifecycle(command.sessionId!, lifecycle)) lifecycle.internalId = internalId;
+							if (this.#promptLifecycle.has(command.sessionId!, lifecycle)) lifecycle.internalId = internalId;
 						},
 					);
-					if (!result.success) this.#releaseMessageLifecycle(command.sessionId!, lifecycle, "rejected");
+					if (!result.success) this.#promptLifecycle.release(command.sessionId!, lifecycle, "rejected");
 					else lifecycle.accepted = true;
 					outcome = {
 						frame: response(
@@ -2214,14 +2203,14 @@ export class LocalAppserver implements AppserverHandle {
 				if (externalOwner) outcome = await this.handleExternalPrompt(command, externalOwner, promptArguments!);
 				else {
 					const supervisor = await this.ensureSupervisor(command.sessionId!);
-					if (this.#promptLifecycles.has(command.sessionId!)) {
+					if (this.#promptLifecycle.activePrompt(command.sessionId!) !== undefined) {
 						outcome = {
 							frame: response(this.hostId, command, false, undefined, {
 								code: "session_busy",
 								message: "another prompt is still running; use steer or follow-up",
 							}),
 						};
-					} else if (this.#pendingMessageCount(command.sessionId!) >= MAX_PENDING_PROMPTS) {
+					} else if (this.#promptLifecycle.pendingCount(command.sessionId!) >= MAX_PENDING_PROMPTS) {
 						outcome = {
 							frame: response(this.hostId, command, false, undefined, {
 								code: "message_queue_full",
@@ -2237,14 +2226,14 @@ export class LocalAppserver implements AppserverHandle {
 							registeredAt: this.#clock.now().getTime(),
 						};
 						messageLifecycle = lifecycle;
-						if (!this.#registerMessageLifecycle(command.sessionId!, lifecycle))
+						if (!this.#promptLifecycle.register(command.sessionId!, lifecycle))
 							throw new Error("pending prompt capacity changed");
-						this.#promptLifecycles.set(command.sessionId!, lifecycle);
+						this.#promptLifecycle.setActivePrompt(command.sessionId!, lifecycle);
 						this.updateStatus(command.sessionId!, "active");
 						const managedImages = promptArguments?.images
 							? await this.#imageUploads.consume(ws!.connectionId, command.sessionId!, promptArguments.images)
 							: undefined;
-						this.#emitPromptTransient(
+						this.#promptLifecycle.emitTransient(
 							command.sessionId!,
 							command,
 							lifecycle,
@@ -2260,7 +2249,7 @@ export class LocalAppserver implements AppserverHandle {
 								// Client disconnect must not revoke it before the child acknowledges it.
 								undefined,
 								internalId => {
-									if (this.#hasMessageLifecycle(command.sessionId!, lifecycle))
+									if (this.#promptLifecycle.has(command.sessionId!, lifecycle))
 										lifecycle.internalId = internalId;
 								},
 								managedImages,
@@ -2270,7 +2259,7 @@ export class LocalAppserver implements AppserverHandle {
 						}
 						if (!result.success || childAgentInvoked(result) === false) {
 							const reason = result.success ? "local-only" : "rejected";
-							if (this.#releaseMessageLifecycle(command.sessionId!, lifecycle, reason))
+							if (this.#promptLifecycle.release(command.sessionId!, lifecycle, reason))
 								this.#projectTerminalStatus(command.sessionId!, supervisor, `${command.requestId}:terminal`);
 						} else lifecycle.accepted = true;
 						outcome = {
@@ -2282,7 +2271,7 @@ export class LocalAppserver implements AppserverHandle {
 								result.success ? undefined : { code: "child_error", message: "session command failed" },
 							),
 						};
-						if (this.#hasMessageLifecycle(command.sessionId!, lifecycle))
+						if (this.#promptLifecycle.has(command.sessionId!, lifecycle))
 							this.scheduleStateRefresh(command.sessionId!, supervisor, command.requestId, true);
 					}
 				}
@@ -2322,14 +2311,14 @@ export class LocalAppserver implements AppserverHandle {
 					// Capture the exact root before the first yield. A root which settles
 					// while the supervisor starts must not let this unscoped RPC abort a
 					// newer prompt that registered in the meantime.
-					const cancelledLifecycle = this.#promptLifecycles.get(command.sessionId!);
+					const cancelledLifecycle = this.#promptLifecycle.activePrompt(command.sessionId!);
 					const supervisor = await this.ensureSupervisor(command.sessionId!);
-					if (this.#promptLifecycles.get(command.sessionId!) !== cancelledLifecycle) {
+					if (this.#promptLifecycle.activePrompt(command.sessionId!) !== cancelledLifecycle) {
 						outcome = { frame: response(this.hostId, command, true, { cancelled: false }) };
 					} else {
 						const result = await supervisor.cancel(command.requestId);
 						if (result.success) {
-							this.#releaseMessageLifecycle(command.sessionId!, cancelledLifecycle, "cancelled");
+							this.#promptLifecycle.release(command.sessionId!, cancelledLifecycle, "cancelled");
 							this.#projectTerminalStatus(command.sessionId!, supervisor, `${command.requestId}:terminal`);
 						}
 						outcome = {
@@ -2435,7 +2424,7 @@ export class LocalAppserver implements AppserverHandle {
 		} catch (error) {
 			if (
 				messageLifecycle &&
-				this.#releaseMessageLifecycle(command.sessionId!, messageLifecycle, "failed") &&
+				this.#promptLifecycle.release(command.sessionId!, messageLifecycle, "failed") &&
 				!this.#closedSessions.has(command.sessionId!)
 			)
 				this.#projectTerminalStatus(command.sessionId!);
@@ -2832,7 +2821,7 @@ export class LocalAppserver implements AppserverHandle {
 					message: "the selected runtime does not support prompt images",
 				}),
 			};
-		if (this.#promptLifecycles.has(sessionId))
+		if (this.#promptLifecycle.activePrompt(sessionId) !== undefined)
 			return {
 				frame: response(this.hostId, command, false, undefined, {
 					code: "session_busy",
@@ -2846,7 +2835,7 @@ export class LocalAppserver implements AppserverHandle {
 			kind: "prompt",
 			registeredAt: this.#clock.now().getTime(),
 		};
-		if (!this.#registerMessageLifecycle(sessionId, lifecycle))
+		if (!this.#promptLifecycle.register(sessionId, lifecycle))
 			return {
 				frame: response(this.hostId, command, false, undefined, {
 					code: "message_queue_full",
@@ -2859,19 +2848,19 @@ export class LocalAppserver implements AppserverHandle {
 			reasoning: "",
 			tools: new Map(),
 		};
-		this.#promptLifecycles.set(sessionId, lifecycle);
+		this.#promptLifecycle.setActivePrompt(sessionId, lifecycle);
 		this.#externalTurns.set(sessionId, turn);
 		this.updateStatus(sessionId, "active");
 		const turnStart = this.#projections
 			.get(sessionId)
 			?.appendEvent(asAppWireEvent({ type: "turn.start", at: this.#clock.now().toISOString() }));
 		if (turnStart) this.broadcast(sessionId, turnStart);
-		this.#emitPromptTransient(sessionId, command, lifecycle, args.message, 0);
+		this.#promptLifecycle.emitTransient(sessionId, command, lifecycle, args.message, 0);
 		const userEntryId = this.appendExternalEntry(sessionId, "message", {
 			role: "user",
 			text: projectMessageText(args.message),
 		});
-		if (userEntryId) this.#settlePromptTransient(sessionId, lifecycle, userEntryId);
+		if (userEntryId) this.#promptLifecycle.settleTransient(sessionId, lifecycle, userEntryId);
 		let failed = false;
 		try {
 			await owner.session.prompt(this.shapePromptMessage(sessionId, args.message));
@@ -2887,14 +2876,14 @@ export class LocalAppserver implements AppserverHandle {
 				: lifecycle.cancelRequested
 					? "cancelled"
 					: "completed-without-entry";
-			if (this.#releaseMessageLifecycle(sessionId, lifecycle, reason)) this.#projectTerminalStatus(sessionId);
+			if (this.#promptLifecycle.release(sessionId, lifecycle, reason)) this.#projectTerminalStatus(sessionId);
 		}
 	}
 	private async handleExternalCancel(command: CommandFrame, owner: ExternalRuntimeOwner): Promise<CommandOutcome> {
 		const sessionId = command.sessionId!;
-		const lifecycle = this.#promptLifecycles.get(sessionId);
+		const lifecycle = this.#promptLifecycle.activePrompt(sessionId);
 		await owner.session.cancel();
-		if (this.#promptLifecycles.get(sessionId) === lifecycle && lifecycle) {
+		if (this.#promptLifecycle.activePrompt(sessionId) === lifecycle && lifecycle) {
 			lifecycle.cancelRequested = true;
 			this.cancelExternalPermissions(sessionId);
 		}
@@ -3208,7 +3197,7 @@ export class LocalAppserver implements AppserverHandle {
 				return this.lifecycleBusyOutcome(command, "session runtime did not stop cleanly");
 			}
 			this.cleanupObserverState(sessionId);
-			this.#releaseAllMessageLifecycles(sessionId, "cancelled");
+			this.#promptLifecycle.releaseAll(sessionId, "cancelled");
 			this.#stateRefreshGenerations.delete(sessionId);
 			this.#transcripts.delete(sessionId);
 			this.disposeSubagentState(sessionId);
@@ -3440,7 +3429,7 @@ export class LocalAppserver implements AppserverHandle {
 			(this.#inflightSessionOperations.get(sessionId) ?? 0) > 0 ||
 			this.#startPromises.has(sessionId) ||
 			this.#supervisors.get(sessionId)?.hasPendingCalls() === true ||
-			this.#pendingMessageCount(sessionId) > 0 ||
+			this.#promptLifecycle.pendingCount(sessionId) > 0 ||
 			(this.#transcripts.get(sessionId)?.pendingUiRequests().length ?? 0) > 0 ||
 			ref?.status === "active" ||
 			ref?.pendingApproval === true ||
@@ -3494,7 +3483,7 @@ export class LocalAppserver implements AppserverHandle {
 		const current = this.#supervisors.get(sessionId);
 		if (current && current !== supervisor) return false;
 		this.#supervisors.delete(sessionId);
-		this.#releaseAllMessageLifecycles(sessionId, "cancelled");
+		this.#promptLifecycle.releaseAll(sessionId, "cancelled");
 		this.#stateRefreshGenerations.delete(sessionId);
 		this.#transcripts.delete(sessionId);
 		this.disposeSubagentState(sessionId);
@@ -3522,7 +3511,7 @@ export class LocalAppserver implements AppserverHandle {
 	private markSupervisorCrashed(sessionId: SessionId, supervisor: RpcChildSupervisor): void {
 		if (this.#supervisors.get(sessionId) !== supervisor) return;
 		this.advanceStateRefreshGeneration(sessionId);
-		this.#releaseAllMessageLifecycles(sessionId, "failed");
+		this.#promptLifecycle.releaseAll(sessionId, "failed");
 		const at = this.#clock.now().toISOString();
 		const crashed = this.#projections.get(sessionId)?.markRuntimeCrashed({
 			id: `runtime:failed:${at}`,
@@ -3579,7 +3568,7 @@ export class LocalAppserver implements AppserverHandle {
 		}
 		if (this.#externalRuntimes.get(sessionId) !== owner) return false;
 		this.#externalRuntimes.delete(sessionId);
-		this.#releaseAllMessageLifecycles(sessionId, "cancelled");
+		this.#promptLifecycle.releaseAll(sessionId, "cancelled");
 		this.#stateRefreshGenerations.delete(sessionId);
 		return true;
 	}
@@ -3733,7 +3722,7 @@ export class LocalAppserver implements AppserverHandle {
 			await this.#attentionOutcomes?.delete(sessionId);
 			await this.#sessionOwnership?.delete(sessionId);
 			this.#closedSessions.delete(sessionId);
-			this.#releaseAllMessageLifecycles(sessionId, "completed-without-entry");
+			this.#promptLifecycle.releaseAll(sessionId, "completed-without-entry");
 			this.#stateRefreshGenerations.delete(sessionId);
 			this.#transcripts.delete(sessionId);
 			this.disposeSubagentState(sessionId);
@@ -3761,138 +3750,6 @@ export class LocalAppserver implements AppserverHandle {
 		idempotency.complete(command.commandId, command, cached);
 		return outcome;
 	}
-	#pendingMessageCount(sessionId: SessionId): number {
-		return this.#messageLifecycles.get(sessionId)?.length ?? 0;
-	}
-	#hasMessageLifecycle(sessionId: SessionId, lifecycle: PromptLifecycle): boolean {
-		return this.#messageLifecycles.get(sessionId)?.includes(lifecycle) === true;
-	}
-	#registerMessageLifecycle(sessionId: SessionId, lifecycle: PromptLifecycle): boolean {
-		const current = this.#messageLifecycles.get(sessionId) ?? [];
-		if (current.length >= MAX_PENDING_PROMPTS || this.#messageLifecyclesByCommandId.has(lifecycle.commandId))
-			return false;
-		this.#messageLifecycles.set(sessionId, [...current, lifecycle]);
-		this.#messageLifecyclesByCommandId.set(lifecycle.commandId, lifecycle);
-		this.advanceStateRefreshGeneration(sessionId);
-		return true;
-	}
-	#findMessageLifecycle(sessionId: SessionId, internalId: string | undefined): PromptLifecycle | undefined {
-		if (internalId === undefined) return undefined;
-		return this.#messageLifecycles.get(sessionId)?.find(lifecycle => lifecycle.internalId === internalId);
-	}
-	#removeMessageLifecycle(sessionId: SessionId, lifecycle: PromptLifecycle): boolean {
-		const current = this.#messageLifecycles.get(sessionId);
-		if (!current?.includes(lifecycle)) return false;
-		const next = current.filter(candidate => candidate !== lifecycle);
-		if (next.length > 0) this.#messageLifecycles.set(sessionId, next);
-		else this.#messageLifecycles.delete(sessionId);
-		if (this.#messageLifecyclesByCommandId.get(lifecycle.commandId) === lifecycle)
-			this.#messageLifecyclesByCommandId.delete(lifecycle.commandId);
-		if (this.#promptLifecycles.get(sessionId) === lifecycle) this.#promptLifecycles.delete(sessionId);
-		this.advanceStateRefreshGeneration(sessionId);
-		return true;
-	}
-	#emitPromptTransient(
-		sessionId: SessionId,
-		command: CommandFrame,
-		lifecycle: PromptLifecycle,
-		message: string,
-		attachmentCount: number,
-	): void {
-		if (!this.#hasMessageLifecycle(sessionId, lifecycle) || lifecycle.transientEntryId) return;
-		const transientEntryId = `user:${createHash("sha256").update(command.commandId).digest("hex").slice(0, 32)}`;
-		lifecycle.transientEntryId = transientEntryId;
-		const projection = this.#projections.get(sessionId);
-		if (!projection) return;
-		const at = this.#clock.now().toISOString();
-		const pending = projection.addPendingPrompt({
-			entryId: transientEntryId,
-			text: projectMessageText(message, PENDING_PROMPT_TEXT_BYTES),
-			attachmentCount,
-			at,
-		});
-		if (pending) this.broadcast(sessionId, pending);
-		this.broadcast(
-			sessionId,
-			projection.appendEvent(
-				asAppWireEvent({
-					type: "message.update",
-					entryId: transientEntryId,
-					role: "user",
-					text: projectMessageText(message, PENDING_PROMPT_EVENT_TEXT_BYTES),
-					reasoning: "",
-					attachmentCount,
-					at,
-				}),
-			),
-		);
-	}
-	#settlePromptTransient(sessionId: SessionId, lifecycle: PromptLifecycle | undefined, entryId: string): void {
-		const transientEntryId = lifecycle?.transientEntryId;
-		if (!lifecycle || !this.#hasMessageLifecycle(sessionId, lifecycle) || !transientEntryId) return;
-		lifecycle.transientEntryId = undefined;
-		const projection = this.#projections.get(sessionId);
-		if (!projection) return;
-		this.broadcast(
-			sessionId,
-			projection.appendEvent(
-				asAppWireEvent({
-					type: "message.settled",
-					transientEntryId,
-					entryId,
-					at: this.#clock.now().toISOString(),
-				}),
-			),
-		);
-		const pending = projection.clearPendingPrompt(transientEntryId);
-		if (pending) this.broadcast(sessionId, pending);
-		if (lifecycle.kind !== "prompt") this.#removeMessageLifecycle(sessionId, lifecycle);
-	}
-	#discardPromptTransient(sessionId: SessionId, lifecycle: PromptLifecycle, reason: PromptDiscardReason): void {
-		const transientEntryId = lifecycle.transientEntryId;
-		if (!transientEntryId) return;
-		lifecycle.transientEntryId = undefined;
-		const projection = this.#projections.get(sessionId);
-		if (!projection) return;
-		this.broadcast(
-			sessionId,
-			projection.appendEvent(
-				asAppWireEvent({
-					type: "message.discarded",
-					transientEntryId,
-					reason,
-					at: this.#clock.now().toISOString(),
-				}),
-			),
-		);
-		const pending = projection.clearPendingPrompt(transientEntryId);
-		if (pending) this.broadcast(sessionId, pending);
-	}
-	#releaseMessageLifecycle(
-		sessionId: SessionId,
-		lifecycle?: PromptLifecycle,
-		reason: PromptDiscardReason = "completed-without-entry",
-	): boolean {
-		if (!lifecycle || !this.#hasMessageLifecycle(sessionId, lifecycle)) return false;
-		this.#discardPromptTransient(sessionId, lifecycle, reason);
-		return this.#removeMessageLifecycle(sessionId, lifecycle);
-	}
-	#releaseAllMessageLifecycles(sessionId: SessionId, reason: PromptDiscardReason): boolean {
-		const lifecycles = [...(this.#messageLifecycles.get(sessionId) ?? [])];
-		let released = false;
-		for (const lifecycle of lifecycles)
-			if (this.#releaseMessageLifecycle(sessionId, lifecycle, reason)) released = true;
-		return released;
-	}
-	/** Prompt lifecycles registered before the idle-supervisor grace window
-	 * elapsed. A wedged turn keeps these pending past grace without ever
-	 * emitting the settling event the normal release path waits on. */
-	#stalePromptLifecycles(sessionId: SessionId): PromptLifecycle[] {
-		const now = this.#clock.now().getTime();
-		const lifecycles = this.#messageLifecycles.get(sessionId);
-		if (!lifecycles || lifecycles.length === 0) return [];
-		return lifecycles.filter(lifecycle => now - lifecycle.registeredAt >= this.#idleSupervisorGraceMs);
-	}
 	/** Reconcile wedged prompt lifecycles after a successful state refresh: OMP
 	 * finished the turn (isStreaming=false) but never emitted turn.end, so the
 	 * normal settling path never fired. Release the stale transients honestly. */
@@ -3903,10 +3760,10 @@ export class LocalAppserver implements AppserverHandle {
 		requestId: string,
 	): boolean {
 		if (isStreaming) return false;
-		const stale = this.#stalePromptLifecycles(sessionId);
+		const stale = this.#promptLifecycle.stale(sessionId);
 		if (stale.length === 0) return false;
 		for (const lifecycle of stale)
-			this.#releaseMessageLifecycle(sessionId, lifecycle, "completed-without-entry");
+			this.#promptLifecycle.release(sessionId, lifecycle, "completed-without-entry");
 		this.#projectTerminalStatus(sessionId, supervisor, `${requestId}:reconciled`);
 		return true;
 	}
@@ -3920,7 +3777,7 @@ export class LocalAppserver implements AppserverHandle {
 		const now = this.#clock.now().getTime();
 		for (const [sessionId, supervisor] of this.#supervisors) {
 			if (now - supervisor.lastActivityAt() < this.#idleSupervisorGraceMs) continue;
-			if (this.#stalePromptLifecycles(sessionId).length === 0) continue;
+			if (this.#promptLifecycle.stale(sessionId).length === 0) continue;
 			// Only dispose when the last state refresh reported the turn not
 			// streaming (the documented wedge: OMP finished but went mute). A
 			// session still marked streaming is left alone; unknown is fail-closed.
@@ -3958,7 +3815,7 @@ export class LocalAppserver implements AppserverHandle {
 		requestId = "terminal",
 	): void {
 		if (this.#closedSessions.has(sessionId)) return;
-		if (this.#pendingMessageCount(sessionId) > 0) this.updateStatus(sessionId, "active");
+		if (this.#promptLifecycle.pendingCount(sessionId) > 0) this.updateStatus(sessionId, "active");
 		if (supervisor) {
 			this.scheduleStateRefresh(sessionId, supervisor, requestId);
 			return;
@@ -4060,7 +3917,7 @@ export class LocalAppserver implements AppserverHandle {
 		this.#reconcileStalePromptLifecycles(sessionId, supervisor, state.isStreaming, requestId);
 		const statusOverride = preserveProjectedStatus
 			? projection.value.ref.status
-			: this.#pendingMessageCount(sessionId) > 0
+			: this.#promptLifecycle.pendingCount(sessionId) > 0
 				? "active"
 				: undefined;
 		const frame = projection.updateState(
@@ -4173,7 +4030,7 @@ export class LocalAppserver implements AppserverHandle {
 					if (!raw) return;
 					const entries = projector.project(raw);
 					const settlementEvents = transcript.observeSessionEntry(raw, entries);
-					const lifecycle = this.#findMessageLifecycle(sessionId, promptEntryCorrelationId(frame.entry));
+					const lifecycle = this.#promptLifecycle.find(sessionId, promptEntryCorrelationId(frame.entry));
 					const correlatedPromptEntry = lifecycle !== undefined;
 					let durableUserEntryId: string | undefined;
 					for (const entry of entries) {
@@ -4187,7 +4044,7 @@ export class LocalAppserver implements AppserverHandle {
 						)
 							durableUserEntryId = entry.id;
 					}
-					if (durableUserEntryId) this.#settlePromptTransient(sessionId, lifecycle, durableUserEntryId);
+					if (durableUserEntryId) this.#promptLifecycle.settleTransient(sessionId, lifecycle, durableUserEntryId);
 					const projectedTitle =
 						projector.titleChange ??
 						(projection.value.ref.title === "Session" || projection.value.ref.title === "Untitled"
@@ -4211,7 +4068,7 @@ export class LocalAppserver implements AppserverHandle {
 						(typeof frame.agentInvoked === "boolean" || typeof frame.error === "string");
 					const terminalLifecycle =
 						terminalPromptResult && typeof frame.id === "string"
-							? this.#findMessageLifecycle(sessionId, frame.id)
+							? this.#promptLifecycle.find(sessionId, frame.id)
 							: undefined;
 					const currentPromptResult = terminalLifecycle !== undefined;
 					for (const event of transcript.translate(frame, { currentPromptResult })) {
@@ -4232,7 +4089,7 @@ export class LocalAppserver implements AppserverHandle {
 								: frame.agentInvoked === false
 									? "local-only"
 									: "completed-without-entry";
-						if (this.#releaseMessageLifecycle(sessionId, terminalLifecycle, reason))
+						if (this.#promptLifecycle.release(sessionId, terminalLifecycle, reason))
 							this.#projectTerminalStatus(sessionId, supervisor, `${frame.id}:terminal`);
 					}
 					if (frame.type === "agent_end") this.scheduleStateRefresh(sessionId, supervisor, "agent-end");
@@ -4272,7 +4129,7 @@ export class LocalAppserver implements AppserverHandle {
 		return supervisor;
 		} catch (error) {
 			if (this.#supervisors.get(sessionId) === supervisor) this.#supervisors.delete(sessionId);
-			this.#releaseAllMessageLifecycles(sessionId, "failed");
+			this.#promptLifecycle.releaseAll(sessionId, "failed");
 			this.#transcripts.delete(sessionId);
 			this.disposeSubagentState(sessionId);
 			// Await the process, not just the supervisor. `stop()` signals and
@@ -4928,7 +4785,7 @@ export class LocalAppserver implements AppserverHandle {
 				await this.#attentionOutcomes?.delete(sessionId);
 				await this.#sessionOwnership?.delete(sessionId);
 				this.#closedSessions.delete(sessionId);
-				this.#releaseAllMessageLifecycles(sessionId, "completed-without-entry");
+				this.#promptLifecycle.releaseAll(sessionId, "completed-without-entry");
 				this.#stateRefreshGenerations.delete(sessionId);
 				this.#transcripts.delete(sessionId);
 				this.disposeSubagentState(sessionId);
@@ -5077,7 +4934,7 @@ export class LocalAppserver implements AppserverHandle {
 			await child.exited.catch(() => undefined);
 		}
 		if (this.#supervisors.get(sessionId) === supervisor) this.#supervisors.delete(sessionId);
-		this.#releaseAllMessageLifecycles(sessionId, "failed");
+		this.#promptLifecycle.releaseAll(sessionId, "failed");
 		this.#stateRefreshGenerations.delete(sessionId);
 		this.#transcripts.delete(sessionId);
 		this.disposeSubagentState(sessionId);
@@ -5428,10 +5285,7 @@ export class LocalAppserver implements AppserverHandle {
 			startingSupervisors: this.#startPromises.size,
 			lifecycleMutations: this.#lifecycleMutations.size + this.#inflightLifecycleMutations,
 			sessionOperations,
-			activePrompts: [...this.#messageLifecycles.values()].reduce(
-				(count, lifecycles) => count + lifecycles.length,
-				0,
-			),
+			activePrompts: this.#promptLifecycle.activeCount(),
 			rpcSupervisorsWithPendingCalls,
 			busySessions,
 			openTerminalSessions,
@@ -5626,7 +5480,7 @@ export class LocalAppserver implements AppserverHandle {
 		await this.#attentionOutcomes?.delete(sessionId);
 		await this.#sessionOwnership?.delete(sessionId);
 		this.#closedSessions.delete(sessionId);
-		this.#releaseAllMessageLifecycles(sessionId, "completed-without-entry");
+		this.#promptLifecycle.releaseAll(sessionId, "completed-without-entry");
 		this.#stateRefreshGenerations.delete(sessionId);
 		this.#transcripts.delete(sessionId);
 		this.#sessionLoads.delete(sessionId);
