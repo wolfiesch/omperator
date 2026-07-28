@@ -342,6 +342,10 @@ struct AppKitTerminalSurface: NSViewRepresentable {
         tv.nativeBackgroundColor = NSColor(theme.bg2)
         context.coordinator.lastFedLength = 0
         feedTail(tv, output: output, coordinator: context.coordinator)
+        // Focus the pty when the drawer opens so typing goes straight to the
+        // shell — otherwise keystrokes stay with whatever was focused before
+        // (e.g. the rail search field).
+        DispatchQueue.main.async { tv.window?.makeFirstResponder(tv) }
         return tv
     }
 
