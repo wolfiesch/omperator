@@ -180,7 +180,7 @@ export class OmpSettingsAuthority {
 			if (patch[key] !== undefined) next[key] = patch[key];
 		}
 		if (patch["tools.approvalMode"] !== undefined || patch["tools.approval"] !== undefined) {
-			const tools = { ...((next.tools as Record<string, unknown>) ?? {}) };
+			const tools = { ...(next.tools as Record<string, unknown> | undefined) };
 			if (patch["tools.approvalMode"] !== undefined) tools.approvalMode = patch["tools.approvalMode"];
 			if (patch["tools.approval"] !== undefined) tools.approval = patch["tools.approval"];
 			next.tools = tools;
