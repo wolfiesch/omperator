@@ -9,6 +9,7 @@
 
 import Foundation
 
+#if os(macOS)
 /// The credential a local t4-host publishes for same-machine apps.
 struct LocalHostCredential {
     let endpoint: URL
@@ -48,3 +49,4 @@ struct LocalHostCredential {
         let deviceToken: String
     }
 }
+#endif
