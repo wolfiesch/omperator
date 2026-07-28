@@ -47,16 +47,18 @@ ssh "$MAC_HOST" "cd '$MAC_PATH' && git pull origin '$BRANCH'"
 # Determine whether we have tracked local changes to sync, or should leave the tree clean.
 if [ -n "$TRACKED_CHANGED" ]; then
     echo "Tracked local changes detected; syncing to $MAC_HOST..."
+    # scp/ssh inside a read loop MUST get /dev/null as stdin: left alone they
+    # drain the loop's file list and silently skip every file after the first.
     git diff --name-status HEAD | while IFS=$'\t' read -r status file; do
         [ -n "$file" ] || continue
         case "$status" in
             M|A)
                 dir=$(dirname "$file")
-                ssh "$MAC_HOST" "mkdir -p '$MAC_PATH/$dir'"
-                scp "$file" "$MAC_HOST:$MAC_PATH/$file"
+                ssh "$MAC_HOST" "mkdir -p '$MAC_PATH/$dir'" < /dev/null
+                scp "$file" "$MAC_HOST:$MAC_PATH/$file" < /dev/null
                 ;;
             D)
-                ssh "$MAC_HOST" "rm -f '$MAC_PATH/$file'"
+                ssh "$MAC_HOST" "rm -f '$MAC_PATH/$file'" < /dev/null
                 ;;
         esac
     done
