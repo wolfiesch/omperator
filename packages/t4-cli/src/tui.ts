@@ -524,7 +524,7 @@ export class Tui implements HostEvents {
 			const ch = data[i]!;
 			if (ch === "\x1b") {
 				// SGR mouse: \x1b[<b;x;yM (down) / \x1b[<b;x;ym (up)
-				if (data[i + 1] === "[<") {
+				if (data[i + 1] === "[" && data[i + 2] === "<") {
 					const upIdx = data.indexOf("m", i + 3);
 					const downIdx = data.indexOf("M", i + 3);
 					const end = downIdx !== -1 && (upIdx === -1 || downIdx < upIdx) ? downIdx : upIdx;
