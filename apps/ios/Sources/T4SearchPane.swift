@@ -132,6 +132,16 @@ struct T4SearchPane: View {
                 Task { await runSearch(query) }
             }
         }
+        .onChange(of: store.connected) { _, isConnected in
+            // Launch seams fire before restore() finishes; retry the pending
+            // mode's command once the host connection is actually up.
+            guard isConnected else { return }
+            if mode == .diff, patchText == nil, diffChanges.isEmpty {
+                Task { await runDiff(turnId) }
+            } else if mode == .search, searchResults == nil, !query.isEmpty {
+                Task { await runSearch(query) }
+            }
+        }
         .onChange(of: mode) { _, newMode in
             if newMode == .diff { Task { await runDiff(turnId) } }
             else { Task { await runSearch(query) } }
