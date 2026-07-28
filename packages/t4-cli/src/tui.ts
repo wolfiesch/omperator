@@ -696,8 +696,11 @@ export class Tui implements HostEvents {
 		}
 		if (s.showHelp) return;
 		if (s.filtering) { s.filter += ch; this.draw(); return; }
-		// Pane switching is global.
-		if (ch >= "1" && ch <= "5") {
+		// Pane switching: digits work where they aren't text input (chat rail,
+		// files, diff) — search and term treat them as keystrokes.
+		const digitPane = ch >= "1" && ch <= "5" &&
+			((s.pane === "chat" && s.focus === "rail") || s.pane === "files" || s.pane === "diff");
+		if (digitPane) {
 			const pane = PANES[Number(ch) - 1]!;
 			if (pane !== s.pane) this.setPane(pane);
 			return;
