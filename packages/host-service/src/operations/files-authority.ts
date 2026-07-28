@@ -1,8 +1,12 @@
 import { MAX_FILE_BYTES, type SessionId } from "@t4-code/host-wire";
+import { execFile } from "node:child_process";
 import { open, readdir, realpath, stat } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { promisify } from "node:util";
 import type { DesktopOperationsAuthority, OperationContext } from "./dispatcher.ts";
+
+const execFileAsync = promisify(execFile);
 
 /**
  * Maximum entries returned by one `files.list` call. The wire decoder bounds
@@ -139,10 +143,44 @@ export class FilesAuthority {
 		}
 	}
 
-	operations(): Pick<DesktopOperationsAuthority, "filesList" | "filesRead"> {
+	/**
+	 * Working-tree diff for `files.diff` (no turnId): `git diff HEAD` rooted at
+	 * the session cwd, optionally narrowed to one relative path. Turn-review
+	 * snapshots stay with the bridge authority — this standalone host has no
+	 * turn artifact store, so a turnId request is an explicit UNSUPPORTED.
+	 */
+	async filesDiff(args: Record<string, unknown>, context: OperationContext): Promise<Record<string, unknown>> {
+		const sessionId = context.sessionId;
+		if (sessionId === undefined) throw operationError("NOT_FOUND", "session was not found");
+		if (args.turnId !== undefined)
+			throw operationError("UNSUPPORTED", "turn review snapshots require a desktop bridge host");
+		const root = await this.#canonicalRoot(await this.#projectRootForSession(sessionId));
+		const rel = typeof args.path === "string" && args.path.length > 0 ? args.path : undefined;
+		if (rel !== undefined) await this.#contained(root, rel);
+		const argv = ["-C", root, "diff", "HEAD", "--", ...(rel !== undefined ? [rel] : [])];
+		let stdout: string;
+		try {
+			({ stdout } = await execFileAsync("git", argv, {
+				maxBuffer: MAX_FILE_BYTES * 2,
+				timeout: 15_000,
+			}));
+		} catch (error) {
+			throw operationError("FAILED", `git diff failed: ${error instanceof Error ? error.message : String(error)}`);
+		}
+		let diff = stdout;
+		let truncated = false;
+		while (Buffer.byteLength(diff, "utf8") > MAX_FILE_BYTES) {
+			diff = diff.slice(0, -1);
+			truncated = true;
+		}
+		return { diff, ...(truncated ? { truncated: true } : {}) };
+	}
+
+	operations(): Pick<DesktopOperationsAuthority, "filesList" | "filesRead" | "filesDiff"> {
 		return {
 			filesList: (args, context) => this.filesList(args, context),
 			filesRead: (args, context) => this.filesRead(args, context),
+			filesDiff: (args, context) => this.filesDiff(args, context),
 		};
 	}
 
