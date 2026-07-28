@@ -66,4 +66,4 @@ else
 fi
 
 echo "Building on $MAC_HOST..."
-ssh "$MAC_HOST" "cd '$MAC_PATH' && xcodegen generate && xcodebuild -scheme '$SCHEME' -destination '$DESTINATION' build"
+ssh "$MAC_HOST" "cd '$MAC_PATH/apps/ios' && xcodegen generate && xcodebuild -scheme '$SCHEME' -destination '$DESTINATION' build"

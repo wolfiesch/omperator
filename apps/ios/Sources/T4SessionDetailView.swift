@@ -168,12 +168,26 @@ struct T4SessionDetailView: View {
                     proxy.scrollTo("transcript-bottom", anchor: .bottom)
                 }
             }
+            #if os(macOS)
+            // Docked to the transcript column: plan strip + composer stick to
+            // the transcript's bottom edge, never spanning the right dock or
+            // the terminal drawer.
+            .safeAreaInset(edge: .bottom, spacing: 20) {
+                VStack(spacing: 8) {
+                    planStripSection
+                    composer
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 6)
+            }
+            #endif
         }
     }
 
     var body: some View {
         regionContainer
         .background(t.bg.ignoresSafeArea())
+        #if os(iOS)
         // Floating glass: plan strip + composer hover over the transcript,
         // which scrolls underneath. No floor, no divider.
         .safeAreaInset(edge: .bottom, spacing: 20) {
@@ -184,6 +198,7 @@ struct T4SessionDetailView: View {
             .padding(.horizontal, 12)
             .padding(.bottom, 6)
         }
+        #endif
         // Collapse the plan strip while typing so the keyboard never buries it.
         .onChange(of: composerFocused) { _, focused in
             if focused, planExpanded {
