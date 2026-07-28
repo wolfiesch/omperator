@@ -478,6 +478,7 @@ export async function runHostDaemon(
         // from the session cwd so remote clients get the files pane either way.
         ...(operationsAuthority.filesList ? {} : { filesList: filesOperations.filesList }),
         ...(operationsAuthority.filesRead ? {} : { filesRead: filesOperations.filesRead }),
+        ...(operationsAuthority.filesDiff ? {} : { filesDiff: filesOperations.filesDiff }),
       },
       ...(usageAuthority ? { usageAuthority } : {}),
       transcriptSearchAuthority,
