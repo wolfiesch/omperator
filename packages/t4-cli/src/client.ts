@@ -8,6 +8,7 @@ export interface SessionRef {
 	sessionId: string;
 	title: string;
 	status: string;
+	revision?: string;
 	cwd?: string;
 	project?: { name?: string; path?: string };
 	updatedAt?: string;
@@ -60,6 +61,8 @@ export class T4Client {
 	private savedCursors: Frame[] = [];
 	/** Latest cursor per session — offered as savedCursors on reconnect. */
 	private cursors = new Map<string, Frame>();
+	/** Session revisions from the inventory — required for lease acquires. */
+	private revisions = new Map<string, string>();
 
 	constructor(
 		private readonly endpoint: string,
@@ -119,7 +122,12 @@ export class T4Client {
 
 	private route(f: Frame): void {
 		switch (f.type) {
-			case "sessions": return this.events.sessions(f.sessions ?? []);
+			case "sessions": {
+				for (const s of (f.sessions ?? []) as SessionRef[]) {
+					if (s.revision) this.revisions.set(s.sessionId, s.revision);
+				}
+				return this.events.sessions(f.sessions ?? []);
+			}
 			case "snapshot": return this.events.snapshot(f.sessionId, f.entries ?? []);
 			case "entry": return this.events.entry(f.sessionId, f.entry);
 			case "session.delta":
@@ -133,7 +141,7 @@ export class T4Client {
 		}
 	}
 
-	command<T = Frame>(command: string, args: Frame = {}, sessionId?: string): Promise<T> {
+	command<T = Frame>(command: string, args: Frame = {}, sessionId?: string, expectedRevision?: string): Promise<T> {
 		const requestId = `t4-${++this.seq}-${Date.now()}`;
 		const frame: Frame = {
 			v: "omp-app/1", type: "command", requestId,
@@ -141,6 +149,7 @@ export class T4Client {
 			timestamp: new Date().toISOString(),
 			hostId: this.hostId, command, args,
 			...(sessionId ? { sessionId } : {}),
+			...(expectedRevision ? { expectedRevision } : {}),
 		};
 		const { promise, resolve, reject } = Promise.withResolvers<T>();
 		const timer = setTimeout(() => {
@@ -170,16 +179,67 @@ export class T4Client {
 		this.ws?.send(JSON.stringify({ v: "omp-app/1", hostId: this.hostId, ...frame }));
 	}
 
-	sessionList() { return this.command<{ sessions: SessionRef[] }>("session.list"); }
+	sessionList() {
+		return this.command<{ sessions: SessionRef[] }>("session.list");
+	}
+
+	/** Refresh the inventory and return one session's current revision. */
+	private async freshRevision(sessionId: string): Promise<string | undefined> {
+		await this.sessionList().catch(() => undefined);
+		return this.revisions.get(sessionId);
+	}
+
+	/**
+	 * Run a mutation under a freshly acquired lease. Every mutation
+	 * (prompt/rename/cancel/preview.launch/…) is policy-denied — closing the
+	 * connection — without a live lease, so this dance is mandatory.
+	 */
+	private async withLease(
+		sessionId: string,
+		kind: "prompt.lease" | "controller.lease",
+		fn: (leaseId: string, revision: string) => Promise<void>,
+	): Promise<void> {
+		let revision = this.revisions.get(sessionId) ?? (await this.freshRevision(sessionId));
+		if (!revision) throw new Error("session revision unknown");
+		let leaseId: string | undefined;
+		for (let attempt = 0; attempt < 2 && !leaseId; attempt += 1) {
+			try {
+				const result = await this.command<{ leaseId: string }>(
+					`${kind}.acquire`, { ownerId: "t4-tui" }, sessionId, revision);
+				leaseId = result.leaseId;
+			} catch (error) {
+				if (attempt === 0) revision = await this.freshRevision(sessionId);
+				else throw error;
+			}
+		}
+		if (!leaseId || !revision) throw new Error(`${kind}.acquire failed`);
+		// The acquire bumps the revision; the mutation must carry the fresh one.
+		const mutationRevision = (await this.freshRevision(sessionId)) ?? revision;
+		try {
+			await fn(leaseId, mutationRevision);
+		} finally {
+			await this.command(`${kind}.release`, { leaseId }, sessionId, mutationRevision).catch(() => undefined);
+		}
+	}
+
 	sessionCreate(cwd?: string) { return this.command<{ session: SessionRef }>("session.create", cwd ? { cwd } : {}); }
 	attach(sessionId: string) { return this.command("session.attach", {}, sessionId); }
-	prompt(sessionId: string, text: string) {
-		return this.command("session.prompt", { input: [{ type: "text", text }] }, sessionId);
+	async prompt(sessionId: string, text: string) {
+		await this.withLease(sessionId, "prompt.lease", async (leaseId, revision) => {
+			await this.command("session.prompt",
+				{ input: [{ type: "text", text }], leaseId }, sessionId, revision);
+		});
 	}
 	fork(sessionId: string) { return this.command<{ session: SessionRef }>("session.fork", {}, sessionId); }
-	cancel(sessionId: string) { return this.command("session.cancel", {}, sessionId); }
-	rename(sessionId: string, title: string, expectedRevision?: string) {
-		return this.command("session.rename", { title, ...(expectedRevision ? { expectedRevision } : {}) }, sessionId);
+	async cancel(sessionId: string) {
+		await this.withLease(sessionId, "controller.lease", async (leaseId, revision) => {
+			await this.command("session.cancel", { leaseId }, sessionId, revision);
+		});
+	}
+	async rename(sessionId: string, title: string) {
+		await this.withLease(sessionId, "controller.lease", async (leaseId, revision) => {
+			await this.command("session.rename", { title, leaseId }, sessionId, revision);
+		});
 	}
 	stateGet(sessionId: string) { return this.command<Frame>("session.state.get", {}, sessionId); }
 
