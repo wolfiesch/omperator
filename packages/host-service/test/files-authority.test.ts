@@ -176,6 +176,48 @@ describe("FilesAuthority filesDiff", () => {
 		expect(narrowed.diff).not.toContain("two.txt");
 	});
 
+	test("scopes a pathless diff to a session rooted below the repository", async () => {
+		const repository = await temporaryDirectory("t4-files-diff-scope-");
+		const sessionRoot = join(repository, "session");
+		const siblingRoot = join(repository, "sibling");
+		await mkdir(sessionRoot);
+		await mkdir(siblingRoot);
+		await writeFile(join(sessionRoot, "inside.txt"), "inside before\n");
+		await writeFile(join(siblingRoot, "outside.txt"), "outside before\n");
+		await initializeGitRepository(repository);
+		await writeFile(join(sessionRoot, "inside.txt"), "inside after\n");
+		await writeFile(join(siblingRoot, "outside.txt"), "outside after\n");
+		const { authority, ctx } = authorityFixture(sessionRoot);
+
+		const result = await authority.filesDiff({}, ctx);
+		expect(result.diff).toContain("inside.txt");
+		expect(result.diff).not.toContain("outside.txt");
+	});
+
+	test("returns deletion diffs for paths that no longer exist", async () => {
+		const root = await temporaryDirectory("t4-files-diff-deleted-");
+		await writeFile(join(root, "deleted.txt"), "remove me\n");
+		await initializeGitRepository(root);
+		await rm(join(root, "deleted.txt"));
+		const { authority, ctx } = authorityFixture(root);
+
+		const result = await authority.filesDiff({ path: "deleted.txt" }, ctx);
+		expect(result.diff).toContain("deleted.txt");
+		expect(result.diff).toContain("-remove me");
+	});
+
+	test("truncates oversized diffs without exhausting the child-process buffer", async () => {
+		const root = await temporaryDirectory("t4-files-diff-large-");
+		await writeFile(join(root, "large.txt"), `${"a".repeat(MAX_FILE_BYTES * 2)}\n`);
+		await initializeGitRepository(root);
+		await writeFile(join(root, "large.txt"), `${"b".repeat(MAX_FILE_BYTES * 2)}\n`);
+		const { authority, ctx } = authorityFixture(root);
+
+		const result = await authority.filesDiff({}, ctx);
+		expect(result.truncated).toBe(true);
+		expect(Buffer.byteLength(result.diff as string, "utf8")).toBeLessThanOrEqual(MAX_FILE_BYTES);
+	});
+
 	test("rejects turn snapshots, escaping paths, and missing sessions", async () => {
 		const root = await temporaryDirectory("t4-files-diff-errors-");
 		const outside = await temporaryDirectory("t4-files-diff-outside-");

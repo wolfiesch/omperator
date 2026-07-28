@@ -1,12 +1,9 @@
 import { MAX_FILE_BYTES, type SessionId } from "@t4-code/host-wire";
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { open, readdir, realpath, stat } from "node:fs/promises";
 import type { Dirent } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
-import { promisify } from "node:util";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { DesktopOperationsAuthority, OperationContext } from "./dispatcher.ts";
-
-const execFileAsync = promisify(execFile);
 
 /**
  * Maximum entries returned by one `files.list` call. The wire decoder bounds
@@ -156,24 +153,8 @@ export class FilesAuthority {
 			throw operationError("UNSUPPORTED", "turn review snapshots require a desktop bridge host");
 		const root = await this.#canonicalRoot(await this.#projectRootForSession(sessionId));
 		const rel = typeof args.path === "string" && args.path.length > 0 ? args.path : undefined;
-		if (rel !== undefined) await this.#contained(root, rel);
-		const argv = ["-C", root, "diff", "HEAD", "--", ...(rel !== undefined ? [rel] : [])];
-		let stdout: string;
-		try {
-			({ stdout } = await execFileAsync("git", argv, {
-				maxBuffer: MAX_FILE_BYTES * 2,
-				timeout: 15_000,
-			}));
-		} catch (error) {
-			throw operationError("FAILED", `git diff failed: ${error instanceof Error ? error.message : String(error)}`);
-		}
-		let diff = stdout;
-		let truncated = false;
-		while (Buffer.byteLength(diff, "utf8") > MAX_FILE_BYTES) {
-			diff = diff.slice(0, -1);
-			truncated = true;
-		}
-		return { diff, ...(truncated ? { truncated: true } : {}) };
+		if (rel !== undefined) await this.#containedDiffPath(root, rel);
+		return await this.#gitDiff(root, rel ?? ".", context.abortSignal);
 	}
 
 	operations(): Pick<DesktopOperationsAuthority, "filesList" | "filesRead" | "filesDiff"> {
@@ -209,5 +190,88 @@ export class FilesAuthority {
 		if (escaped.startsWith("..") || isAbsolute(escaped))
 			throw operationError("FORBIDDEN", "path escapes the session root");
 		return resolved;
+	}
+
+	async #containedDiffPath(canonicalRoot: string, rel: string): Promise<void> {
+		const candidate = resolve(canonicalRoot, rel);
+		const escaped = relative(canonicalRoot, candidate);
+		if (escaped.startsWith("..") || isAbsolute(escaped))
+			throw operationError("FORBIDDEN", "path escapes the session root");
+		let ancestor = candidate;
+		while (true) {
+			try {
+				const resolved = await realpath(ancestor);
+				const resolvedEscape = relative(canonicalRoot, resolved);
+				if (resolvedEscape.startsWith("..") || isAbsolute(resolvedEscape))
+					throw operationError("FORBIDDEN", "path escapes the session root");
+				return;
+			} catch (error) {
+				if ((error as { code?: string }).code !== "ENOENT") throw error;
+				const parent = dirname(ancestor);
+				if (parent === ancestor) throw operationError("NOT_FOUND", "session root was not found");
+				ancestor = parent;
+			}
+		}
+	}
+
+	async #gitDiff(root: string, pathspec: string, signal: AbortSignal): Promise<Record<string, unknown>> {
+		return await new Promise((resolvePromise, rejectPromise) => {
+			const child = spawn("git", ["-C", root, "diff", "HEAD", "--", pathspec], {
+				stdio: ["ignore", "pipe", "ignore"],
+			});
+			const chunks: Buffer[] = [];
+			let bytes = 0;
+			let truncated = false;
+			let timedOut = false;
+			let settled = false;
+			const cleanup = () => {
+				clearTimeout(timer);
+				signal.removeEventListener("abort", abort);
+			};
+			const fail = (error: Error) => {
+				if (settled) return;
+				settled = true;
+				cleanup();
+				rejectPromise(error);
+			};
+			const abort = () => {
+				child.kill("SIGKILL");
+				fail(operationError("ABORTED", "operation was aborted"));
+			};
+			const timer = setTimeout(() => {
+				timedOut = true;
+				child.kill("SIGKILL");
+			}, 15_000);
+			signal.addEventListener("abort", abort, { once: true });
+			if (signal.aborted) abort();
+			child.stdout.on("data", (value: Buffer) => {
+				if (bytes >= MAX_FILE_BYTES) {
+					truncated = true;
+					return;
+				}
+				const remaining = MAX_FILE_BYTES - bytes;
+				const chunk = value.subarray(0, remaining);
+				chunks.push(chunk);
+				bytes += chunk.length;
+				if (chunk.length < value.length) truncated = true;
+			});
+			child.on("error", () => fail(operationError("FAILED", "git diff failed")));
+			child.on("close", code => {
+				if (settled) return;
+				if (timedOut) {
+					fail(operationError("FAILED", "git diff timed out"));
+					return;
+				}
+				if (code !== 0) {
+					fail(operationError("FAILED", "git diff failed"));
+					return;
+				}
+				settled = true;
+				cleanup();
+				let diff = Buffer.concat(chunks).toString("utf8");
+				while (Buffer.byteLength(diff, "utf8") > MAX_FILE_BYTES) diff = diff.slice(0, -1);
+				resolvePromise({ diff, ...(truncated ? { truncated: true } : {}) });
+			});
+		});
 	}
 }
