@@ -132,11 +132,16 @@ export class Tui implements HostEvents {
 	}
 	close(reason: string): void {
 		this.state.connected = false;
+		// Force re-attach + terminal re-open after the reconnect lands.
+		this.attachedId = undefined;
 		this.state.terminalId = undefined;
 		this.state.termOpenedFor = undefined;
 		this.state.statusLine = `disconnected (${reason}) — reconnecting…`;
 		this.draw();
-		setTimeout(() => void this.connectLoop().then(() => this.refresh()).catch(() => undefined), 1000);
+		setTimeout(() => void this.connectLoop().then(async () => {
+			await this.refresh();
+			if (this.state.pane === "term") await this.ensureTerminal();
+		}).catch(() => undefined), 1000);
 	}
 	error(message: string): void {
 		this.state.statusLine = `error: ${message}`;
