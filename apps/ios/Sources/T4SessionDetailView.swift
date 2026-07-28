@@ -127,12 +127,12 @@ struct T4SessionDetailView: View {
                     // macOS carries the status pill in the window toolbar;
                     // iOS keeps it as a slim transcript-top row.
                     statusRow
-                    #endif
                     if let challenge = store.pendingConfirmation {
                         confirmationBanner(challenge)
                     }
                     if showFacts { facts }
                     Divider().overlay(t.lineFaint)
+                    #endif
                     T4TranscriptView(entries: store.transcript(for: session.sessionId),
                                      streamingText: store.streamingText[session.sessionId] ?? "",
                                      theme: t)
@@ -175,9 +175,13 @@ struct T4SessionDetailView: View {
             #if os(macOS)
             // Docked to the transcript column: plan strip + composer stick to
             // the transcript's bottom edge, never spanning the right dock or
-            // the terminal drawer.
+            // the terminal drawer. Approval challenges dock here too — a
+            // decision surface, not transcript scrollback.
             .safeAreaInset(edge: .bottom, spacing: 20) {
                 VStack(spacing: 8) {
+                    if let challenge = store.pendingConfirmation {
+                        confirmationBanner(challenge)
+                    }
                     planStripSection
                     composer
                 }
@@ -193,9 +197,13 @@ struct T4SessionDetailView: View {
         .background(t.bg.ignoresSafeArea())
         #if os(iOS)
         // Floating glass: plan strip + composer hover over the transcript,
-        // which scrolls underneath. No floor, no divider.
+        // which scrolls underneath. No floor, no divider. Approval challenges
+        // dock here too — a decision surface, not transcript scrollback.
         .safeAreaInset(edge: .bottom, spacing: 20) {
             VStack(spacing: 8) {
+                if let challenge = store.pendingConfirmation {
+                    confirmationBanner(challenge)
+                }
                 planStripSection
                 composer
             }
@@ -239,10 +247,15 @@ struct T4SessionDetailView: View {
                 }
             }
             ToolbarItemGroup(placement: .primaryAction) {
-                Button { withAnimation(.easeInOut(duration: 0.2)) { showFacts.toggle() } } label: {
+                Button { showFacts.toggle() } label: {
                     Image(systemName: showFacts ? "info.circle.fill" : "info.circle")
                 }
                 .accessibilityLabel("Session details")
+                .popover(isPresented: $showFacts, arrowEdge: .bottom) {
+                    facts
+                        .padding(14)
+                        .frame(width: 320)
+                }
                 Button { openPane(.files) } label: {
                     Image(systemName: "folder")
                 }
