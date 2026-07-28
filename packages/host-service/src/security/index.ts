@@ -78,6 +78,9 @@ const canonicalIdentity = (identity: RemotePeerIdentity): string => {
 		throw new Error("invalid tailscale identity");
 	return JSON.stringify([identity.nodeId, identity.login, identity.hostId, identity.tailnetIp]);
 };
+/** Exported so the host can mint a device record offline (local autoconnect)
+ * with the exact identity key registry.authenticate will derive at hello. */
+export const canonicalDeviceIdentityKey = canonicalIdentity;
 const normalizeSourceIp = (value: string): string | null => {
 	const raw = safe(value, 128)?.trim();
 	if (!raw) return null;

@@ -538,6 +538,20 @@ export async function runHostDaemon(
                   },
                 }
               : {}),
+            // Local autoconnect: same-machine apps read the 0600 credential
+            // file and connect over loopback — no pairing UI. Direct mode
+            // only; serve mode already binds loopback for the Tailscale proxy.
+            ...(config.remote.mode === "direct"
+              ? {
+                  remoteEndpointLoopback: {
+                    address: "127.0.0.1",
+                    port: config.remote.port,
+                    originAllowlist: config.remote.origins,
+                  },
+                  localDevicePath: `${paths.socketPath}.localdevice`,
+                  log: (event: string, data?: Record<string, unknown>) => hostLogger.log(event, data),
+                }
+              : {}),
             appserver: options,
           })
         : (dependencies.createLocal ?? createAppserver)(options);

@@ -103,7 +103,7 @@ import {
 } from "./ownership.ts";
 import { OfficialOmpCapabilityAdapter, OfficialOmpOperationError } from "./official-omp-capabilities.ts";
 import { SessionProjection } from "./projection.ts";
-import { BunRemoteListener, createInternalListenerPlan, createListenerPlan, createServeProxyPlan } from "./remote/listener.ts";
+import { BunRemoteListener, createInternalListenerPlan, createListenerPlan, createLoopbackListenerPlan, createServeProxyPlan } from "./remote/listener.ts";
 import type { HostLogger } from "./remote/logging.ts";
 import type { HealthSnapshot, RemoteConnection, RemoteListenerConfig } from "./remote/types.ts";
 import { BunRpcChildFactory, RpcChildSupervisor } from "./rpc-child.ts";
@@ -990,7 +990,9 @@ export class LocalAppserver implements AppserverHandle {
 	#remoteDecisions = new Map<AppWs, RemoteHelloDecision>();
 	#remoteListener?: BunRemoteListener;
 	#remoteListenerTls?: BunRemoteListener;
+	#remoteListenerLoopback?: BunRemoteListener;
 	#remoteEndpointTls?: RemoteListenerConfig;
+	#remoteEndpointLoopback?: RemoteListenerConfig;
 	#remotePolicy?: RemoteConnectionPolicy;
 	#admin?: AppserverOptions["admin"];
 	#testControl?: AppserverOptions["testControl"];
@@ -1057,6 +1059,7 @@ export class LocalAppserver implements AppserverHandle {
 		this.#testControl = options.testControl;
 		this.#remoteListener = options.remoteListener;
 		this.#remoteEndpointTls = options.remoteEndpointTls;
+		this.#remoteEndpointLoopback = options.remoteEndpointLoopback;
 		this.#clock = options.clock ?? clock;
 		this.#idempotency = new IdempotencyStore({ now: () => this.#clock.now().getTime() });
 		this.#authority = options.sessionAuthority;
@@ -1432,6 +1435,30 @@ export class LocalAppserver implements AppserverHandle {
 				}
 				this.#remoteListenerTls = tlsListener;
 			}
+			if (this.#remotePolicy && this.#remoteEndpointLoopback) {
+				const loopbackEndpoint = this.#remoteEndpointLoopback;
+				const loopbackListener = new BunRemoteListener(
+					createLoopbackListenerPlan(loopbackEndpoint),
+					{
+						connected: connection => this.#remoteConnected(connection),
+						message: (connection, message) => this.#remoteMessage(connection, message),
+						disconnected: connection => this.#remoteDisconnected(connection),
+					},
+					loopbackEndpoint,
+					undefined,
+					() => this.#healthSnapshot(),
+				);
+				try {
+					loopbackListener.start();
+				} catch (error) {
+					await this.#remoteListener?.stop().catch(() => undefined);
+					this.#remoteListener = undefined;
+					await this.#remoteListenerTls?.stop().catch(() => undefined);
+					this.#remoteListenerTls = undefined;
+					throw error;
+				}
+				this.#remoteListenerLoopback = loopbackListener;
+			}
 		} catch (error) {
 			try {
 				await this.cleanupPartial();
@@ -1460,6 +1487,8 @@ export class LocalAppserver implements AppserverHandle {
 			this.#remoteListener = undefined;
 			await this.#remoteListenerTls?.stop();
 			this.#remoteListenerTls = undefined;
+			await this.#remoteListenerLoopback?.stop();
+			this.#remoteListenerLoopback = undefined;
 			await Promise.all(
 				[...this.#clients].map(async ws => {
 					for (const controller of this.#abortControllers.get(ws) ?? []) controller.abort();

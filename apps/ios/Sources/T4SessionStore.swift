@@ -270,7 +270,13 @@ final class T4SessionStore: ObservableObject {
         // consent dialog ignores kSecUseAuthenticationUIFail for ACL-denied
         // items and can block the main thread before first paint).
         if ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("-T4DeviceToken=") }) { return true }
-        return Keychain.get(Self.savedEndpointKey) != nil
+        if Keychain.get(Self.savedEndpointKey) != nil { return true }
+        #if os(macOS)
+        // A local t4-host publishing an autoconnect credential counts as a
+        // saved connection: restore() will pick it up without any UI.
+        if LocalHostCredential.load() != nil { return true }
+        #endif
+        return false
     }
 
     /// True once a live host has spoken; false while showing the offline sample.
@@ -352,15 +358,37 @@ final class T4SessionStore: ObservableObject {
         if let seam = seamArg("T4Endpoint") {
             Keychain.set(seam, forKey: Self.savedEndpointKey)
         }
-        guard !connected, !connecting,
-              let endpointString = Keychain.get(Self.savedEndpointKey),
-              let endpoint = URL(string: endpointString) else { return }
-        let deviceId = Keychain.get(Self.savedDeviceIdKey) ?? ""
-        let token = Keychain.get(Self.savedDeviceTokenKey) ?? ""
-        let auth: DeviceAuthentication? = (!deviceId.isEmpty && !token.isEmpty)
-            ? DeviceAuthentication(deviceId: deviceId, deviceToken: token) : nil
-        await connect(endpoint: endpoint, identity: ClientIdentity(name: "t4-ios", version: "0.1", build: "dev", platform: "ios"), authentication: auth)
+        guard !connected, !connecting else { return }
+        if let endpointString = Keychain.get(Self.savedEndpointKey),
+           let endpoint = URL(string: endpointString) {
+            let deviceId = Keychain.get(Self.savedDeviceIdKey) ?? ""
+            let token = Keychain.get(Self.savedDeviceTokenKey) ?? ""
+            let auth: DeviceAuthentication? = (!deviceId.isEmpty && !token.isEmpty)
+                ? DeviceAuthentication(deviceId: deviceId, deviceToken: token) : nil
+            await connect(endpoint: endpoint, identity: ClientIdentity(name: "t4-ios", version: "0.1", build: "dev", platform: "ios"), authentication: auth)
+            if connected { return }
+        }
+        #if os(macOS)
+        // Local autoconnect: no saved remote (or it's unreachable) and a
+        // t4-host on this machine is publishing a credential. Same-machine
+        // trust — nothing is written to the Keychain; the host's 0600 file
+        // is the source of truth and rotates on every host start.
+        guard !connected, !connecting, let local = LocalHostCredential.load() else { return }
+        connectingLocalAutoconnect = true
+        await connect(endpoint: local.endpoint, identity: ClientIdentity(name: "t4-ios", version: "0.1", build: "dev", platform: "ios"),
+                      authentication: DeviceAuthentication(deviceId: local.deviceId, deviceToken: local.deviceToken))
+        connectingLocalAutoconnect = false
+        localAutoconnect = connected
+        #endif
     }
+
+    /// True while the current connection came from the local host's
+    /// autoconnect file rather than an explicitly paired/saved host. Drives
+    /// the "This Mac · automatic" row in Settings.
+    @Published private(set) var localAutoconnect = false
+    /// Set only around the autoconnect connect() call so persist() skips the
+    /// Keychain for credentials the local host owns.
+    private var connectingLocalAutoconnect = false
 
     /// True when the session's credentials came from -T4Endpoint/-T4DeviceId/
     /// -T4DeviceToken launch seams: nothing may touch the Keychain this run
@@ -369,7 +397,7 @@ final class T4SessionStore: ObservableObject {
     private var ephemeralCredentials = false
 
     private func persist(endpoint: URL, authentication: DeviceAuthentication?) {
-        if ephemeralCredentials { return }
+        if ephemeralCredentials || connectingLocalAutoconnect { return }
         // nil/empty values clear the item, matching the prior UserDefaults
         // semantics (an open host persists only the endpoint, no creds).
         Keychain.set(endpoint.absoluteString, forKey: Self.savedEndpointKey)
@@ -1944,6 +1972,7 @@ final class T4SessionStore: ObservableObject {
         connected = false
         pairedEndpoint = nil
         hostInfo = nil
+        localAutoconnect = false
         // Drop any open terminals — the transport is gone, no close frame.
         terminalOutput.removeAll()
         terminalExits.removeAll()

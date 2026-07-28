@@ -20,6 +20,7 @@ import {
 	type AuthenticatedPrincipal,
 	type AuthorizationGuard,
 	type Capability,
+	canonicalDeviceIdentityKey,
 	type Clock,
 	type DeviceMetadata,
 	type DeviceRegistry,
@@ -89,6 +90,11 @@ function securityIdentity(peer: RemotePeerIdentity): SecurityPeerIdentity {
 		hostId: peer.hostname ?? peer.nodeId,
 		tailnetIp: address,
 	};
+}
+/** The exact device identity key registry.authenticate derives for this peer
+ * at hello time — used to mint the local autoconnect device record offline. */
+export function deviceIdentityKeyForPeer(peer: RemotePeerIdentity): string {
+	return canonicalDeviceIdentityKey(securityIdentity(peer));
 }
 function safeString(value: unknown, max = 256): value is string {
 	return typeof value === "string" && value.length > 0 && value.length <= max && ![...value].some(character => {

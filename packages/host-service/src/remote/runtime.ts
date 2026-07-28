@@ -1,22 +1,88 @@
 import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import { access, chmod, lstat, mkdir, open, readFile, realpath, stat } from "node:fs/promises";
+import { access, chmod, lstat, mkdir, open, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { LocalPairingTicketIssuer, SqliteDeviceRegistry } from "../security/index.ts";
+import { isCapability, type DeviceCapability } from "@t4-code/host-wire";
 import { appserverSupportedCapabilities, appserverSupportedFeatures, createAppserver } from "../server.ts";
 import type { AppserverHandle, AppserverOptions } from "../types.ts";
-import { TailscaleRemotePolicy } from "./policy.ts";
+import { deviceIdentityKeyForPeer, TailscaleRemotePolicy } from "./policy.ts";
 import { TailscaleWhoisResolver } from "./resolver.ts";
-import type { ProcessRunner, ProcessRunOptions, RemoteListenerConfig } from "./types.ts";
+import type { ProcessRunner, ProcessRunOptions, RemoteListenerConfig, RemotePeerIdentity } from "./types.ts";
 
 const KEY_BYTES = 32;
 const DEFAULT_WHOIS_OUTPUT = 256 * 1024;
+const LOCAL_DEVICE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
+/** Mint (or rotate) the device credential same-machine apps use to
+ * autoconnect over the loopback listener, and publish it as a 0600 JSON file
+ * next to the appserver socket. The record is bound to the host's own tailnet
+ * node identity — exactly what registry.authenticate derives when the
+ * loopback listener reports peers as that node. Every host start revokes the
+ * previous file's device and issues a fresh one, killing old tokens. */
+export async function publishLocalDevice(
+	registry: SqliteDeviceRegistry,
+	path: string,
+	endpoint: string,
+	selfIdentity: RemotePeerIdentity,
+	capabilities: readonly string[],
+): Promise<void> {
+	try {
+		const previous = JSON.parse(await readFile(path, "utf8")) as { deviceId?: unknown };
+		if (typeof previous.deviceId === "string" && registry.get(previous.deviceId))
+			registry.revoke(previous.deviceId);
+	} catch {
+		// No readable previous file — first start on this machine.
+	}
+	const now = Date.now();
+	const deviceId = `local-${randomBytes(9).toString("base64url")}`;
+	const token = randomBytes(32).toString("base64url");
+	registry.create(
+		{
+			deviceId,
+			identityKey: deviceIdentityKeyForPeer(selfIdentity),
+			capabilities: capabilities.filter((value): value is DeviceCapability => isCapability(value)),
+			metadata: {
+				label: "This Mac (automatic)",
+				platform: process.platform === "darwin" ? "macos" : process.platform,
+			},
+			createdAt: now,
+			lastSeenAt: null,
+			tokenExpiresAt: now + LOCAL_DEVICE_TTL_MS,
+			revokedAt: null,
+			epoch: 0,
+		},
+		token,
+	);
+	const payload = JSON.stringify({
+		version: 1,
+		endpoint,
+		deviceId,
+		deviceToken: token,
+	});
+	const tmp = `${path}.tmp-${randomBytes(6).toString("hex")}`;
+	await writeFile(tmp, payload, { mode: 0o600 });
+	await rename(tmp, path);
+}
+
+async function withdrawLocalDevice(path: string): Promise<void> {
+	await unlink(path).catch(() => undefined);
+}
 
 export interface RemoteAppserverOptions {
 	readonly stateDir: string;
 	readonly remoteEndpoint: RemoteListenerConfig;
 	readonly remoteEndpointTls?: RemoteListenerConfig;
-	readonly appserver?: Omit<AppserverOptions, "remoteEndpoint" | "remotePolicy" | "remoteResolver" | "admin">;
+	/** Same-machine clients: extra listener on 127.0.0.1. The host resolves its
+	 * own tailnet identity once and reports every loopback peer as that node,
+	 * so credentials bound to this machine (the local-device file below, or any
+	 * device paired here) authenticate without pairing UI. */
+	readonly remoteEndpointLoopback?: RemoteListenerConfig;
+	/** Path of the 0600 JSON credential file same-machine apps read to
+	 * autoconnect over the loopback listener. Requires remoteEndpointLoopback. */
+	readonly localDevicePath?: string;
+	readonly log?: (event: string, data?: Record<string, unknown>) => void;
+	readonly appserver?: Omit<AppserverOptions, "remoteEndpoint" | "remoteEndpointLoopback" | "remotePolicy" | "remoteResolver" | "admin">;
 	readonly processRunner?: ProcessRunner;
 	readonly tailscaleExecutable?: string;
 }
@@ -161,14 +227,16 @@ export async function createRemoteAppserver(options: RemoteAppserverOptions): Pr
 	const registry = new SqliteDeviceRegistry(join(options.stateDir, "devices.sqlite"));
 	const issuer = new LocalPairingTicketIssuer(registry, key);
 	const appserverOptions = options.appserver;
+	const supportedCapabilities = appserverSupportedCapabilities(appserverOptions ?? {});
 	const policy = new TailscaleRemotePolicy({
 		registry,
 		localPairing: issuer,
-		supportedCapabilities: appserverSupportedCapabilities(appserverOptions ?? {}),
+		supportedCapabilities,
 		supportedFeatures: appserverSupportedFeatures(appserverOptions ?? {}, true),
 	});
 	const endpoint = options.remoteEndpoint;
 	let resolver: TailscaleWhoisResolver | undefined;
+	let loopbackEndpoint: RemoteListenerConfig | undefined;
 	try {
 		if (endpoint.serveProxy !== true) {
 			const executable = options.tailscaleExecutable ?? (await discoverTailscaleExecutable());
@@ -178,10 +246,31 @@ export async function createRemoteAppserver(options: RemoteAppserverOptions): Pr
 				endpoint.whoisMaxOutputBytes ?? DEFAULT_WHOIS_OUTPUT,
 			);
 		}
+		if (options.remoteEndpointLoopback && resolver && options.localDevicePath) {
+			// Local autoconnect: report loopback peers as this host's own tailnet
+			// node and mint the device credential file apps read. A whois failure
+			// (tailscaled down) must never keep the host from starting.
+			try {
+				const selfIdentity = await resolver.resolve(endpoint.address);
+				loopbackEndpoint = { ...options.remoteEndpointLoopback, selfIdentity };
+				await publishLocalDevice(
+					registry,
+					options.localDevicePath,
+					`ws://${options.remoteEndpointLoopback.address}:${options.remoteEndpointLoopback.port}/v1/ws`,
+					selfIdentity,
+					supportedCapabilities,
+				);
+				options.log?.("remote.local_autoconnect", { address: options.remoteEndpointLoopback.address, port: options.remoteEndpointLoopback.port });
+			} catch (error) {
+				loopbackEndpoint = undefined;
+				options.log?.("remote.local_autoconnect.disabled", { error: error instanceof Error ? error.message : String(error) });
+			}
+		}
 		const inner = createAppserver({
 			...options.appserver,
 			remoteEndpoint: endpoint,
 			...(options.remoteEndpointTls ? { remoteEndpointTls: options.remoteEndpointTls } : {}),
+			...(loopbackEndpoint ? { remoteEndpointLoopback: loopbackEndpoint } : {}),
 			remotePolicy: policy,
 			...(resolver ? { remoteResolver: resolver } : undefined),
 			admin: {
@@ -220,6 +309,7 @@ export async function createRemoteAppserver(options: RemoteAppserverOptions): Pr
 				try {
 					await inner.stop();
 				} finally {
+					if (options.localDevicePath) await withdrawLocalDevice(options.localDevicePath);
 					closePolicy();
 				}
 			},

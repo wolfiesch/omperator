@@ -318,6 +318,11 @@ export interface AppserverOptions {
 	remoteEndpoint?: RemoteListenerConfig;
 	/** Optional second listener serving the same policy over TLS (wss); shares hooks and health with remoteEndpoint. */
 	remoteEndpointTls?: RemoteListenerConfig;
+	/** Optional loopback listener (127.0.0.1) for same-machine clients. Peers
+	 * are reported with config.selfIdentity (the host's own tailnet node), so
+	 * only device credentials bound to that node authenticate — pairing is
+	 * unchanged for everyone else. */
+	remoteEndpointLoopback?: RemoteListenerConfig;
 	remotePolicy?: RemoteConnectionPolicy;
 	remoteResolver?: { resolve(address: string): Promise<RemotePeerIdentity> };
 	/** Optional structured host logger for connection/pair/denied/supervisor/watchdog events. */

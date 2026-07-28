@@ -40,6 +40,11 @@ export interface RemoteListenerConfig {
 	serveProxy?: boolean;
 	/** Fixed peer identity for a pod-network listener whose omp-app hello is authenticated by a dedicated policy. */
 	internalPeerNodeId?: string;
+	/** Loopback listeners only: every loopback peer is reported with this
+	 * identity (the host's own tailnet node). Possession of a device credential
+	 * bound to that node — e.g. the 0600 local-device file — is what
+	 * authenticates the connection; the mapping itself grants nothing. */
+	selfIdentity?: RemotePeerIdentity;
 	/** PEM cert/key for a TLS (wss) listener; fingerprint is sha256 of the cert DER, hex. */
 	tls?: { readonly cert: string; readonly key: string };
 	tlsFingerprint?: string;
@@ -67,7 +72,7 @@ export interface HealthSnapshot {
  * response with live host state. Falls back to `{ ok: true }` when absent. */
 export type HealthProvider = () => HealthSnapshot;
 export interface ListenerPlan {
-	mode: "direct" | "serve";
+	mode: "direct" | "serve" | "loopback";
 	address: string;
 	port: number;
 	path: "/v1/ws";

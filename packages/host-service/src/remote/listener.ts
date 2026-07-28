@@ -64,6 +64,17 @@ export function createInternalListenerPlan(config: RemoteListenerConfig): Listen
 export function originAllowed(origin: string | null, allowlist: readonly string[] = []): boolean {
 	return origin === null || allowlist.includes(origin);
 }
+export function isLoopbackAddress(address: string): boolean {
+	const normalized = normalizeIpAddress(address);
+	return normalized === "127.0.0.1" || normalized === "::1";
+}
+export function createLoopbackListenerPlan(config: RemoteListenerConfig): ListenerPlan {
+	if (!isLoopbackAddress(config.address)) throw new Error("loopback listener must bind a loopback address");
+	if (!config.selfIdentity) throw new Error("loopback listener requires a self identity");
+	if (!Number.isInteger(config.port) || config.port < 1 || config.port > 65535)
+		throw new Error("listener port is invalid");
+	return { mode: "loopback", address: config.address, port: config.port, path: "/v1/ws", trustedServeProxy: false };
+}
 export function createServeProxyPlan(config: RemoteListenerConfig): ListenerPlan {
 	if (config.address !== "127.0.0.1" && config.address !== "::1") throw new Error("Serve proxy must bind loopback");
 	if (config.trustedServeProxy !== true) throw new Error("Serve proxy requires trustedServeProxy");
@@ -154,7 +165,12 @@ export class BunRemoteListener {
 					if (!requested) return new Response("Unauthorized", { status: 401 });
 					const address = normalizeIpAddress(requested);
 					let peer: ListenerPeerContext | undefined;
-					if (this.plan.mode === "direct") {
+					if (this.plan.mode === "loopback") {
+						// Every loopback peer is the host's own node: only credentials
+						// bound to that node (paired on this machine, or the 0600
+						// local-device file) authenticate — no whois needed.
+						peer = { address, source: "direct", identity: this.config.selfIdentity! };
+					} else if (this.plan.mode === "direct") {
 						if (this.config.internalPeerNodeId) {
 							const normalized = normalizeIpAddress(address);
 							peer = { address: normalized, source: "direct", identity: { nodeId: this.config.internalPeerNodeId, addresses: [normalized], source: "direct" } };
