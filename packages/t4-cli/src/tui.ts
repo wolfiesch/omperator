@@ -175,6 +175,8 @@ export class Tui implements HostEvents {
 	}
 	termOutput(_sessionId: string, terminalId: string, _stream: string, data: string, encoding?: string): void {
 		if (terminalId !== this.state.terminalId) return;
+		if (process.env.T4_DEBUG_TERM)
+			require("node:fs").appendFileSync("/tmp/t4term.log", JSON.stringify({ stream: _stream, encoding, data: data.slice(0, 120) }) + "\n");
 		const text = encoding === "base64" ? Buffer.from(data, "base64").toString("utf8") : data;
 		// Strip ANSI control sequences for the tail view; keep it readable.
 		const clean = text.replace(/\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07/g, "");
