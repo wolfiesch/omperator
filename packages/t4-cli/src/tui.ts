@@ -566,6 +566,8 @@ export class Tui implements HostEvents {
 	}
 
 	private mouse(btn: number, x: number, y: number, down: boolean): void {
+		if (process.env.T4_DEBUG_MOUSE)
+			require("node:fs").appendFileSync("/tmp/t4mouse.log", JSON.stringify({ btn, x, y, down, pane: this.state.pane }) + "\n");
 		const s = this.state;
 		if (btn === 64 || btn === 65) {
 			const delta = btn === 64 ? 3 : -3;
