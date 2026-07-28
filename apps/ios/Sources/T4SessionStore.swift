@@ -876,7 +876,7 @@ final class T4SessionStore: ObservableObject {
     /// command-gating feature names for the panes (preview, search, watch).
     private static let clientFeatures = [
         "resume", "prompt.lease", "controller.lease", "prompt.images", "transcript.page",
-        "session.delta", "files.list", "terminal.io",
+        "session.delta", "files.list", "files.diff", "terminal.io",
         "preview.control", "files.search", "transcript.search",
         "session.watch", "host.watch", "project.reveal",
     ]
