@@ -696,6 +696,12 @@ export class Tui implements HostEvents {
 		}
 		if (s.showHelp) return;
 		if (s.filtering) { s.filter += ch; this.draw(); return; }
+		// Pane switching is global.
+		if (ch >= "1" && ch <= "5") {
+			const pane = PANES[Number(ch) - 1]!;
+			if (pane !== s.pane) this.setPane(pane);
+			return;
+		}
 		if (s.pane === "search") {
 			s.searchQuery += ch;
 			this.scheduleSearch();
@@ -732,11 +738,6 @@ export class Tui implements HostEvents {
 				s.filtering = true;
 				this.draw();
 				return;
-			case "1": this.setPane("chat"); return;
-			case "2": this.setPane("files"); return;
-			case "3": this.setPane("search"); return;
-			case "4": this.setPane("diff"); return;
-			case "5": this.setPane("term"); return;
 			case "q": return this.destroy();
 			case "?":
 				s.showHelp = true;
