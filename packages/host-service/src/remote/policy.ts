@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+	ARTIFACT_CHUNK_BASE64_BYTES,
 	type ClientFrame,
 	COMMAND_DESCRIPTORS,
 	type CommandFrame,
@@ -8,12 +9,15 @@ import {
 	type HelloFrame,
 	isSecretLikeKey,
 	MAX_ARRAY_ITEMS,
+	MAX_FILE_BYTES,
 	MAX_MAP_KEYS,
+	PREVIEW_CAPTURE_CHUNK_BASE64_BYTES,
 	type PairOkFrame,
 	type PairStartFrame,
 	pairingId,
 	REMOTE_DEFAULT_CAPABILITIES,
 	type ServerFrame,
+	TRANSCRIPT_IMAGE_CHUNK_BASE64_BYTES,
 	leaseId as wireLeaseId,
 } from "@t4-code/host-wire";
 import {
@@ -720,10 +724,22 @@ export class TailscaleRemotePolicy implements RemoteConnectionPolicy {
 
 function sanitizeRemoteFrame(frame: ServerFrame): ServerFrame | undefined {
 	const seen = new WeakSet<object>();
-	const walk = (value: unknown, depth: number, settingsMap = false): unknown => {
+	const largeContentLimits: Readonly<Record<string, number>> = {
+		"files.read": Math.ceil(MAX_FILE_BYTES / 3) * 4,
+		"session.image.read": TRANSCRIPT_IMAGE_CHUNK_BASE64_BYTES,
+		"artifact.read": ARTIFACT_CHUNK_BASE64_BYTES,
+		"preview.capture.read": PREVIEW_CAPTURE_CHUNK_BASE64_BYTES,
+	};
+	const largeContentLimit =
+		frame.type === "response" && typeof frame.command === "string"
+			? largeContentLimits[frame.command]
+			: undefined;
+	const walk = (value: unknown, depth: number, settingsMap = false, largeContent = false): unknown => {
 		if (depth > 12) throw new Error("outbound depth exceeded");
 		if (typeof value === "string") {
-			if (value.length > 65_536) throw new Error("outbound string exceeded");
+			if (value.length > (largeContent && largeContentLimit !== undefined ? largeContentLimit : 65_536))
+				throw new Error("outbound string exceeded");
+			if (largeContent) return value;
 			if (
 				/^(?:[A-Za-z]+\s+)?[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(value) ||
 				/^Bearer\s+/iu.test(value)
@@ -738,7 +754,7 @@ function sanitizeRemoteFrame(frame: ServerFrame): ServerFrame | undefined {
 		seen.add(value);
 		if (Array.isArray(value)) {
 			if (value.length > MAX_ARRAY_ITEMS) throw new Error("outbound array exceeded");
-			const result = value.map(item => walk(item, depth + 1));
+			const result = value.map(item => walk(item, depth + 1, false, false));
 			seen.delete(value);
 			return result;
 		}
@@ -755,7 +771,15 @@ function sanitizeRemoteFrame(frame: ServerFrame): ServerFrame | undefined {
 				result[childKey] = child;
 			} else if (!settingsMap && (childKey === "deviceToken" || isSecretLikeKey(childKey))) {
 				result[childKey] = "[redacted]";
-			} else result[childKey] = walk(child, depth + 1, childIsSettingsMap);
+			} else
+				result[childKey] = walk(
+					child,
+					depth + 1,
+					childIsSettingsMap,
+					largeContentLimit !== undefined &&
+						depth === 1 &&
+						(childKey === "content" || childKey === "data"),
+				);
 		}
 		seen.delete(value);
 		return result;
