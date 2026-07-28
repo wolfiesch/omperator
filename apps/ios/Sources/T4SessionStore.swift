@@ -1235,7 +1235,7 @@ final class T4SessionStore: ObservableObject {
     private static let clientFeatures = [
         "resume", "prompt.lease", "controller.lease", "prompt.images", "transcript.page",
         "session.delta", "files.list", "terminal.io",
-        "preview.control", "files.search", "transcript.search",
+        "preview.control", "files.search", "files.diff", "transcript.search",
         "session.watch", "host.watch", "project.reveal",
         "session.observer", "session.unverified", "session.fork",
     ]

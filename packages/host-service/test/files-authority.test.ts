@@ -24,9 +24,20 @@ function context(signal = new AbortController().signal): OperationContext {
 		sessionId: sessionId("files-session"),
 		deviceId: "device-1",
 		connectionId: "connection-1",
-		capabilities: new Set(["files.list", "files.read"]),
+		capabilities: new Set(["files.list", "files.read", "files.diff"]),
 		abortSignal: signal,
 	};
+}
+
+async function initializeGitRepository(root: string): Promise<void> {
+	for (const args of [
+		["init"],
+		["add", "."],
+		["-c", "user.name=T4 Test", "-c", "user.email=t4@example.invalid", "commit", "-m", "base"],
+	]) {
+		const process = Bun.spawn(["git", "-C", root, ...args], { stdout: "ignore", stderr: "pipe" });
+		if ((await process.exited) !== 0) throw new Error(await new Response(process.stderr).text());
+	}
 }
 
 function authorityFixture(root: string): { authority: FilesAuthority; ctx: OperationContext } {
@@ -144,8 +155,45 @@ describe("FilesAuthority filesRead", () => {
 		await expect(authority.filesRead({ path: "nope.txt" }, ctx)).rejects.toMatchObject({ code: "NOT_FOUND" });
 	});
 
-	test("operations() advertises exactly filesList and filesRead", () => {
+});
+
+describe("FilesAuthority filesDiff", () => {
+	test("returns the working-tree diff and optionally narrows it to one file", async () => {
+		const root = await temporaryDirectory("t4-files-diff-");
+		await writeFile(join(root, "one.txt"), "before one\n");
+		await writeFile(join(root, "two.txt"), "before two\n");
+		await initializeGitRepository(root);
+		await writeFile(join(root, "one.txt"), "after one\n");
+		await writeFile(join(root, "two.txt"), "after two\n");
+		const { authority, ctx } = authorityFixture(root);
+
+		const all = await authority.filesDiff({}, ctx);
+		expect(all.diff).toContain("one.txt");
+		expect(all.diff).toContain("two.txt");
+
+		const narrowed = await authority.filesDiff({ path: "one.txt" }, ctx);
+		expect(narrowed.diff).toContain("one.txt");
+		expect(narrowed.diff).not.toContain("two.txt");
+	});
+
+	test("rejects turn snapshots, escaping paths, and missing sessions", async () => {
+		const root = await temporaryDirectory("t4-files-diff-errors-");
+		const outside = await temporaryDirectory("t4-files-diff-outside-");
+		await writeFile(join(root, "tracked.txt"), "base\n");
+		await writeFile(join(outside, "secret.txt"), "secret\n");
+		await symlink(join(outside, "secret.txt"), join(root, "escape.txt"));
+		await initializeGitRepository(root);
+		const { authority, ctx } = authorityFixture(root);
+
+		await expect(authority.filesDiff({ turnId: "turn-1" }, ctx)).rejects.toMatchObject({ code: "UNSUPPORTED" });
+		await expect(authority.filesDiff({ path: "escape.txt" }, ctx)).rejects.toMatchObject({ code: "FORBIDDEN" });
+		await expect(authority.filesDiff({}, { ...ctx, sessionId: undefined })).rejects.toMatchObject({
+			code: "NOT_FOUND",
+		});
+	});
+
+	test("operations() advertises all standalone file operations", () => {
 		const { authority } = authorityFixture("/tmp");
-		expect(Object.keys(authority.operations()).sort()).toEqual(["filesList", "filesRead"]);
+		expect(Object.keys(authority.operations()).sort()).toEqual(["filesDiff", "filesList", "filesRead"]);
 	});
 });

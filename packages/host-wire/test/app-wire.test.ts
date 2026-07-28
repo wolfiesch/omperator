@@ -1393,6 +1393,9 @@ describe("app-wire authority", () => {
 			AppWireError,
 		);
 		expect(() => decodeCommandArguments("preview.launch", { url: "javascript:alert(1)" })).toThrow(AppWireError);
+		expect(decodeCommandArguments("files.diff", {})).toEqual({});
+		expect(decodeCommandArguments("files.diff", { path: "src/app.ts" })).toEqual({ path: "src/app.ts" });
+		expect(() => decodeCommandArguments("files.diff", { path: "../outside" })).toThrow(AppWireError);
 		expect(
 			decodeCommandArguments("session.model.set", { selector: "openai/gpt-5.5", persistence: "session" }),
 		).toMatchObject({ selector: "openai/gpt-5.5", persistence: "session" });

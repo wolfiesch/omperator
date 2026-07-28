@@ -138,6 +138,18 @@ struct HostWireFixtureTests {
                 expectedRevision: "rev"
             )
         }
+        #expect(throws: Never.self) {
+            _ = try CommandFrame(
+                requestId: "r", commandId: "c", hostId: "h",
+                command: "files.search", sessionId: "s"
+            )
+        }
+        #expect(throws: Never.self) {
+            _ = try CommandFrame(
+                requestId: "r", commandId: "c", hostId: "h",
+                command: "files.diff", sessionId: "s"
+            )
+        }
     }
 
     @Test("Unknown session ownership shapes stay read-only")
