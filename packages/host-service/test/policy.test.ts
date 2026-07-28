@@ -446,6 +446,25 @@ test("prompt lease release remains authorized by the default guard before revoca
 	expect(policy.authorize(owner, prompt, context)).toBe(false);
 	policy.close();
 });
+test("remote terminal opens remain confirmation protected", () => {
+	const registry = new Registry();
+	registry.current = {
+		...registry.current,
+		capabilities: [...registry.current.capabilities, "term.open"],
+	};
+	const guard = new DefaultAuthorizationGuard(registry);
+	const policy = new TailscaleRemotePolicy({ registry, guard });
+	const remote = connection("guarded-terminal", { count: 0 });
+	policy.authenticate(remote, hello(remote.connectionId, ["term.open"]));
+	expect(
+		policy.authorize(remote, command("guarded-terminal-open", "term.open"), {
+			connectionId: remote.connectionId,
+			peer: remote.peer,
+			sessionRevision: revisionValue,
+		}),
+	).toBe(false);
+	policy.close();
+});
 test("preview commands require negotiated preview.control and preview capability", () => {
 	const registry = new Registry();
 	registry.current = {

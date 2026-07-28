@@ -11,5 +11,5 @@ export const OPERATION_COMMAND_DESCRIPTORS: CommandDescriptorGroup = {
   "review.apply": descriptor("files.write", "session", "required", "authority", "challenge"),
   "agent.cancel": descriptor("agents.control", "session", "optional", "session", "challenge"),
   "bash.run": descriptor("bash.run", "session", "optional", "session", "challenge"),
-  "term.open": descriptor("term.open", "session", "optional", "session", "none"),
+  "term.open": descriptor("term.open", "session", "optional", "session", "challenge"),
 };
