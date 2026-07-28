@@ -32,6 +32,10 @@ if (remote && (!auth!.deviceId || !auth!.deviceToken)) {
 }
 
 const tui = new Tui();
+// A TUI must never die on a stray rejection mid-reconnect; surface it instead.
+process.on("unhandledRejection", reason => {
+	tui.error(`internal: ${reason instanceof Error ? reason.message : reason}`);
+});
 const client = new T4Client(endpoint, auth, tui, !remote);
 tui.setClient(client);
 await tui.run();
