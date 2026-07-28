@@ -503,6 +503,7 @@ final class T4SessionStore: ObservableObject {
             ),
         ]
         activeTurns.insert(sessionId)
+        defer { activeTurns.remove(sessionId) }
         for (index, kind, content, callId, tool) in blocks {
             var length = 3
             while length < content.count {

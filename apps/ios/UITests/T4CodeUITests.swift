@@ -96,16 +96,12 @@ final class T4CodeUITests: XCTestCase {
         var thinkingFrames = Set<String>()
         var writeFrames = Set<String>()
         let deadline = Date().addingTimeInterval(18)
+        let thinking = app.staticTexts["live-turn-thinking"]
+        let write = app.staticTexts["live-turn-tool-write"].firstMatch
 
         while Date() < deadline {
-            let thinking = app.descendants(matching: .any)
-                .matching(NSPredicate(format: "label BEGINSWITH %@", "Assistant thinking:"))
-                .firstMatch
             if thinking.exists { thinkingFrames.insert(thinking.label) }
 
-            let write = app.descendants(matching: .any)
-                .matching(NSPredicate(format: "label BEGINSWITH %@", "write preparing:"))
-                .firstMatch
             if write.exists { writeFrames.insert(write.label) }
             if thinkingFrames.count >= 3 && writeFrames.count >= 3 { break }
             Thread.sleep(forTimeInterval: 0.05)
