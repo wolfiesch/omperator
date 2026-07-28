@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
 import type { FileHandle } from "node:fs/promises";
-import { chmod, stat as fsStat, lstat, open, readlink, realpath, rename, symlink, unlink } from "node:fs/promises";
+import { chmod, stat as fsStat, lstat, open, readlink, rename, symlink, unlink } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import {
 	type AttentionOutcome,
@@ -31,7 +31,6 @@ import {
 	parseBounded,
 	type OperationCapability,
 	projectId,
-	type ProjectId,
 	requiredCapability,
 	revision as wireRevision,
 	type ServerFrame,
@@ -46,12 +45,14 @@ import type {
 	RpcSessionEntryFrame,
 	RpcSubagentMessagesResult,
 } from "./omp-rpc-contract.ts";
+import { AdminRequestRouter } from "./admin-request-router.ts";
 import { AgentTranscriptProjection } from "./agent-transcript-projection.ts";
 import { appserverResponse as response } from "./appserver-response.ts";
 import { ArtifactReader } from "./artifact-reader.ts";
 import { completeAttachOutput, prepareAttachOutput } from "./attach-output.ts";
 import { AttentionOutcomeStore } from "./attention-outcome-store.ts";
 import { AppserverCommandHandlers } from "./command-handler.ts";
+import { AppserverConnectionRegistry } from "./connection-registry.ts";
 import { registerCoreCommandHandlers } from "./core-command-handlers.ts";
 import {
 	AGENT_CANCEL_COMMAND,
@@ -126,6 +127,7 @@ import type {
 	RuntimeSession,
 	RuntimeWorkspaceIdentity,
 } from "./runtime-adapter.ts";
+import { SessionLifecycleRegistry } from "./session-lifecycle-registry.ts";
 import { SubagentProjection, subagentIdFromFrame } from "./subagent-projection.ts";
 import {
 	type AppserverEvent,
@@ -143,7 +145,6 @@ import type {
 	AppserverOptions,
 	AppserverTestControl,
 	AppserverTestControlStatus,
-	AppserverTestSeedRequest,
 	AppserverTranscriptSearchAuthority,
 	AppserverUsageAuthority,
 	ChildHandle,
@@ -161,7 +162,8 @@ import type {
 } from "./types.ts";
 import { PreviewService, createPreviewChromiumResolver } from "./preview/index.ts";
 import { registerPreviewCommandHandlers } from "./preview/command-handlers.ts";
-import { type WorkspaceAuthority, WorkspaceAuthorityError, type WorkspaceRecord } from "./workspace-authority.ts";
+import type { WorkspaceAuthority } from "./workspace-authority.ts";
+import { WorkspaceRuntimeController } from "./workspace-runtime-controller.ts";
 
 const clock: Clock = { now: () => new Date() };
 const SUBAGENT_TRANSCRIPT_RPC_BYTES = 384 * 1024;
@@ -781,114 +783,6 @@ export function appserverSupportedCapabilities(
 	return [...(options.supportedCapabilities ?? implemented)];
 }
 
-const ORDERED_STREAM_TEST_SCENARIO = "ordered-turn-v1";
-
-function accumulatedTestBlock(
-	entryId: string,
-	blockIndex: number,
-	blockKind: "text" | "thinking" | "tool-input",
-	content: string,
-	at: string,
-	options: { callId?: string; tool?: string } = {},
-): AppserverEvent[] {
-	const characters = [...content];
-	const stride = 3;
-	const events: AppserverEvent[] = [];
-	for (let length = stride; length < characters.length; length += stride) {
-		events.push({
-			type: "assistant.block.update",
-			entryId,
-			blockIndex,
-			blockKind,
-			content: characters.slice(0, length).join(""),
-			...options,
-			at,
-		});
-	}
-	events.push({
-		type: "assistant.block.update",
-		entryId,
-		blockIndex,
-		blockKind,
-		content,
-		...options,
-		at,
-	});
-	return events;
-}
-
-/**
- * Fixed local-only visual fixture. Content is deliberately code-owned rather
- * than caller-supplied so the test-control route cannot become an arbitrary
- * transcript or notification injection surface.
- */
-function orderedStreamTestEvents(at: string): AppserverEvent[] {
-	const entryId = "assistant:test-ordered-turn";
-	const primaryCallId = "test-write-primary";
-	const coverageCallId = "test-write-coverage";
-	return [
-		{ type: "turn.start", at },
-		...accumulatedTestBlock(
-			entryId,
-			0,
-			"thinking",
-			"I’ll preserve the provider’s block order, then stream both writes.",
-			at,
-		),
-		...accumulatedTestBlock(
-			entryId,
-			1,
-			"text",
-			"I’m updating the implementation first.",
-			at,
-		),
-		...accumulatedTestBlock(
-			entryId,
-			2,
-			"tool-input",
-			'{"path":"Sources/Streaming.swift","content":"struct StreamState {\\n    let isSmooth = true\\n}"}',
-			at,
-			{ callId: primaryCallId, tool: "write" },
-		),
-		{
-			type: "tool.start",
-			callId: primaryCallId,
-			tool: "write",
-			title: "Write implementation",
-			args: { path: "Sources/Streaming.swift" },
-			at,
-		},
-		...accumulatedTestBlock(
-			entryId,
-			3,
-			"thinking",
-			"The implementation is in place. I’ll add coverage without hiding the first tool.",
-			at,
-		),
-		...accumulatedTestBlock(
-			entryId,
-			4,
-			"tool-input",
-			'{"path":"Tests/StreamingTests.swift","content":"func testOrderedStreaming() {\\n    XCTAssertTrue(true)\\n}"}',
-			at,
-			{ callId: coverageCallId, tool: "write" },
-		),
-		{
-			type: "tool.start",
-			callId: coverageCallId,
-			tool: "write",
-			title: "Write coverage",
-			args: { path: "Tests/StreamingTests.swift" },
-			at,
-		},
-		{ type: "tool.progress", callId: primaryCallId, note: "formatting implementation", at },
-		{ type: "tool.progress", callId: coverageCallId, note: "running focused coverage", at },
-		{ type: "tool.result", callId: primaryCallId, ok: true, result: { bytes: 48 }, at },
-		{ type: "tool.result", callId: coverageCallId, ok: true, result: { tests: 1 }, at },
-		{ type: "turn.end", at },
-	];
-}
-
 export class LocalAppserver implements AppserverHandle {
 	hostId: HostId;
 	readonly epoch: string;
@@ -925,7 +819,6 @@ export class LocalAppserver implements AppserverHandle {
 	#baseOperationCapabilities: readonly OperationCapability[];
 	#externalRuntimes = new Map<SessionId, ExternalRuntimeOwner>();
 	readonly #openingExternalRuntimes = new Map<string, number>();
-	readonly #archivingWorkspaces = new Set<string>();
 	#externalPermissions = new Map<SessionId, Map<string, ExternalPermissionRequest>>();
 	#externalTurns = new Map<SessionId, ExternalTurnProjection>();
 	#promptLifecycle = new PromptLifecycleController({
@@ -954,34 +847,62 @@ export class LocalAppserver implements AppserverHandle {
 	#discoveryMisses = new Map<SessionId, number>();
 	#agentTranscripts = new Map<SessionId, AgentTranscriptProjection>();
 	#startPromises = new Map<SessionId, Promise<RpcChildSupervisor>>();
-	#lifecycleMutations = new Set<SessionId>();
+	#sessionLifecycle = new SessionLifecycleRegistry();
+	get #lifecycleMutations() {
+		return this.#sessionLifecycle.mutations;
+	}
 	#testControlMutations = new Set<Promise<Response>>();
-	#inflightSessionOperations = new Map<SessionId, number>();
-	#closedSessions = new Set<SessionId>();
+	get #inflightSessionOperations() {
+		return this.#sessionLifecycle.operations;
+	}
+	get #closedSessions() {
+		return this.#sessionLifecycle.closed;
+	}
 	#idempotency: IdempotencyStore;
 	#connectionIdempotency = new Map<AppWs, IdempotencyStore>();
 	#server?: Bun.Server<ServerWebSocketData>;
-	#clients = new Set<AppWs>();
+	#connections = new AppserverConnectionRegistry<LocalWs>();
+	get #clients() {
+		return this.#connections.clients;
+	}
 	#draining = false;
 	#inflightMessages = 0;
 	#inflightLifecycleMutations = 0;
-	#hello = new Set<AppWs>();
-	#clientCapabilities = new Map<AppWs, Set<string>>();
-	#clientFeatures = new Map<AppWs, Set<string>>();
-	#attached = new Map<AppWs, Set<SessionId>>();
-	#deviceIds = new Map<AppWs, string>();
-	#abortControllers = new Map<AppWs, Set<AbortController>>();
-	#outboundTails = new Map<AppWs, Promise<void>>();
-	#localTransports = new Map<LocalWs, AppWs>();
-	#remoteTransports = new Map<string, AppWs>();
-	#remoteConnections = new Map<AppWs, RemoteConnection>();
-	#remoteDecisions = new Map<AppWs, RemoteHelloDecision>();
+	get #hello() {
+		return this.#connections.hello;
+	}
+	get #clientCapabilities() {
+		return this.#connections.capabilities;
+	}
+	get #clientFeatures() {
+		return this.#connections.features;
+	}
+	get #attached() {
+		return this.#connections.attached;
+	}
+	get #abortControllers() {
+		return this.#connections.abortControllers;
+	}
+	get #outboundTails() {
+		return this.#connections.outboundTails;
+	}
+	get #localTransports() {
+		return this.#connections.localTransports;
+	}
+	get #remoteTransports() {
+		return this.#connections.remoteTransports;
+	}
+	get #remoteConnections() {
+		return this.#connections.remoteConnections;
+	}
+	get #remoteDecisions() {
+		return this.#connections.remoteDecisions;
+	}
 	#remoteListener?: BunRemoteListener;
 	#remoteListenerTls?: BunRemoteListener;
 	#remoteEndpointTls?: RemoteListenerConfig;
 	#remotePolicy?: RemoteConnectionPolicy;
-	#admin?: AppserverOptions["admin"];
-	#testControl?: AppserverOptions["testControl"];
+	#adminRouter: AdminRequestRouter;
 	#remoteEndpoint?: RemoteListenerConfig;
 	#remoteResolver?: AppserverOptions["remoteResolver"];
 	#started = false;
@@ -1004,12 +925,10 @@ export class LocalAppserver implements AppserverHandle {
 	#supportedFeatures: Set<string>;
 	#remoteSupportedFeatures: Set<string>;
 	#supportedCapabilities: Set<string>;
-	#projectRootForProject?: AppserverOptions["projectRootForProject"];
-	#projectRevealer?: AppserverOptions["projectRevealer"];
 	#claimLocklessSessions: boolean;
 	#runtimeAdapters?: RuntimeAdapterRegistry;
 	#workspaceAuthority?: WorkspaceAuthority;
-	#workspaceTargetPathForProject?: AppserverOptions["workspaceTargetPathForProject"];
+	#workspaceRuntime: WorkspaceRuntimeController;
 	#logger?: HostLogger;
 	#onOwnerAcquired?: AppserverOptions["onOwnerAcquired"];
 	#trace?: HostTraceSink;
@@ -1041,8 +960,6 @@ export class LocalAppserver implements AppserverHandle {
 		this.#remotePolicy = options.remotePolicy;
 		this.#remoteEndpoint = options.remoteEndpoint;
 		this.#remoteResolver = options.remoteResolver;
-		this.#admin = options.admin;
-		this.#testControl = options.testControl;
 		this.#remoteListener = options.remoteListener;
 		this.#remoteEndpointTls = options.remoteEndpointTls;
 		this.#clock = options.clock ?? clock;
@@ -1069,13 +986,21 @@ export class LocalAppserver implements AppserverHandle {
 			: undefined;
 		this.#usageAuthority = options.usageAuthority;
 		this.#transcriptSearch = options.transcriptSearchAuthority;
-		this.#projectRootForProject = options.projectRootForProject;
-		this.#projectRevealer = options.projectRevealer;
 		this.#claimLocklessSessions = options.claimLocklessSessions === true;
 		this.#observerIndependentTerminalOperations = options.observerIndependentTerminalOperations === true;
 		this.#runtimeAdapters = options.runtimeAdapters;
 		this.#workspaceAuthority = options.workspaceAuthority;
-		this.#workspaceTargetPathForProject = options.workspaceTargetPathForProject;
+		this.#workspaceRuntime = new WorkspaceRuntimeController({
+			hostId: this.hostId,
+			runtimeAdapters: options.runtimeAdapters,
+			workspaceAuthority: options.workspaceAuthority,
+			projectRootForProject: options.projectRootForProject,
+			projectRevealer: options.projectRevealer,
+			workspaceTargetPathForProject: options.workspaceTargetPathForProject,
+			records: () => this.#records.values(),
+			workspaceHasExternalRuntimeOwner: instanceId =>
+				this.#workspaceHasExternalRuntimeOwner(instanceId),
+		});
 		this.#onOwnerAcquired = options.onOwnerAcquired;
 		this.#logger = options.logger;
 		this.#discovery = options.discovery ?? options.sessionAuthority ?? { list: async () => [] };
@@ -1154,38 +1079,33 @@ export class LocalAppserver implements AppserverHandle {
 		if (requested.some(capability => !implemented.has(capability)))
 			throw new Error("unsupported capability has no handler");
 		this.#supportedCapabilities = new Set(requested);
-		const workspaceMutationEnabled =
-			Boolean(this.#workspaceAuthority) &&
-			Boolean(this.#workspaceTargetPathForProject) &&
-			Boolean(this.#projectRootForProject);
 		registerCoreCommandHandlers(this.#handlers, {
 			sessionCreate: command => this.handleCreate(command),
 			sessionFork:
 				this.#authority?.fork && this.#discovery.load
 					? command => this.handleFork(command)
 					: undefined,
-			runtimeList: this.#runtimeAdapters
-				? command => this.handleRuntimeList(command)
+			runtimeList: this.#workspaceRuntime.runtimeListEnabled
+				? command => this.#workspaceRuntime.runtimeList(command)
 				: undefined,
-			workspaceList: this.#workspaceAuthority
-				? command => this.handleWorkspaceList(command)
+			workspaceList: this.#workspaceRuntime.workspaceEnabled
+				? command => this.#workspaceRuntime.workspaceList(command)
 				: undefined,
-			workspaceArchive: this.#workspaceAuthority
-				? command => this.handleWorkspaceArchive(command)
+			workspaceArchive: this.#workspaceRuntime.workspaceEnabled
+				? command => this.#workspaceRuntime.workspaceArchive(command)
 				: undefined,
-			workspaceRecover: this.#workspaceAuthority
-				? command => this.handleWorkspaceRecover(command)
+			workspaceRecover: this.#workspaceRuntime.workspaceEnabled
+				? command => this.#workspaceRuntime.workspaceRecover(command)
 				: undefined,
-			workspaceCreate: workspaceMutationEnabled
-				? command => this.handleWorkspaceCreate(command)
+			workspaceCreate: this.#workspaceRuntime.workspaceMutationEnabled
+				? command => this.#workspaceRuntime.workspaceCreate(command)
 				: undefined,
-			workspaceImport: workspaceMutationEnabled
-				? command => this.handleWorkspaceImport(command)
+			workspaceImport: this.#workspaceRuntime.workspaceMutationEnabled
+				? command => this.#workspaceRuntime.workspaceImport(command)
 				: undefined,
-			projectReveal:
-				this.#projectRootForProject && this.#projectRevealer
-					? command => this.handleProjectReveal(command)
-					: undefined,
+			projectReveal: this.#workspaceRuntime.projectRevealEnabled
+				? command => this.#workspaceRuntime.projectReveal(command)
+				: undefined,
 			sessionClose: command => this.handleClose(command),
 			sessionRelease: this.#sessionOwnership
 				? command => this.handleRelease(command)
@@ -1215,6 +1135,43 @@ export class LocalAppserver implements AppserverHandle {
 				log: (event, fields) => this.#log(event, fields),
 			});
 		}
+		this.#adminRouter = new AdminRequestRouter(options, {
+			health: () => ({
+				ok: true,
+				hostId: this.hostId,
+				epoch: this.epoch,
+				draining: this.#draining,
+			}),
+			unavailable: () => this.#draining || this.#stopping,
+			stopping: () => this.#stopping,
+			tryDrainIfIdle: (expectedHostId, expectedEpoch) =>
+				this.#tryDrainIfIdle(expectedHostId, expectedEpoch),
+			runLifecycleMutation: async operation => {
+				this.#inflightLifecycleMutations += 1;
+				try {
+					return await operation();
+				} finally {
+					this.#inflightLifecycleMutations -= 1;
+				}
+			},
+			runTestControlMutation: operation => this.#runTestControlMutation(operation),
+			refreshInventoryAfterMutation: () => this.refreshInventoryAfterMutation(),
+			claimTestSessions: (control, runId) => this.#claimTestSessions(control, runId),
+			quiesceTestSessions: (control, runId) => this.#quiesceTestSessions(control, runId),
+			testControlStatus: (control, runId, status) =>
+				this.#testControlStatus(control, runId, status),
+			streamTestEvents: async (sessionId, events, stepMs) => {
+				const projection = this.#projections.get(sessionId);
+				if (!projection) return false;
+				for (const event of events) {
+					this.broadcast(sessionId, projection.appendEvent(asAppWireEvent(event)));
+					if (stepMs > 0) await Bun.sleep(stepMs);
+				}
+				return true;
+			},
+			evictTestSession: sessionId => this.#evictTestSession(sessionId),
+			now: () => this.#clock.now(),
+		});
 	}
 	/** Structured event sink; no-op when no logger is configured. Never throws. */
 	#log(event: string, fields?: Record<string, unknown>): void {
@@ -1362,13 +1319,7 @@ export class LocalAppserver implements AppserverHandle {
 							return;
 						}
 						const transport = this.#createLocalTransport(ws);
-						this.#localTransports.set(ws, transport);
-						this.#clients.add(transport);
-						this.#clientCapabilities.set(transport, new Set());
-						this.#clientFeatures.set(transport, new Set());
-						this.#attached.set(transport, new Set());
-						this.#deviceIds.set(transport, transport.deviceId);
-						this.#abortControllers.set(transport, new Set());
+						this.#connections.registerLocal(ws, transport);
 						this.#connectionIdempotency.set(transport, new IdempotencyStore());
 					},
 					message: (ws, message) => {
@@ -2543,7 +2494,7 @@ export class LocalAppserver implements AppserverHandle {
 		const runtimeId = typeof args.runtimeId === "string" ? args.runtimeId : undefined;
 		if (runtimeId) return this.createExternalSession(args, runtimeId, args.workspaceInstanceId as string);
 		if (!this.#authority) throw new Error("session creation is unavailable");
-		const canonical = await this.resolveProjectRoot(args.projectId);
+		const canonical = await this.#workspaceRuntime.resolveProjectRoot(args.projectId);
 		const title = typeof args.title === "string" ? args.title : undefined;
 		const created = await this.#authority.create(canonical, title);
 		const timestamp = this.#clock.now().toISOString();
@@ -2582,7 +2533,7 @@ export class LocalAppserver implements AppserverHandle {
 		if (workspace.lifecycle !== "active") throw new Error("workspace is not active");
 		if (workspace.repositoryId !== requestedProject)
 			throw new Error("workspace does not belong to the requested project");
-		if (this.#archivingWorkspaces.has(workspace.instanceId))
+		if (this.#workspaceRuntime.workspaceArchiveInProgress(workspace.instanceId))
 			throw new Error("workspace is being archived");
 		this.#reserveExternalRuntimeOpening(workspace.instanceId);
 		const publicSessionId = sessionId(`session-${randomUUID()}`);
@@ -2926,154 +2877,6 @@ export class LocalAppserver implements AppserverHandle {
 		return { frame: response(this.hostId, command, true, { accepted: true }) };
 	}
 
-	private async resolveProjectRoot(value: unknown): Promise<string> {
-		if (!this.#projectRootForProject) throw new Error("project resolver is unavailable");
-		if (typeof value !== "string") throw new Error("projectId is invalid");
-		const requestedProject = projectId(value);
-		const indexed = [...this.#records.values()].filter(
-			record => record.runtime === undefined && record.projectId === requestedProject,
-		);
-		for (const record of indexed) {
-			const canonical = await this.canonicalProjectRoot(record.cwd, requestedProject);
-			if (canonical !== undefined) return canonical;
-		}
-		const requestedCwd = await this.#projectRootForProject(requestedProject);
-		if (typeof requestedCwd !== "string" || !requestedCwd.startsWith("/"))
-			throw new Error("project resolver returned an invalid local root");
-		const canonical = await this.canonicalProjectRoot(requestedCwd, requestedProject);
-		if (canonical === undefined) {
-			let available = false;
-			try {
-				available = (await fsStat(await realpath(requestedCwd))).isDirectory();
-			} catch {}
-			if (available)
-				throw new Error("project resolver returned a mismatched local root");
-			throw new Error("project resolver returned an unavailable local root");
-		}
-		return canonical;
-	}
-	private async canonicalProjectRoot(
-		candidate: string,
-		requestedProject: ProjectId,
-	): Promise<string | undefined> {
-		if (!candidate.startsWith("/")) return undefined;
-		try {
-			const canonical = await realpath(candidate);
-			if (!(await fsStat(canonical)).isDirectory()) return undefined;
-			return stableProjectId(canonical) === requestedProject ? canonical : undefined;
-		} catch {
-			return undefined;
-		}
-	}
-	private workspaceProjection(record: WorkspaceRecord): Record<string, unknown> {
-		return {
-			repositoryId: record.repositoryId,
-			instanceId: record.instanceId,
-			ownership: record.ownership,
-			branch: record.branch,
-			sourceCommit: record.sourceCommit,
-			expectedHead: record.expectedHead,
-			lifecycle: record.lifecycle,
-			createdAt: record.createdAt,
-			updatedAt: record.updatedAt,
-			...(record.archivedAt === undefined ? {} : { archivedAt: record.archivedAt }),
-		};
-	}
-
-	private async handleRuntimeList(command: CommandFrame): Promise<CommandOutcome> {
-		const runtimes = await Promise.all(
-			this.#runtimeAdapters!.list().map(async manifest => {
-				try {
-					return { ...manifest, availability: await this.#runtimeAdapters!.availability(manifest.id) };
-				} catch {
-					return { ...manifest, availability: { state: "unknown" as const } };
-				}
-			}),
-		);
-		return { frame: response(this.hostId, command, true, { runtimes }) };
-	}
-	private async workspaceCommand(
-		command: CommandFrame,
-		action: () => Promise<Record<string, unknown>> | Record<string, unknown>,
-	): Promise<CommandOutcome> {
-		try {
-			return { frame: response(this.hostId, command, true, await action()) };
-		} catch (cause) {
-			const code = cause instanceof WorkspaceAuthorityError ? cause.code : "workspace-command-failed";
-			const message = cause instanceof WorkspaceAuthorityError ? cause.message : "workspace command failed";
-			return { frame: response(this.hostId, command, false, undefined, { code, message }) };
-		}
-	}
-	private handleWorkspaceList(command: CommandFrame): Promise<CommandOutcome> {
-		return this.workspaceCommand(command, () => ({
-			workspaces: this.#workspaceAuthority!.list().map(record => this.workspaceProjection(record)),
-		}));
-	}
-	private handleWorkspaceCreate(command: CommandFrame): Promise<CommandOutcome> {
-		return this.workspaceCommand(command, async () => {
-			const repositoryId = projectId(command.args.projectId as string);
-			const repositoryPath = await this.resolveProjectRoot(repositoryId);
-			const targetPath = await this.#workspaceTargetPathForProject!(repositoryId, command.args.name as string);
-			if (!isAbsolute(targetPath))
-				throw new WorkspaceAuthorityError("invalid-path", "Workspace target resolver returned a non-absolute path");
-			const workspace = await this.#workspaceAuthority!.create({
-				repositoryId,
-				repositoryPath,
-				targetPath,
-				branch: command.args.branch as string,
-				sourceCommit: command.args.sourceCommit as string,
-			});
-			return { workspace: this.workspaceProjection(workspace) };
-		});
-	}
-	private handleWorkspaceImport(command: CommandFrame): Promise<CommandOutcome> {
-		return this.workspaceCommand(command, async () => {
-			const repositoryId = projectId(command.args.projectId as string);
-			const repositoryPath = await this.resolveProjectRoot(repositoryId);
-			const workspacePath = await this.#workspaceTargetPathForProject!(repositoryId, command.args.name as string);
-			if (!isAbsolute(workspacePath))
-				throw new WorkspaceAuthorityError("invalid-path", "Workspace target resolver returned a non-absolute path");
-			const workspace = await this.#workspaceAuthority!.import({ repositoryId, repositoryPath, workspacePath });
-			return { workspace: this.workspaceProjection(workspace) };
-		});
-	}
-	private handleWorkspaceArchive(command: CommandFrame): Promise<CommandOutcome> {
-		return this.workspaceCommand(command, async () => {
-			const instanceId = command.args.instanceId as string;
-			const authority = this.#workspaceAuthority!;
-			const workspace = authority.get(instanceId);
-			if (!workspace) throw new WorkspaceAuthorityError("worktree-not-found", "Workspace record was not found");
-			if (workspace.ownership === "repository-root")
-				throw new WorkspaceAuthorityError("repository-root-protected", "Repository root worktrees cannot be archived");
-			if (workspace.ownership !== "managed")
-				throw new WorkspaceAuthorityError(
-					"ownership-protected",
-					"Imported and detected worktrees are never deleted by the authority",
-				);
-			if (this.#archivingWorkspaces.has(instanceId))
-				throw new WorkspaceAuthorityError("mutation-in-progress", "Workspace archive is already in progress");
-			if (this.#workspaceHasExternalRuntimeOwner(instanceId))
-				throw new WorkspaceAuthorityError("mutation-in-progress", "Workspace is owned by a live external runtime");
-			this.#archivingWorkspaces.add(instanceId);
-			try {
-				const sealed = await authority.seal({ instanceId });
-				return { workspace: this.workspaceProjection(await authority.archive({ instanceId: sealed.instanceId })) };
-			} finally {
-				this.#archivingWorkspaces.delete(instanceId);
-			}
-		});
-	}
-	private handleWorkspaceRecover(command: CommandFrame): Promise<CommandOutcome> {
-		return this.workspaceCommand(command, async () => ({
-			workspaces: (await this.#workspaceAuthority!.recover()).map(record => this.workspaceProjection(record)),
-		}));
-	}
-	private async handleProjectReveal(command: CommandFrame): Promise<CommandOutcome> {
-		if (!this.#projectRevealer) throw new Error("project reveal is unavailable");
-		const root = await this.resolveProjectRoot(command.args.projectId);
-		const revealed = await this.#projectRevealer(root);
-		return { frame: response(this.hostId, command, true, { revealed }) };
-	}
 	private async handleCreate(command: CommandFrame): Promise<CommandOutcome> {
 		const created = await this.createSession(command.args);
 		const createdSessionId = created.sessionId as SessionId;
@@ -3433,14 +3236,13 @@ export class LocalAppserver implements AppserverHandle {
 		};
 	}
 	private beginSessionOperation(sessionId: SessionId): boolean {
-		if (this.#draining || this.#stopping || this.#lifecycleMutations.has(sessionId)) return false;
-		this.#inflightSessionOperations.set(sessionId, (this.#inflightSessionOperations.get(sessionId) ?? 0) + 1);
-		return true;
+		return this.#sessionLifecycle.beginOperation(
+			sessionId,
+			!this.#draining && !this.#stopping,
+		);
 	}
 	private endSessionOperation(sessionId: SessionId): void {
-		const count = this.#inflightSessionOperations.get(sessionId) ?? 0;
-		if (count <= 1) this.#inflightSessionOperations.delete(sessionId);
-		else this.#inflightSessionOperations.set(sessionId, count - 1);
+		this.#sessionLifecycle.endOperation(sessionId);
 	}
 	private sessionLifecycleBusy(sessionId: SessionId, ignoreLifecycleFence = false): boolean {
 		const ref = this.#projections.get(sessionId)?.value.ref;
@@ -4505,23 +4307,12 @@ export class LocalAppserver implements AppserverHandle {
 			}
 		}
 		await this.#imageUploads.cleanupConnection(ws.connectionId);
-		this.#clients.delete(ws);
-		this.#hello.delete(ws);
-		this.#clientCapabilities.delete(ws);
-		this.#clientFeatures.delete(ws);
-		this.#attached.delete(ws);
+		this.#connections.forget(ws);
 		for (const sessionId of detachedSessions)
 			if (!this.hasAttachedClient(sessionId)) this.cleanupObserverState(sessionId);
-		this.#deviceIds.delete(ws);
-		this.#abortControllers.delete(ws);
-		this.#remoteDecisions.delete(ws);
-		this.#remoteConnections.delete(ws);
-		this.#remoteTransports.delete(ws.connectionId);
 		this.#connectionIdempotency.delete(ws);
 		for (const [confirmationId, pending] of this.#challenges)
 			if (pending.ws === ws) this.#challenges.delete(confirmationId);
-		for (const [socket, transport] of this.#localTransports)
-			if (transport === ws) this.#localTransports.delete(socket);
 	}
 	private async hello(ws: AppWs, frame: HelloFrame, decision?: RemoteHelloDecision): Promise<void> {
 		if (!ws.remote && frame.authentication !== undefined)
@@ -4617,14 +4408,7 @@ export class LocalAppserver implements AppserverHandle {
 				connection.socket.close(code, reason);
 			},
 		};
-		this.#remoteConnections.set(transport, connection);
-		this.#remoteTransports.set(transport.connectionId, transport);
-		this.#clients.add(transport);
-		this.#clientCapabilities.set(transport, new Set());
-		this.#clientFeatures.set(transport, new Set());
-		this.#attached.set(transport, new Set());
-		this.#deviceIds.set(transport, transport.deviceId);
-		this.#abortControllers.set(transport, new Set());
+		this.#connections.registerRemote(connection, transport);
 		this.#connectionIdempotency.set(transport, new IdempotencyStore());
 		this.#log("connection.open", { connectionId: connection.connectionId, peer: connection.peer.identity.nodeId, source: connection.peer.source });
 	}
@@ -5289,8 +5073,7 @@ export class LocalAppserver implements AppserverHandle {
 		const now = Date.now();
 		for (const [confirmationId, pending] of this.#challenges)
 			if (pending.expiresAt < now || !this.#clients.has(pending.ws)) this.#challenges.delete(confirmationId);
-		let sessionOperations = 0;
-		for (const count of this.#inflightSessionOperations.values()) sessionOperations += count;
+		const sessionOperations = this.#sessionLifecycle.operationCount();
 		let rpcSupervisorsWithPendingCalls = 0;
 		for (const supervisor of this.#supervisors.values())
 			if (supervisor.hasPendingCalls()) rpcSupervisorsWithPendingCalls += 1;
@@ -5328,17 +5111,9 @@ export class LocalAppserver implements AppserverHandle {
 		return { state: "draining", health, busy };
 	}
 	private async fetch(request: Request, server: Bun.Server<ServerWebSocketData>): Promise<Response | undefined> {
+		const routed = await this.#adminRouter.route(request);
+		if (routed) return routed;
 		const url = new URL(request.url);
-		if (url.pathname === "/health" && request.method === "GET")
-			return Response.json({ ok: true, hostId: this.hostId, epoch: this.epoch, draining: this.#draining });
-		if (url.pathname === "/admin/drain-if-idle") return this.#adminDrainIfIdle(request);
-		if (url.pathname === "/admin/pair-ticket") return this.adminPairTicket(request);
-		if (url.pathname === "/admin/devices") return this.adminDevices(request);
-		if (url.pathname === "/admin/revoke") return this.adminRevoke(request);
-		if (url.pathname === "/admin/test/seed") return this.#adminTestSeed(request);
-		if (url.pathname === "/admin/test/status") return this.#adminTestStatus(request);
-		if (url.pathname === "/admin/test/stream") return this.#adminTestStream(request);
-		if (url.pathname === "/admin/test/cleanup") return this.#adminTestCleanup(request);
 		if (
 			url.pathname !== "/ws" ||
 			request.method !== "GET" ||
@@ -5348,106 +5123,6 @@ export class LocalAppserver implements AppserverHandle {
 		if (this.#draining || this.#stopping) return new Response("Service Unavailable", { status: 503 });
 		if (server.upgrade(request, { data: { socket: {} } })) return undefined;
 		return new Response("Upgrade Required", { status: 426 });
-	}
-	private adminError(status = 400): Response {
-		return Response.json({ error: "invalid admin request" }, { status });
-	}
-	private async adminJson(request: Request, keys: readonly string[]): Promise<Record<string, unknown> | Response> {
-		if (request.method !== "POST" || request.headers.get("content-type") !== "application/json")
-			return this.adminError(405);
-		const length = request.headers.get("content-length");
-		if (length !== null && (!/^\d+$/u.test(length) || Number(length) > 16_384)) return this.adminError(413);
-		let bytes: ArrayBuffer;
-		try {
-			bytes = await request.arrayBuffer();
-		} catch {
-			return this.adminError();
-		}
-		if (bytes.byteLength > 16_384) return this.adminError(413);
-		let value: unknown;
-		try {
-			value = JSON.parse(new TextDecoder().decode(bytes));
-		} catch {
-			return this.adminError();
-		}
-		if (!value || typeof value !== "object" || Array.isArray(value)) return this.adminError();
-		const body = value as Record<string, unknown>;
-		if (Object.keys(body).some(key => !keys.includes(key))) return this.adminError();
-		return body;
-	}
-	async #adminDrainIfIdle(request: Request): Promise<Response> {
-		if (this.#stopping) return this.adminError(503);
-		const body = await this.adminJson(request, ["expectedHostId", "expectedEpoch"]);
-		if (body instanceof Response) return body;
-		if (this.#stopping) return this.adminError(503);
-		if (
-			typeof body.expectedHostId !== "string" ||
-			body.expectedHostId.length === 0 ||
-			body.expectedHostId.length > 1024 ||
-			typeof body.expectedEpoch !== "string" ||
-			body.expectedEpoch.length === 0 ||
-			body.expectedEpoch.length > 1024
-		)
-			return this.adminError();
-		return Response.json(this.#tryDrainIfIdle(body.expectedHostId, body.expectedEpoch));
-	}
-	private async adminPairTicket(request: Request): Promise<Response> {
-		if (!this.#admin || request.method !== "POST") return this.adminError(404);
-		if (this.#draining || this.#stopping) return this.adminError(503);
-		this.#inflightLifecycleMutations += 1;
-		try {
-			const body = await this.adminJson(request, ["capabilities", "ttlMs", "expectedNodeId"]);
-			if (body instanceof Response) return body;
-			if (this.#draining || this.#stopping) return this.adminError(503);
-			const capabilities = body.capabilities;
-			if (
-				!Array.isArray(capabilities) ||
-				capabilities.length === 0 ||
-				capabilities.length > 32 ||
-				capabilities.some(value => typeof value !== "string" || value.length === 0 || value.length > 128)
-			)
-				return this.adminError();
-			const ttl = body.ttlMs;
-			if (ttl !== undefined && (typeof ttl !== "number" || !Number.isSafeInteger(ttl) || ttl <= 0 || ttl > 600_000))
-				return this.adminError();
-			const nodeId = body.expectedNodeId;
-			if (nodeId !== undefined && (typeof nodeId !== "string" || nodeId.length === 0 || nodeId.length > 512))
-				return this.adminError();
-			try {
-				return Response.json(this.#admin.issuePairingTicket(capabilities, ttl, nodeId));
-			} catch {
-				return this.adminError();
-			}
-		} finally {
-			this.#inflightLifecycleMutations -= 1;
-		}
-	}
-	private adminDevices(request: Request): Response {
-		if (!this.#admin || request.method !== "GET") return this.adminError(404);
-		try {
-			return Response.json({ devices: this.#admin.listDevices() });
-		} catch {
-			return this.adminError(500);
-		}
-	}
-	private async adminRevoke(request: Request): Promise<Response> {
-		if (!this.#admin || request.method !== "POST") return this.adminError(404);
-		if (this.#draining || this.#stopping) return this.adminError(503);
-		this.#inflightLifecycleMutations += 1;
-		try {
-			const body = await this.adminJson(request, ["deviceId"]);
-			if (body instanceof Response) return body;
-			if (this.#draining || this.#stopping) return this.adminError(503);
-			if (typeof body.deviceId !== "string" || body.deviceId.length === 0 || body.deviceId.length > 512)
-				return this.adminError();
-			try {
-				return Response.json(this.#admin.revokeDevice(body.deviceId));
-			} catch {
-				return this.adminError();
-			}
-		} finally {
-			this.#inflightLifecycleMutations -= 1;
-		}
 	}
 	async #quiesceTestSessions(control: AppserverTestControl, runId: string): Promise<void> {
 		for (const id of await control.sessionIds(runId)) {
@@ -5511,7 +5186,8 @@ export class LocalAppserver implements AppserverHandle {
 		for (const sessions of this.#attached.values()) sessions.delete(sessionId);
 	}
 	async #runTestControlMutation(operation: () => Promise<Response>): Promise<Response> {
-		if (this.#draining || this.#stopping) return this.adminError(503);
+		if (this.#draining || this.#stopping)
+			return Response.json({ error: "invalid admin request" }, { status: 503 });
 		this.#inflightLifecycleMutations += 1;
 		const pending = operation();
 		this.#testControlMutations.add(pending);
@@ -5521,11 +5197,6 @@ export class LocalAppserver implements AppserverHandle {
 			this.#testControlMutations.delete(pending);
 			this.#inflightLifecycleMutations -= 1;
 		}
-	}
-	#authorizedTestControl(request: Request): AppserverOptions["testControl"] | undefined {
-		const control = this.#testControl;
-		if (!control || request.headers.get("authorization") !== `Bearer ${control.token}`) return undefined;
-		return control;
 	}
 	async #testControlStatus(
 		control: AppserverTestControl,
@@ -5548,135 +5219,6 @@ export class LocalAppserver implements AppserverHandle {
 			...status,
 			workers: { supervisors, starting, pendingRpc },
 		};
-	}
-	async #adminTestSeed(request: Request): Promise<Response> {
-		const control = this.#authorizedTestControl(request);
-		if (!control) return this.adminError(404);
-		if (this.#draining || this.#stopping) return this.adminError(503);
-		const body = await this.adminJson(request, ["runId", "projectRoot", "sessionCount", "historyEntries"]);
-		if (body instanceof Response) return body;
-		if (
-			typeof body.runId !== "string" ||
-			body.runId.length === 0 ||
-			body.runId.length > 128 ||
-			typeof body.projectRoot !== "string" ||
-			body.projectRoot.length === 0 ||
-			body.projectRoot.length > 4096 ||
-			typeof body.sessionCount !== "number" ||
-			!Number.isSafeInteger(body.sessionCount) ||
-			body.sessionCount < 1 ||
-			body.sessionCount > 100 ||
-			typeof body.historyEntries !== "number" ||
-			!Number.isSafeInteger(body.historyEntries) ||
-			body.historyEntries < 0 ||
-			body.historyEntries > 10_000
-		)
-			return this.adminError();
-		const seedRequest: AppserverTestSeedRequest = {
-			runId: body.runId,
-			projectRoot: body.projectRoot,
-			sessionCount: body.sessionCount,
-			historyEntries: body.historyEntries,
-		};
-		return this.#runTestControlMutation(async () => {
-			try {
-				await control.seed(seedRequest);
-				await this.refreshInventoryAfterMutation();
-				await this.#claimTestSessions(control, seedRequest.runId);
-				const status = await this.#testControlStatus(
-					control,
-					seedRequest.runId,
-					await control.status(seedRequest.runId),
-				);
-				return Response.json(status);
-			} catch {
-				return this.adminError(500);
-			}
-		});
-	}
-	async #adminTestStatus(request: Request): Promise<Response> {
-		const control = this.#authorizedTestControl(request);
-		if (!control) return this.adminError(404);
-		const body = await this.adminJson(request, ["runId"]);
-		if (body instanceof Response) return body;
-		if (typeof body.runId !== "string" || body.runId.length === 0 || body.runId.length > 128)
-			return this.adminError();
-		try {
-			return Response.json(await this.#testControlStatus(control, body.runId, await control.status(body.runId)));
-		} catch {
-			return this.adminError(500);
-		}
-	}
-	async #adminTestStream(request: Request): Promise<Response> {
-		const control = this.#authorizedTestControl(request);
-		if (!control) return this.adminError(404);
-		if (this.#draining || this.#stopping) return this.adminError(503);
-		const body = await this.adminJson(request, ["runId", "scenario", "stepMs"]);
-		if (body instanceof Response) return body;
-		if (
-			typeof body.runId !== "string" ||
-			body.runId.length === 0 ||
-			body.runId.length > 128 ||
-			body.scenario !== ORDERED_STREAM_TEST_SCENARIO ||
-			typeof body.stepMs !== "number" ||
-			!Number.isSafeInteger(body.stepMs) ||
-			body.stepMs < 0 ||
-			body.stepMs > 250
-		)
-			return this.adminError();
-		const runId = body.runId;
-		const stepMs = body.stepMs;
-		return this.#runTestControlMutation(async () => {
-			try {
-				const [target, ...extra] = await control.sessionIds(runId);
-				if (!target || extra.length > 0) return this.adminError();
-				await this.refreshInventoryAfterMutation();
-				const projection = this.#projections.get(target);
-				if (!projection) return this.adminError(409);
-				const events = orderedStreamTestEvents(this.#clock.now().toISOString());
-				for (const event of events) {
-					this.broadcast(target, projection.appendEvent(asAppWireEvent(event)));
-					if (stepMs > 0) await Bun.sleep(stepMs);
-				}
-				return Response.json({
-					v: 1,
-					runId,
-					scenario: ORDERED_STREAM_TEST_SCENARIO,
-					sessionId: target,
-					events: events.length,
-				});
-			} catch {
-				return this.adminError(500);
-			}
-		});
-	}
-	async #adminTestCleanup(request: Request): Promise<Response> {
-		const control = this.#authorizedTestControl(request);
-		if (!control) return this.adminError(404);
-		if (this.#draining || this.#stopping) return this.adminError(503);
-		const body = await this.adminJson(request, ["runId"]);
-		if (body instanceof Response) return body;
-		if (typeof body.runId !== "string" || body.runId.length === 0 || body.runId.length > 128)
-			return this.adminError();
-		const runId = body.runId;
-		return this.#runTestControlMutation(async () => {
-			try {
-				const sessionIds = await control.sessionIds(runId);
-				await this.#quiesceTestSessions(control, runId);
-				const result = await control.cleanup(runId);
-				// A session the control could not delete stays in its manifest, so
-				// it must keep its projection and ownership proof. Evicting it here
-				// would strand a still-present transcript as an unmanageable
-				// foreign session that no retry could reach.
-				const retained = new Set(await control.sessionIds(runId));
-				for (const sessionId of sessionIds)
-					if (!retained.has(sessionId)) await this.#evictTestSession(sessionId);
-				await this.refreshInventoryAfterMutation();
-				return Response.json(await this.#testControlStatus(control, runId, result));
-			} catch {
-				return this.adminError(500);
-			}
-		});
 	}
 }
 interface ServerWebSocketData {
