@@ -28,8 +28,11 @@ public actor HostClient {
             requestedFeatures: [String] = ["resume", "prompt.lease", "controller.lease", "prompt.images", "transcript.page", "session.delta", "files.list", "terminal.io"],
             capabilities: Capabilities? = Capabilities(client: [
                 "sessions.read", "sessions.prompt", "sessions.control", "sessions.manage",
-                "catalog.read", "files.list", "files.read",
+                "catalog.read", "files.list", "files.read", "files.diff",
                 "term.open", "term.input", "term.resize",
+                "settings.read", "settings.write",
+                "preview.control", "preview.read", "usage.read",
+                "agents.control", "audit.read", "config.read",
             ])
         ) {
             self.identity = identity
