@@ -12,6 +12,8 @@ import type { ManagedRpcImageRef } from "./image-upload-store.ts";
 import { OfficialOmpCapabilityAdapter } from "./official-omp-capabilities.ts";
 import type { ChildHandle, RpcChildFactory, SessionRecord } from "./types.ts";
 import type { RpcChildRegistry } from "./rpc-child-registry.ts";
+import type { RpcChildInvocation, RpcChildInvocationOverrides } from "./rpc-child-contract.ts";
+export type { RpcChildInvocation, RpcChildInvocationOverrides } from "./rpc-child-contract.ts";
 
 const MAX_LINE_BYTES = 1024 * 1024;
 const MAX_RPC_REASSEMBLED_BYTES = 64 * 1024 * 1024;
@@ -368,17 +370,6 @@ export interface ChildCallbacks {
 export interface RpcLoadedTranscriptWatermark {
 	readonly lastEntryId: string | null;
 	readonly entryCount: number;
-}
-
-export interface RpcChildInvocation {
-	executable: string;
-	prefixArgv: readonly string[];
-}
-
-export interface RpcChildInvocationOverrides {
-	compiled?: boolean;
-	executable?: string;
-	main?: string;
 }
 
 export function resolveRpcChildInvocation(overrides: RpcChildInvocationOverrides = {}): RpcChildInvocation {

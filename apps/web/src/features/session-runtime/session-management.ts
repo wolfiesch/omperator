@@ -9,10 +9,11 @@ import {
 } from "@t4-code/protocol";
 import type { CommandResult } from "@t4-code/protocol/desktop-ipc";
 
-import type { LiveProjectAddress, LiveSessionAddress } from "../../platform/live-workspace.ts";
+import type { LiveProjectAddress, LiveSessionAddress } from "../../platform/live-address.ts";
 import { commandSupport } from "./session-controls.ts";
 import { sessionActionRejectionReason } from "./command-errors.ts";
-import { pendingPromptsFromRef } from "./pending-prompts.ts";
+import { sessionIsWorking } from "./session-working.ts";
+export { sessionIsWorking } from "./session-working.ts";
 import { sessionWriteLink } from "./session-inventory.ts";
 import { presentSessionControl, readSessionControl } from "./session-observer.ts";
 
@@ -160,53 +161,6 @@ export function sessionIsArchived(ref: SessionRef | undefined): boolean {
 
 export function sessionIsClosed(ref: SessionRef | undefined): boolean {
   return ref?.status === "closed";
-}
-
-export function sessionIsWorking(ref: SessionRef | undefined): boolean {
-  if (ref === undefined) return false;
-  if (pendingPromptsFromRef(ref).length > 0) return true;
-  const rawRef = ref as unknown as Record<string, unknown>;
-  if (
-    ref.status === "active" ||
-    ref.pendingApproval === true ||
-    ref.pendingUserInput === true ||
-    rawRef.working === true ||
-    rawRef.isWorking === true ||
-    rawRef.turnActive === true ||
-    rawRef.inFlight === true ||
-    (typeof rawRef.queuedMessageCount === "number" && rawRef.queuedMessageCount > 0) ||
-    (Array.isArray(rawRef.queuedMessages) && rawRef.queuedMessages.length > 0)
-  ) {
-    return true;
-  }
-  const liveState = ref?.liveState;
-  if (liveState === undefined || liveState === null || typeof liveState !== "object") return false;
-  const live = liveState as Record<string, unknown>;
-  const phase = live.phase;
-  return (
-    phase === "working" ||
-    phase === "running" ||
-    phase === "active" ||
-    phase === "streaming" ||
-    phase === "compacting" ||
-    phase === "queued" ||
-    phase === "waiting" ||
-    phase === "awaiting-input" ||
-    phase === "awaiting_input" ||
-    live.working === true ||
-    live.isWorking === true ||
-    live.isRunning === true ||
-    live.turnActive === true ||
-    live.inFlight === true ||
-    live.isStreaming === true ||
-    live.isCompacting === true ||
-    live.pendingApproval === true ||
-    live.pendingUserInput === true ||
-    (typeof live.queuedMessageCount === "number" && live.queuedMessageCount > 0) ||
-    (typeof live.queue === "number" && live.queue > 0) ||
-    (Array.isArray(live.queuedMessages) && live.queuedMessages.length > 0) ||
-    (Array.isArray(live.queue) && live.queue.length > 0)
-  );
 }
 
 export function managementCommandSupport(

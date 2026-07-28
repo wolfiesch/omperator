@@ -32,11 +32,6 @@ import {
 	type OperationCapability,
 	projectId,
 	type ProjectId,
-	type ResultFrame,
-	type PreviewAction,
-	type PreviewSnapshot,
-	previewCaptureId,
-	previewId,
 	requiredCapability,
 	revision as wireRevision,
 	type ServerFrame,
@@ -52,10 +47,21 @@ import type {
 	RpcSubagentMessagesResult,
 } from "./omp-rpc-contract.ts";
 import { AgentTranscriptProjection } from "./agent-transcript-projection.ts";
+import { appserverResponse as response } from "./appserver-response.ts";
 import { ArtifactReader } from "./artifact-reader.ts";
 import { completeAttachOutput, prepareAttachOutput } from "./attach-output.ts";
 import { AttentionOutcomeStore } from "./attention-outcome-store.ts";
 import { AppserverCommandHandlers } from "./command-handler.ts";
+import {
+	AGENT_CANCEL_COMMAND,
+	ARCHIVED_SESSION_COMMANDS,
+	commandArgumentError,
+	DIRECT_SESSION_RPC_COMMANDS,
+	IMAGE_UPLOAD_COMMANDS,
+	OBSERVER_READ_COMMANDS,
+	SESSION_CANCEL_COMMAND,
+	SESSION_LIFECYCLE_COMMANDS,
+} from "./command-policy.ts";
 import { executeReadCommand, isReadCommand } from "./read-command-handler.ts";
 import {
 	artifactDescriptorForRoot,
@@ -147,63 +153,10 @@ import type {
 	SessionRecord,
 } from "./types.ts";
 import { PreviewService, createPreviewChromiumResolver } from "./preview/index.ts";
-import { PreviewServiceError } from "./preview/types.ts";
+import { registerPreviewCommandHandlers } from "./preview/command-handlers.ts";
 import { type WorkspaceAuthority, WorkspaceAuthorityError, type WorkspaceRecord } from "./workspace-authority.ts";
 
 const clock: Clock = { now: () => new Date() };
-const ARCHIVED_SESSION_COMMANDS = new Set([
-	"session.attach",
-	"session.archive",
-	"session.restore",
-	"session.delete",
-	"session.image.read",
-	"artifact.read",
-	"files.read",
-	"files.list",
-	"files.diff",
-	"review.read",
-	"transcript.context",
-	"transcript.page",
-]);
-const SESSION_LIFECYCLE_COMMANDS = new Set([
-	"session.close",
-	"session.release",
-	"session.reclaim",
-	"session.archive",
-	"session.restore",
-	"session.delete",
-]);
-const IMAGE_UPLOAD_COMMANDS = new Set(["session.image.begin", "session.image.chunk", "session.image.discard"]);
-const DIRECT_SESSION_RPC_COMMANDS: ReadonlySet<string> = new Set([
-	"session.retry",
-	"session.pause",
-	"session.resume",
-	"session.compact",
-	"session.rename",
-	"session.model.set",
-	"session.thinking.set",
-	"session.fast.set",
-]);
-const SESSION_CANCEL_COMMAND = "session.cancel";
-const AGENT_CANCEL_COMMAND = "agent.cancel";
-const OBSERVER_READ_COMMANDS = new Set([
-	"session.attach",
-	// Reads the source transcript and writes a different file, so an observed or
-	// unverified session may still be forked while its writer keeps ownership.
-	"session.fork",
-	"session.image.read",
-	"artifact.read",
-	"files.read",
-	"files.list",
-	"files.diff",
-	"review.read",
-	"preview.state",
-	"preview.capture",
-	"preview.capture.read",
-	"preview.policy.check",
-	"transcript.context",
-	"transcript.page",
-]);
 const SUBAGENT_TRANSCRIPT_RPC_BYTES = 384 * 1024;
 const REMOTE_OUTBOUND_TRANSFORM_TIMEOUT_MS = 10_000;
 const CATALOG_OPERATION_REFRESH_TIMEOUT_MS = 750;
@@ -362,90 +315,6 @@ function queuedLifecycleWork(liveState: Record<string, unknown> | undefined): bo
 	const queued = liveState.queuedMessages;
 	if (!queued || typeof queued !== "object" || Array.isArray(queued)) return false;
 	return Object.values(queued).some(value => Array.isArray(value) && value.length > 0);
-}
-function response(
-	hostId: HostId,
-	command: CommandFrame,
-	ok: boolean,
-	result?: unknown,
-	error?: { code: string; message: string; details?: Record<string, unknown> },
-): ResultFrame {
-	return {
-		v: "omp-app/1",
-		type: "response",
-		requestId: command.requestId,
-		commandId: command.commandId,
-		command: command.command,
-		hostId,
-		sessionId: command.sessionId,
-		ok,
-		...(ok ? { result } : { error }),
-	} as ResultFrame;
-}
-function argumentError(command: CommandFrame): string | undefined {
-	const args = command.args;
-	if (!args || typeof args !== "object" || Array.isArray(args)) return "args must be an object";
-	const keys = Object.keys(args);
-	if (command.command === "session.prompt") {
-		try {
-			decodeSessionPromptArguments(args);
-			return undefined;
-		} catch {
-			return "prompt arguments are invalid";
-		}
-	}
-	if (command.command === "session.attach") {
-		if (keys.length === 0) return undefined;
-		if (keys.length === 1 && keys[0] === "cursor") {
-			try {
-				decodeCursor(args.cursor);
-				return undefined;
-			} catch {
-				return "attach cursor is invalid";
-			}
-		}
-		return "attach accepts only an optional cursor";
-	}
-	// A copy may need a working directory of its own when the source's recorded
-	// project directory no longer exists.
-	if (command.command === "session.fork") {
-		if (keys.some(key => key !== "cwd")) return "fork arguments are invalid";
-		if (args.cwd !== undefined) {
-			if (typeof args.cwd !== "string" || args.cwd.length === 0 || utf8ByteLength(args.cwd) > 4096)
-				return "fork cwd must be a bounded non-empty UTF-8 string";
-			// eslint-disable-next-line no-control-regex -- reject control characters in a filesystem path.
-			if (/[\u0000-\u001F\u007F]/.test(args.cwd)) return "fork cwd must not contain control characters";
-		}
-	}
-	if (command.command === "session.create") {
-		if (keys.some(key => !["projectId", "title", "runtimeId", "workspaceInstanceId"].includes(key)))
-			return "create arguments are invalid";
-		if (typeof args.projectId !== "string" || args.projectId.length === 0 || utf8ByteLength(args.projectId) > 256)
-			return "create projectId must be a bounded non-empty UTF-8 string";
-		if (
-			args.title !== undefined &&
-			(typeof args.title !== "string" || args.title.length === 0 || utf8ByteLength(args.title) > 512)
-		)
-			return "create title must be a bounded non-empty UTF-8 string";
-		for (const [key, limit] of [
-			["runtimeId", 64],
-			["workspaceInstanceId", 128],
-		] as const)
-			if (
-				args[key] !== undefined &&
-				(typeof args[key] !== "string" || args[key].length === 0 || utf8ByteLength(args[key]) > limit)
-			)
-				return `create ${key} must be a bounded non-empty UTF-8 string`;
-		if ((args.runtimeId === undefined) !== (args.workspaceInstanceId === undefined))
-			return "create runtimeId and workspaceInstanceId must be provided together";
-		return undefined;
-	}
-	// Operation argument shapes are validated by decodeCommand and the typed
-	// authority. Host/session list remain explicitly empty for compatibility
-	// with their legacy broad argument decoders.
-	if (command.command !== "host.list" && command.command !== "session.list") return undefined;
-	if (keys.length !== 0) return "command does not accept args";
-	return undefined;
 }
 function safeSessionState(value: unknown): SessionStateResult {
 	const raw =
@@ -1327,7 +1196,12 @@ export class LocalAppserver implements AppserverHandle {
 					? { idleTimeoutMs: options.previewAuthority.idleTimeoutMs }
 					: {}),
 			});
-			this.registerPreviewHandlers();
+			registerPreviewCommandHandlers({
+				handlers: this.#handlers,
+				hostId: this.hostId,
+				service: this.#previewService,
+				log: (event, fields) => this.#log(event, fields),
+			});
 		}
 	}
 	/** Structured event sink; no-op when no logger is configured. Never throws. */
@@ -2018,7 +1892,7 @@ export class LocalAppserver implements AppserverHandle {
 					}),
 				};
 		}
-		const invalidArgs = argumentError(command);
+		const invalidArgs = commandArgumentError(command);
 		if (invalidArgs)
 			return this.finish(
 				command,
@@ -3874,342 +3748,6 @@ export class LocalAppserver implements AppserverHandle {
 			};
 		} finally {
 			this.#lifecycleMutations.delete(sessionId);
-		}
-	}
-	private registerPreviewHandlers(): void {
-		const svc = this.#previewService!;
-		this.#handlers.register("preview.launch", command => this.handlePreviewLaunch(command));
-		this.#handlers.register("preview.state", command => this.handlePreviewState(command));
-		this.#handlers.register("preview.activate", command => this.handlePreviewActivate(command));
-		this.#handlers.register("preview.navigate", command => this.handlePreviewNavigate(command));
-		this.#handlers.register("preview.back", command => this.handlePreviewBack(command));
-		this.#handlers.register("preview.forward", command => this.handlePreviewForward(command));
-		this.#handlers.register("preview.reload", command => this.handlePreviewReload(command));
-		this.#handlers.register("preview.close", command => this.handlePreviewClose(command));
-		this.#handlers.register("preview.capture", command => this.handlePreviewCapture(command));
-		this.#handlers.register("preview.capture.read", command => this.handlePreviewCaptureRead(command));
-		this.#handlers.register("preview.click", command => this.handlePreviewClick(command));
-		this.#handlers.register("preview.fill", command => this.handlePreviewFill(command));
-		this.#handlers.register("preview.scroll", command => this.handlePreviewScroll(command));
-		this.#handlers.register("preview.type", command => this.handlePreviewType(command));
-		this.#handlers.register("preview.select", command => this.handlePreviewSelect(command));
-		this.#handlers.register("preview.press", command => this.handlePreviewPress(command));
-		this.#handlers.register("preview.upload", command => this.handlePreviewUpload(command));
-		this.#handlers.register("preview.policy.check", command => this.handlePreviewPolicyCheck(command));
-		this.#handlers.register("preview.lease.acquire", command => this.handlePreviewLeaseAcquire(command));
-		this.#handlers.register("preview.lease.renew", command => this.handlePreviewLeaseRenew(command));
-		this.#handlers.register("preview.lease.release", command => this.handlePreviewLeaseRelease(command));
-		this.#handlers.register("preview.handoff", command => this.handlePreviewHandoff(command));
-		void svc;
-	}
-	private previewError(command: CommandFrame, error: unknown): CommandOutcome {
-		if (error instanceof PreviewServiceError)
-			return {
-				frame: response(this.hostId, command, false, undefined, { code: error.code, message: error.message }),
-			};
-		return {
-			frame: response(this.hostId, command, false, undefined, {
-				code: "preview_failed",
-				message: error instanceof Error ? error.message : "preview operation failed",
-			}),
-		};
-	}
-	private async handlePreviewLaunch(command: CommandFrame): Promise<CommandOutcome> {
-		this.#log("preview.launch.start", { sessionId: command.sessionId });
-		try {
-			const args = decodeCommandArguments(command.command, command.args);
-			const snapshot = await this.#previewService!.launch({
-				sessionId: command.sessionId!,
-				url: args.url as string,
-				...(args.authorityId !== undefined ? { authorityId: args.authorityId as string } : {}),
-			});
-			this.#log("preview.launch.done", { sessionId: command.sessionId });
-			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
-		} catch (error) {
-			return this.previewError(command, error);
-		}
-	}
-	private async handlePreviewState(command: CommandFrame): Promise<CommandOutcome> {
-		try {
-			const args = decodeCommandArguments(command.command, command.args);
-			const result = await this.#previewService!.state({
-				sessionId: command.sessionId!,
-				...(args.previewId !== undefined ? { previewId: previewId(args.previewId) } : {}),
-			});
-			return { frame: response(this.hostId, command, true, result) };
-		} catch (error) {
-			return this.previewError(command, error);
-		}
-	}
-	private async handlePreviewActivate(command: CommandFrame): Promise<CommandOutcome> {
-		try {
-			const args = decodeCommandArguments(command.command, command.args);
-			const snapshot = await this.#previewService!.activate({
-				sessionId: command.sessionId!,
-				previewId: previewId(args.previewId),
-				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
-			});
-			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
-		} catch (error) {
-			return this.previewError(command, error);
-		}
-	}
-	private async handlePreviewNavigate(command: CommandFrame): Promise<CommandOutcome> {
-		try {
-			const args = decodeCommandArguments(command.command, command.args);
-			const snapshot = await this.#previewService!.navigate({
-				sessionId: command.sessionId!,
-				previewId: previewId(args.previewId),
-				url: args.url as string,
-				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
-			});
-			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
-		} catch (error) {
-			return this.previewError(command, error);
-		}
-	}
-	private async handlePreviewBack(command: CommandFrame): Promise<CommandOutcome> {
-		return this.handlePreviewNavigation(command, (args, sessionId) =>
-			this.#previewService!.back({
-				sessionId,
-				previewId: previewId(args.previewId),
-				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
-			}),
-		);
-	}
-	private async handlePreviewForward(command: CommandFrame): Promise<CommandOutcome> {
-		return this.handlePreviewNavigation(command, (args, sessionId) =>
-			this.#previewService!.forward({
-				sessionId,
-				previewId: previewId(args.previewId),
-				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
-			}),
-		);
-	}
-	private async handlePreviewReload(command: CommandFrame): Promise<CommandOutcome> {
-		return this.handlePreviewNavigation(command, (args, sessionId) =>
-			this.#previewService!.reload({
-				sessionId,
-				previewId: previewId(args.previewId),
-				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
-			}),
-		);
-	}
-	private async handlePreviewClose(command: CommandFrame): Promise<CommandOutcome> {
-		return this.handlePreviewNavigation(command, (args, sessionId) =>
-			this.#previewService!.close({
-				sessionId,
-				previewId: previewId(args.previewId),
-				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
-			}),
-		);
-	}
-	private async handlePreviewCapture(command: CommandFrame): Promise<CommandOutcome> {
-		return this.handlePreviewNavigation(command, (args, sessionId) =>
-			this.#previewService!.capture({
-				sessionId,
-				previewId: previewId(args.previewId),
-				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
-			}),
-		);
-	}
-	private handlePreviewCaptureRead(command: CommandFrame): CommandOutcome {
-		try {
-			const args = decodeCommandArguments(command.command, command.args);
-			const result = this.#previewService!.captureRead({
-				sessionId: command.sessionId!,
-				previewId: previewId(args.previewId),
-				captureId: previewCaptureId(args.captureId),
-				offset: args.offset as number,
-			});
-			return { frame: response(this.hostId, command, true, result) };
-		} catch (error) {
-			return this.previewError(command, error);
-		}
-	}
-	private async handlePreviewClick(command: CommandFrame): Promise<CommandOutcome> {
-		try {
-			const args = decodeCommandArguments(command.command, command.args);
-			const snapshot = await this.#previewService!.click({
-				sessionId: command.sessionId!,
-				previewId: previewId(args.previewId),
-				...(args.selector !== undefined ? { selector: args.selector as string } : {}),
-				...(args.x !== undefined ? { x: args.x as number } : {}),
-				...(args.y !== undefined ? { y: args.y as number } : {}),
-				...(args.button !== undefined ? { button: args.button as "left" | "middle" | "right" } : {}),
-				...(args.clickCount !== undefined ? { clickCount: args.clickCount as number } : {}),
-				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
-			});
-			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
-		} catch (error) {
-			return this.previewError(command, error);
-		}
-	}
-	private async handlePreviewFill(command: CommandFrame): Promise<CommandOutcome> {
-		return this.handlePreviewTextInput(command, (args, sessionId) =>
-			this.#previewService!.fill({
-				sessionId,
-				previewId: previewId(args.previewId),
-				selector: args.selector as string,
-				text: args.text as string,
-				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
-			}),
-		);
-	}
-	private async handlePreviewType(command: CommandFrame): Promise<CommandOutcome> {
-		return this.handlePreviewTextInput(command, (args, sessionId) =>
-			this.#previewService!.type({
-				sessionId,
-				previewId: previewId(args.previewId),
-				text: args.text as string,
-				...(args.selector !== undefined ? { selector: args.selector as string } : {}),
-				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
-			}),
-		);
-	}
-	private async handlePreviewScroll(command: CommandFrame): Promise<CommandOutcome> {
-		try {
-			const args = decodeCommandArguments(command.command, command.args);
-			const snapshot = await this.#previewService!.scroll({
-				sessionId: command.sessionId!,
-				previewId: previewId(args.previewId),
-				deltaX: args.deltaX as number,
-				deltaY: args.deltaY as number,
-				...(args.selector !== undefined ? { selector: args.selector as string } : {}),
-				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
-			});
-			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
-		} catch (error) {
-			return this.previewError(command, error);
-		}
-	}
-	private async handlePreviewSelect(command: CommandFrame): Promise<CommandOutcome> {
-		try {
-			const args = decodeCommandArguments(command.command, command.args);
-			const snapshot = await this.#previewService!.selectOption({
-				sessionId: command.sessionId!,
-				previewId: previewId(args.previewId),
-				selector: args.selector as string,
-				value: args.value as string,
-				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
-			});
-			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
-		} catch (error) {
-			return this.previewError(command, error);
-		}
-	}
-	private async handlePreviewPress(command: CommandFrame): Promise<CommandOutcome> {
-		try {
-			const args = decodeCommandArguments(command.command, command.args);
-			const snapshot = await this.#previewService!.press({
-				sessionId: command.sessionId!,
-				previewId: previewId(args.previewId),
-				key: args.key as string,
-				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
-			});
-			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
-		} catch (error) {
-			return this.previewError(command, error);
-		}
-	}
-	private async handlePreviewUpload(command: CommandFrame): Promise<CommandOutcome> {
-		return this.previewError(command, new PreviewServiceError("unsupported", "preview upload is not yet implemented"));
-	}
-	private handlePreviewPolicyCheck(command: CommandFrame): CommandOutcome {
-		try {
-			const args = decodeCommandArguments(command.command, command.args);
-			const result = this.#previewService!.policyCheck({
-				action: args.action as PreviewAction,
-				...(args.previewId !== undefined ? { previewId: previewId(args.previewId) } : {}),
-				...(args.url !== undefined ? { url: args.url as string } : {}),
-				...(args.authorityId !== undefined ? { authorityId: args.authorityId as string } : {}),
-			});
-			return { frame: response(this.hostId, command, true, result) };
-		} catch (error) {
-			return this.previewError(command, error);
-		}
-	}
-	private handlePreviewLeaseAcquire(command: CommandFrame): CommandOutcome {
-		try {
-			const args = decodeCommandArguments(command.command, command.args);
-			const result = this.#previewService!.leaseAcquire({
-				sessionId: command.sessionId!,
-				previewId: previewId(args.previewId),
-				...(args.ttlMs !== undefined ? { ttlMs: args.ttlMs as number } : {}),
-			});
-			return { frame: response(this.hostId, command, true, result) };
-		} catch (error) {
-			return this.previewError(command, error);
-		}
-	}
-	private handlePreviewLeaseRenew(command: CommandFrame): CommandOutcome {
-		try {
-			const args = decodeCommandArguments(command.command, command.args);
-			const result = this.#previewService!.leaseRenew({
-				sessionId: command.sessionId!,
-				previewId: previewId(args.previewId),
-				leaseId: args.leaseId as never,
-				...(args.ttlMs !== undefined ? { ttlMs: args.ttlMs as number } : {}),
-			});
-			return { frame: response(this.hostId, command, true, result) };
-		} catch (error) {
-			return this.previewError(command, error);
-		}
-	}
-	private handlePreviewLeaseRelease(command: CommandFrame): CommandOutcome {
-		try {
-			const args = decodeCommandArguments(command.command, command.args);
-			const result = this.#previewService!.leaseRelease({
-				sessionId: command.sessionId!,
-				previewId: previewId(args.previewId),
-				leaseId: args.leaseId as never,
-			});
-			return { frame: response(this.hostId, command, true, result) };
-		} catch (error) {
-			return this.previewError(command, error);
-		}
-	}
-	private async handlePreviewHandoff(command: CommandFrame): Promise<CommandOutcome> {
-		try {
-			const args = decodeCommandArguments(command.command, command.args);
-			const snapshot = await this.#previewService!.handoff({
-				sessionId: command.sessionId!,
-				previewId: previewId(args.previewId),
-				message: args.message as string,
-				...(args.mode !== undefined ? { mode: args.mode as "manual" | "selector" | "url" | "text" } : {}),
-				...(args.selector !== undefined ? { selector: args.selector as string } : {}),
-				...(args.urlSubstring !== undefined ? { urlSubstring: args.urlSubstring as string } : {}),
-				...(args.text !== undefined ? { text: args.text as string } : {}),
-				...(args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs as number } : {}),
-				...(args.leaseId !== undefined ? { leaseId: args.leaseId as never } : {}),
-			});
-			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
-		} catch (error) {
-			return this.previewError(command, error);
-		}
-	}
-	private async handlePreviewNavigation(
-		command: CommandFrame,
-		action: (args: Record<string, unknown>, sessionId: SessionId) => Promise<PreviewSnapshot>,
-	): Promise<CommandOutcome> {
-		try {
-			const args = decodeCommandArguments(command.command, command.args);
-			const snapshot = await action(args, command.sessionId!);
-			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
-		} catch (error) {
-			return this.previewError(command, error);
-		}
-	}
-	private async handlePreviewTextInput(
-		command: CommandFrame,
-		action: (args: Record<string, unknown>, sessionId: SessionId) => Promise<PreviewSnapshot>,
-	): Promise<CommandOutcome> {
-		try {
-			const args = decodeCommandArguments(command.command, command.args);
-			const snapshot = await action(args, command.sessionId!);
-			return { frame: response(this.hostId, command, true, { preview: snapshot }) };
-		} catch (error) {
-			return this.previewError(command, error);
 		}
 	}
 	private finish(

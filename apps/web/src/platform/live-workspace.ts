@@ -20,12 +20,14 @@ import type {
   WorkspaceSession,
 } from "../lib/workspace-data.ts";
 import { resolveCurrentHostTargetId } from "../lib/host-target.ts";
-import { sessionIsWorking } from "../features/session-runtime/session-management.ts";
+import { sessionIsWorking } from "../features/session-runtime/session-working.ts";
 import {
   readSessionControl,
   sessionControlDisplayKind,
 } from "../features/session-runtime/session-observer.ts";
 import { sessionRefIsCurrent } from "../features/session-runtime/session-inventory.ts";
+import type { LiveProjectAddress, LiveSessionAddress } from "./live-address.ts";
+export type { LiveProjectAddress, LiveSessionAddress } from "./live-address.ts";
 
 /** Composite route id for one live session; unambiguous and URL-safe. */
 export function sessionViewId(hostId: string, sessionId: string): string {
@@ -55,12 +57,6 @@ export function sessionAttentionOutcomeMarker(
   return null;
 }
 
-export interface LiveSessionAddress {
-  readonly targetId: string;
-  readonly hostId: string;
-  readonly sessionId: string;
-}
-
 /** Resolve a session view id back to its target/host/session triple. */
 export function resolveLiveSession(
   snapshot: DesktopRuntimeSnapshot,
@@ -72,13 +68,6 @@ export function resolveLiveSession(
   const sessionId = decodeURIComponent(viewId.slice(separator + 1));
   const targetId = resolveCurrentHostTargetId(snapshot, hostId);
   return targetId === null ? null : { targetId, hostId, sessionId };
-}
-
-/** Composite route id for one live project. */
-export interface LiveProjectAddress {
-  readonly targetId: string;
-  readonly hostId: string;
-  readonly projectId: string;
 }
 
 export interface LiveProjectCreateTarget {
