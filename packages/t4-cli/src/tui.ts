@@ -76,8 +76,9 @@ class TermScreen {
 		for (let i = 0; i < s.length; i += 1) {
 			const ch = s[i]!;
 			if (ch === "\x1b") {
-				const m = /^\x1b\[([0-9;]*)([A-Za-z])/.exec(s.slice(i));
+				const m = /^\x1b\[([0-9;?]*)([A-Za-z])/.exec(s.slice(i));
 				if (m) {
+					if (m[1]!.includes("?")) { i += m[0].length - 1; continue; } // private modes: drop
 					const nums = m[1]!.split(";").map(v => (v === "" ? 0 : Number(v)));
 					const n = nums[0] ?? 0;
 					switch (m[2]) {
