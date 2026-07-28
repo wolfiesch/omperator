@@ -6,6 +6,7 @@ import {
   hostDaemonPaths,
   OFFICIAL_OMP_BUILD,
   OFFICIAL_OMP_VERSION,
+  officialOmpRootFromSessionsRoot,
   parseHostDaemonArgs,
   runHostDaemon,
   verifyOfficialRuntime,
@@ -29,6 +30,15 @@ describe("T4 host daemon CLI", () => {
       sessionOwnershipPath: expect.stringContaining("/owned-sessions.json"),
       transcriptSearchPath: expect.stringContaining("/transcript-search.sqlite"),
     });
+  });
+
+  test("keeps official settings inside the selected OMP profile root", () => {
+    expect(
+      officialOmpRootFromSessionsRoot("/profiles/test/.omp/agent/sessions"),
+    ).toBe("/profiles/test/.omp");
+    expect(
+      officialOmpRootFromSessionsRoot("/isolated-profile/sessions"),
+    ).toBe("/isolated-profile");
   });
 
   test("validates remote exposure and rejects ambiguous or relative authority", () => {

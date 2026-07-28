@@ -8,6 +8,7 @@ export * from "./omp-authority-bridge-contract.ts";
 export * from "./omp-authority-bridge-client.ts";
 export * from "./official-omp-capabilities.ts";
 export * from "./official-omp-profile-authority.ts";
+export * from "./omp-settings-authority.ts";
 export * from "./project-file-search.ts";
 export * from "./operations/index.ts";
 export * from "./projection.ts";

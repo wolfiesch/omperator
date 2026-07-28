@@ -286,7 +286,8 @@ final class T4SessionStore: ObservableObject {
     @Published private(set) var hasLiveInventory = false
     /// True when a previous session's endpoint is persisted (restore will run).
     var hasSavedConnection: Bool {
-        Keychain.get(Self.savedEndpointKey) != nil
+        EphemeralConnectionCredentials() != nil
+            || Keychain.get(Self.savedEndpointKey) != nil
     }
 
     /// True once a live host has spoken; false while showing the offline sample.
@@ -570,6 +571,27 @@ final class T4SessionStore: ObservableObject {
     func restore() async {
         // UI-test seam: -T4NoRestore forces the offline sample inventory.
         if ProcessInfo.processInfo.arguments.contains("-T4NoRestore") { return }
+        // Harness seam: a complete endpoint/device/token triple is an
+        // in-memory connection profile. It never reads, writes, migrates, or
+        // deletes the developer's Keychain credentials.
+        if let ephemeral = EphemeralConnectionCredentials(),
+           let endpoint = URL(string: ephemeral.endpoint),
+           !connected, !connecting {
+            await connect(
+                endpoint: endpoint,
+                identity: ClientIdentity(
+                    name: platformClientName,
+                    version: "0.1",
+                    build: "dev",
+                    platform: platformClientPlatform
+                ),
+                authentication: DeviceAuthentication(
+                    deviceId: ephemeral.deviceId,
+                    deviceToken: ephemeral.deviceToken
+                )
+            )
+            return
+        }
         // UI-test seam: -T4ForgetCreds wipes saved connection credentials so
         // the boot lands on real onboarding (fresh-install path).
         if ProcessInfo.processInfo.arguments.contains("-T4ForgetCreds") {
@@ -1112,6 +1134,13 @@ final class T4SessionStore: ObservableObject {
         return URLSessionHostWireTransport(endpoint: endpoint, session: session)
     }
 
+    /// A later healthy connection supersedes any earlier endpoint failure.
+    /// Keep this transition explicit so a transient restore/pair attempt cannot
+    /// leave a stale transport error pinned above a live session inventory.
+    func clearErrorAfterSuccessfulConnection() {
+        lastError = nil
+    }
+
     /// Connect to a t4-host over host-wire, handshake, and load the inventory.
     func connect(endpoint: URL, identity: ClientIdentity, authentication: DeviceAuthentication? = nil) async {
         connecting = true
@@ -1129,6 +1158,7 @@ final class T4SessionStore: ObservableObject {
             if connected {
                 pairedEndpoint = endpoint.absoluteString
                 persist(endpoint: endpoint, authentication: authentication)
+                clearErrorAfterSuccessfulConnection()
                 await refresh()
                 await loadCatalog()
                 Task { await observe() }
@@ -1175,6 +1205,7 @@ final class T4SessionStore: ObservableObject {
                 connected = true
                 pairedEndpoint = endpoint.absoluteString
                 persist(endpoint: endpoint, authentication: nil)
+                clearErrorAfterSuccessfulConnection()
                 await refresh()
                 await loadCatalog()
                 Task { await observe() }
@@ -1189,7 +1220,7 @@ final class T4SessionStore: ObservableObject {
                 deviceId: "\(platformDeviceIdPrefix)-\(slug)-\(UUID().uuidString.lowercased())",
                 deviceName: deviceName,
                 platform: platformClientPlatform,
-                requestedCapabilities: ["sessions.read", "sessions.prompt", "sessions.control", "sessions.manage", "catalog.read", "files.list", "files.read", "files.diff", "term.open", "term.input", "term.resize", "preview.control", "preview.read", "usage.read", "agents.control", "audit.read", "config.read"]
+                requestedCapabilities: ["sessions.read", "sessions.prompt", "sessions.control", "sessions.manage", "catalog.read", "files.list", "files.read", "files.diff", "term.open", "term.input", "term.resize", "preview.control", "preview.read", "usage.read", "agents.control", "audit.read", "config.read", "config.write"]
             )
             let ok = try await c.pair(intent)
             // The paired connection is inert by design (the host rejects
@@ -1844,6 +1875,19 @@ final class T4SessionStore: ObservableObject {
         }
     }
 
+    /// The wire's settings.read carries metadata entries ({type, effective}),
+    /// not bare values. Unwrap to the raw map the panes consume — entries that
+    /// are already bare (bridge hosts) pass through untouched.
+    private static func unwrapSettingsMetadata(_ settings: [String: JSONValue]) -> [String: JSONValue] {
+        settings.mapValues { value in
+            guard case .object(let entry) = value,
+                  entry["type"] != nil,
+                  let effective = entry["effective"]
+            else { return value }
+            return effective
+        }
+    }
+
     /// Fetch the host settings map (settings.read, host scope). Stores the
     /// map in `settingsSnapshot` and returns it; nil on failure (lastError
     /// is set).
@@ -1860,9 +1904,10 @@ final class T4SessionStore: ObservableObject {
             let result = try await client.sendCommand(CommandIntent(
                 hostId: hostId, command: "settings.read"))
             let read = try result.settingsReadResult()
-            settingsSnapshot = read.settings
+            let settings = Self.unwrapSettingsMetadata(read.settings)
+            settingsSnapshot = settings
             settingsRevision = read.revision
-            return read.settings
+            return settings
         } catch {
             t4log.error("settings.read failed: \(error)")
             lastError = "\(error)"
@@ -1870,25 +1915,22 @@ final class T4SessionStore: ObservableObject {
         }
     }
 
-    /// Write one host setting (settings.write, host scope, revision required).
-    /// The host echoes the written metadata object; on success the store
-    /// refreshes `settingsSnapshot` with the echo and returns true. Returns
-    /// false on failure (lastError is set). `value` is sent as a JSONValue
-    /// (string/bool/number); the pane shapes string values as `.string`.
+    /// Write a partial settings object (settings.write, host scope, revision
+    /// required). `patch` is merged into the host settings; the host may answer
+    /// with a confirmation challenge instead of a result — that surfaces as
+    /// `pendingConfirmation` via observe() and the banner handles approve/deny.
+    /// On success the new revision is captured and the snapshot re-read so
+    /// masked provider keys stay authoritative.
     @discardableResult
-    func settingsWrite(key: String, value: JSONValue) async -> Bool {
+    func settingsWrite(patch: [String: JSONValue]) async -> Bool {
         guard let client, connected, !hostId.isEmpty else {
             lastError = "Not connected to a host."
             return false
         }
-        // settings.write is host-scope, revision required, confirmation
-        // challenge. The revision is the settings revision captured by the
-        // last settings.read (`settingsRevision`); the host may answer with a
-        // confirmation challenge instead of a result — that surfaces as
-        // `pendingConfirmation` via observe() and the banner handles approve/
-        // deny. Send without a confirmationId so the host issues the
-        // challenge; the store's pendingConfirmation banner then drives the
-        // confirm() flow.
+        guard grantedCapabilities.contains("config.write") else {
+            lastError = "Settings writes require the config.write capability."
+            return false
+        }
         guard let revision = settingsRevision else {
             lastError = "Settings revision unknown — load settings first."
             return false
@@ -1896,10 +1938,13 @@ final class T4SessionStore: ObservableObject {
         do {
             let result = try await client.sendCommand(CommandIntent(
                 hostId: hostId, command: "settings.write",
-                args: [key: value], expectedRevision: revision))
-            if let echo = try result.settingsWriteResult() {
-                settingsSnapshot = echo
+                args: patch, expectedRevision: revision))
+            if let echo = try result.settingsWriteResult(),
+               case .string(let newRevision) = echo["revision"] ?? .null,
+               !newRevision.isEmpty {
+                settingsRevision = newRevision
             }
+            await settingsRead()
             return true
         } catch {
             t4log.error("settings.write failed: \(error)")

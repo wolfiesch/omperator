@@ -14,7 +14,39 @@
 //  read/write/delete path needs no `#if os()` guards.
 
 import Foundation
+import LocalAuthentication
 import Security
+
+struct EphemeralConnectionCredentials: Equatable {
+    let endpoint: String
+    let deviceId: String
+    let deviceToken: String
+
+    init(endpoint: String, deviceId: String, deviceToken: String) {
+        self.endpoint = endpoint
+        self.deviceId = deviceId
+        self.deviceToken = deviceToken
+    }
+
+    init?(arguments: [String] = ProcessInfo.processInfo.arguments) {
+        func value(_ name: String) -> String? {
+            let prefix = "-\(name)="
+            guard let argument = arguments.first(where: { $0.hasPrefix(prefix) }) else {
+                return nil
+            }
+            let value = String(argument.dropFirst(prefix.count))
+            return value.isEmpty ? nil : value
+        }
+
+        guard let endpoint = value("T4Endpoint"),
+              let deviceId = value("T4DeviceId"),
+              let deviceToken = value("T4DeviceToken")
+        else { return nil }
+        self.endpoint = endpoint
+        self.deviceId = deviceId
+        self.deviceToken = deviceToken
+    }
+}
 
 enum Keychain {
     /// Service prefix shared by every T4 Code keychain item (matches the
@@ -29,6 +61,7 @@ enum Keychain {
         arguments: [String] = ProcessInfo.processInfo.arguments
     ) -> Bool {
         !arguments.contains("-T4NoRestore")
+            && EphemeralConnectionCredentials(arguments: arguments) == nil
     }
 
     /// Store `value` under `key`. Replaces any existing item. A nil or empty
@@ -58,6 +91,8 @@ enum Keychain {
     /// Read the string stored under `key`, or nil if absent/unreadable.
     static func get(_ key: String) -> String? {
         guard usesPersistentStore() else { return nil }
+        let authenticationContext = LAContext()
+        authenticationContext.interactionNotAllowed = true
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -65,6 +100,10 @@ enum Keychain {
             kSecAttrSynchronizable as String: false,
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecReturnData as String: true,
+            // Ad-hoc macOS builds change signing identities frequently. Never
+            // block first paint on an interactive SecurityAgent consent sheet;
+            // an unreadable item behaves exactly like a missing item.
+            kSecUseAuthenticationContext as String: authenticationContext,
         ]
         var item: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,

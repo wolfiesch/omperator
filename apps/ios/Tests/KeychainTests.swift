@@ -13,6 +13,48 @@ final class KeychainTests: XCTestCase {
         XCTAssertTrue(Keychain.usesPersistentStore(arguments: ["T4Code"]))
     }
 
+    func testCompleteEphemeralCredentialsDisablePersistentKeychain() {
+        let arguments = [
+            "T4Code",
+            "-T4Endpoint=wss://example.test/v1/ws",
+            "-T4DeviceId=device-id",
+            "-T4DeviceToken=device-token",
+        ]
+
+        XCTAssertFalse(Keychain.usesPersistentStore(arguments: arguments))
+        XCTAssertEqual(
+            EphemeralConnectionCredentials(arguments: arguments),
+            EphemeralConnectionCredentials(
+                endpoint: "wss://example.test/v1/ws",
+                deviceId: "device-id",
+                deviceToken: "device-token"
+            )
+        )
+    }
+
+    func testIncompleteEphemeralCredentialsKeepPersistentKeychainEnabled() {
+        XCTAssertTrue(
+            Keychain.usesPersistentStore(arguments: [
+                "T4Code",
+                "-T4Endpoint=wss://example.test/v1/ws",
+                "-T4DeviceId=device-id",
+            ])
+        )
+    }
+
+    @MainActor
+    func testSuccessfulConnectionClearsStaleEndpointError() {
+        let store = T4SessionStore()
+        store.lastError = """
+        Error Domain=NSURLErrorDomain Code=-1004 \
+        "Could not connect to the server."
+        """
+
+        store.clearErrorAfterSuccessfulConnection()
+
+        XCTAssertNil(store.lastError)
+    }
+
     func testPendingTranscriptQueueKeepsEveryAssistantEntry() throws {
         var queue = PendingTranscriptQueue()
 
@@ -56,6 +98,32 @@ final class KeychainTests: XCTestCase {
         XCTAssertEqual(defaults.string(forKey: "t4.endpoint"), "wss://example.test/v1/ws")
         XCTAssertEqual(defaults.string(forKey: "t4.deviceId"), "device-id")
         XCTAssertEqual(defaults.string(forKey: "t4.deviceToken"), "device-token")
+        let migrationMarkerKey = ["t4", "keychainMigrated"].joined(separator: ".")
+        XCTAssertFalse(defaults.bool(forKey: migrationMarkerKey))
+    }
+
+    @MainActor
+    func testEphemeralCredentialsPreserveLegacyCredentialsForLaterMigration() {
+        let suiteName = "KeychainTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set("wss://saved.example/v1/ws", forKey: "t4.endpoint")
+        defaults.set("saved-device-id", forKey: "t4.deviceId")
+        defaults.set("saved-device-token", forKey: "t4.deviceToken")
+
+        T4SessionStore.migrateCredentialsToKeychainIfNeeded(
+            arguments: [
+                "T4Code",
+                "-T4Endpoint=wss://ephemeral.example/v1/ws",
+                "-T4DeviceId=ephemeral-device-id",
+                "-T4DeviceToken=ephemeral-device-token",
+            ],
+            defaults: defaults
+        )
+
+        XCTAssertEqual(defaults.string(forKey: "t4.endpoint"), "wss://saved.example/v1/ws")
+        XCTAssertEqual(defaults.string(forKey: "t4.deviceId"), "saved-device-id")
+        XCTAssertEqual(defaults.string(forKey: "t4.deviceToken"), "saved-device-token")
         let migrationMarkerKey = ["t4", "keychainMigrated"].joined(separator: ".")
         XCTAssertFalse(defaults.bool(forKey: migrationMarkerKey))
     }

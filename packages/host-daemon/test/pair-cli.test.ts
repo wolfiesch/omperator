@@ -110,6 +110,7 @@ describe("t4-host pair", () => {
     expect(capabilities).toContain("agents.control");
     expect(capabilities).toContain("audit.read");
     expect(capabilities).toContain("config.read");
+    expect(capabilities).toContain("config.write");
   });
 
   test("postPairTicket sends capabilities and ttlMs to the admin endpoint", async () => {

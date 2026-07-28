@@ -2,12 +2,13 @@
 import { createHash } from "node:crypto";
 import { chmod, mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import {
   createAppserver,
   createHostLogger,
   createRemoteAppserver,
   OfficialOmpProfileAuthority,
+  OmpSettingsAuthority,
   OmpAuthorityBridgeClient,
   profileSocketPath,
   FilesAuthority,
@@ -33,6 +34,11 @@ const PROFILE = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
 const ORIGIN_LIMIT = 32;
 const VERSION_OUTPUT_BYTES = 4 * 1024;
 const VERSION_TIMEOUT_MS = 5_000;
+
+export function officialOmpRootFromSessionsRoot(sessionsRoot: string): string {
+  const parent = dirname(sessionsRoot);
+  return basename(parent) === "agent" ? dirname(parent) : parent;
+}
 const OFFICIAL_CATALOG_COMMANDS = Object.freeze([
   "session.create",
   "session.rename",
@@ -401,6 +407,9 @@ export async function runHostDaemon(
         items: officialCatalogItems(),
       }),
       ...terminals.operations(),
+      ...new OmpSettingsAuthority({
+        ompRoot: officialOmpRootFromSessionsRoot(config.ompSessionsRoot!),
+      }).operations(),
     };
     projectRootForProject = projectId => official.projectRootForProject(projectId);
     projectRootForSession = sessionId => official.projectRootForSession(sessionId);
