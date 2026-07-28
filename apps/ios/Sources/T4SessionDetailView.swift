@@ -27,6 +27,9 @@ struct T4SessionDetailView: View {
     let session: SessionRef
     @ObservedObject var store: T4SessionStore
     @EnvironmentObject var theme: ThemeStore
+    #if os(macOS)
+    @EnvironmentObject private var macCommands: MacCommandsModel
+    #endif
     @StateObject private var dictation = Dictation()
     @State private var draft = ""
     @State private var sending = false
@@ -216,6 +219,9 @@ struct T4SessionDetailView: View {
                 withAnimation(.easeInOut(duration: 0.22)) { planExpanded = false }
             }
         }
+        #if os(macOS)
+        .onChange(of: macCommands.composerTick) { _, _ in composerFocused = true }
+        #endif
         // Cross-pane prefill (browser design-mode annotation): adopt the
         // pending text into the composer draft, then clear the channel. Append
         // to existing draft so a half-typed message isn't clobbered.

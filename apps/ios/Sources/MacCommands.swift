@@ -20,6 +20,7 @@ final class MacCommandsModel: ObservableObject {
     /// Monotonic ticks — the workspace observes these to perform one-shot UI
     /// actions without the Commands scene needing direct view-state access.
     @Published var focusSearchTick = 0
+    @Published var composerTick = 0
     @Published var dismissTick = 0
     @Published var connectTick = 0
     @Published var paletteTick = 0
@@ -31,6 +32,7 @@ final class MacCommandsModel: ObservableObject {
         withAnimation { columnVisibility = columnVisibility == .all ? .detailOnly : .all }
     }
     func focusSearch() { focusSearchTick &+= 1 }
+    func focusComposer() { composerTick &+= 1 }
     func dismissPresented() { dismissTick &+= 1 }
     func requestConnect() { connectTick &+= 1 }
     func openPalette() { paletteTick &+= 1 }
@@ -97,6 +99,10 @@ struct MacCommands: SwiftUI.Commands {
 
             Button("Focus Search") { commands?.focusSearch() }
                 .keyboardShortcut("f", modifiers: .command)
+
+            // ⌘L: jump to the message composer (browser-location-bar habit).
+            Button("Focus Composer") { commands?.focusComposer() }
+                .keyboardShortcut("l", modifiers: .command)
 
             Button("Close Sheet") { commands?.dismissPresented() }
                 .keyboardShortcut(.escape, modifiers: [])
