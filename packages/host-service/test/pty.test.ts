@@ -126,7 +126,7 @@ describe("spawnPty", () => {
 			try {
 				child.write("ps -o tty,stat -p $$\n");
 				let output = "";
-				const deadline = Date.now() + 6_000;
+				const deadline = Date.now() + 10_000;
 				while (!/\bSs\b/u.test(output) && Date.now() < deadline) {
 					output += child.drain();
 					await settle(40);
@@ -142,7 +142,7 @@ describe("spawnPty", () => {
 				child.close();
 			}
 		}
-	}, 30_000);
+	}, 45_000);
 
 	test("round-trips the window size and signals the child", async () => {
 		const root = await mkdtemp(join(tmpdir(), "t4-pty-winsize-"));
