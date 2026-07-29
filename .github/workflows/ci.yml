@@ -694,21 +694,24 @@ jobs:
         run: |
           set -euo pipefail
           test -x /opt/homebrew/bin/xcodegen
-          test -d /Applications/Xcode-26.3.0.app/Contents/Developer
+          developer_dir="$(xcode-select -p)"
+          test -d "$developer_dir"
+          xcode_version="$(DEVELOPER_DIR="$developer_dir" xcodebuild -version | awk 'NR == 1 { print $2 }')"
+          test -n "$xcode_version"
           echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
           {
-            echo "DEVELOPER_DIR=/Applications/Xcode-26.3.0.app/Contents/Developer"
+            echo "DEVELOPER_DIR=$developer_dir"
             echo "ARCHS=arm64"
             echo "ONLY_ACTIVE_ARCH=YES"
-            echo "T4_IOS_DERIVED_DATA_PATH=$HOME/Library/Caches/omperator-ci/ios/xcode-26.3/derived-data"
+            echo "T4_IOS_DERIVED_DATA_PATH=$HOME/Library/Caches/omperator-ci/ios/xcode-$xcode_version/derived-data"
           } >> "$GITHUB_ENV"
           T4_IOS_CACHE_MIN_FREE_GIB=11 \
-            T4_IOS_CACHE_ROOT="$HOME/Library/Caches/omperator-ci/ios/xcode-26.3" \
+            T4_IOS_CACHE_ROOT="$HOME/Library/Caches/omperator-ci/ios/xcode-$xcode_version" \
             node scripts/prepare-ios-ci-cache.mjs
-          xcodebuild -version
+          DEVELOPER_DIR="$developer_dir" xcodebuild -version
           /opt/homebrew/bin/xcodegen --version
-          xcodebuild -showComponent MetalToolchain -json
-          xcrun simctl list runtimes available | grep -F "iOS 26.3"
+          DEVELOPER_DIR="$developer_dir" xcodebuild -showComponent MetalToolchain -json
+          DEVELOPER_DIR="$developer_dir" xcrun simctl list runtimes available | grep -F "iOS "
 
       - name: Install XcodeGen
         if: ${{ runner.name != 'wolfie-m1-omperator' }}
@@ -745,8 +748,9 @@ jobs:
       - name: Enforce iOS cache bounds
         if: ${{ always() && runner.name == 'wolfie-m1-omperator' }}
         run: |
+          xcode_version="$(DEVELOPER_DIR="$DEVELOPER_DIR" xcodebuild -version | awk 'NR == 1 { print $2 }')"
           T4_IOS_CACHE_MIN_FREE_GIB=11 \
-            T4_IOS_CACHE_ROOT="$HOME/Library/Caches/omperator-ci/ios/xcode-26.3" \
+            T4_IOS_CACHE_ROOT="$HOME/Library/Caches/omperator-ci/ios/xcode-$xcode_version" \
             node scripts/prepare-ios-ci-cache.mjs
 
   # The branch-protection gate. It waits only on legs that run on ubuntu-24.04
