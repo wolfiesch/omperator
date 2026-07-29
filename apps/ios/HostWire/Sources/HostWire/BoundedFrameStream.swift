@@ -16,7 +16,7 @@ public struct BoundedFrameStream: AsyncSequence, Sendable {
 
     fileprivate let buffer: BoundedFrameBuffer
 
-    fileprivate init(buffer: BoundedFrameBuffer) {
+    init(buffer: BoundedFrameBuffer) {
         self.buffer = buffer
     }
 
