@@ -1,0 +1,209 @@
+# Portable Agent Platform v1 implementation tracker
+
+- Status: planning complete; implementation not started
+- Source specification: <https://roycorp.net/briefs/omperator-portable-agent-platform-v1-f4c81ee5.html>
+- Source SHA-256: `f31778a0d57b3b39b822faa0d6e7a3f1af2888dd09a9a39780025c43acce6194`
+- Specification baseline: `wolfiesch/omperator@2ab8fc7`, `manaflow-ai/cmux@192e444`, `can1357/oh-my-pi@d16c616`
+- Repository review baseline: `48b1ba7b94f468154ed0e0998118d01f7dbffbd0`
+- Execution tracker: project-local `td` database under `.todos/`
+
+## Review verdict
+
+The proposed platform architecture is directionally sound. It preserves the right authority boundaries: exact upstream `machine-provider-v1` and cmux protocol v10, the existing `omp-app/1` application wire, raw OMP RPC on stdio only, and one fenced OMP/cmux writer per runtime. Its portable driver model and separation between highly available gateways and non-active-active runtimes are also correct.
+
+The delivery phases are not safe or efficient to execute literally. The implementation must first resolve several contract gaps, then prove the provider/runtime path locally before expanding the Kubernetes plane. In particular, storage separation and fencing cannot wait until after cmux is placed in the runtime, and local parity cannot wait until the end because it is the cheapest reference implementation of the common driver and provider contracts.
+
+## Current repository baseline
+
+| Area | Present now | Missing for the specification |
+|---|---|---|
+| Kubernetes resources | `T4ClusterHost`, `T4Workspace`, and `T4Session` CRDs; guarded additive lifecycle; leader-elected controllers | Desired power state, runtime generation, stable external identity/tombstones, idle and connection policy, separate runtime-state storage |
+| Workspace/session reconciliation | RWX workspace PVC, one deterministic Pod and Service per `T4Session`, ownership and precondition checks | Sleeping/stopped states, old-writer proof, generation-bound routing, runtime-state PVC, wake/failover state machine |
+| Application gateway | Replicated Bun gateway serving `omp-app/1` at `/v1/ws`; Tailscale trusted-proxy identity; Kubernetes projection and pod routing | REST lifecycle/discovery, SSE, scope model, pluggable identity, cmux routes, SSH provider gateway |
+| Runtime | Pinned OMP bridge, one host service, Xvfb/Chromium option, durable OMP/browser state | Upstream headless cmux, cmux durable state and writer lease, protocol v10 route, shared readiness and shutdown supervision |
+| Credential plane | Separate allowlisted model gateway; runtime pods receive no reusable provider credentials | Provider-neutral identity/credential adapters and complete audit coverage for new front doors |
+| REST contract | Validated but undeployed T4 API v1 contract with workspace/session commands, snapshots, and SSE | Product-neutral runtime lifecycle contract; removal of REST transcript/command behavior forbidden by the new specification |
+| Packaging | Portable Helm chart, immutable digest inputs, strict NetworkPolicies, PDB/topology for existing shared services | SSH service, HPA, runtime-state storage values, image pre-pull, OCI/signing evidence, GitOps/Terraform examples |
+| Conformance | Existing `omp-app/1`, OMP bridge, cluster, packaging, and release gates | Upstream cmux/provider fixtures and all Appendix B portable-platform scenarios |
+
+Source anchors include `packages/cluster-operator/api/v1alpha1/types.go`, `packages/cluster-operator/controllers/session_controller.go`, `packages/cluster-server/src/server.ts`, `packages/cluster-server/src/gateway.ts`, `packages/cluster-server/src/session-host-main.ts`, `cluster/images/session-runtime/session-entrypoint.sh`, `packages/t4-api-contract/openapi.json`, and `deploy/charts/t4-cluster/`.
+
+## Corrections required before implementation
+
+1. **Preserve the three existing CRDs.** The specification explicitly keeps `cluster.t4.dev/v1alpha1` and maps REST `runtime` to `T4Session`. Do not add a competing `T4Runtime` CRD. Extend `T4Session` additively and map its Kubernetes name/UID plus a deletion tombstone to the stable REST runtime identity.
+2. **Replace the undeployed REST contract cleanly.** The existing `t4-api-contract` uses `/v1/sessions`, command submission, snapshots, and session event streaming. The target contract uses `/v1/runtimes` and lifecycle invalidations only. There are no external users, so replace it and all in-repo generated callers and fixtures without shims.
+3. **Resolve the cmux/OMP topology before code.** The current runtime starts one OMP authority through the host service. The specification also says a cmux user can start OMP through a terminal. Starting a second OMP would violate the single-writer invariant. The contract must define how cmux exposes or attaches to the existing authority, and the first-prompt conformance test must prove both client families observe the same OMP session.
+4. **Move storage separation and fencing ahead of Kubernetes cmux rollout.** cmux SQLite/WAL and browser/OMP state cannot first be placed on an arbitrary RWX workspace and migrated later. Establish the runtime-state volume and fencing contract before declaring the Kubernetes provider usable.
+5. **Build the local vertical slice before the replicated SSH edge.** Prove exact provider control/stream framing and a real headless cmux process through the direct command connector first. The SSH gateway should then be a strict authenticated transport wrapper, not the first place protocol behavior is debugged.
+6. **Define the shared control-store semantics.** Atomic ticket consumption, 24-hour idempotency, deletion tombstones, and resumable SSE across replicas are not supplied merely by saying “use Kubernetes resources.” Specify keys, compare-and-swap behavior, retention, cleanup, replay, and fail-closed behavior. Local mode uses SQLite; Kubernetes mode uses reviewed Kubernetes objects and optimistic concurrency unless evidence requires a different shared store.
+7. **Use OpenSSH as the boring v1 SSH boundary.** Prefer a hardened `sshd` deployment with stable administrator-managed host keys and a forced-command dispatcher. Do not implement a general shell or a custom SSH server unless the forced-command design cannot meet the pinned cmux contract.
+8. **Define identity and scopes before exposing front doors.** Tailscale currently yields one principal string. OIDC, SSH keys/certificates, automation identity, scope membership, roles, and cross-scope denial need one provider-neutral authorization interface and one source of scope membership.
+9. **Reconcile upstream pins.** The specification pins OMP `d16c616`, while the packaged runtime currently pins the T4 OMP bridge build at `ca2902bc…`. Select one tested OMP/cmux/host image set before adding runtime behavior. No component rolls independently.
+10. **Treat SLOs as targets until measured.** Startup and failover values require source hash, built image digests, environment, scenario, iterations, and artifacts. No release or tracker entry may convert the proposed targets into observed guarantees without that evidence.
+
+## Non-negotiable invariants
+
+- One requested top-level runtime maps to one `T4Session`, one cmux machine, and at most one live runtime pod/process group.
+- OMP owns sessions, turns, prompts, approvals, subagents, jobs, artifacts, cancellation, and takeover.
+- cmux owns terminal panes, workspace registry, layouts, VT state, and cmux browser panes.
+- Kubernetes/local drivers own infrastructure desired state only.
+- `machine-provider-v1`, cmux protocol v10, and `omp-app/1` are transported exactly. No private terminal, browser, transcript, or agent wire is added.
+- Raw OMP RPC, cmux Unix sockets, CDP, filesystem locks, and runtime credentials remain internal.
+- Status and lifecycle events contain infrastructure truth only.
+- A replacement writer is never started while the prior writer's ability to mutate durable state is uncertain.
+- Credentials, prompts, terminal bytes, paths, browser pixels, and unbounded identifiers never enter CR status, discovery, logs, metrics, or traces.
+- Unsupported capabilities are omitted and fail with typed unsupported results; they are never advertised speculatively.
+
+## Revised delivery sequence
+
+```mermaid
+graph TD
+  P0[P0 Contract and trust boundaries] --> P1[P1 Portable core and local proof]
+  P1 --> P2[P2 Kubernetes lifecycle and fencing]
+  P1 --> P3[P3 Packaged runtime integration]
+  P1 --> P6[P6 Local and single-host service]
+  P2 --> P4[P4 REST, WSS, and SSH gateways]
+  P3 --> P4
+  P2 --> P5[P5 HA, policy, and operations]
+  P4 --> P5
+  P4 --> P7[P7 Cross-driver conformance]
+  P5 --> P7
+  P6 --> P7
+  P7 --> P8[P8 Distribution and release]
+```
+
+P2, P3, and P6 may run concurrently only after P0/P1 freeze their shared interfaces. P4 waits for both Kubernetes generation routing and the real runtime stream. P8 is the only publication phase and retains the normal point-of-risk approval gate.
+
+## Work packages
+
+### P0 — Contract, topology, and trust boundaries
+
+| ID | Deliverable | Depends on | Acceptance | Default executor |
+|---|---|---|---|---|
+| P0-01 | Rebaseline the external specification and record exact OMP/cmux/Omperator pins | None | Source digest and current repository head are recorded; mismatched OMP pin is resolved | Main |
+| P0-02 | Import or generate upstream provider schemas and golden control/stream fixtures | P0-01 | No hand-copied reduced schema; fixture provenance is pinned | GPT-5.6 medium |
+| P0-03 | Decide and document the one-authority cmux/OMP process topology | P0-01 | cmux and `omp-app/1` operate on one OMP authority; no second OMP process can write the session | Main |
+| P0-04 | Replace the OpenAPI draft with runtime lifecycle/discovery resources | P0-01 | OpenAPI 3.1 validates; no REST terminal/transcript/browser stream remains | GPT-5.6 medium |
+| P0-05 | Define driver, route, control-store, revision, ticket, tombstone, and event-journal interfaces | P0-03, P0-04 | Local and Kubernetes backends can implement one contract without transport-specific fields | Main |
+| P0-06 | Define principal, scope, role, action, policy, and capability intersection | P0-04 | Every REST/WSS/SSH action has a deny-by-default authorization decision | GPT-5.6 medium |
+| P0-07 | Define desired-state, generation, drain, fence, replacement, deletion, and restore state machines | P0-03, P0-05 | Uncertain fencing has one explicit fail-closed terminal state | Main |
+| P0-08 | Threat-model all public and internal boundaries | P0-05, P0-06, P0-07 | Ticket replay, sender identity, shell/path injection, credential exposure, cross-scope access, and duplicate writer threats have executable checks | GPT-5.6 medium + fresh review |
+
+### P1 — Portable core and local protocol proof
+
+| ID | Deliverable | Depends on | Acceptance | Default executor |
+|---|---|---|---|---|
+| P1-01 | Implement product-neutral resource, revision, phase, capability, and Problem Details types | P0 | Strict decoders and bounded fields match OpenAPI examples | GPT-5.6 medium |
+| P1-02 | Implement SQLite local registry, idempotency ledger, ticket CAS, tombstones, and event journal | P0-05, P1-01 | Exact retries replay; conflicting retries reject; ticket use is atomic; retention is bounded | GPT-5.6 medium |
+| P1-03 | Implement `LocalDriver` process/directory lifecycle with generation-bound routes | P0-05, P0-07, P1-01 | Create, get, update, sleep, wake, stop, delete, and watch converge against real processes | GPT-5.6 medium |
+| P1-04 | Pin/build upstream cmux and start a real headless process with private socket and durable state | P0-02, P0-03 | `identify` reports protocol 10; duplicate writer/corrupt state fails closed; socket paths stay under platform limits | GPT-5.6 medium |
+| P1-05 | Implement exact provider control and stream engines independent of SSH | P0-02, P1-02, P1-03, P1-04 | Golden frames pass; ticket handshake becomes an unmodified cmux v10 stream | GPT-5.6 medium |
+| P1-06 | Add direct-command `omperatorctl provider -- control|stream` adapter | P1-05 | cmux appends exactly `control` or `stream`; no shell evaluation or catalog translation | GPT-5.6 low/medium |
+| P1-07 | Prove an unmodified cmux client can list, create, open, close, sleep, wake, and reconnect locally | P1-03 through P1-06 | Real client scenario passes with frame-hash no-translation evidence | Main verification |
+
+### P2 — Kubernetes lifecycle, storage, and fencing
+
+| ID | Deliverable | Depends on | Acceptance | Default executor |
+|---|---|---|---|---|
+| P2-01 | Add optional/default-safe `T4Session` desired-state, runtime identity/name, policy, and generation concepts | P0-07 | Existing CR fixtures round-trip and validate unchanged | GPT-5.6 medium |
+| P2-02 | Add host/workspace runtime-state storage profile, snapshot references, and bounded status fields | P0-07 | Workspace RWX and runtime-state storage can differ; status remains infrastructure-only | GPT-5.6 medium |
+| P2-03 | Reconcile Running, Sleeping, and Stopped without duplicate pods | P2-01, P2-02 | Sleeping/stopped remove the pod while retaining declared state; running creates exactly one pod | GPT-5.6 medium |
+| P2-04 | Implement drain, credential revocation, pod/volume fence proof, generation CAS, and route publication | P2-03 | Replacement never becomes Ready before old-writer proof; uncertain fence remains degraded | GPT-5.6 medium + fresh review |
+| P2-05 | Implement Kubernetes control-store backend for ticket/idempotency/tombstone/event contracts | P0-05, P2-01 | Atomic use across replicas and cleanup/retention behavior are demonstrated under concurrency | GPT-5.6 medium |
+| P2-06 | Implement `KubernetesDriver` and generation-bound internal route resolution | P2-03 through P2-05 | Driver conformance matches LocalDriver semantics; clients never receive Pod addresses | GPT-5.6 medium |
+| P2-07 | Extend guarded CRD lifecycle, chart schemas, RBAC, NetworkPolicies, and affected verification | P2-01 through P2-06 | Additive preflight, live-object compatibility, OpenAPI convergence, and dry-run gates remain fail-closed | GPT-5.6 medium |
+
+### P3 — Packaged runtime integration
+
+| ID | Deliverable | Depends on | Acceptance | Default executor |
+|---|---|---|---|---|
+| P3-01 | Add pinned multi-arch cmux build to the immutable session runtime image | P0-01, P1-04 | Built image records exact source and digest; upstream license/provenance retained | GPT-5.6 medium |
+| P3-02 | Establish private runtime, authority, cmux, browser, artifact, and workspace state roots | P0-03, P2-02 | Permissions, mount ownership, short socket paths, and writer leases fail closed | GPT-5.6 medium |
+| P3-03 | Supervise cmux, host service, OMP authority, optional browser, and route agent | P3-01, P3-02 | One child failure drains readiness and shuts the process group down without orphan writers | GPT-5.6 medium |
+| P3-04 | Implement the approved cmux-to-existing-OMP-authority attachment path | P0-03, P3-03 | cmux and application prompts/history refer to the same OMP session | GPT-5.6 medium |
+| P3-05 | Add readiness for storage, cmux identify, OMP host, internal generation auth, and required browser | P2-04, P3-03 | RouteReady is published only after every profile-required component passes | GPT-5.6 medium |
+| P3-06 | Preserve both cmux browser panes and `omp-app/1` Browser Preview without public CDP | P3-03 | Both negotiated surfaces work; browser-disabled profiles start no Chromium and advertise no browser capability | GPT-5.6 medium |
+| P3-07 | Prove graceful restart, crash restart, and durable reconnect of OMP/cmux/browser state | P3-04 through P3-06 | Real runtime smoke retains selected state and never starts two writers | Main verification |
+
+### P4 — REST, application, cmux, and SSH front doors
+
+| ID | Deliverable | Depends on | Acceptance | Default executor |
+|---|---|---|---|---|
+| P4-01 | Serve well-known discovery, version, capabilities, scopes, workspaces, runtimes, and connections | P0-04, P1-01, P2-06 | Authorized bounded documents match OpenAPI; internal names/addresses and credentials are absent | GPT-5.6 medium |
+| P4-02 | Implement ETags, preconditions, PUT idempotency, action idempotency, pagination, filters, and Problem Details | P1-02, P2-05, P4-01 | Stale revisions and conflicting keys fail with exact typed responses | GPT-5.6 medium |
+| P4-03 | Implement resumable bounded SSE lifecycle invalidations | P1-02, P2-05, P4-01 | Cursor resume and typed reset work across gateway replicas | GPT-5.6 medium |
+| P4-04 | Preserve `/v1/ws` `omp-app/1` with stable runtime selection and generation-bound internal auth | P2-06, P3-05 | Existing app clients reconnect through stable IDs; raw OMP RPC remains private | GPT-5.6 medium |
+| P4-05 | Implement optional direct cmux WSS framing proxy | P2-06, P3-05 | Text-frame/JSONL delimiters are the only translation; binary frames reject; object bytes/order/errors remain unchanged | GPT-5.6 medium |
+| P4-06 | Package hardened OpenSSH gateway with stable host identity and strict forced-command dispatcher | P0-06, P1-05, P2-06 | Only specified commands/flags/PTTY modes work; shell, forwarding, subsystems, and injection attempts reject | GPT-5.6 medium + fresh review |
+| P4-07 | Implement exact `cmux provider control`, `cmux provider stream`, and direct relay forced commands | P4-06 | Unmodified `--cloud-host` client completes provider hello and opens protocol v10 | GPT-5.6 medium |
+| P4-08 | Implement Tailscale, OIDC, SSH key/certificate, and automation identity adapters | P0-06, P4-01, P4-06 | Principal/scope binding is server-derived and reevaluated per mutation/open | GPT-5.6 medium + fresh review |
+| P4-09 | Implement action authorization, capability intersection, and structured audit events across all gateways | P4-01 through P4-08 | Cross-scope attempts deny consistently; audit omits user content and secrets | GPT-5.6 medium |
+| P4-10 | Prove gateway replica failure and atomic ticket use | P4-03 through P4-09 | Connections reconnect without runtime restart; replay and cross-generation tickets reject | Main verification |
+
+### P5 — HA policy, scale-to-zero, and operations
+
+| ID | Deliverable | Depends on | Acceptance | Default executor |
+|---|---|---|---|---|
+| P5-01 | Define and expose bounded authoritative runtime activity signals | P0-03, P3-03 | Active OMP turns/jobs/approvals, terminal leases, clients, browsers, and keepalives are observable without entering CR status | GPT-5.6 medium |
+| P5-02 | Implement safe idle sleep, explicit wake/sleep/stop, and provider wake timeout | P2-03, P4-07, P5-01 | Idle sleep occurs only when every required signal is inactive and state flush is acknowledged | GPT-5.6 medium |
+| P5-03 | Implement scope quotas, admission limits, browser/GPU policy, and bounded creation rates | P0-06, P4-09 | Over-quota requests reject before workload creation with typed retry policy | GPT-5.6 medium |
+| P5-04 | Add gateway HPA, controller/SSH PDBs, topology, anti-affinity, and optional image pre-pull | P4 | Existing defaults stay fail-closed; shared-service replica loss meets reconnect semantics |
+| P5-05 | Add bounded metrics, structured logs, traces, and alerts | P2 through P4 | No user IDs/content/paths or unbounded labels; each alert has an actionable runbook target |
+| P5-06 | Add storage capability/remount probe and node-loss fencing scenario | P2-04 | Advertised HA storage writes, remounts elsewhere, and reads successfully; uncertain attachment refuses replacement |
+| P5-07 | Implement quiesced backup/restore and explicitly labeled crash-consistent snapshots | P3-07, P5-02, P5-06 | Restore creates a new fenced generation and cannot attach one snapshot to two live runtimes |
+| P5-08 | Build startup/failover measurement harness without publishing unmeasured claims | P4-10, P5-04, P5-06 | Artifacts record source/image hashes, mode, environment, scenario, iterations, timeout, and raw results |
+
+### P6 — Local and remote single-host service
+
+| ID | Deliverable | Depends on | Acceptance | Default executor |
+|---|---|---|---|---|
+| P6-01 | Package LocalDriver behind existing launchd/systemd service-manager primitives | P1-03, P1-07 | Install/start/stop/restart/inspect are safe and rollback on partial install |
+| P6-02 | Serve the same REST/provider/cmux/`omp-app/1` descriptors locally and on one remote host | P4 contracts, P6-01 | Endpoint/identity is the only client-profile difference |
+| P6-03 | Add copy-on-import for existing local OMP and cmux state | P0-03, P6-01 | Originals are never rewritten in place; failed import is resumable or safely discarded |
+| P6-04 | Document and expose truthful non-HA capability/status for single-host mode | P6-02 | Single-host mode never advertises gateway/runtime HA |
+| P6-05 | Run common lifecycle, prompt, browser, sleep/wake, reconnect, and deletion scenarios | P6-02 through P6-04 | Common protocol/resource semantics match LocalDriver and KubernetesDriver |
+
+### P7 — Cross-driver conformance and security
+
+| ID | Scenario | Depends on | Acceptance |
+|---|---|---|---|
+| P7-01 | Protocol discovery and negotiation | P4, P6 | Well-known, provider hello, cmux identify 10, and `omp-app/1` hello pass with pinned clients |
+| P7-02 | Create runtime and first prompt | P3, P4 | Provider-created runtime, cmux attach, app prompt, durable paging, and infra-only status refer to one authority |
+| P7-03 | Concurrent cmux/app clients and gateway loss | P4-10 | Observer/takeover/sizing semantics persist and writer count remains one |
+| P7-04 | cmux browser pane plus Browser Preview | P3-06 | Navigation/input/resize/restart policy work and CDP is unreachable externally |
+| P7-05 | Sleep, provider wake, reconnect, and ticket replay | P5-02 | Zero sleeping pods/processes, retained state, bounded wake, replay rejection |
+| P7-06 | Pod/node loss and uncertain fencing | P5-06 | Old writer is proven fenced before replacement; uncertainty refuses replacement |
+| P7-07 | Gateway/controller rolling failure | P4-10, P5-04 | No duplicate pod/PVC/service/ticket/generation and bounded reconnect succeeds |
+| P7-08 | Local, single-host, and Kubernetes parity | P6-05 | Protocol frames and resource semantics match; only timing/environment differ |
+| P7-09 | Additive upgrade and rollback | P2-07, P5-07 | Old/new clients and retained state survive forward and backward workload rollout |
+| P7-10 | Security boundary suite | P4-09, P5-05 | Cross-scope, replay, wrong generation, SSH/path/image/Secret injection, egress, CDP, and content-leak attempts fail |
+
+Every scenario uses real implementations where the contract requires them. Fixture replay alone cannot satisfy OMP, cmux, browser, fencing, or failover acceptance.
+
+### P8 — Distribution and release
+
+| ID | Deliverable | Depends on | Acceptance | Default executor |
+|---|---|---|---|---|
+| P8-01 | Produce OCI Helm chart and immutable amd64/arm64 images | P7 | Digests, provenance, SBOM/signature policy, and compatibility set are recorded |
+| P8-02 | Add Terraform Helm/Kubernetes and Flux/Argo examples | P8-01 | No cloud/storage/identity/network provider becomes mandatory; CRDs remain separately ordered |
+| P8-03 | Publish compatibility matrix and upstream patch ledger | P7, P8-01 | Exact revisions, protocols, skew, rollback image set, and patch removal conditions are explicit |
+| P8-04 | Complete install, upgrade, rollback, backup/restore, fencing, identity rotation, and uninstall runbooks | P5, P7 | Destructive steps name exact targets, revisions, and retention effects |
+| P8-05 | Attach measured startup/failover evidence | P5-08, P7 | Targets are distinguished from observations and evidence metadata is complete |
+| P8-06 | Prove fresh install, upgrade, rollback, retained-state reinstall, and clean uninstall | P8-01 through P8-05 | Every advertised capability has an end-to-end scenario and rollback artifact |
+| P8-07 | Publish release artifacts | P8-06 | Requires explicit point-of-risk approval immediately before public publication |
+
+## Goal-loop procedure
+
+1. Run `td usage --new-session` or `td resume`, then select the earliest unblocked critical-path issue.
+2. Main owns the shared contract issue. Dispatch at most two genuinely independent implementation issues.
+3. Every delegated issue names files/symbols, non-goals, required interface, and observable acceptance. Agents skip project-wide validation.
+4. Verify claimed changed files and one behavior contract before accepting delegated work.
+5. Run `pnpm verify:affected:plan`, then `pnpm verify:affected`, plus the direct smoke scenario for the changed contract. Go/package-specific checks may precede the affected gate.
+6. Run one fresh-context review after correctness gates. Act only on high-confidence correctness, security, contract, or test defects.
+7. Commit a completed, passing code slice. Update the `td` issue with files, evidence, decisions, and remaining risks.
+8. Close the issue, write `td handoff`, and continue to the next ready issue. A phase boundary is not a stopping condition.
+9. Stop only at an explicit user gate, external publication/deployment approval, destructive operation approval, or an unreachable prerequisite.
+
+## Completion definition
+
+The program is complete only when P0 through P8 are closed, every Appendix B scenario passes against each applicable driver, an unmodified pinned cmux client and packaged OMP runtime complete the real flows, duplicate-writer and cross-scope failure cases fail closed, release artifacts carry exact digests and compatibility evidence, and no capability is advertised without an end-to-end scenario.

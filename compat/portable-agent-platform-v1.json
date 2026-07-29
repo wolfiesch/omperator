@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "contract": "omperator-portable-agent-platform-v1",
+  "specification": {
+    "url": "https://roycorp.net/briefs/omperator-portable-agent-platform-v1-f4c81ee5.html",
+    "date": "2026-07-28",
+    "sha256": "f31778a0d57b3b39b822faa0d6e7a3f1af2888dd09a9a39780025c43acce6194"
+  },
+  "baselines": {
+    "omperator": {
+      "repository": "https://github.com/wolfiesch/omperator",
+      "commit": "2ab8fc746f3b588d172da57101036e0d8dd3e0e7"
+    },
+    "cmux": {
+      "repository": "https://github.com/manaflow-ai/cmux",
+      "commit": "192e44428c16b98210c951ec4bd5a86bc7139014",
+      "machineProviderProtocol": 1,
+      "muxProtocol": 10
+    },
+    "omp": {
+      "repository": "https://github.com/can1357/oh-my-pi",
+      "commit": "d16c6168c86f40fc44f25118c2fd06fe160fcb93",
+      "rpcProtocols": [1, 2]
+    }
+  },
+  "implementationStart": {
+    "omperatorCommit": "48b1ba7b94f468154ed0e0998118d01f7dbffbd0",
+    "packagedOmpAuthority": {
+      "repository": "https://github.com/wolfiesch/oh-my-pi",
+      "tag": "t4code-17.0.5-appserver-15",
+      "commit": "ca2902bc095a0b17067f4b8b34ecf454390f85ff",
+      "upstreamRepository": "https://github.com/can1357/oh-my-pi",
+      "upstreamTag": "v17.0.5",
+      "upstreamCommit": "9fd6e97113f5ed3a847e66d346970efdf8afcad9"
+    }
+  },
+  "ompPinResolution": {
+    "contractCommit": "d16c6168c86f40fc44f25118c2fd06fe160fcb93",
+    "currentPackagedCommit": "ca2902bc095a0b17067f4b8b34ecf454390f85ff",
+    "strategy": "replace-before-portable-runtime",
+    "portableRuntimeAdmission": "requires-descendant-integration-proof",
+    "reason": "The packaged authority bridge is based on OMP v17.0.5, while the portable contract was reviewed against a newer official OMP commit. Portable runtime behavior must use a new fork integration commit descended from the contract commit and must pass the pinned OMP RPC and authority-bridge gates before packaging."
+  },
+  "compatibilitySetPolicy": {
+    "rollTogether": ["omperator-host", "omp-runtime", "cmux-runtime"],
+    "independentComponentRollsAllowed": false,
+    "privateProtocolForksAllowed": false
+  }
+}

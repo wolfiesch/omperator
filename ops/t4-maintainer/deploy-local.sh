@@ -496,7 +496,7 @@ verify_sealed_overlay() {
     || { sealed_overlay_invalid "package is unavailable"; return 1; }
   [[ $(stat -c '%a' "$package") == 400 ]] \
     || { sealed_overlay_invalid "permissions changed"; return 1; }
-  [[ $(wc -c <"$package") == "$OVERLAY_PACKAGE_SIZE" ]] \
+  [[ $(wc -c <"$package") -eq $OVERLAY_PACKAGE_SIZE ]] \
     || { sealed_overlay_invalid "size changed"; return 1; }
   [[ $($SHA256SUM "$package" | awk '{print $1}') == "$OVERLAY_PACKAGE_SHA" ]] \
     || { sealed_overlay_invalid "digest changed"; return 1; }
@@ -544,7 +544,7 @@ validate_operator_overlay() {
   require_regular_file "$canonical_path" "operator rollback package"
   package_size=$($JQ -er '.artifact.package.size | numbers | select(. > 0 and . <= 524288000)' "$receipt") \
     || fail "operator rollback package size is invalid"
-  [[ $(wc -c <"$canonical_path") == "$package_size" ]] \
+  [[ $(wc -c <"$canonical_path") -eq $package_size ]] \
     || fail "operator rollback package size does not match its receipt"
   package_sha=$($JQ -er '.artifact.package.sha256 | strings | select(test("^[0-9a-f]{64}$"))' "$receipt") \
     || fail "operator rollback package digest is invalid"
