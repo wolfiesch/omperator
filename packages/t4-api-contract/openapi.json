@@ -1,864 +1,746 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "T4 API",
+    "title": "Omperator Portable Agent Platform API",
     "version": "1.0.0",
-    "summary": "Authenticated public API for bounded T4 workspace and session lifecycle",
-    "description": "The public boundary for T4 clients. The service is not assumed to be publicly exposed. Every operation requires an opaque bearer credential and deny-by-default server-side scope authorization. Kubernetes, PostgreSQL, controller, runtime, and private OMP representations are never exposed."
+    "description": "Portable lifecycle and discovery API for durable workspaces and runtimes."
   },
-  "servers": [{ "url": "https://t4.example.invalid", "description": "Operator-configured private HTTPS endpoint" }],
+  "servers": [{ "url": "https://api.example.invalid" }],
   "security": [{ "BearerAuth": [] }],
-  "tags": [
-    { "name": "Discovery" },
-    { "name": "Workspaces" },
-    { "name": "Sessions" },
-    { "name": "Watch" }
-  ],
   "paths": {
-    "/v1": {
+    "/.well-known/omperator": {
       "get": {
-        "operationId": "discoverV1",
-        "tags": ["Discovery"],
-        "summary": "Negotiate T4 API v1 and discover capabilities and bounds",
-        "parameters": [{ "$ref": "#/components/parameters/ApiVersion" }],
+        "operationId": "getDiscovery",
+        "security": [],
         "responses": {
-          "200": { "$ref": "#/components/responses/Discovery" },
-          "401": {"$ref": "#/components/responses/Error401"},
-          "403": {"$ref": "#/components/responses/Error403"},
-          "406": {"$ref": "#/components/responses/Error406"},
-          "503": {"$ref": "#/components/responses/Error503"}
+          "200": { "$ref": "#/components/responses/DiscoveryResponse" },
+          "503": { "$ref": "#/components/responses/ProblemResponse" }
+        }
+      }
+    },
+    "/v1/version": {
+      "get": {
+        "operationId": "getVersion",
+        "responses": {
+          "200": { "$ref": "#/components/responses/VersionResponse" },
+          "401": { "$ref": "#/components/responses/UnauthorizedResponse" },
+          "503": { "$ref": "#/components/responses/ProblemResponse" }
+        }
+      }
+    },
+    "/v1/capabilities": {
+      "get": {
+        "operationId": "getCapabilities",
+        "responses": {
+          "200": { "$ref": "#/components/responses/CapabilitiesResponse" },
+          "401": { "$ref": "#/components/responses/UnauthorizedResponse" },
+          "503": { "$ref": "#/components/responses/ProblemResponse" }
+        }
+      }
+    },
+    "/v1/scopes": {
+      "get": {
+        "operationId": "listScopes",
+        "parameters": [
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/Cursor" }
+        ],
+        "responses": {
+          "200": { "$ref": "#/components/responses/ScopePageResponse" },
+          "400": { "$ref": "#/components/responses/ProblemResponse" },
+          "401": { "$ref": "#/components/responses/UnauthorizedResponse" },
+          "503": { "$ref": "#/components/responses/ProblemResponse" }
         }
       }
     },
     "/v1/workspaces": {
       "get": {
         "operationId": "listWorkspaces",
-        "tags": ["Workspaces"],
         "parameters": [
-          { "$ref": "#/components/parameters/ApiVersion" },
-          { "$ref": "#/components/parameters/PageSize" },
-          { "$ref": "#/components/parameters/PageCursor" }
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/Cursor" },
+          { "$ref": "#/components/parameters/ScopeFilter" },
+          { "$ref": "#/components/parameters/PhaseFilter" },
+          { "$ref": "#/components/parameters/UpdatedSinceFilter" }
         ],
         "responses": {
-          "200": { "$ref": "#/components/responses/WorkspacePage" },
-          "400": {"$ref": "#/components/responses/Error400"},
-          "401": {"$ref": "#/components/responses/Error401"},
-          "403": {"$ref": "#/components/responses/Error403"},
-          "406": {"$ref": "#/components/responses/Error406"},
-          "422": {"$ref": "#/components/responses/Error422"},
-          "503": {"$ref": "#/components/responses/Error503"}
-        }
-      },
-      "post": {
-        "operationId": "createWorkspace",
-        "tags": ["Workspaces"],
-        "parameters": [
-          { "$ref": "#/components/parameters/ApiVersion" },
-          { "$ref": "#/components/parameters/IdempotencyKey" }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceCreate" } } }
-        },
-        "responses": {
-          "200": { "$ref": "#/components/responses/WorkspaceReplay" },
-          "202": { "$ref": "#/components/responses/WorkspaceAccepted" },
-          "400": {"$ref": "#/components/responses/Error400"},
-          "401": {"$ref": "#/components/responses/Error401"},
-          "403": {"$ref": "#/components/responses/Error403"},
-          "406": {"$ref": "#/components/responses/Error406"},
-          "409": {"$ref": "#/components/responses/Error409"},
-          "422": {"$ref": "#/components/responses/Error422"},
-          "503": {"$ref": "#/components/responses/Error503"}
+          "200": { "$ref": "#/components/responses/WorkspacePageResponse" },
+          "400": { "$ref": "#/components/responses/ProblemResponse" },
+          "401": { "$ref": "#/components/responses/UnauthorizedResponse" },
+          "503": { "$ref": "#/components/responses/ProblemResponse" }
         }
       }
     },
     "/v1/workspaces/{workspaceId}": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceId" }],
+      "put": {
+        "operationId": "putWorkspace",
+        "parameters": [{ "$ref": "#/components/parameters/IfNoneMatch" }],
+        "requestBody": { "$ref": "#/components/requestBodies/WorkspaceCreate" },
+        "responses": {
+          "200": { "$ref": "#/components/responses/WorkspaceResponse" },
+          "201": { "$ref": "#/components/responses/WorkspaceCreatedResponse" },
+          "202": { "$ref": "#/components/responses/WorkspaceAcceptedResponse" },
+          "400": { "$ref": "#/components/responses/ProblemResponse" },
+          "401": { "$ref": "#/components/responses/UnauthorizedResponse" },
+          "403": { "$ref": "#/components/responses/ProblemResponse" },
+          "409": { "$ref": "#/components/responses/ProblemResponse" },
+          "412": { "$ref": "#/components/responses/ProblemResponse" },
+          "422": { "$ref": "#/components/responses/ProblemResponse" },
+          "503": { "$ref": "#/components/responses/ProblemResponse" }
+        }
+      },
       "get": {
         "operationId": "getWorkspace",
-        "tags": ["Workspaces"],
-        "parameters": [{ "$ref": "#/components/parameters/ApiVersion" }],
         "responses": {
-          "200": { "$ref": "#/components/responses/Workspace" },
-          "401": {"$ref": "#/components/responses/Error401"},
-          "403": {"$ref": "#/components/responses/Error403"},
-          "404": {"$ref": "#/components/responses/Error404"},
-          "406": {"$ref": "#/components/responses/Error406"},
-          "503": {"$ref": "#/components/responses/Error503"}
+          "200": { "$ref": "#/components/responses/WorkspaceResponse" },
+          "401": { "$ref": "#/components/responses/UnauthorizedResponse" },
+          "404": { "$ref": "#/components/responses/ProblemResponse" },
+          "503": { "$ref": "#/components/responses/ProblemResponse" }
         }
       },
       "patch": {
-        "operationId": "mutateWorkspace",
-        "tags": ["Workspaces"],
-        "parameters": [
-          { "$ref": "#/components/parameters/ApiVersion" },
-          { "$ref": "#/components/parameters/IfRevision" },
-          { "$ref": "#/components/parameters/IdempotencyKey" }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceMutation" } } }
-        },
+        "operationId": "patchWorkspace",
+        "parameters": [{ "$ref": "#/components/parameters/IfMatch" }],
+        "requestBody": { "$ref": "#/components/requestBodies/WorkspacePatch" },
         "responses": {
-          "400": { "$ref": "#/components/responses/Error400" },
-          "200": { "$ref": "#/components/responses/WorkspaceReplay" },
-          "401": {"$ref": "#/components/responses/Error401"},
-          "403": {"$ref": "#/components/responses/Error403"},
-          "404": {"$ref": "#/components/responses/Error404"},
-          "406": {"$ref": "#/components/responses/Error406"},
-          "409": {"$ref": "#/components/responses/Error409"},
-          "422": {"$ref": "#/components/responses/Error422"},
-          "503": {"$ref": "#/components/responses/Error503"}
+          "200": { "$ref": "#/components/responses/WorkspaceResponse" },
+          "202": { "$ref": "#/components/responses/WorkspaceAcceptedResponse" },
+          "400": { "$ref": "#/components/responses/ProblemResponse" },
+          "401": { "$ref": "#/components/responses/UnauthorizedResponse" },
+          "403": { "$ref": "#/components/responses/ProblemResponse" },
+          "404": { "$ref": "#/components/responses/ProblemResponse" },
+          "409": { "$ref": "#/components/responses/ProblemResponse" },
+          "412": { "$ref": "#/components/responses/ProblemResponse" },
+          "422": { "$ref": "#/components/responses/ProblemResponse" },
+          "503": { "$ref": "#/components/responses/ProblemResponse" }
         }
       },
       "delete": {
         "operationId": "deleteWorkspace",
-        "tags": ["Workspaces"],
-        "parameters": [
-          { "$ref": "#/components/parameters/ApiVersion" },
-          { "$ref": "#/components/parameters/IdempotencyKey" }
-        ],
+        "parameters": [{ "$ref": "#/components/parameters/IfMatch" }],
         "responses": {
-          "204": { "$ref": "#/components/responses/Deleted" },
-          "400": { "$ref": "#/components/responses/Error400" },
-          "401": {"$ref": "#/components/responses/Error401"},
-          "403": {"$ref": "#/components/responses/Error403"},
-          "404": {"$ref": "#/components/responses/Error404"},
-          "406": {"$ref": "#/components/responses/Error406"},
-          "409": {"$ref": "#/components/responses/Error409"},
-          "503": {"$ref": "#/components/responses/Error503"}
+          "202": { "$ref": "#/components/responses/WorkspaceAcceptedResponse" },
+          "204": { "$ref": "#/components/responses/DeletedResponse" },
+          "401": { "$ref": "#/components/responses/UnauthorizedResponse" },
+          "403": { "$ref": "#/components/responses/ProblemResponse" },
+          "404": { "$ref": "#/components/responses/ProblemResponse" },
+          "409": { "$ref": "#/components/responses/ProblemResponse" },
+          "412": { "$ref": "#/components/responses/ProblemResponse" },
+          "503": { "$ref": "#/components/responses/ProblemResponse" }
         }
       }
     },
-    "/v1/workspaces/{workspaceId}/sessions": {
-      "parameters": [{ "$ref": "#/components/parameters/WorkspaceId" }],
+    "/v1/runtimes": {
       "get": {
-        "operationId": "listSessions",
-        "tags": ["Sessions"],
+        "operationId": "listRuntimes",
         "parameters": [
-          { "$ref": "#/components/parameters/ApiVersion" },
-          { "$ref": "#/components/parameters/PageSize" },
-          { "$ref": "#/components/parameters/PageCursor" }
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/Cursor" },
+          { "$ref": "#/components/parameters/ScopeFilter" },
+          { "$ref": "#/components/parameters/DesiredStateFilter" },
+          { "$ref": "#/components/parameters/PhaseFilter" },
+          { "$ref": "#/components/parameters/WorkspaceFilter" },
+          { "$ref": "#/components/parameters/UpdatedSinceFilter" }
         ],
         "responses": {
-          "200": { "$ref": "#/components/responses/SessionPage" },
-          "401": {"$ref": "#/components/responses/Error401"},
-          "403": {"$ref": "#/components/responses/Error403"},
-          "404": {"$ref": "#/components/responses/Error404"},
-          "406": {"$ref": "#/components/responses/Error406"},
-          "422": {"$ref": "#/components/responses/Error422"},
-          "503": {"$ref": "#/components/responses/Error503"}
+          "200": { "$ref": "#/components/responses/RuntimePageResponse" },
+          "400": { "$ref": "#/components/responses/ProblemResponse" },
+          "401": { "$ref": "#/components/responses/UnauthorizedResponse" },
+          "503": { "$ref": "#/components/responses/ProblemResponse" }
+        }
+      }
+    },
+    "/v1/runtimes/{runtimeId}": {
+      "parameters": [{ "$ref": "#/components/parameters/RuntimeId" }],
+      "put": {
+        "operationId": "putRuntime",
+        "parameters": [{ "$ref": "#/components/parameters/IfNoneMatch" }],
+        "requestBody": { "$ref": "#/components/requestBodies/RuntimeCreate" },
+        "responses": {
+          "200": { "$ref": "#/components/responses/RuntimeResponse" },
+          "201": { "$ref": "#/components/responses/RuntimeCreatedResponse" },
+          "202": { "$ref": "#/components/responses/RuntimeAcceptedResponse" },
+          "400": { "$ref": "#/components/responses/ProblemResponse" },
+          "401": { "$ref": "#/components/responses/UnauthorizedResponse" },
+          "403": { "$ref": "#/components/responses/ProblemResponse" },
+          "409": { "$ref": "#/components/responses/ProblemResponse" },
+          "412": { "$ref": "#/components/responses/ProblemResponse" },
+          "422": { "$ref": "#/components/responses/ProblemResponse" },
+          "503": { "$ref": "#/components/responses/ProblemResponse" }
         }
       },
-      "post": {
-        "operationId": "spawnSession",
-        "tags": ["Sessions"],
-        "parameters": [
-          { "$ref": "#/components/parameters/ApiVersion" },
-          { "$ref": "#/components/parameters/IdempotencyKey" }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SessionCreate" } } }
-        },
-        "responses": {
-          "200": { "$ref": "#/components/responses/SessionReplay" },
-          "202": { "$ref": "#/components/responses/SessionAccepted" },
-          "400": { "$ref": "#/components/responses/Error400" },
-          "401": {"$ref": "#/components/responses/Error401"},
-          "403": {"$ref": "#/components/responses/Error403"},
-          "404": {"$ref": "#/components/responses/Error404"},
-          "406": {"$ref": "#/components/responses/Error406"},
-          "409": {"$ref": "#/components/responses/Error409"},
-          "422": {"$ref": "#/components/responses/Error422"},
-          "503": {"$ref": "#/components/responses/Error503"}
-        }
-      }
-    },
-    "/v1/sessions/{sessionId}": {
-      "parameters": [{ "$ref": "#/components/parameters/SessionId" }],
       "get": {
-        "operationId": "getSession",
-        "tags": ["Sessions"],
-        "parameters": [{ "$ref": "#/components/parameters/ApiVersion" }],
+        "operationId": "getRuntime",
         "responses": {
-          "200": { "$ref": "#/components/responses/Session" },
-          "401": {"$ref": "#/components/responses/Error401"},
-          "403": {"$ref": "#/components/responses/Error403"},
-          "404": {"$ref": "#/components/responses/Error404"},
-          "406": {"$ref": "#/components/responses/Error406"},
-          "503": {"$ref": "#/components/responses/Error503"}
+          "200": { "$ref": "#/components/responses/RuntimeResponse" },
+          "401": { "$ref": "#/components/responses/UnauthorizedResponse" },
+          "404": { "$ref": "#/components/responses/ProblemResponse" },
+          "503": { "$ref": "#/components/responses/ProblemResponse" }
         }
       },
       "patch": {
-        "operationId": "mutateSession",
-        "tags": ["Sessions"],
-        "parameters": [
-          { "$ref": "#/components/parameters/ApiVersion" },
-          { "$ref": "#/components/parameters/IfRevision" },
-          { "$ref": "#/components/parameters/IdempotencyKey" }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SessionMutation" } } }
-        },
+        "operationId": "patchRuntime",
+        "parameters": [{ "$ref": "#/components/parameters/IfMatch" }],
+        "requestBody": { "$ref": "#/components/requestBodies/RuntimePatch" },
         "responses": {
-          "400": { "$ref": "#/components/responses/Error400" },
-          "200": { "$ref": "#/components/responses/SessionReplay" },
-          "401": {"$ref": "#/components/responses/Error401"},
-          "403": {"$ref": "#/components/responses/Error403"},
-          "404": {"$ref": "#/components/responses/Error404"},
-          "406": {"$ref": "#/components/responses/Error406"},
-          "409": {"$ref": "#/components/responses/Error409"},
-          "422": {"$ref": "#/components/responses/Error422"},
-          "503": {"$ref": "#/components/responses/Error503"}
+          "200": { "$ref": "#/components/responses/RuntimeResponse" },
+          "202": { "$ref": "#/components/responses/RuntimeAcceptedResponse" },
+          "400": { "$ref": "#/components/responses/ProblemResponse" },
+          "401": { "$ref": "#/components/responses/UnauthorizedResponse" },
+          "403": { "$ref": "#/components/responses/ProblemResponse" },
+          "404": { "$ref": "#/components/responses/ProblemResponse" },
+          "409": { "$ref": "#/components/responses/ProblemResponse" },
+          "412": { "$ref": "#/components/responses/ProblemResponse" },
+          "422": { "$ref": "#/components/responses/ProblemResponse" },
+          "503": { "$ref": "#/components/responses/ProblemResponse" }
         }
       },
       "delete": {
-        "operationId": "deleteSession",
-        "tags": ["Sessions"],
-        "parameters": [
-          { "$ref": "#/components/parameters/ApiVersion" },
-          { "$ref": "#/components/parameters/IdempotencyKey" }
-        ],
+        "operationId": "deleteRuntime",
+        "parameters": [{ "$ref": "#/components/parameters/IfMatch" }],
         "responses": {
-          "204": { "$ref": "#/components/responses/Deleted" },
-          "400": { "$ref": "#/components/responses/Error400" },
-          "401": {"$ref": "#/components/responses/Error401"},
-          "403": {"$ref": "#/components/responses/Error403"},
-          "404": {"$ref": "#/components/responses/Error404"},
-          "406": {"$ref": "#/components/responses/Error406"},
-          "409": {"$ref": "#/components/responses/Error409"},
-          "503": {"$ref": "#/components/responses/Error503"}
+          "202": { "$ref": "#/components/responses/RuntimeAcceptedResponse" },
+          "204": { "$ref": "#/components/responses/DeletedResponse" },
+          "401": { "$ref": "#/components/responses/UnauthorizedResponse" },
+          "403": { "$ref": "#/components/responses/ProblemResponse" },
+          "404": { "$ref": "#/components/responses/ProblemResponse" },
+          "409": { "$ref": "#/components/responses/ProblemResponse" },
+          "412": { "$ref": "#/components/responses/ProblemResponse" },
+          "503": { "$ref": "#/components/responses/ProblemResponse" }
         }
       }
     },
-    "/v1/sessions/{sessionId}/cancel": {
+    "/v1/runtimes/{runtimeId}:wake": {
+      "parameters": [{ "$ref": "#/components/parameters/RuntimeId" }],
       "post": {
-        "operationId": "cancelSession",
-        "tags": ["Sessions"],
+        "operationId": "wakeRuntime",
         "parameters": [
-          { "$ref": "#/components/parameters/SessionId" },
-          { "$ref": "#/components/parameters/ApiVersion" },
+          { "$ref": "#/components/parameters/IfMatch" },
           { "$ref": "#/components/parameters/IdempotencyKey" }
         ],
         "responses": {
-          "200": { "$ref": "#/components/responses/SessionReplay" },
-          "400": { "$ref": "#/components/responses/Error400" },
-          "202": { "$ref": "#/components/responses/SessionAccepted" },
-          "401": {"$ref": "#/components/responses/Error401"},
-          "403": {"$ref": "#/components/responses/Error403"},
-          "404": {"$ref": "#/components/responses/Error404"},
-          "406": {"$ref": "#/components/responses/Error406"},
-          "409": {"$ref": "#/components/responses/Error409"},
-          "503": {"$ref": "#/components/responses/Error503"}
+          "200": { "$ref": "#/components/responses/RuntimeResponse" },
+          "202": { "$ref": "#/components/responses/RuntimeAcceptedResponse" },
+          "401": { "$ref": "#/components/responses/UnauthorizedResponse" },
+          "403": { "$ref": "#/components/responses/ProblemResponse" },
+          "404": { "$ref": "#/components/responses/ProblemResponse" },
+          "409": { "$ref": "#/components/responses/ProblemResponse" },
+          "412": { "$ref": "#/components/responses/ProblemResponse" },
+          "503": { "$ref": "#/components/responses/ProblemResponse" }
         }
       }
     },
-    "/v1/sessions/{sessionId}/commands": {
+    "/v1/runtimes/{runtimeId}:sleep": {
+      "parameters": [{ "$ref": "#/components/parameters/RuntimeId" }],
       "post": {
-        "operationId": "submitCommand",
-        "tags": ["Sessions"],
+        "operationId": "sleepRuntime",
         "parameters": [
-          { "$ref": "#/components/parameters/SessionId" },
-          { "$ref": "#/components/parameters/ApiVersion" },
+          { "$ref": "#/components/parameters/IfMatch" },
           { "$ref": "#/components/parameters/IdempotencyKey" }
         ],
-        "requestBody": {
-          "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CommandCreate" } } }
-        },
         "responses": {
-          "200": { "$ref": "#/components/responses/CommandReplay" },
-          "202": { "$ref": "#/components/responses/CommandAccepted" },
-          "400": { "$ref": "#/components/responses/Error400" },
-          "401": {"$ref": "#/components/responses/Error401"},
-          "403": {"$ref": "#/components/responses/Error403"},
-          "404": {"$ref": "#/components/responses/Error404"},
-          "406": {"$ref": "#/components/responses/Error406"},
-          "409": {"$ref": "#/components/responses/Error409"},
-          "422": {"$ref": "#/components/responses/Error422"},
-          "503": {"$ref": "#/components/responses/Error503"}
+          "200": { "$ref": "#/components/responses/RuntimeResponse" },
+          "202": { "$ref": "#/components/responses/RuntimeAcceptedResponse" },
+          "401": { "$ref": "#/components/responses/UnauthorizedResponse" },
+          "403": { "$ref": "#/components/responses/ProblemResponse" },
+          "404": { "$ref": "#/components/responses/ProblemResponse" },
+          "409": { "$ref": "#/components/responses/ProblemResponse" },
+          "412": { "$ref": "#/components/responses/ProblemResponse" },
+          "503": { "$ref": "#/components/responses/ProblemResponse" }
         }
       }
     },
-    "/v1/sessions/{sessionId}/snapshot": {
+    "/v1/runtimes/{runtimeId}/connections": {
+      "parameters": [{ "$ref": "#/components/parameters/RuntimeId" }],
       "get": {
-        "operationId": "getSessionSnapshot",
-        "tags": ["Watch"],
-        "parameters": [
-          { "$ref": "#/components/parameters/SessionId" },
-          { "$ref": "#/components/parameters/ApiVersion" }
-        ],
+        "operationId": "getRuntimeConnections",
         "responses": {
-          "200": { "$ref": "#/components/responses/Snapshot" },
-          "401": {"$ref": "#/components/responses/Error401"},
-          "403": {"$ref": "#/components/responses/Error403"},
-          "404": {"$ref": "#/components/responses/Error404"},
-          "406": {"$ref": "#/components/responses/Error406"},
-          "503": {"$ref": "#/components/responses/Error503"}
+          "200": { "$ref": "#/components/responses/ConnectionDescriptorResponse" },
+          "401": { "$ref": "#/components/responses/UnauthorizedResponse" },
+          "403": { "$ref": "#/components/responses/ProblemResponse" },
+          "404": { "$ref": "#/components/responses/ProblemResponse" },
+          "409": { "$ref": "#/components/responses/ProblemResponse" },
+          "503": { "$ref": "#/components/responses/ProblemResponse" }
         }
       }
     },
-    "/v1/sessions/{sessionId}/events": {
+    "/v1/events": {
       "get": {
-        "operationId": "watchSessionEvents",
-        "tags": ["Watch"],
-        "summary": "Watch a bounded Server-Sent Events stream over HTTPS",
-        "description": "The response is standard Server-Sent Events over HTTPS. Clients reconnect with the last event cursor in the cursor query parameter or Last-Event-ID header. Heartbeat events bound idle detection. Clients explicitly cancel by aborting the HTTPS request. A retained cursor expiry returns a typed 410 response with a snapshot resync target.",
+        "operationId": "getEvents",
         "parameters": [
-          { "$ref": "#/components/parameters/SessionId" },
-          { "$ref": "#/components/parameters/ApiVersion" },
-          { "$ref": "#/components/parameters/WatchCursor" },
           { "$ref": "#/components/parameters/LastEventId" },
-          { "$ref": "#/components/parameters/MaxEvents" },
-          { "$ref": "#/components/parameters/HeartbeatSeconds" }
+          { "$ref": "#/components/parameters/ScopeFilter" }
         ],
         "responses": {
-          "200": {
-            "description": "Bounded SSE event stream. Every non-empty SSE data field is one JSON value conforming to WatchEvent; clients MUST reject unknown fields and schema-invalid event payloads before delivery. Transport chunk boundaries do not delimit frames.",
-            "headers": {
-              "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } },
-              "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }
-            },
-            "content": {
-              "text/event-stream": {
-                "schema": { "type": "string", "description": "Server-Sent Events framing whose data values conform to #/components/schemas/WatchEvent", "x-t4-sse-data-schema": "#/components/schemas/WatchEvent" },
-                "example": "id: cur_01J...\\nevent: heartbeat\\ndata: {\"type\":\"heartbeat\",\"cursor\":\"cur_01J...\",\"observedAt\":\"2026-07-21T00:00:00Z\"}\\n\\n"
-              }
-            }
-          },
-          "400": {"$ref": "#/components/responses/Error400"},
-          "401": {"$ref": "#/components/responses/Error401"},
-          "403": {"$ref": "#/components/responses/Error403"},
-          "404": {"$ref": "#/components/responses/Error404"},
-          "406": {"$ref": "#/components/responses/Error406"},
-          "410": {"$ref": "#/components/responses/Error410"},
-          "422": {"$ref": "#/components/responses/Error422"},
-          "503": {"$ref": "#/components/responses/Error503"}
+          "200": { "$ref": "#/components/responses/EventStreamResponse" },
+          "400": { "$ref": "#/components/responses/ProblemResponse" },
+          "401": { "$ref": "#/components/responses/UnauthorizedResponse" },
+          "503": { "$ref": "#/components/responses/ProblemResponse" }
         }
       }
     }
   },
   "components": {
     "securitySchemes": {
-      "BearerAuth": {
-        "type": "http",
-        "scheme": "bearer",
-        "description": "Opaque bearer credential. The server maps it to deny-by-default tenant and resource scopes; clients must not inspect or persist credential contents in API resources."
-      }
+      "BearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "opaque" }
     },
     "parameters": {
-      "ApiVersion": {
-        "name": "T4-API-Version",
-        "in": "header",
-        "required": true,
-        "description": "Requested API major. v1 clients send 1. Unsupported majors fail with 406 instead of silently downgrading.",
-        "schema": { "type": "string", "pattern": "^[1-9][0-9]{0,3}$", "maxLength": 4 }
-      },
-      "IdempotencyKey": {
-        "name": "Idempotency-Key",
-        "in": "header",
-        "required": true,
-        "description": "Opaque caller-generated key scoped by the server to the authenticated principal, operation ID, and target resource IDs. Idempotency is evaluated only after path, query, header, and request-schema validation and application of schema defaults. Request identity is the operation ID, target IDs, relevant precondition headers, and the RFC 8785 JSON Canonicalization Scheme (JCS) bytes of the validated JSON body. JCS object member order is insignificant, array order is significant, omitted fields remain distinct unless the request schema defaulted them, and no Unicode normalization is performed beyond RFC 8785. Reusing a key with identical identity replays the original terminal response and advertises Idempotency-Replayed; reusing it with a different identity returns 409 idempotency_conflict.",
-        "schema": { "type": "string", "minLength": 16, "maxLength": 128, "pattern": "^[A-Za-z0-9._~-]+$" }
-      },
-      "IfRevision": {
-        "name": "T4-If-Revision",
-        "in": "header",
-        "required": true,
-        "description": "Decimal resource revision for optimistic mutation.",
-        "schema": { "type": "string", "pattern": "^[1-9][0-9]{0,18}$" }
-      },
-      "WorkspaceId": {
-        "name": "workspaceId",
-        "in": "path",
-        "required": true,
-        "schema": { "$ref": "#/components/schemas/ResourceId" }
-      },
-      "SessionId": {
-        "name": "sessionId",
-        "in": "path",
-        "required": true,
-        "schema": { "$ref": "#/components/schemas/ResourceId" }
-      },
-      "PageSize": {
-        "name": "pageSize",
-        "in": "query",
-        "description": "Omit to use the server-specific limits.pageSizeDefault value from discovery.",
-        "schema": { "type": "integer", "minimum": 1, "maximum": 100 }
-      },
-      "PageCursor": {
-        "name": "cursor",
-        "in": "query",
-        "description": "Opaque page cursor, valid only for the same identity and list operation.",
-        "schema": { "$ref": "#/components/schemas/Cursor" }
-      },
-      "WatchCursor": {
-        "name": "cursor",
-        "in": "query",
-        "description": "Opaque last-consumed watch event cursor.",
-        "schema": { "$ref": "#/components/schemas/Cursor" }
-      },
-      "LastEventId": {
-        "name": "Last-Event-ID",
-        "in": "header",
-        "description": "Standard SSE reconnect header. Must agree with cursor when both are present.",
-        "schema": { "$ref": "#/components/schemas/Cursor" }
-      },
-      "MaxEvents": {
-        "name": "maxEvents",
-        "in": "query",
-        "description": "Omit to use the server-specific limits.watchEventsDefault value from discovery.",
-        "schema": { "type": "integer", "minimum": 1, "maximum": 1000 }
-      },
-      "HeartbeatSeconds": {
-        "name": "heartbeatSeconds",
-        "in": "query",
-        "schema": { "type": "integer", "minimum": 5, "maximum": 60, "default": 15 }
-      }
+      "WorkspaceId": { "name": "workspaceId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/WorkspaceId" } },
+      "RuntimeId": { "name": "runtimeId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/RuntimeId" } },
+      "Limit": { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 } },
+      "Cursor": { "name": "cursor", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/Cursor" } },
+      "ScopeFilter": { "name": "scopeId", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/ScopeId" } },
+      "DesiredStateFilter": { "name": "desiredState", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/DesiredState" } },
+      "PhaseFilter": { "name": "phase", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/Phase" } },
+      "WorkspaceFilter": { "name": "workspaceId", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/WorkspaceId" } },
+      "UpdatedSinceFilter": { "name": "updatedSince", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/Timestamp" } },
+      "IfNoneMatch": { "name": "If-None-Match", "in": "header", "required": true, "schema": { "type": "string", "const": "*" } },
+      "IfMatch": { "name": "If-Match", "in": "header", "required": true, "schema": { "$ref": "#/components/schemas/EntityTag" } },
+      "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": true, "schema": { "type": "string", "minLength": 16, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{15,127}$" } },
+      "LastEventId": { "name": "Last-Event-ID", "in": "header", "required": false, "schema": { "$ref": "#/components/schemas/EventId" } }
     },
     "headers": {
-      "SelectedVersion": {
-        "description": "Selected T4 API profile. This strict v1.0 contract requires exactly 1.0.",
-        "required": true,
-        "schema": { "type": "string", "const": "1.0" }
-      },
-      "IdempotencyReplayed": {
-        "description": "True when this response replays a prior identical request.",
-        "required": true,
-        "schema": { "type": "string", "enum": ["true", "false"] }
-      },
-      "EventCursor": {
-        "description": "Durable event cursor committed with the accepted mutation and preserved by replay.",
-        "required": true,
-        "schema": { "$ref": "#/components/schemas/Cursor" }
-      }
+      "ETag": { "required": true, "schema": { "$ref": "#/components/schemas/EntityTag" } },
+      "Location": { "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^/v1/(workspaces|runtimes)/[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$" } },
+      "RetryAfter": { "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 3600 } },
+      "WWWAuthenticate": { "required": true, "schema": { "type": "string", "const": "Bearer" } },
+      "CacheControl": { "required": true, "schema": { "type": "string", "const": "no-store" } }
+    },
+    "requestBodies": {
+      "WorkspaceCreate": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceCreate" }, "example": { "scopeId": "scope_personal", "displayName": "api-refactor", "capacityBytes": 10737418240, "retention": "Retain" } } } },
+      "WorkspacePatch": { "required": true, "content": { "application/merge-patch+json": { "schema": { "$ref": "#/components/schemas/WorkspacePatch" }, "example": { "displayName": "api-refactor-main", "retention": "Retain" } } } },
+      "RuntimeCreate": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RuntimeCreate" }, "example": { "scopeId": "scope_personal", "displayName": "api-refactor", "workspaceId": "ws_01JZ8R4M6K", "hostProfileId": "default", "desiredState": "Running", "browserPolicy": "Allowed" } } } },
+      "RuntimePatch": { "required": true, "content": { "application/merge-patch+json": { "schema": { "$ref": "#/components/schemas/RuntimePatch" }, "example": { "desiredState": "Sleeping" } } } }
+    },
+    "responses": {
+      "DiscoveryResponse": { "description": "Service discovery", "headers": { "Cache-Control": { "$ref": "#/components/headers/CacheControl" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Discovery" } } } },
+      "VersionResponse": { "description": "Version metadata", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Version" } } } },
+      "CapabilitiesResponse": { "description": "Supported operations and limits", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Capabilities" } } } },
+      "ScopePageResponse": { "description": "Scope page", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ScopePage" } } } },
+      "WorkspacePageResponse": { "description": "Workspace page", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspacePage" } } } },
+      "RuntimePageResponse": { "description": "Runtime page", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RuntimePage" } } } },
+      "WorkspaceResponse": { "description": "Workspace", "headers": { "ETag": { "$ref": "#/components/headers/ETag" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Workspace" } } } },
+      "WorkspaceCreatedResponse": { "description": "Workspace created and ready", "headers": { "ETag": { "$ref": "#/components/headers/ETag" }, "Location": { "$ref": "#/components/headers/Location" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Workspace" } } } },
+      "WorkspaceAcceptedResponse": { "description": "Workspace change accepted", "headers": { "ETag": { "$ref": "#/components/headers/ETag" }, "Location": { "$ref": "#/components/headers/Location" }, "Retry-After": { "$ref": "#/components/headers/RetryAfter" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Workspace" } } } },
+      "RuntimeResponse": { "description": "Runtime", "headers": { "ETag": { "$ref": "#/components/headers/ETag" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Runtime" } } } },
+      "RuntimeCreatedResponse": { "description": "Runtime created and ready", "headers": { "ETag": { "$ref": "#/components/headers/ETag" }, "Location": { "$ref": "#/components/headers/Location" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Runtime" } } } },
+      "RuntimeAcceptedResponse": { "description": "Runtime change accepted", "headers": { "ETag": { "$ref": "#/components/headers/ETag" }, "Location": { "$ref": "#/components/headers/Location" }, "Retry-After": { "$ref": "#/components/headers/RetryAfter" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Runtime" } } } },
+      "ConnectionDescriptorResponse": { "description": "Authorized current routes", "headers": { "ETag": { "$ref": "#/components/headers/ETag" }, "Cache-Control": { "$ref": "#/components/headers/CacheControl" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConnectionDescriptor" } } } },
+      "EventStreamResponse": { "description": "Lifecycle invalidations", "headers": { "Cache-Control": { "$ref": "#/components/headers/CacheControl" } }, "content": { "text/event-stream": { "schema": { "type": "string", "x-omperator-sse-events": { "invalidation": "#/components/schemas/InvalidationEvent", "reset": "#/components/schemas/ResetEvent" } } } } },
+      "DeletedResponse": { "description": "Deletion completed" },
+      "ProblemResponse": { "description": "Problem details", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } } } },
+      "UnauthorizedResponse": { "description": "Authentication required", "headers": { "WWW-Authenticate": { "$ref": "#/components/headers/WWWAuthenticate" } }, "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } } } }
     },
     "schemas": {
-      "ResourceId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
-      "Cursor": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[A-Za-z0-9._~-]+$", "description": "Opaque server-issued header-safe SSE cursor." },
-      "Revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
-      "CommandState": { "type": "string", "enum": ["accepted", "projected", "dispatching", "running", "succeeded", "failed", "cancelling", "cancelled", "rejected", "unavailable", "indeterminate"] },
-      "WorkspaceState": { "type": "string", "enum": ["accepted", "provisioning", "ready", "deleting", "deleted", "failed", "unavailable", "indeterminate"] },
-      "SessionState": { "type": "string", "enum": ["accepted", "provisioning", "ready", "cancelling", "cancelled", "failed", "unavailable", "indeterminate"] },
-      "ServerBuild": {
+      "OpaqueId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$" },
+      "ScopeId": { "$ref": "#/components/schemas/OpaqueId" },
+      "WorkspaceId": { "$ref": "#/components/schemas/OpaqueId" },
+      "RuntimeId": { "$ref": "#/components/schemas/OpaqueId" },
+      "HostProfileId": { "$ref": "#/components/schemas/OpaqueId" },
+      "Revision": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9:._~-]{0,127}$" },
+      "Generation": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,63}$" },
+      "Cursor": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[A-Za-z0-9_-]+={0,2}$" },
+      "EventId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$" },
+      "EntityTag": { "type": "string", "minLength": 3, "maxLength": 130, "pattern": "^\"[A-Za-z0-9][A-Za-z0-9:._~-]{0,127}\"$" },
+      "Timestamp": { "type": "string", "format": "date-time", "maxLength": 64 },
+      "DisplayName": { "type": "string", "minLength": 1, "maxLength": 128 },
+      "BoundedCode": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,127}$" },
+      "BoundedMessage": { "type": "string", "minLength": 1, "maxLength": 1024 },
+      "HttpsUrl": { "type": "string", "format": "uri", "minLength": 12, "maxLength": 2048, "pattern": "^https://[^/@\\s?#]+/v1$" },
+      "WssUrl": { "type": "string", "format": "uri", "minLength": 12, "maxLength": 2048, "pattern": "^wss://[^/@\\s?#]+/v1/ws$" },
+      "CmuxWssUrl": { "type": "string", "format": "uri", "minLength": 13, "maxLength": 2048, "pattern": "^wss://[^/@\\s?#]+/v1/cmux/[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$" },
+      "WssUrlTemplate": { "type": "string", "minLength": 25, "maxLength": 2048, "pattern": "^wss://[^/@\\s?#]+/v1/cmux/\\{runtimeId\\}$" },
+      "PublicHost": { "type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$" },
+      "SshUser": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+      "DesiredState": { "type": "string", "maxLength": 8, "enum": ["Running", "Sleeping", "Stopped"] },
+      "Phase": { "type": "string", "enum": ["Pending", "Provisioning", "Starting", "Ready", "Sleeping", "Stopped", "Deleting", "Unavailable", "Degraded", "Failed"] },
+      "ConditionStatus": { "type": "string", "enum": ["True", "False", "Unknown"] },
+      "Condition": {
         "type": "object",
-        "additionalProperties": false,
-        "required": ["version", "revision"],
+        "additionalProperties": true,
+        "required": ["type", "status", "reason", "lastTransitionTime"],
         "properties": {
-          "version": { "type": "string", "minLength": 1, "maxLength": 128 },
-          "revision": { "type": "string", "minLength": 1, "maxLength": 128 }
+          "type": { "$ref": "#/components/schemas/BoundedCode" },
+          "status": { "$ref": "#/components/schemas/ConditionStatus" },
+          "reason": { "$ref": "#/components/schemas/BoundedCode" },
+          "message": { "$ref": "#/components/schemas/BoundedMessage" },
+          "lastTransitionTime": { "$ref": "#/components/schemas/Timestamp" }
         }
       },
-      "CapabilityDeprecation": {
+      "ProtocolDiscovery": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["message"],
+        "required": ["machineProvider", "cmux", "application"],
         "properties": {
-          "message": { "type": "string", "minLength": 1, "maxLength": 1024 },
-          "sinceVersion": { "type": "string", "minLength": 1, "maxLength": 128 },
-          "sunsetAt": { "type": "string", "format": "date-time", "maxLength": 64 },
-          "replacement": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z][a-z0-9.-]*$" }
+          "machineProvider": { "type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true, "items": { "type": "string", "const": "machine-provider-v1" } },
+          "cmux": { "type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true, "items": { "type": "integer", "const": 10 } },
+          "application": { "type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true, "items": { "type": "string", "const": "omp-app/1" } }
         }
       },
-      "CapabilityStatus": {
+      "SshEndpoint": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["supported", "enabled", "authorized", "available"],
+        "required": ["host", "port"],
         "properties": {
-          "supported": { "type": "boolean" },
-          "enabled": { "type": "boolean" },
-          "authorized": { "type": "boolean" },
-          "available": { "type": "boolean" },
-          "deprecation": { "$ref": "#/components/schemas/CapabilityDeprecation" }
+          "host": { "$ref": "#/components/schemas/PublicHost" },
+          "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
         }
-      },
-      "Capabilities": {
-        "type": "object",
-        "maxProperties": 128,
-        "propertyNames": { "minLength": 1, "maxLength": 128, "pattern": "^[a-z][a-z0-9.-]*$" },
-        "additionalProperties": { "$ref": "#/components/schemas/CapabilityStatus" }
       },
       "Discovery": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["apiVersion", "serverBuild", "supportedMajors", "capabilities", "limits"],
+        "required": ["service", "apiVersion", "restBaseUrl", "protocols"],
+        "examples": [{ "service": "omperator", "apiVersion": "v1", "restBaseUrl": "https://omp.example.net/v1", "ompAppWebSocketUrl": "wss://omp.example.net/v1/ws", "cmuxWebSocketTemplate": "wss://omp.example.net/v1/cmux/{runtimeId}", "ssh": { "host": "omp.example.net", "port": 22 }, "protocols": { "machineProvider": ["machine-provider-v1"], "cmux": [10], "application": ["omp-app/1"] } }],
         "properties": {
-          "apiVersion": { "type": "string", "pattern": "^1\\.[0-9]+$" },
-          "serverBuild": { "$ref": "#/components/schemas/ServerBuild" },
-          "supportedMajors": { "type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": { "type": "integer", "minimum": 1 } },
-          "capabilities": { "$ref": "#/components/schemas/Capabilities" },
-          "limits": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["pageSizeDefault", "pageSizeMax", "commandBytesMax", "commandRequestBytesMax", "commandMetadataValueBytesMax", "watchEventsDefault", "watchEventsMax", "heartbeatSeconds"],
-            "properties": {
-              "pageSizeDefault": { "type": "integer", "minimum": 1, "maximum": 100 },
-              "pageSizeMax": { "type": "integer", "minimum": 1, "maximum": 100 },
-              "commandBytesMax": { "type": "integer", "minimum": 1, "maximum": 262144 },
-              "commandRequestBytesMax": { "type": "integer", "minimum": 1, "maximum": 1048576 },
-              "commandMetadataValueBytesMax": { "type": "integer", "minimum": 1, "maximum": 262144 },
-              "watchEventsDefault": { "type": "integer", "minimum": 1, "maximum": 1000 },
-              "watchEventsMax": { "type": "integer", "minimum": 1, "maximum": 1000 },
-              "heartbeatSeconds": { "type": "integer", "minimum": 5, "maximum": 60 }
-            }
-          }
+          "service": { "type": "string", "const": "omperator" },
+          "apiVersion": { "type": "string", "const": "v1" },
+          "restBaseUrl": { "$ref": "#/components/schemas/HttpsUrl" },
+          "ompAppWebSocketUrl": { "$ref": "#/components/schemas/WssUrl" },
+          "cmuxWebSocketTemplate": { "$ref": "#/components/schemas/WssUrlTemplate" },
+          "ssh": { "$ref": "#/components/schemas/SshEndpoint" },
+          "protocols": { "$ref": "#/components/schemas/ProtocolDiscovery" }
+        }
+      },
+      "BuildInfo": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["version", "revision", "builtAt"],
+        "properties": {
+          "version": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "revision": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "builtAt": { "$ref": "#/components/schemas/Timestamp" }
+        }
+      },
+      "Version": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["apiVersion", "build", "protocols"],
+        "properties": {
+          "apiVersion": { "type": "string", "const": "v1" },
+          "build": { "$ref": "#/components/schemas/BuildInfo" },
+          "protocols": { "$ref": "#/components/schemas/ProtocolDiscovery" }
+        }
+      },
+      "MachineProviderCapabilities": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["versions", "capabilities"],
+        "properties": {
+          "versions": { "type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true, "items": { "type": "integer", "const": 1 } },
+          "capabilities": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/components/schemas/BoundedCode" } }
+        }
+      },
+      "NumericProtocolCapabilities": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["versions"],
+        "properties": { "versions": { "type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true, "items": { "type": "integer", "enum": [1, 10] } } }
+      },
+      "CapabilitiesProtocols": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["machineProvider", "cmux", "ompApp"],
+        "properties": {
+          "machineProvider": { "$ref": "#/components/schemas/MachineProviderCapabilities" },
+          "cmux": { "allOf": [{ "$ref": "#/components/schemas/NumericProtocolCapabilities" }, { "properties": { "versions": { "items": { "const": 10 } } } }] },
+          "ompApp": { "allOf": [{ "$ref": "#/components/schemas/NumericProtocolCapabilities" }, { "properties": { "versions": { "items": { "const": 1 } } } }] }
+        }
+      },
+      "CapabilityLimits": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["maxActiveRuntimes", "maxRetainedRuntimes", "idempotencyRetentionSeconds", "eventRetentionSeconds", "maxPageSize"],
+        "properties": {
+          "maxActiveRuntimes": { "type": "integer", "minimum": 0, "maximum": 100000 },
+          "maxRetainedRuntimes": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+          "idempotencyRetentionSeconds": { "type": "integer", "minimum": 86400, "maximum": 31536000 },
+          "eventRetentionSeconds": { "type": "integer", "minimum": 60, "maximum": 2592000 },
+          "maxPageSize": { "type": "integer", "minimum": 1, "maximum": 200 }
+        }
+      },
+      "CapabilityFeatures": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["restLifecycle", "sshProvider", "directCmuxWebSocket", "browser", "scaleToZero"],
+        "properties": {
+          "restLifecycle": { "type": "boolean" },
+          "sshProvider": { "type": "boolean" },
+          "directCmuxWebSocket": { "type": "boolean" },
+          "browser": { "type": "boolean" },
+          "scaleToZero": { "type": "boolean" }
+        }
+      },
+      "Capabilities": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["apiVersion", "protocols", "limits", "features"],
+        "examples": [{ "apiVersion": "v1", "protocols": { "machineProvider": { "versions": [1], "capabilities": ["machine-lifecycle-v1"] }, "cmux": { "versions": [10] }, "ompApp": { "versions": [1] } }, "limits": { "maxActiveRuntimes": 20, "maxRetainedRuntimes": 100, "idempotencyRetentionSeconds": 86400, "eventRetentionSeconds": 3600, "maxPageSize": 200 }, "features": { "restLifecycle": true, "sshProvider": true, "directCmuxWebSocket": true, "browser": true, "scaleToZero": true } }],
+        "properties": {
+          "apiVersion": { "type": "string", "const": "v1" },
+          "protocols": { "$ref": "#/components/schemas/CapabilitiesProtocols" },
+          "limits": { "$ref": "#/components/schemas/CapabilityLimits" },
+          "features": { "$ref": "#/components/schemas/CapabilityFeatures" }
+        }
+      },
+      "Scope": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["id", "displayName", "kind", "revision"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/ScopeId" },
+          "displayName": { "$ref": "#/components/schemas/DisplayName" },
+          "kind": { "type": "string", "enum": ["Personal", "Team"] },
+          "revision": { "$ref": "#/components/schemas/Revision" }
+        }
+      },
+      "WorkspaceRetention": { "type": "string", "maxLength": 6, "enum": ["Retain", "Delete"] },
+      "Workspace": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["id", "scopeId", "displayName", "capacityBytes", "retention", "phase", "attachmentCount", "revision", "conditions", "createdAt", "updatedAt"],
+        "examples": [{ "id": "ws_01JZ8R4M6K", "scopeId": "scope_personal", "displayName": "api-refactor", "capacityBytes": 10737418240, "retention": "Retain", "phase": "Ready", "attachmentCount": 1, "revision": "opaque:0007", "conditions": [{ "type": "StorageReady", "status": "True", "reason": "WorkspaceReady", "lastTransitionTime": "2026-07-28T11:59:50Z" }], "createdAt": "2026-07-28T11:59:45Z", "updatedAt": "2026-07-28T11:59:50Z" }],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/WorkspaceId" },
+          "scopeId": { "$ref": "#/components/schemas/ScopeId" },
+          "displayName": { "$ref": "#/components/schemas/DisplayName" },
+          "capacityBytes": { "type": "integer", "minimum": 1048576, "maximum": 1125899906842624 },
+          "retention": { "$ref": "#/components/schemas/WorkspaceRetention" },
+          "phase": { "$ref": "#/components/schemas/Phase" },
+          "attachmentCount": { "type": "integer", "minimum": 0, "maximum": 100000 },
+          "revision": { "$ref": "#/components/schemas/Revision" },
+          "conditions": { "type": "array", "maxItems": 64, "items": { "$ref": "#/components/schemas/Condition" } },
+          "createdAt": { "$ref": "#/components/schemas/Timestamp" },
+          "updatedAt": { "$ref": "#/components/schemas/Timestamp" }
         }
       },
       "WorkspaceCreate": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name"],
+        "required": ["scopeId", "displayName", "capacityBytes", "retention"],
+        "examples": [{ "scopeId": "scope_personal", "displayName": "api-refactor", "capacityBytes": 10737418240, "retention": "Retain" }],
         "properties": {
-          "name": { "type": "string", "minLength": 1, "maxLength": 128 },
-          "labels": { "$ref": "#/components/schemas/Labels" }
+          "scopeId": { "$ref": "#/components/schemas/ScopeId" },
+          "displayName": { "$ref": "#/components/schemas/DisplayName" },
+          "capacityBytes": { "type": "integer", "minimum": 1048576, "maximum": 1125899906842624 },
+          "retention": { "$ref": "#/components/schemas/WorkspaceRetention" }
         }
       },
-      "WorkspaceMutation": {
+      "WorkspacePatch": {
         "type": "object",
         "additionalProperties": false,
         "minProperties": 1,
+        "examples": [{ "displayName": "api-refactor-main", "retention": "Retain" }],
         "properties": {
-          "name": { "type": "string", "minLength": 1, "maxLength": 128 },
-          "labels": { "$ref": "#/components/schemas/Labels" }
+          "displayName": { "$ref": "#/components/schemas/DisplayName" },
+          "retention": { "$ref": "#/components/schemas/WorkspaceRetention" }
         }
       },
-      "Workspace": {
+      "BrowserPolicy": { "type": "string", "maxLength": 8, "enum": ["Allowed", "Disabled"] },
+      "IdlePolicy": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["enabled"],
+            "properties": { "enabled": { "type": "boolean", "const": false } }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["enabled", "idleSeconds"],
+            "properties": {
+              "enabled": { "type": "boolean", "const": true },
+              "idleSeconds": { "type": "integer", "minimum": 60, "maximum": 2592000 }
+            }
+          }
+        ]
+      },
+      "Runtime": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["id", "scopeId", "displayName", "workspaceId", "hostProfileId", "desiredState", "phase", "generation", "revision", "capabilities", "conditions", "createdAt", "updatedAt"],
+        "examples": [{ "id": "rt_01JZ8R7N2P", "scopeId": "scope_personal", "displayName": "api-refactor", "workspaceId": "ws_01JZ8R4M6K", "hostProfileId": "default", "desiredState": "Running", "phase": "Ready", "generation": "17", "revision": "opaque:0009", "capabilities": ["cmux", "omp-app", "browser-preview", "sleep"], "conditions": [{ "type": "RouteReady", "status": "True", "reason": "RuntimeReady", "lastTransitionTime": "2026-07-28T12:00:00Z" }], "createdAt": "2026-07-28T11:59:55Z", "updatedAt": "2026-07-28T12:00:00Z" }],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/RuntimeId" },
+          "scopeId": { "$ref": "#/components/schemas/ScopeId" },
+          "displayName": { "$ref": "#/components/schemas/DisplayName" },
+          "workspaceId": { "$ref": "#/components/schemas/WorkspaceId" },
+          "hostProfileId": { "$ref": "#/components/schemas/HostProfileId" },
+          "desiredState": { "$ref": "#/components/schemas/DesiredState" },
+          "phase": { "$ref": "#/components/schemas/Phase" },
+          "generation": { "$ref": "#/components/schemas/Generation" },
+          "revision": { "$ref": "#/components/schemas/Revision" },
+          "capabilities": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/components/schemas/BoundedCode" } },
+          "conditions": { "type": "array", "maxItems": 64, "items": { "$ref": "#/components/schemas/Condition" } },
+          "createdAt": { "$ref": "#/components/schemas/Timestamp" },
+          "updatedAt": { "$ref": "#/components/schemas/Timestamp" }
+        }
+      },
+      "RuntimeCreate": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "name", "state", "revision"],
+        "required": ["scopeId", "displayName", "workspaceId", "hostProfileId", "desiredState", "browserPolicy"],
+        "examples": [{ "scopeId": "scope_personal", "displayName": "api-refactor", "workspaceId": "ws_01JZ8R4M6K", "hostProfileId": "default", "desiredState": "Running", "browserPolicy": "Allowed" }],
         "properties": {
-          "id": { "$ref": "#/components/schemas/ResourceId" },
-          "name": { "type": "string", "minLength": 1, "maxLength": 128 },
-          "state": { "$ref": "#/components/schemas/WorkspaceState" },
-          "revision": { "$ref": "#/components/schemas/Revision" },
-          "labels": { "$ref": "#/components/schemas/Labels" }
+          "scopeId": { "$ref": "#/components/schemas/ScopeId" },
+          "displayName": { "$ref": "#/components/schemas/DisplayName" },
+          "workspaceId": { "$ref": "#/components/schemas/WorkspaceId" },
+          "hostProfileId": { "$ref": "#/components/schemas/HostProfileId" },
+          "desiredState": { "$ref": "#/components/schemas/DesiredState" },
+          "browserPolicy": { "$ref": "#/components/schemas/BrowserPolicy" },
+          "idlePolicy": { "$ref": "#/components/schemas/IdlePolicy" }
+        }
+      },
+      "RuntimePatch": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "examples": [{ "desiredState": "Sleeping" }],
+        "properties": {
+          "displayName": { "$ref": "#/components/schemas/DisplayName" },
+          "desiredState": { "$ref": "#/components/schemas/DesiredState" },
+          "browserPolicy": { "$ref": "#/components/schemas/BrowserPolicy" },
+          "idlePolicy": { "$ref": "#/components/schemas/IdlePolicy" }
+        }
+      },
+      "PageCursor": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": { "nextCursor": { "$ref": "#/components/schemas/Cursor" } }
+      },
+      "ScopePage": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["items"],
+        "properties": {
+          "items": { "type": "array", "maxItems": 200, "items": { "$ref": "#/components/schemas/Scope" } },
+          "nextCursor": { "$ref": "#/components/schemas/Cursor" }
         }
       },
       "WorkspacePage": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "required": ["items"],
         "properties": {
-          "items": { "type": "array", "maxItems": 100, "items": { "$ref": "#/components/schemas/Workspace" } },
+          "items": { "type": "array", "maxItems": 200, "items": { "$ref": "#/components/schemas/Workspace" } },
           "nextCursor": { "$ref": "#/components/schemas/Cursor" }
         }
       },
-      "SessionCreate": {
+      "RuntimePage": {
         "type": "object",
-        "additionalProperties": false,
-        "required": ["title"],
-        "properties": {
-          "title": { "type": "string", "minLength": 1, "maxLength": 128 },
-          "labels": { "$ref": "#/components/schemas/Labels" }
-        }
-      },
-      "SessionMutation": {
-        "type": "object",
-        "additionalProperties": false,
-        "minProperties": 1,
-        "properties": {
-          "title": { "type": "string", "minLength": 1, "maxLength": 128 },
-          "labels": { "$ref": "#/components/schemas/Labels" }
-        }
-      },
-      "Session": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["id", "workspaceId", "title", "state", "revision"],
-        "properties": {
-          "id": { "$ref": "#/components/schemas/ResourceId" },
-          "workspaceId": { "$ref": "#/components/schemas/ResourceId" },
-          "title": { "type": "string", "minLength": 1, "maxLength": 128 },
-          "state": { "$ref": "#/components/schemas/SessionState" },
-          "revision": { "$ref": "#/components/schemas/Revision" },
-          "labels": { "$ref": "#/components/schemas/Labels" }
-        }
-      },
-      "SessionPage": {
-        "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "required": ["items"],
         "properties": {
-          "items": { "type": "array", "maxItems": 100, "items": { "$ref": "#/components/schemas/Session" } },
+          "items": { "type": "array", "maxItems": 200, "items": { "$ref": "#/components/schemas/Runtime" } },
           "nextCursor": { "$ref": "#/components/schemas/Cursor" }
         }
       },
-      "Labels": {
-        "type": "object",
-        "maxProperties": 32,
-        "propertyNames": { "pattern": "^[a-z][a-z0-9.-]{0,62}$" },
-        "additionalProperties": { "type": "string", "maxLength": 128 }
-      },
-      "CommandCreate": {
+      "MachineProviderSshRoute": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["command"],
-        "x-t4-maxUtf8Bytes": 1048576,
+        "required": ["kind", "host", "port", "user", "providerVersion"],
         "properties": {
-          "command": { "type": "string", "minLength": 1, "maxLength": 262144, "x-t4-maxUtf8Bytes": 262144 },
-          "metadata": {
-            "type": "object",
-            "default": {},
-            "maxProperties": 32,
-            "propertyNames": { "pattern": "^[a-z][a-z0-9.-]{0,62}$" },
-            "additionalProperties": {
-              "oneOf": [
-                { "type": "string", "maxLength": 262144, "x-t4-maxUtf8Bytes": 262144 },
-                { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 },
-                { "type": "boolean" },
-                { "type": "null" }
-              ]
-            }
+          "kind": { "type": "string", "const": "machine-provider-ssh" },
+          "host": { "$ref": "#/components/schemas/PublicHost" },
+          "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+          "user": { "$ref": "#/components/schemas/SshUser" },
+          "providerVersion": { "type": "integer", "const": 1 }
+        }
+      },
+      "OmpAppWebSocketRoute": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "url", "protocol"],
+        "properties": {
+          "kind": { "type": "string", "const": "omp-app-websocket" },
+          "url": { "$ref": "#/components/schemas/WssUrl" },
+          "protocol": { "type": "string", "const": "omp-app/1" }
+        }
+      },
+      "CmuxWebSocketRoute": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "url", "protocol"],
+        "properties": {
+          "kind": { "type": "string", "const": "cmux-websocket" },
+          "url": { "$ref": "#/components/schemas/CmuxWssUrl" },
+          "protocol": { "type": "integer", "const": 10 }
+        }
+      },
+      "ConnectionRoute": {
+        "oneOf": [
+          { "$ref": "#/components/schemas/MachineProviderSshRoute" },
+          { "$ref": "#/components/schemas/OmpAppWebSocketRoute" },
+          { "$ref": "#/components/schemas/CmuxWebSocketRoute" }
+        ],
+        "discriminator": {
+          "propertyName": "kind",
+          "mapping": {
+            "machine-provider-ssh": "#/components/schemas/MachineProviderSshRoute",
+            "omp-app-websocket": "#/components/schemas/OmpAppWebSocketRoute",
+            "cmux-websocket": "#/components/schemas/CmuxWebSocketRoute"
           }
         }
       },
-      "CommandResult": {
+      "ConnectionDescriptor": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["commandId", "state"],
+        "required": ["runtimeId", "generation", "expiresAt", "routes"],
+        "examples": [{ "runtimeId": "rt_01JZ8R7N2P", "generation": "17", "expiresAt": "2026-07-28T12:05:00Z", "routes": [{ "kind": "machine-provider-ssh", "host": "omp.example.net", "port": 22, "user": "tenant-user", "providerVersion": 1 }, { "kind": "omp-app-websocket", "url": "wss://omp.example.net/v1/ws", "protocol": "omp-app/1" }, { "kind": "cmux-websocket", "url": "wss://omp.example.net/v1/cmux/rt_01JZ8R7N2P", "protocol": 10 }] }],
         "properties": {
-          "commandId": { "$ref": "#/components/schemas/ResourceId" },
-          "state": { "$ref": "#/components/schemas/CommandState" }
+          "runtimeId": { "$ref": "#/components/schemas/RuntimeId" },
+          "generation": { "$ref": "#/components/schemas/Generation" },
+          "expiresAt": { "$ref": "#/components/schemas/Timestamp" },
+          "routes": { "type": "array", "maxItems": 3, "uniqueItems": true, "items": { "$ref": "#/components/schemas/ConnectionRoute" } }
         }
       },
-      "SnapshotEntry": {
+      "ResourceKind": { "type": "string", "enum": ["scope", "workspace", "runtime"] },
+      "InvalidationEvent": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["sequence", "kind", "text"],
+        "required": ["eventId", "event", "resourceKind", "resourceId", "scopeId", "revision", "phase", "timestamp"],
+        "examples": [{ "eventId": "evt_01JZ8R9Q4T", "event": "invalidation", "resourceKind": "runtime", "resourceId": "rt_01JZ8R7N2P", "scopeId": "scope_personal", "revision": "opaque:0010", "phase": "Ready", "timestamp": "2026-07-28T12:00:01Z" }],
         "properties": {
-          "sequence": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
-          "kind": { "type": "string", "enum": ["input", "output", "status"] },
-          "text": { "type": "string", "maxLength": 1048576 }
+          "eventId": { "$ref": "#/components/schemas/EventId" },
+          "event": { "type": "string", "const": "invalidation" },
+          "resourceKind": { "$ref": "#/components/schemas/ResourceKind" },
+          "resourceId": { "$ref": "#/components/schemas/OpaqueId" },
+          "scopeId": { "$ref": "#/components/schemas/ScopeId" },
+          "revision": { "$ref": "#/components/schemas/Revision" },
+          "phase": { "$ref": "#/components/schemas/Phase" },
+          "timestamp": { "$ref": "#/components/schemas/Timestamp" }
         }
       },
-      "SessionSnapshot": {
+      "ResetEvent": {
         "type": "object",
         "additionalProperties": false,
-        "x-t4-maxUtf8Bytes": 16777216,
-        "required": ["sessionId", "cursor", "state", "entries"],
+        "required": ["eventId", "event", "reason", "timestamp"],
+        "examples": [{ "eventId": "evt_01JZ8RA3W6", "event": "reset", "reason": "cursor_expired", "timestamp": "2026-07-28T12:05:00Z" }],
         "properties": {
-          "sessionId": { "$ref": "#/components/schemas/ResourceId" },
-          "cursor": { "$ref": "#/components/schemas/Cursor" },
-          "state": { "$ref": "#/components/schemas/SessionState" },
-          "entries": { "type": "array", "maxItems": 1000, "items": { "$ref": "#/components/schemas/SnapshotEntry" } }
+          "eventId": { "$ref": "#/components/schemas/EventId" },
+          "event": { "type": "string", "const": "reset" },
+          "reason": { "type": "string", "const": "cursor_expired" },
+          "timestamp": { "$ref": "#/components/schemas/Timestamp" }
         }
       },
-      "HeartbeatWatchEvent": {
+      "Problem": {
         "type": "object",
-        "additionalProperties": false,
-        "required": ["type", "cursor", "observedAt"],
+        "additionalProperties": true,
+        "required": ["type", "title", "status", "detail", "instance", "code", "retryable"],
+        "examples": [{ "type": "https://omperator.dev/problems/runtime-fencing", "title": "Runtime replacement is waiting for fencing", "status": 409, "detail": "The previous runtime generation is not yet proven stopped.", "instance": "urn:trace:01JZ8RB7Y9", "code": "runtime_fencing", "retryable": true, "retryAfterMs": 2000, "currentRevision": "opaque:0011" }],
         "properties": {
-          "type": { "type": "string", "const": "heartbeat" },
-          "cursor": { "$ref": "#/components/schemas/Cursor" },
-          "observedAt": { "type": "string", "format": "date-time", "maxLength": 64 }
-        }
-      },
-      "SessionWatchEvent": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["type", "cursor", "state", "revision"],
-        "properties": {
-          "type": { "type": "string", "const": "session" },
-          "cursor": { "$ref": "#/components/schemas/Cursor" },
-          "state": { "$ref": "#/components/schemas/SessionState" },
-          "revision": { "$ref": "#/components/schemas/Revision" }
-        }
-      },
-      "CommandWatchEvent": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["type", "cursor", "commandId", "state"],
-        "properties": {
-          "type": { "type": "string", "const": "command" },
-          "cursor": { "$ref": "#/components/schemas/Cursor" },
-          "commandId": { "$ref": "#/components/schemas/ResourceId" },
-          "state": { "$ref": "#/components/schemas/CommandState" }
-        }
-      },
-      "WatchEvent": {
-        "oneOf": [
-          { "$ref": "#/components/schemas/HeartbeatWatchEvent" },
-          { "$ref": "#/components/schemas/SessionWatchEvent" },
-          { "$ref": "#/components/schemas/CommandWatchEvent" }
-        ]
-      },
-      "FieldViolation": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["field", "rule", "message"],
-        "properties": {
-          "field": { "type": "string", "minLength": 1, "maxLength": 256 },
-          "rule": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z][A-Za-z0-9._-]*$" },
-          "message": { "type": "string", "minLength": 1, "maxLength": 512 }
-        }
-      },
-      "Resync": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["snapshotUrl", "cursor"],
-        "properties": {
-          "snapshotUrl": { "type": "string", "description": "API-base-relative snapshot path for this watched session.", "pattern": "^v1/sessions/[A-Za-z0-9][A-Za-z0-9._~-]{0,127}/snapshot$", "maxLength": 149 },
-          "cursor": { "$ref": "#/components/schemas/Cursor" }
-        }
-      },
-      "ApiError": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["code", "message", "requestId", "retryable"],
-        "properties": {
-          "code": {
-            "type": "string",
-            "enum": ["invalid_request", "unauthenticated", "forbidden", "not_found", "idempotency_key_required", "idempotency_conflict", "revision_conflict", "incompatible_version", "cursor_expired", "unavailable", "indeterminate", "invalid_origin", "https_required"]
-          },
-          "message": { "type": "string", "minLength": 1, "maxLength": 1024 },
-          "requestId": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "type": { "type": "string", "format": "uri", "minLength": 1, "maxLength": 2048 },
+          "title": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "status": { "type": "integer", "minimum": 400, "maximum": 599 },
+          "detail": { "type": "string", "minLength": 1, "maxLength": 2048 },
+          "instance": { "type": "string", "format": "uri-reference", "minLength": 1, "maxLength": 2048 },
+          "code": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z][a-z0-9_]{0,127}$" },
           "retryable": { "type": "boolean" },
-          "violations": { "type": "array", "maxItems": 64, "items": { "$ref": "#/components/schemas/FieldViolation" } },
-          "supportedMajors": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "type": "integer", "minimum": 1 } },
-          "resync": { "$ref": "#/components/schemas/Resync" }
+          "retryAfterMs": { "type": "integer", "minimum": 0, "maximum": 86400000 },
+          "currentRevision": { "$ref": "#/components/schemas/Revision" }
         }
-      },
-      "BadRequestApiError": {
-        "allOf": [
-          { "$ref": "#/components/schemas/ApiError" },
-          { "type": "object", "properties": { "code": { "enum": ["invalid_request", "idempotency_key_required", "invalid_origin", "https_required"] } } }
-        ]
-      },
-      "UnauthenticatedApiError": {
-        "allOf": [
-          { "$ref": "#/components/schemas/ApiError" },
-          { "type": "object", "properties": { "code": { "const": "unauthenticated" } } }
-        ]
-      },
-      "ForbiddenApiError": {
-        "allOf": [
-          { "$ref": "#/components/schemas/ApiError" },
-          { "type": "object", "properties": { "code": { "const": "forbidden" } } }
-        ]
-      },
-      "NotFoundApiError": {
-        "allOf": [
-          { "$ref": "#/components/schemas/ApiError" },
-          { "type": "object", "properties": { "code": { "const": "not_found" } } }
-        ]
-      },
-      "ConflictApiError": {
-        "allOf": [
-          { "$ref": "#/components/schemas/ApiError" },
-          { "type": "object", "properties": { "code": { "enum": ["idempotency_conflict", "revision_conflict"] } } }
-        ]
-      },
-      "UnavailableApiError": {
-        "allOf": [
-          { "$ref": "#/components/schemas/ApiError" },
-          { "type": "object", "properties": { "code": { "enum": ["unavailable", "indeterminate"] } } }
-        ]
-      },
-      "IncompatibleVersionApiError": {
-        "allOf": [
-          { "$ref": "#/components/schemas/ApiError" },
-          { "type": "object", "required": ["supportedMajors"], "properties": { "code": { "const": "incompatible_version" }, "supportedMajors": { "type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": { "type": "integer", "minimum": 1 } } } }
-        ]
-      },
-      "CursorExpiredApiError": {
-        "allOf": [
-          { "$ref": "#/components/schemas/ApiError" },
-          { "type": "object", "required": ["resync"], "properties": { "code": { "const": "cursor_expired" }, "resync": { "$ref": "#/components/schemas/Resync" } } }
-        ]
-      },
-      "InvalidRequestApiError": {
-        "allOf": [
-          { "$ref": "#/components/schemas/ApiError" },
-          { "type": "object", "required": ["violations"], "properties": { "code": { "const": "invalid_request" }, "violations": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "$ref": "#/components/schemas/FieldViolation" } } } }
-        ]
-      },
-      "ErrorEnvelope": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["error"],
-        "properties": { "error": { "$ref": "#/components/schemas/ApiError" } }
-      },
-      "BadRequestErrorEnvelope": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["error"],
-        "properties": { "error": { "$ref": "#/components/schemas/BadRequestApiError" } }
-      },
-      "UnauthenticatedErrorEnvelope": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["error"],
-        "properties": { "error": { "$ref": "#/components/schemas/UnauthenticatedApiError" } }
-      },
-      "ForbiddenErrorEnvelope": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["error"],
-        "properties": { "error": { "$ref": "#/components/schemas/ForbiddenApiError" } }
-      },
-      "NotFoundErrorEnvelope": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["error"],
-        "properties": { "error": { "$ref": "#/components/schemas/NotFoundApiError" } }
-      },
-      "ConflictErrorEnvelope": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["error"],
-        "properties": { "error": { "$ref": "#/components/schemas/ConflictApiError" } }
-      },
-      "UnavailableErrorEnvelope": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["error"],
-        "properties": { "error": { "$ref": "#/components/schemas/UnavailableApiError" } }
-      },
-      "IncompatibleVersionErrorEnvelope": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["error"],
-        "properties": { "error": { "$ref": "#/components/schemas/IncompatibleVersionApiError" } }
-      },
-      "CursorExpiredErrorEnvelope": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["error"],
-        "properties": { "error": { "$ref": "#/components/schemas/CursorExpiredApiError" } }
-      },
-      "InvalidRequestErrorEnvelope": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["error"],
-        "properties": { "error": { "$ref": "#/components/schemas/InvalidRequestApiError" } }
       }
-    },
-    "responses": {
-      "Discovery": { "description": "Negotiated v1 discovery", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Discovery" } } } },
-      "Workspace": { "description": "Workspace", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Workspace" } } } },
-      "WorkspaceAccepted": { "description": "Workspace intent accepted", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" }, "T4-Event-Cursor": { "$ref": "#/components/headers/EventCursor" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Workspace" } } } },
-      "WorkspaceReplay": { "description": "Identical workspace request replay", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" }, "T4-Event-Cursor": { "$ref": "#/components/headers/EventCursor" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Workspace" } } } },
-      "WorkspacePage": { "description": "Bounded workspace page", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspacePage" } } } },
-      "Session": { "description": "Session", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Session" } } } },
-      "SessionAccepted": { "description": "Session intent accepted", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" }, "T4-Event-Cursor": { "$ref": "#/components/headers/EventCursor" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Session" } } } },
-      "SessionReplay": { "description": "Identical session mutation replay", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" }, "T4-Event-Cursor": { "$ref": "#/components/headers/EventCursor" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Session" } } } },
-      "SessionPage": { "description": "Bounded session page", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SessionPage" } } } },
-      "CommandAccepted": { "description": "Command intent accepted with a stable outcome state", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" }, "T4-Event-Cursor": { "$ref": "#/components/headers/EventCursor" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CommandResult" } } } },
-      "CommandReplay": { "description": "Identical command request replay", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" }, "T4-Event-Cursor": { "$ref": "#/components/headers/EventCursor" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CommandResult" } } } },
-      "Snapshot": { "description": "Bounded session snapshot and reconnect cursor", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SessionSnapshot" } } } },
-      "Deleted": { "description": "Idempotent deletion accepted or resource already absent", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" }, "T4-Event-Cursor": { "$ref": "#/components/headers/EventCursor" } } },
-      "Error400": { "description": "Malformed request or missing idempotency key", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BadRequestErrorEnvelope" } } } },
-      "Error401": { "description": "Missing or invalid opaque bearer credential", "headers": { "WWW-Authenticate": { "required": true, "schema": { "type": "string", "const": "Bearer realm=\"t4\"" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UnauthenticatedErrorEnvelope" } } } },
-      "Error403": { "description": "Credential lacks the deny-by-default operation or resource scope", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ForbiddenErrorEnvelope" } } } },
-      "Error404": { "description": "Resource absent or outside caller scope (scope existence is not disclosed)", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NotFoundErrorEnvelope" } } } },
-      "Error406": { "description": "Requested major is incompatible; no silent downgrade", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IncompatibleVersionErrorEnvelope" } } } },
-      "Error409": { "description": "Idempotency or resource revision conflict", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConflictErrorEnvelope" } } } },
-      "Error410": { "description": "Watch cursor expired; resync from the typed snapshot target", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CursorExpiredErrorEnvelope" } } } },
-      "Error422": { "description": "Bounded semantic validation failure with stable field violations", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/InvalidRequestErrorEnvelope" } } } },
-      "Error503": { "description": "Service temporarily unavailable or outcome indeterminate. Retryable watch failures may advertise Retry-After; clients honor it with a 30 second ceiling.", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Retry-After": { "description": "RFC 9110 delay in seconds or HTTP date; clients bound the applied delay.", "schema": { "type": "string", "minLength": 1, "maxLength": 128 } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UnavailableErrorEnvelope" } } } }
     }
   }
 }

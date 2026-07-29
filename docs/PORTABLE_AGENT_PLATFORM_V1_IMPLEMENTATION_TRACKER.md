@@ -1,6 +1,6 @@
 # Portable Agent Platform v1 implementation tracker
 
-- Status: implementation in progress; P0-01 through P0-03 complete
+- Status: implementation in progress; P0-01 through P0-04 complete
 - Source specification: <https://roycorp.net/briefs/omperator-portable-agent-platform-v1-f4c81ee5.html>
 - Source SHA-256: `f31778a0d57b3b39b822faa0d6e7a3f1af2888dd09a9a39780025c43acce6194`
 - Specification baseline: `wolfiesch/omperator@2ab8fc7`, `manaflow-ai/cmux@192e444`, `can1357/oh-my-pi@d16c616`
@@ -12,6 +12,7 @@
 - **P0-01:** `compat/portable-agent-platform-v1.json` pins the specification and exact Omperator, cmux, official OMP, and packaged OMP authorities. `pnpm check:portable-platform` fails closed on drift.
 - **P0-02:** `vendor/cmux-machine-provider-v1/` contains the byte-exact upstream Rust protocol crate source at the pinned cmux commit. The typed Rust generator emits control and provider-stream handoff fixtures, while `provenance/cmux-machine-provider-v1.json` records source objects, digests, generator inputs, corpus membership, and the tooling-only packaging boundary. `pnpm test:portable-platform` and `pnpm check:portable-platform` enforce the import.
 - **P0-03:** `docs/adr/020-portable-runtime-single-authority.md` fixes the process topology: `t4-host` owns the sole writable OMP RPC child, raw RPC stays on child stdio, and the future cmux terminal client attaches to that same authority over runtime-local `omp-app/1` instead of opening the session as another writer. `compat/portable-agent-platform-v1.json` records the machine-checkable cardinality, transport, attach, and admission rules; the portable-platform checker rejects weakened writer or RPC exposure rules and documentation drift.
+- **P0-04:** `packages/t4-api-contract/openapi.json` now defines only the OpenAPI 3.1 portable discovery, scope, workspace, runtime lifecycle, connection-descriptor, and infrastructure-invalidation surface. `packages/t4-api-client/` consumes the generated types and enforces bearer ownership, strong revision ETags, RFC 9457 Problem Details, bounded responses, and lifecycle-only SSE. The deterministic conformance fixture covers explicit-ID creation, optimistic concurrency, action idempotency, pagination, public route descriptors, and reconnect/reset behavior without a REST terminal, transcript, command, snapshot, browser, or OMP event stream.
 
 ## Review verdict
 
@@ -28,7 +29,7 @@ The delivery phases are not safe or efficient to execute literally. The implemen
 | Application gateway | Replicated Bun gateway serving `omp-app/1` at `/v1/ws`; Tailscale trusted-proxy identity; Kubernetes projection and pod routing | REST lifecycle/discovery, SSE, scope model, pluggable identity, cmux routes, SSH provider gateway |
 | Runtime | Pinned OMP bridge, one host service, Xvfb/Chromium option, durable OMP/browser state | Upstream headless cmux, cmux durable state and writer lease, protocol v10 route, shared readiness and shutdown supervision |
 | Credential plane | Separate allowlisted model gateway; runtime pods receive no reusable provider credentials | Provider-neutral identity/credential adapters and complete audit coverage for new front doors |
-| REST contract | Validated but undeployed T4 API v1 contract with workspace/session commands, snapshots, and SSE | Product-neutral runtime lifecycle contract; removal of REST transcript/command behavior forbidden by the new specification |
+| REST contract | Checked-in OpenAPI 3.1 portable discovery, scope, workspace, runtime lifecycle, connection-descriptor, and infrastructure-invalidation contract with generated SDK types and deterministic conformance fixtures | Deployable REST/SSE gateway and driver/controller integration, implemented in P2 and P4 |
 | Packaging | Portable Helm chart, immutable digest inputs, strict NetworkPolicies, PDB/topology for existing shared services | SSH service, HPA, runtime-state storage values, image pre-pull, OCI/signing evidence, GitOps/Terraform examples |
 | Conformance | Existing `omp-app/1`, OMP bridge, cluster, packaging, and release gates | Upstream cmux/provider fixtures and all Appendix B portable-platform scenarios |
 

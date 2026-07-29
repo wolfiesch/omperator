@@ -244,24 +244,21 @@
     <main>
       <h2 id="status">Status and decision</h2>
       <p>
-        This hand-maintained document supersedes the prior
-        <em>Omperator local and managed architecture</em> and is the canonical
-        architecture decision for the managed T4 product. It defines a
-        conventional Kubernetes Operator and a separately deployable,
-        horizontally scalable, versioned T4 API. It is a target contract, not a
-        claim that every described component is already implemented. The
-        implementation baseline and the new work are called out explicitly
-        below.
+        This hand-maintained <em>T4 Code local and managed architecture</em>
+        document records the earlier managed product proposal. It is retained
+        for architectural provenance, but it is not
+        normative for Portable Agent Platform v1. The accepted portable-platform
+        specification, its checked-in OpenAPI contract, and the numbered ADRs
+        supersede this document wherever they differ.
       </p>
       <p>
-        The product boundary is authenticated HTTPS <strong>T4 API v1</strong>.
-        External clients do not call the Kubernetes controller, do not receive
-        Kubernetes credentials, do not mutate custom resources, and do not speak
-        a private runtime protocol. PostgreSQL is authoritative for accepted
-        intent and product events. Kubernetes custom resources are a durable
-        projection of that committed intent. The controller reconciles that
-        projection into Kubernetes resources; it never serves product clients or
-        stores product events.
+        The portable product boundary uses HTTPS for lifecycle and discovery,
+        WSS for the existing <code>omp-app/1</code> application wire and optional
+        cmux protocol v10 transport, and SSH for exact
+        <code>machine-provider-v1</code> control and stream commands. REST does
+        not carry prompts, commands, transcripts, terminal output, browser
+        frames, or OMP events. Control-store and deployment choices remain
+        driver concerns rather than mandatory client semantics.
       </p>
 
       <h2 id="scope-and-terms">Scope and terms</h2>
@@ -612,54 +609,55 @@ standard editor ─┐     │  authenticated HTTPS T4 API v1
         </li>
       </ul>
 
-      <h2 id="api-contract">T4 API v1 and gateway contract</h2>
+      <h2 id="api-contract">Portable lifecycle API and gateway contract</h2>
       <p>
-        The remote contract is an executable OpenAPI document served and versioned
-        with T4 API v1. The checked-in specification is the source for generated
-        SDKs, request/response validators, examples, fixtures, and compatibility
-        checks. Hand-written client DTOs are prohibited where generated public
-        types exist.
+        The normative remote REST contract is the checked-in OpenAPI 3.1
+        document. It is the source for generated SDK types, request and response
+        validation, bounded public examples, fixtures, and compatibility checks.
+        Hand-written client DTOs are prohibited where generated public types
+        exist.
       </p>
       <h3 id="api-surface">Required v1 surface</h3>
       <ul>
         <li>
-          Version and capability discovery, including server build, API versions,
-          feature identifiers, bounds, enablement, authorization, availability,
-          and deprecation metadata.
+          Unauthenticated bounded service discovery plus authenticated version,
+          protocol, capability, limit, and authorized-scope discovery.
         </li>
         <li>
-          Workspace and session intent creation, retrieval, listing, mutation,
-          deletion, and cancellation with scoped principals and stable resource
-          identifiers.
+          Workspace and runtime listing, explicit-ID idempotent creation,
+          retrieval, bounded mutation, staged deletion, and wake or sleep
+          transitions.
         </li>
         <li>
-          Command submission with a required idempotency key and typed accepted,
-          rejected, conflict, unavailable, and indeterminate states.
+          Current authorization-filtered connection descriptors for exact
+          <code>machine-provider-v1</code>, cmux protocol v10, and
+          <code>omp-app/1</code> transports.
         </li>
         <li>
-          Snapshot reads and ordered watch streams with opaque cursors,
-          reconnect-after-cursor, heartbeat, explicit cancellation, bounded
-          batches and frames, and typed cursor expiry requiring resync.
+          A global resumable SSE stream containing only bounded infrastructure
+          invalidations and typed cursor-reset events. Clients refetch resources;
+          the stream never embeds resource bodies or semantic runtime activity.
         </li>
         <li>
-          Stable errors carrying a machine code, safe message, request ID, retry
-          classification, and field violations without exposing internals.
+          RFC 9457 Problem Details with stable bounded extensions and no raw
+          upstream errors, credentials, internal addresses, or Kubernetes
+          representations.
         </li>
       </ul>
       <p>
-        Every mutation authenticates a principal, authorizes tenant, namespace,
-        resource, and action scope, validates advertised bounds, and records an
-        audit correlation ID. The same principal and idempotency key with the same
-        canonical request returns the original result. Reuse with a different
-        request is a typed conflict. Keys are isolated by principal and operation
-        scope and expire only according to a documented retention policy.
+        Caller-selected IDs and <code>If-None-Match: *</code> make creation
+        retries idempotent. Mutable resources expose opaque revisions through
+        strong ETags; patch, destructive lifecycle, and retention changes require
+        <code>If-Match</code>. Wake and sleep additionally require an
+        <code>Idempotency-Key</code> retained for at least 24 hours and bound to
+        principal, scope, method, canonical path, and canonical body digest.
       </p>
       <p>
-        API and controller compatibility is explicit. Startup and readiness fail
-        closed when database schema, CRD served/storage versions, or runtime
-        provider versions are outside the supported matrix. Public capability
-        discovery exposes only behavior that the current compatible deployment
-        can actually complete.
+        REST owns desired lifecycle and infrastructure status only. Application
+        sessions, agents, prompts, reviews, artifacts, settings, terminals, and
+        browser previews remain on <code>omp-app/1</code>; cmux commands and
+        events remain byte-semantic protocol v10. Public capabilities advertise
+        only routes and behavior that the current deployment can complete.
       </p>
 
       <h2 id="durable-ledger">Durable intent, event, and command ledger</h2>
