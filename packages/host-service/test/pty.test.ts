@@ -119,10 +119,18 @@ describe("spawnPty", () => {
 			cols: 80,
 		});
 		try {
+			// macOS bashrc prints a zsh-migration banner before the shell is
+			// ready, and a write that lands before the slave reader attaches can
+			// be lost — re-send on a slow poll instead of assuming one write.
 			child.write("ps -o tty,stat -p $$\n");
-			// macOS bashrc prints a zsh-migration banner before the shell is ready;
-			// under full-suite load the shell can take far longer than 4s to answer.
-			const output = await drainUntil(() => child.drain(), /\bSs\b/u, 20_000);
+			let output = "";
+			const deadline = Date.now() + 20_000;
+			let resent = false;
+			while (!/\bSs\b/u.test(output) && Date.now() < deadline) {
+				output += child.drain();
+				if (!resent && Date.now() > deadline - 14_000) { child.write("ps -o tty,stat -p $$\n"); resent = true; }
+				await settle(40);
+			}
 			// A session leader (Ss) attached to a real tty, not "??".
 			expect(output).toMatch(/\bSs\b/u);
 			expect(output).not.toContain("no job control");
