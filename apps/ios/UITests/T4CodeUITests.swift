@@ -14,8 +14,13 @@ final class T4CodeUITests: XCTestCase {
     @MainActor
     private func launch(arguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
-        // Fresh state every run: no Keychain access and no restored connection.
-        app.launchArguments = ["-T4NoRestore", "-T4Demo"] + arguments
+        // Fresh state every run: no Keychain access, restored connection, or
+        // persisted rail presentation state.
+        app.launchArguments = [
+            "-T4NoRestore",
+            "-T4Demo",
+            "-T4ResetRailPreferences",
+        ] + arguments
         app.launch()
         return app
     }
@@ -31,11 +36,14 @@ final class T4CodeUITests: XCTestCase {
         app.buttons["Show sessions"].tap()
         XCTAssertTrue(app.searchFields["Search sessions"].waitForExistence(timeout: 3))
 
-        // Project group header with all four sample sessions.
-        XCTAssertTrue(app.staticTexts["Host-wire Swift port"].exists)
+        // The organization controls intentionally consume the first viewport;
+        // scroll to prove rows below them remain reachable in the bounded list.
+        let target = app.buttons["session-row-s2"]
+        if !target.isHittable { app.swipeUp() }
+        XCTAssertTrue(target.waitForExistence(timeout: 3))
 
         // Tapping a session closes the drawer and shows its detail.
-        app.staticTexts["Host-wire Swift port"].tap()
+        target.tap()
         XCTAssertTrue(app.staticTexts["Host-wire Swift port"].waitForExistence(timeout: 3))
         XCTAssertFalse(app.searchFields["Search sessions"].exists)
     }
@@ -49,6 +57,34 @@ final class T4CodeUITests: XCTestCase {
         search.typeText("agent")
         XCTAssertTrue(app.staticTexts["Agent view"].waitForExistence(timeout: 3))
         XCTAssertFalse(app.staticTexts["Hosts & usage"].exists)
+    }
+
+    @MainActor
+    func testRailSwitchesBetweenCurrentAndArchivedSessions() throws {
+        let app = launch(arguments: ["-T4RailOpen"])
+        XCTAssertTrue(app.buttons["session-row-s1"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["session-row-s5"].exists)
+
+        let archived = app.buttons["Archived sessions"]
+        XCTAssertTrue(archived.waitForExistence(timeout: 3))
+        archived.tap()
+
+        XCTAssertTrue(app.buttons["session-row-s5"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["session-row-s1"].exists)
+        XCTAssertTrue(app.staticTexts["Finished release audit"].exists)
+    }
+
+    @MainActor
+    func testRailAttentionFilterUsesAuthoritativeSessionSignals() throws {
+        let app = launch(arguments: ["-T4RailOpen"])
+        XCTAssertTrue(app.buttons["session-row-s3"].waitForExistence(timeout: 5))
+
+        app.buttons["session-filter-attention"].tap()
+
+        XCTAssertTrue(app.buttons["session-row-s1"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["session-row-s4"].exists)
+        XCTAssertFalse(app.buttons["session-row-s2"].exists)
+        XCTAssertFalse(app.buttons["session-row-s3"].exists)
     }
 
     // MARK: - Model menu

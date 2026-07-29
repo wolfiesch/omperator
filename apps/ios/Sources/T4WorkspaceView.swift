@@ -67,7 +67,7 @@ struct T4WorkspaceView: View {
             }
             .onOpenURL { url in handleDeepLink(url) }
             .onAppear {
-                if store.selectedSession == nil { store.select(store.sessions.first) }
+                store.selectDefaultVisibleSessionIfNeeded()
                 // UI-test seam: launch with -T4RailOpen to boot with the rail open.
                 if ProcessInfo.processInfo.arguments.contains("-T4RailOpen") { railProgress = 1 }
                 // UI-test seam: launch with -T4ShowInbox to boot with the inbox open.
