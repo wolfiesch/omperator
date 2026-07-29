@@ -65,11 +65,36 @@ describe("durable RPC child process registry", () => {
 
 	test("refuses to register a child that is not its process-group leader", async () => {
 		const root = await mkdtemp(join(tmpdir(), "t4-rpc-registry-shared-"));
+		let now = 0;
 		const registry = new RpcChildRegistry(join(root, "children.json"), {
 			inspect: pid =>
 				pid === process.pid ? identity(process.pid) : identity(pid, { pgid: 99 }),
+			now: () => now,
+			waitSync: milliseconds => {
+				now += milliseconds;
+			},
 		});
 		expect(() => registry.register(5555)).toThrow("dedicated process group");
+	});
+
+	test("waits for a detached child to become its process-group leader", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-rpc-registry-transition-"));
+		let inspections = 0;
+		let now = 0;
+		const registry = new RpcChildRegistry(join(root, "children.json"), {
+			inspect: pid => {
+				if (pid === process.pid) return identity(process.pid);
+				inspections += 1;
+				return identity(pid, { pgid: inspections === 1 ? 99 : pid });
+			},
+			now: () => now,
+			waitSync: milliseconds => {
+				now += milliseconds;
+			},
+		});
+
+		expect(registry.register(5555)).toEqual(identity(5555));
+		expect(inspections).toBe(2);
 	});
 
 	test("removes only the exact identity registered by this host", async () => {

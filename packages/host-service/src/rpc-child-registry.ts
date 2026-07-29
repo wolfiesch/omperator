@@ -14,8 +14,11 @@ import { dirname, isAbsolute } from "node:path";
 const REGISTRY_VERSION = 2;
 const MAX_REGISTRY_BYTES = 64 * 1024;
 const PS_TIMEOUT_MS = 2_000;
+const REGISTRATION_GRACE_MS = 250;
+const REGISTRATION_POLL_MS = 5;
 const TERMINATION_GRACE_MS = 2_000;
 const TERMINATION_POLL_MS = 50;
+const SYNC_WAIT_BUFFER = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
 
 export interface RpcChildIdentity {
 	readonly pid: number;
@@ -28,6 +31,8 @@ export interface RpcChildIdentity {
 export interface RpcChildRegistryDependencies {
 	readonly inspect?: (pid: number) => RpcChildIdentity | undefined;
 	readonly killGroup?: (pgid: number, signal: "SIGTERM" | "SIGKILL") => void;
+	readonly now?: () => number;
+	readonly waitSync?: (milliseconds: number) => void;
 	readonly wait?: (milliseconds: number) => Promise<void>;
 }
 
@@ -171,6 +176,8 @@ export class RpcChildRegistry {
 	readonly #path: string;
 	readonly #inspect: (pid: number) => RpcChildIdentity | undefined;
 	readonly #killGroup: (pgid: number, signal: "SIGTERM" | "SIGKILL") => void;
+	readonly #now: () => number;
+	readonly #waitSync: (milliseconds: number) => void;
 	readonly #wait: (milliseconds: number) => Promise<void>;
 	readonly #owner: RpcChildIdentity;
 	readonly #ownerNonce = randomUUID();
@@ -187,13 +194,29 @@ export class RpcChildRegistry {
 			((pgid, signal): void => {
 				process.kill(-pgid, signal);
 			});
+		this.#now = dependencies.now ?? Date.now;
+		this.#waitSync =
+			dependencies.waitSync ??
+			(milliseconds => {
+				Atomics.wait(SYNC_WAIT_BUFFER, 0, 0, milliseconds);
+			});
 		this.#wait =
 			dependencies.wait ??
 			(milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)));
 	}
 
 	register(pid: number): RpcChildIdentity {
-		const identity = this.#inspect(pid);
+		const deadline = this.#now() + REGISTRATION_GRACE_MS;
+		let identity = this.#inspect(pid);
+		while (
+			(!identity || (identity.pid === pid && identity.pgid !== pid)) &&
+			this.#now() < deadline
+		) {
+			this.#waitSync(
+				Math.min(REGISTRATION_POLL_MS, Math.max(1, deadline - this.#now())),
+			);
+			identity = this.#inspect(pid);
+		}
 		if (!identity || identity.pid !== pid || identity.pgid !== pid)
 			throw new Error("rpc child did not start in a dedicated process group");
 		const state = this.#read();
