@@ -45,6 +45,137 @@
     "packagedInProduct": false,
     "packagingRequiresLicenseReview": true
   },
+  "portableControlContracts": {
+    "decision": "backend-neutral-driver-and-control-store",
+    "documentation": "docs/adr/021-portable-driver-control-contracts.md",
+    "documentationSha256": "518a33eaf5d2c671bd7b5b70bde4cad035ef25a46780db907b28b4347efa4ede",
+    "supersedesRequiredBackend": "postgresql",
+    "requiredBackend": null,
+    "optionalImplementations": ["kubernetes-api-objects", "sqlite", "postgresql"],
+    "firstCodeImplementationWorkPackage": "P1-01",
+    "driver": {
+      "operations": {
+        "scope": ["get", "list"],
+        "workspace": ["create", "get", "list", "update", "delete"],
+        "runtime": ["create", "get", "list", "update", "delete", "setDesiredState"],
+        "capability": ["get"],
+        "runtimeRoute": ["resolve"],
+        "infrastructureEvent": ["list", "watch"]
+      },
+      "reportedCapabilityCategories": ["storage", "browser", "transport", "autoscaling"],
+      "unsupportedCapabilityResult": "typed-unsupported",
+      "backendFieldsAllowed": false
+    },
+    "routes": {
+      "descriptorFields": ["kind", "reference"],
+      "routeKinds": ["cmux-v10", "omp-app-v1"],
+      "referenceSemantics": "opaque-equality-only",
+      "boundTo": ["runtimeId", "generation"],
+      "invalidatedByGenerationChange": true,
+      "backendFieldsAllowed": false,
+      "edgeEndpointFieldsAllowed": false,
+      "publicConnectionDescriptorRole": "edge-dto-not-driver-route"
+    },
+    "revision": {
+      "semantics": "opaque-equality-only",
+      "distinctFrom": ["generation", "eventCursor"],
+      "orderingAllowed": false,
+      "derivationAllowed": false,
+      "expectedRevisionRequiredFor": [
+        "workspace.update",
+        "workspace.delete",
+        "runtime.update",
+        "runtime.delete",
+        "runtime.setDesiredState"
+      ],
+      "workspaceRetentionMutation": "workspace.update",
+      "mismatchOutcome": "revisionMismatch",
+      "mismatchIncludesCurrentRevision": true,
+      "mismatchSideEffectsAllowed": false,
+      "lastWriteWinsAllowed": false
+    },
+    "idempotency": {
+      "operations": ["reserve", "complete"],
+      "lookupKey": ["principalId", "scopeId", "method", "canonicalPath", "idempotencyKey"],
+      "requestFingerprint": ["canonicalBodyDigest"],
+      "replicaSafe": true,
+      "authoritativeSharedStoreRequired": true,
+      "minimumRetentionSeconds": 86400,
+      "reserveAtomic": true,
+      "reserveOutcomes": ["new", "pending", "replay", "conflict"],
+      "matchingFingerprintOutcomes": ["pending", "replay"],
+      "differingFingerprintOutcome": "conflict",
+      "newOutcomeReturnsReservationToken": true,
+      "replayOutcomeIncludesRecordedResult": true,
+      "completeCondition": "matching-reservation-token",
+      "indeterminateRecovery": "fail-closed-pending-until-authoritative-reconciliation",
+      "processLocalFallbackAllowed": false
+    },
+    "tickets": {
+      "operations": ["mint", "consume", "revoke"],
+      "store": "authoritative-shared-cas",
+      "storedMaterial": "sha256-digest-only",
+      "plaintextRetentionAllowed": false,
+      "recordAndConsumeBoundTo": ["runtimeId", "runtimeGeneration", "providerControlGeneration", "purpose"],
+      "maximumTtlSeconds": 60,
+      "consumption": "atomic-compare-and-delete",
+      "revocation": "atomic",
+      "invalidationTriggers": [
+        "controlDisconnect",
+        "providerControlGenerationReplacement",
+        "runtimeGenerationReplacement",
+        "explicitCancellation"
+      ],
+      "singleUse": true,
+      "replicaSafe": true
+    },
+    "tombstones": {
+      "operations": ["put", "get"],
+      "creationOrder": "before-backend-delete",
+      "creationAtomic": true,
+      "deletionOnCreationUncertaintyAllowed": false,
+      "minimumRetentionSeconds": 86400,
+      "maximumRetentionSeconds": 604800,
+      "maximumRecordsPerScope": 100000,
+      "capacityOutcome": "reject-delete-before-evicting-required-tombstone",
+      "identifierReuseAfterExpiryAllowed": false,
+      "identifierReuseAuthority": "stable-id-allocator-registry"
+    },
+    "eventJournal": {
+      "operations": ["append", "readAfter", "subscribe"],
+      "entryFields": [
+        "eventId",
+        "resourceKind",
+        "resourceId",
+        "scopeId",
+        "revision",
+        "phase",
+        "timestamp"
+      ],
+      "entryFieldBounds": "existing-portable-api-schemas",
+      "payload": "bounded-infrastructure-lifecycle-invalidations-only",
+      "replicaSafe": true,
+      "ordering": "monotonic-per-scope",
+      "retention": "bounded",
+      "cursorSemantics": "opaque",
+      "cursorDistinctFrom": ["revision", "generation"],
+      "expiredCursorOutcome": "cursorExpired",
+      "sseExpiredCursorEvent": {
+        "fields": ["event", "eventId", "reason", "timestamp"],
+        "event": "reset",
+        "reason": "cursor_expired",
+        "allocatedFields": ["eventId", "timestamp"],
+        "allocatedFieldBounds": "existing-portable-api-schemas"
+      },
+      "listReturnsCursor": "atomic-high-water-H",
+      "readAfterReturns": ["orderedBatch", "tailNextCursorT"],
+      "emptyReadAfterTailCursor": "H",
+      "subscribeStarts": "strictly-after-T",
+      "subscribeReplayCursor": "T",
+      "interCallEventLossAllowed": false,
+      "listWatchGapAllowed": false
+    }
+  },
   "runtimeTopology": {
     "decision": "host-owned-single-rpc-authority",
     "documentation": "docs/adr/020-portable-runtime-single-authority.md",

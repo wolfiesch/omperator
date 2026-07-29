@@ -32,6 +32,137 @@ const expected = Object.freeze({
   topologyDocumentationSha256: "da84f4b15fb7c68770ed77baacf5802da84e7fda496b5df20435f209c4e874d3",
   pinResolutionReason:
     "The packaged authority bridge is based on OMP v17.0.5, while the portable contract was reviewed against a newer official OMP commit. Portable runtime behavior must use a new fork integration commit descended from the contract commit and must pass the pinned OMP RPC and authority-bridge gates before packaging.",
+  controlContracts: {
+    decision: "backend-neutral-driver-and-control-store",
+    documentation: "docs/adr/021-portable-driver-control-contracts.md",
+    documentationSha256: "518a33eaf5d2c671bd7b5b70bde4cad035ef25a46780db907b28b4347efa4ede",
+    supersedesRequiredBackend: "postgresql",
+    requiredBackend: null,
+    optionalImplementations: ["kubernetes-api-objects", "sqlite", "postgresql"],
+    firstCodeImplementationWorkPackage: "P1-01",
+    driver: {
+      operations: {
+        scope: ["get", "list"],
+        workspace: ["create", "get", "list", "update", "delete"],
+        runtime: ["create", "get", "list", "update", "delete", "setDesiredState"],
+        capability: ["get"],
+        runtimeRoute: ["resolve"],
+        infrastructureEvent: ["list", "watch"],
+      },
+      reportedCapabilityCategories: ["storage", "browser", "transport", "autoscaling"],
+      unsupportedCapabilityResult: "typed-unsupported",
+      backendFieldsAllowed: false,
+    },
+    routes: {
+      descriptorFields: ["kind", "reference"],
+      routeKinds: ["cmux-v10", "omp-app-v1"],
+      referenceSemantics: "opaque-equality-only",
+      boundTo: ["runtimeId", "generation"],
+      invalidatedByGenerationChange: true,
+      backendFieldsAllowed: false,
+      edgeEndpointFieldsAllowed: false,
+      publicConnectionDescriptorRole: "edge-dto-not-driver-route",
+    },
+    revision: {
+      semantics: "opaque-equality-only",
+      distinctFrom: ["generation", "eventCursor"],
+      orderingAllowed: false,
+      derivationAllowed: false,
+      expectedRevisionRequiredFor: [
+        "workspace.update",
+        "workspace.delete",
+        "runtime.update",
+        "runtime.delete",
+        "runtime.setDesiredState",
+      ],
+      workspaceRetentionMutation: "workspace.update",
+      mismatchOutcome: "revisionMismatch",
+      mismatchIncludesCurrentRevision: true,
+      mismatchSideEffectsAllowed: false,
+      lastWriteWinsAllowed: false,
+    },
+    idempotency: {
+      operations: ["reserve", "complete"],
+      lookupKey: ["principalId", "scopeId", "method", "canonicalPath", "idempotencyKey"],
+      requestFingerprint: ["canonicalBodyDigest"],
+      replicaSafe: true,
+      authoritativeSharedStoreRequired: true,
+      minimumRetentionSeconds: 86400,
+      reserveAtomic: true,
+      reserveOutcomes: ["new", "pending", "replay", "conflict"],
+      matchingFingerprintOutcomes: ["pending", "replay"],
+      differingFingerprintOutcome: "conflict",
+      newOutcomeReturnsReservationToken: true,
+      replayOutcomeIncludesRecordedResult: true,
+      completeCondition: "matching-reservation-token",
+      indeterminateRecovery: "fail-closed-pending-until-authoritative-reconciliation",
+      processLocalFallbackAllowed: false,
+    },
+    tickets: {
+      operations: ["mint", "consume", "revoke"],
+      store: "authoritative-shared-cas",
+      storedMaterial: "sha256-digest-only",
+      plaintextRetentionAllowed: false,
+      recordAndConsumeBoundTo: ["runtimeId", "runtimeGeneration", "providerControlGeneration", "purpose"],
+      maximumTtlSeconds: 60,
+      consumption: "atomic-compare-and-delete",
+      revocation: "atomic",
+      invalidationTriggers: [
+        "controlDisconnect",
+        "providerControlGenerationReplacement",
+        "runtimeGenerationReplacement",
+        "explicitCancellation",
+      ],
+      singleUse: true,
+      replicaSafe: true,
+    },
+    tombstones: {
+      operations: ["put", "get"],
+      creationOrder: "before-backend-delete",
+      creationAtomic: true,
+      deletionOnCreationUncertaintyAllowed: false,
+      minimumRetentionSeconds: 86400,
+      maximumRetentionSeconds: 604800,
+      maximumRecordsPerScope: 100000,
+      capacityOutcome: "reject-delete-before-evicting-required-tombstone",
+      identifierReuseAfterExpiryAllowed: false,
+      identifierReuseAuthority: "stable-id-allocator-registry",
+    },
+    eventJournal: {
+      operations: ["append", "readAfter", "subscribe"],
+      entryFields: [
+        "eventId",
+        "resourceKind",
+        "resourceId",
+        "scopeId",
+        "revision",
+        "phase",
+        "timestamp",
+      ],
+      entryFieldBounds: "existing-portable-api-schemas",
+      payload: "bounded-infrastructure-lifecycle-invalidations-only",
+      replicaSafe: true,
+      ordering: "monotonic-per-scope",
+      retention: "bounded",
+      cursorSemantics: "opaque",
+      cursorDistinctFrom: ["revision", "generation"],
+      expiredCursorOutcome: "cursorExpired",
+      sseExpiredCursorEvent: {
+        fields: ["event", "eventId", "reason", "timestamp"],
+        event: "reset",
+        reason: "cursor_expired",
+        allocatedFields: ["eventId", "timestamp"],
+        allocatedFieldBounds: "existing-portable-api-schemas",
+      },
+      listReturnsCursor: "atomic-high-water-H",
+      readAfterReturns: ["orderedBatch", "tailNextCursorT"],
+      emptyReadAfterTailCursor: "H",
+      subscribeStarts: "strictly-after-T",
+      subscribeReplayCursor: "T",
+      interCallEventLossAllowed: false,
+      listWatchGapAllowed: false,
+    },
+  },
 });
 
 function diagnostic(message) {
@@ -40,6 +171,48 @@ function diagnostic(message) {
 
 function requireEqual(failures, label, actual, wanted) {
   if (actual !== wanted) failures.push(diagnostic(`${label} must be ${JSON.stringify(wanted)}`));
+}
+
+function requireJsonEqual(failures, label, actual, wanted) {
+  if (JSON.stringify(actual) !== JSON.stringify(wanted)) {
+    failures.push(diagnostic(`${label} must match the pinned contract exactly`));
+  }
+}
+
+function findLeakedRouteField(value, prefix = "portableControlContracts.routes") {
+  const forbidden = new Set([
+    "backend",
+    "backendType",
+    "kubernetesNamespace",
+    "namespace",
+    "pod",
+    "podName",
+    "service",
+    "serviceName",
+    "host",
+    "hostname",
+    "port",
+    "url",
+    "socket",
+    "socketPath",
+    "processId",
+    "pid",
+    "database",
+    "dsn",
+    "protocol",
+    "transport",
+    "wssUrl",
+    "sshHost",
+    "httpUrl",
+  ]);
+  if (!value || typeof value !== "object") return null;
+  for (const [key, child] of Object.entries(value)) {
+    const field = `${prefix}.${key}`;
+    if (forbidden.has(key)) return field;
+    const nested = findLeakedRouteField(child, field);
+    if (nested) return nested;
+  }
+  return null;
 }
 
 function requireCommit(failures, label, value) {
@@ -203,6 +376,33 @@ export async function checkPortablePlatformBaseline(root = process.cwd()) {
     );
   } catch (error) {
     failures.push(diagnostic(`runtimeTopology.documentation is unreadable: ${error.message}`));
+  }
+
+  const controlContracts = manifest.portableControlContracts;
+  requireJsonEqual(
+    failures,
+    "portableControlContracts",
+    controlContracts,
+    expected.controlContracts,
+  );
+  if (!SHA256.test(controlContracts?.documentationSha256 ?? "")) {
+    failures.push(diagnostic("portableControlContracts.documentationSha256 must be 64 lowercase hex characters"));
+  }
+  const leakedRouteField = findLeakedRouteField(controlContracts?.routes);
+  if (leakedRouteField) {
+    failures.push(diagnostic(`${leakedRouteField} leaks a backend coordinate or edge endpoint field`));
+  }
+  try {
+    const documentationBytes = await readFile(path.join(root, expected.controlContracts.documentation));
+    const digest = createHash("sha256").update(documentationBytes).digest("hex");
+    requireEqual(
+      failures,
+      "portableControlContracts.documentationSha256",
+      digest,
+      expected.controlContracts.documentationSha256,
+    );
+  } catch (error) {
+    failures.push(diagnostic(`portableControlContracts.documentation is unreadable: ${error.message}`));
   }
 
   requireEqual(failures, "ompPinResolution.contractCommit", manifest.ompPinResolution?.contractCommit, expected.ompBaseline);

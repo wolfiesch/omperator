@@ -1,6 +1,6 @@
 # Portable Agent Platform v1 implementation tracker
 
-- Status: implementation in progress; P0-01 through P0-04 complete
+- Status: implementation in progress; P0-01 through P0-05 complete
 - Source specification: <https://roycorp.net/briefs/omperator-portable-agent-platform-v1-f4c81ee5.html>
 - Source SHA-256: `f31778a0d57b3b39b822faa0d6e7a3f1af2888dd09a9a39780025c43acce6194`
 - Specification baseline: `wolfiesch/omperator@2ab8fc7`, `manaflow-ai/cmux@192e444`, `can1357/oh-my-pi@d16c616`
@@ -13,6 +13,7 @@
 - **P0-02:** `vendor/cmux-machine-provider-v1/` contains the byte-exact upstream Rust protocol crate source at the pinned cmux commit. The typed Rust generator emits control and provider-stream handoff fixtures, while `provenance/cmux-machine-provider-v1.json` records source objects, digests, generator inputs, corpus membership, and the tooling-only packaging boundary. `pnpm test:portable-platform` and `pnpm check:portable-platform` enforce the import.
 - **P0-03:** `docs/adr/020-portable-runtime-single-authority.md` fixes the process topology: `t4-host` owns the sole writable OMP RPC child, raw RPC stays on child stdio, and the future cmux terminal client attaches to that same authority over runtime-local `omp-app/1` instead of opening the session as another writer. `compat/portable-agent-platform-v1.json` records the machine-checkable cardinality, transport, attach, and admission rules; the portable-platform checker rejects weakened writer or RPC exposure rules and documentation drift.
 - **P0-04:** `packages/t4-api-contract/openapi.json` now defines only the OpenAPI 3.1 portable discovery, scope, workspace, runtime lifecycle, connection-descriptor, and infrastructure-invalidation surface. `packages/t4-api-client/` consumes the generated types and enforces bearer ownership, strong revision ETags, RFC 9457 Problem Details, bounded responses, and lifecycle-only SSE. The deterministic conformance fixture covers explicit-ID creation, optimistic concurrency, action idempotency, pagination, public route descriptors, and reconnect/reset behavior without a REST terminal, transcript, command, snapshot, browser, or OMP event stream.
+- **P0-05:** `docs/adr/021-portable-driver-control-contracts.md` defines backend-neutral resource-driver and capability operations, exact internal `cmux-v10` and `omp-app-v1` generation-bound routes, preconditioned equality-only revisions, exact replica-safe idempotency identity/operations, 60-second digest-only tickets with generation binding and invalidation, bounded pre-delete tombstones with stable-ID non-reuse, and a bounded gap-free infrastructure event journal with exact entry/reset shapes. `compat/portable-agent-platform-v1.json` pins the exact contract and ADR digest; the portable-platform checker rejects invariant weakening, documentation drift, and backend-coordinate or edge-endpoint field leakage. PostgreSQL remains optional alongside conforming SQLite and Kubernetes-object implementations, and P1-01 remains the first code implementation.
 
 ## Review verdict
 
