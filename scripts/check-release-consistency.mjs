@@ -1038,22 +1038,21 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
       if (workflow?.jobs?.[job]?.if !== undefined)
         errors.push(`.github/workflows/ci.yml ${job} must run unconditionally`);
     }
-    // The required branch-protection gate must not wait on any leg that runs
-    // off ubuntu-24.04, and those legs must stay aggregated by release-gates so
-    // a failure still fails the run the release waiter reads. `ios` is in this
-    // set because it runs on macOS, not because it is deferred: unlike the
-    // release gates it also runs on pull requests.
+    // Only push-only compatibility proofs are deferred. Native correctness is
+    // part of branch protection, so each Swift/iOS/macOS leg must feed verify.
     const verifyNeeds = workflow?.jobs?.verify?.needs ?? [];
-    for (const job of ["legacy-bridge-continuity", "official-omp-gate0", "ios"]) {
+    for (const job of ["legacy-bridge-continuity", "official-omp-gate0"]) {
       if (verifyNeeds.includes(job))
         errors.push(`.github/workflows/ci.yml verify must not wait on the ${job} leg`);
       if (!(workflow?.jobs?.["release-gates"]?.needs ?? []).includes(job))
         errors.push(`.github/workflows/ci.yml release-gates must aggregate the ${job} leg`);
     }
-    // The iOS leg is path-gated, so a broken gate would silently ship Swift
-    // that no job ever compiled.
-    if (workflow?.jobs?.ios?.if !== "${{ needs.changes.outputs.ios == 'true' }}")
-      errors.push(".github/workflows/ci.yml ios must be gated on needs.changes.outputs.ios");
+    for (const job of ["hostwire-swift", "ios-build", "macos-build", "ios-ui-tests"]) {
+      if (workflow?.jobs?.[job]?.if !== "${{ needs.changes.outputs.ios == 'true' }}")
+        errors.push(`.github/workflows/ci.yml ${job} must be gated on needs.changes.outputs.ios`);
+      if (!verifyNeeds.includes(job))
+        errors.push(`.github/workflows/ci.yml verify must require the ${job} leg`);
+    }
     if (workflow?.jobs?.changes?.outputs?.ios !== "${{ steps.classify.outputs.ios }}")
       errors.push(".github/workflows/ci.yml changes must export the ios classification");
     // A merge run may only narrow its legs against a commit whose own run was
@@ -1140,12 +1139,21 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "android-debug:",
     "name: verify",
     "if: ${{ always() }}",
-    "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]",
+    "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug, hostwire-swift, ios-build, macos-build, ios-ui-tests]",
     "name: release-gates",
-    "needs: [changes, legacy-bridge-continuity, official-omp-gate0, ios]",
-    "ios:",
+    "needs: [changes, legacy-bridge-continuity, official-omp-gate0]",
+    "hostwire-swift:",
+    "ios-build:",
+    "macos-build:",
+    "ios-ui-tests:",
+    "run: swift test --package-path apps/ios/HostWire",
+    "run: xcodebuild build -scheme T4Code",
+    "run: xcodebuild build -scheme T4CodeMac",
     "run: node scripts/verify-ios.mjs",
-    "IOS_RESULT: ${{ needs.ios.result }}",
+    "HOSTWIRE_SWIFT_RESULT: ${{ needs.hostwire-swift.result }}",
+    "IOS_BUILD_RESULT: ${{ needs.ios-build.result }}",
+    "MACOS_BUILD_RESULT: ${{ needs.macos-build.result }}",
+    "IOS_UI_TESTS_RESULT: ${{ needs.ios-ui-tests.result }}",
     'test "$CHANGES_RESULT" = success',
     'test "$T4_API_GENERATION_RESULT" = success',
     'test "$CHECK_RESULT" = success',

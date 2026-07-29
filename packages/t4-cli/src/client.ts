@@ -2,15 +2,22 @@
 // same vocabulary the iOS HostWire package encodes), over UDS by default or
 // remote ws/wss with device credentials. Tracks stream cursors so a reconnect
 // can resume instead of re-snapshotting.
+import { createHash } from "node:crypto";
+import {
+	COMMAND_DESCRIPTORS,
+	decodeClientFrame,
+	decodeServerFrame,
+	type ServerFrame,
+} from "@t4-code/host-wire";
 import WebSocket from "ws";
+import { negotiatedFeature, savedCursorFromFrame, sessionCreateArgs } from "./wire-helpers.ts";
 
 export interface SessionRef {
 	sessionId: string;
 	title: string;
 	status: string;
 	revision?: string;
-	cwd?: string;
-	project?: { name?: string; path?: string };
+	project: { projectId: string; name?: string };
 	updatedAt?: string;
 	model?: string;
 }
@@ -40,34 +47,6 @@ export interface HostEvents {
 export type Frame = Record<string, unknown>;
 
 /** The server→client frames the TUI consumes, validated at the socket. */
-interface WireFrame {
-	v?: string;
-	type?: string;
-	hostId?: string;
-	sessionId?: string;
-	requestId?: string;
-	commandId?: string;
-	command?: string;
-	ok?: boolean;
-	error?: { message?: string; code?: string };
-	result?: unknown;
-	cursor?: unknown;
-	sessions?: SessionRef[];
-	entries?: TranscriptEntry[];
-	entry?: TranscriptEntry;
-	ref?: { sessionId?: string; status?: string; revision?: string };
-	confirmationId?: string;
-	summary?: string;
-	terminalId?: string;
-	stream?: string;
-	data?: string;
-	encoding?: string;
-	message?: string;
-	code?: string;
-	reason?: string;
-	[key: string]: unknown;
-}
-
 const CLIENT_FEATURES = [
 	"resume", "prompt.lease", "controller.lease", "prompt.images", "transcript.page",
 	"session.delta", "files.list", "files.diff", "terminal.io", "preview.control",
@@ -85,13 +64,15 @@ export class T4Client {
 	private events: HostEvents;
 	private ws?: WebSocket;
 	private hostId = "";
+	private grantedCapabilities = new Set<string>();
+	private grantedFeatures = new Set<string>();
 	private seq = 0;
 	private pending = new Map<string, { resolve(f: Frame): void; reject(e: Error): void; timer: Timer }>();
-	private savedCursors: Frame[] = [];
 	/** Latest cursor per session — offered as savedCursors on reconnect. */
-	private cursors = new Map<string, Frame>();
+	private cursors = new Map<string, { hostId: string; sessionId: string; cursor: import("@t4-code/host-wire").Cursor }>();
 	/** Session revisions from the inventory — required for lease acquires. */
 	private revisions = new Map<string, string>();
+	private sessionsById = new Map<string, SessionRef>();
 
 	constructor(
 		private readonly endpoint: string,
@@ -99,6 +80,7 @@ export class T4Client {
 		events: HostEvents,
 		/** Unix-socket connections are local and trusted: no lease dance. */
 		private readonly local = false,
+		private readonly tlsFingerprint?: string,
 	) {
 		this.events = events;
 	}
@@ -109,10 +91,44 @@ export class T4Client {
 
 	connect(): Promise<Frame> {
 		const { promise, resolve, reject } = Promise.withResolvers<Frame>();
-		const ws = new WebSocket(this.endpoint, { rejectUnauthorized: false });
+		const isTls = this.endpoint.startsWith("wss://");
+		if (this.tlsFingerprint && (!isTls || !/^[0-9a-f]{64}$/u.test(this.tlsFingerprint)))
+			return Promise.reject(new Error("TLS fingerprint must be 64 lowercase hexadecimal characters for wss://"));
+		const pinnedTls = isTls && this.tlsFingerprint !== undefined;
+		const ws = new WebSocket(this.endpoint, { rejectUnauthorized: !pinnedTls });
 		this.ws = ws;
+		let settled = false;
+		let certificateAccepted = !pinnedTls;
+		const settleReject = (error: Error): void => {
+			if (settled) return;
+			settled = true;
+			reject(error);
+		};
+		const handshakeTimer = setTimeout(() => {
+			settleReject(new Error("welcome handshake timed out"));
+			ws.terminate();
+		}, 15_000);
+		ws.on("upgrade", response => {
+			if (!pinnedTls) return;
+			const socket = response.socket as typeof response.socket & {
+				getPeerCertificate?: (detailed?: boolean) => { raw?: Buffer };
+			};
+			const raw = socket.getPeerCertificate?.(true).raw;
+			const actual = raw ? createHash("sha256").update(raw).digest("hex") : "";
+			if (actual !== this.tlsFingerprint) {
+				settleReject(new Error("server certificate fingerprint mismatch"));
+				ws.terminate();
+				return;
+			}
+			certificateAccepted = true;
+		});
 		ws.on("open", () => {
-			ws.send(JSON.stringify({
+			if (!certificateAccepted) {
+				settleReject(new Error("server certificate was not verified"));
+				ws.terminate();
+				return;
+			}
+			const hello = decodeClientFrame({
 				v: "omp-app/1",
 				type: "hello",
 				protocol: { min: "omp-app/1", max: "omp-app/1" },
@@ -121,78 +137,108 @@ export class T4Client {
 				requestedFeatures: CLIENT_FEATURES,
 				savedCursors: [...this.cursors.values()],
 				...(this.auth ? { authentication: { deviceId: this.auth.deviceId, deviceToken: this.auth.deviceToken } } : {}),
-			}));
+			});
+			ws.send(JSON.stringify(hello));
 		});
 		ws.on("message", (raw: WebSocket.RawData) => {
-			// Socket boundary: frames are server JSON; the WireFrame surface is the
-			// complete set of fields this client consumes, so assert once here.
-			let f: WireFrame;
-			try { f = JSON.parse(raw.toString()) as WireFrame; } catch { return; }
-			if (f.type === "welcome") {
-				this.hostId = f.hostId ?? "";
-				this.events.open();
-				resolve(f as Frame);
+			let f: ServerFrame;
+			try {
+				f = decodeServerFrame(JSON.parse(raw.toString()));
+			} catch (error) {
+				this.events.error(`invalid host frame: ${error instanceof Error ? error.message : String(error)}`);
+				ws.close(1002, "invalid host frame");
 				return;
 			}
-			if (f.requestId && this.pending.has(f.requestId)) {
+			if (f.type === "welcome") {
+				this.hostId = f.hostId;
+				this.grantedCapabilities = new Set(f.grantedCapabilities);
+				this.grantedFeatures = new Set(f.grantedFeatures);
+				this.events.open();
+				clearTimeout(handshakeTimer);
+				settled = true;
+				resolve(f as unknown as Frame);
+				return;
+			}
+			if (f.type === "response" && this.pending.has(f.requestId)) {
 				const p = this.pending.get(f.requestId)!;
 				this.pending.delete(f.requestId);
 				clearTimeout(p.timer);
 				// Command responses that carry the inventory also refresh revisions.
 				// (session.list's result shape is asserted by the caller.)
-				const result = f.result as { sessions?: SessionRef[] } | undefined;
+				const result = f.result as { sessions?: SessionRef[] };
 				if (f.command === "session.list" && f.ok !== false && Array.isArray(result?.sessions)) {
+					this.sessionsById.clear();
 					for (const s of result.sessions!) {
+						this.sessionsById.set(s.sessionId, s);
 						if (s.revision) this.revisions.set(s.sessionId, s.revision);
 					}
 				}
 				if (f.ok === false) p.reject(new Error(String(f.error?.message ?? f.error?.code ?? "command failed")));
-				else p.resolve(f);
+				else p.resolve(f as unknown as Frame);
 				return;
 			}
-			if (f.cursor && f.sessionId) this.cursors.set(f.sessionId, { sessionId: f.sessionId, cursor: f.cursor });
+			const saved = savedCursorFromFrame(f);
+			if (saved) this.cursors.set(saved.sessionId, saved);
 			this.route(f);
 		});
-		ws.on("error", e => { this.events.error(e.message); reject(e); });
+		ws.on("error", e => { this.events.error(e.message); settleReject(e); });
 		ws.on("close", (code, reason) => {
+			clearTimeout(handshakeTimer);
 			for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new Error("closed")); }
 			this.pending.clear();
+			settleReject(new Error(`connection closed before welcome (${code} ${reason.toString()})`));
 			this.events.close(`${code} ${reason}`);
 		});
 		return promise;
 	}
 
-	private route(f: WireFrame): void {
+	private route(f: ServerFrame): void {
 		switch (f.type) {
 			case "sessions": {
-				for (const s of (f.sessions ?? []) as SessionRef[]) {
+				const sessions = f.sessions as unknown as SessionRef[];
+				this.sessionsById = new Map(sessions.map(session => [session.sessionId, session]));
+				for (const s of sessions) {
 					if (s.revision) this.revisions.set(s.sessionId, s.revision);
 				}
-				return this.events.sessions(f.sessions ?? []);
+				return this.events.sessions(sessions);
 			}
-			case "snapshot": return this.events.snapshot(f.sessionId ?? "", f.entries ?? []);
-			case "entry": return this.events.entry(f.sessionId ?? "", f.entry ?? { id: "", kind: "entry" });
+			case "snapshot": return this.events.snapshot(f.sessionId, f.entries as unknown as TranscriptEntry[]);
+			case "entry": return this.events.entry(f.sessionId, f.entry as unknown as TranscriptEntry);
 			case "session.delta":
-				if (f.ref) this.events.status(f.sessionId ?? f.ref.sessionId ?? "", f.ref.status ?? "idle");
+				if (f.upsert) {
+					const session = f.upsert as unknown as SessionRef;
+					if (session.revision) this.revisions.set(f.sessionId, session.revision);
+					this.sessionsById.set(f.sessionId, session);
+					this.events.status(f.sessionId, session.status);
+					this.events.sessions([...this.sessionsById.values()]);
+				} else if (f.remove) {
+					this.revisions.delete(f.remove);
+					this.sessionsById.delete(f.remove);
+					this.events.sessions([...this.sessionsById.values()]);
+				}
 				return;
-			case "confirmation": return this.events.confirm(f as Frame);
+			case "confirmation": return this.events.confirm(f as unknown as Frame);
 			case "terminal.output":
-				return this.events.termOutput(f.sessionId ?? "", f.terminalId ?? "", f.stream ?? "stdout", f.data ?? "", f.encoding);
-			case "terminal.exit": return this.events.termExit(f.sessionId ?? "", f.terminalId ?? "");
-			case "error": return this.events.error(f.message ?? f.code ?? "host error");
+				return this.events.termOutput(f.sessionId, f.terminalId, f.stream, f.data, f.encoding);
+			case "terminal.exit": return this.events.termExit(f.sessionId, f.terminalId);
+			case "error": return this.events.error(f.message || f.code);
 		}
 	}
 
 	command<T = Frame>(command: string, args: Frame = {}, sessionId?: string, expectedRevision?: string): Promise<T> {
+		const descriptor = COMMAND_DESCRIPTORS[command];
+		if (!descriptor) return Promise.reject(new Error(`${command}: unsupported command`));
+		if (!this.grantedCapabilities.has(descriptor.capability))
+			return Promise.reject(new Error(`${command}: host did not grant ${descriptor.capability}`));
 		const requestId = `t4-${++this.seq}-${Date.now()}`;
-		const frame: Frame = {
+		const frame = decodeClientFrame({
 			v: "omp-app/1", type: "command", requestId,
 			commandId: `c-${this.seq}-${Date.now()}`,
 			timestamp: new Date().toISOString(),
 			hostId: this.hostId, command, args,
 			...(sessionId ? { sessionId } : {}),
 			...(expectedRevision ? { expectedRevision } : {}),
-		};
+		});
 		const { promise, resolve, reject } = Promise.withResolvers<T>();
 		const timer = setTimeout(() => {
 			this.pending.delete(requestId);
@@ -204,7 +250,7 @@ export class T4Client {
 	}
 
 	/** Answer a confirmation challenge (confirm frame is not a command). */
-	confirmAnswer(challenge: Frame, decision: "accept" | "reject"): void {
+	confirmAnswer(challenge: Frame, decision: "approve" | "deny"): void {
 		this.sendRaw({
 			v: "omp-app/1", type: "confirm",
 			requestId: `t4-${++this.seq}-${Date.now()}`,
@@ -218,7 +264,12 @@ export class T4Client {
 
 	/** Raw additive client → host frame (terminal.input/resize/close). */
 	sendRaw(frame: Frame): void {
-		this.ws?.send(JSON.stringify({ v: "omp-app/1", hostId: this.hostId, ...frame }));
+		const decoded = decodeClientFrame({ v: "omp-app/1", hostId: this.hostId, ...frame });
+		this.ws?.send(JSON.stringify(decoded));
+	}
+
+	supportsFeature(feature: string): boolean {
+		return negotiatedFeature(this.local, this.grantedFeatures, feature);
 	}
 
 	sessionList() {
@@ -270,7 +321,9 @@ export class T4Client {
 		}
 	}
 
-	sessionCreate(cwd?: string) { return this.command<{ session: SessionRef }>("session.create", cwd ? { cwd } : {}); }
+	sessionCreate(projectId: string) {
+		return this.command<{ session: SessionRef }>("session.create", sessionCreateArgs(projectId));
+	}
 	attach(sessionId: string) { return this.command("session.attach", {}, sessionId); }
 	async prompt(sessionId: string, text: string) {
 		await this.withLease(sessionId, "prompt.lease", async (leaseId, revision) => {

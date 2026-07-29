@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import { access, chmod, lstat, mkdir, open, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
@@ -26,34 +26,30 @@ export async function publishLocalDevice(
 	endpoint: string,
 	selfIdentity: RemotePeerIdentity,
 	capabilities: readonly string[],
-): Promise<void> {
-	try {
-		const previous = JSON.parse(await readFile(path, "utf8")) as { deviceId?: unknown };
-		if (typeof previous.deviceId === "string" && registry.get(previous.deviceId))
-			registry.revoke(previous.deviceId);
-	} catch {
-		// No readable previous file — first start on this machine.
-	}
+): Promise<string> {
 	const now = Date.now();
-	const deviceId = `local-${randomBytes(9).toString("base64url")}`;
+	const identityKey = deviceIdentityKeyForPeer(selfIdentity);
+	const deviceId = `local-${createHash("sha256").update(identityKey).digest("base64url").slice(0, 24)}`;
 	const token = randomBytes(32).toString("base64url");
-	registry.create(
-		{
-			deviceId,
-			identityKey: deviceIdentityKeyForPeer(selfIdentity),
-			capabilities: capabilities.filter((value): value is DeviceCapability => isCapability(value)),
-			metadata: {
-				label: "This Mac (automatic)",
-				platform: process.platform === "darwin" ? "macos" : process.platform,
-			},
-			createdAt: now,
-			lastSeenAt: null,
-			tokenExpiresAt: now + LOCAL_DEVICE_TTL_MS,
-			revokedAt: null,
-			epoch: 0,
+	const record = {
+		deviceId,
+		identityKey,
+		capabilities: capabilities.filter((value): value is DeviceCapability => isCapability(value)),
+		metadata: {
+			label: "This Mac (automatic)",
+			platform: process.platform === "darwin" ? "macos" : process.platform,
 		},
-		token,
-	);
+		createdAt: now,
+		lastSeenAt: null,
+		tokenExpiresAt: now + LOCAL_DEVICE_TTL_MS,
+		revokedAt: null,
+		epoch: registry.get(deviceId)?.epoch ?? 0,
+	};
+	if (registry.get(deviceId)) registry.rotate(record, token);
+	else registry.create(record, token);
+	for (const obsolete of registry.list())
+		if (obsolete.deviceId !== deviceId && obsolete.metadata.label === "This Mac (automatic)" && obsolete.revokedAt === null)
+			registry.revoke(obsolete.deviceId, now);
 	const payload = JSON.stringify({
 		version: 1,
 		endpoint,
@@ -63,9 +59,11 @@ export async function publishLocalDevice(
 	const tmp = `${path}.tmp-${randomBytes(6).toString("hex")}`;
 	await writeFile(tmp, payload, { mode: 0o600 });
 	await rename(tmp, path);
+	return deviceId;
 }
 
-async function withdrawLocalDevice(path: string): Promise<void> {
+async function withdrawLocalDevice(registry: SqliteDeviceRegistry, path: string, deviceId?: string): Promise<void> {
+	if (deviceId && registry.get(deviceId)?.revokedAt === null) registry.revoke(deviceId);
 	await unlink(path).catch(() => undefined);
 }
 
@@ -237,6 +235,7 @@ export async function createRemoteAppserver(options: RemoteAppserverOptions): Pr
 	const endpoint = options.remoteEndpoint;
 	let resolver: TailscaleWhoisResolver | undefined;
 	let loopbackEndpoint: RemoteListenerConfig | undefined;
+	let localDeviceId: string | undefined;
 	try {
 		if (endpoint.serveProxy !== true) {
 			const executable = options.tailscaleExecutable ?? (await discoverTailscaleExecutable());
@@ -253,7 +252,7 @@ export async function createRemoteAppserver(options: RemoteAppserverOptions): Pr
 			try {
 				const selfIdentity = await resolver.resolve(endpoint.address);
 				loopbackEndpoint = { ...options.remoteEndpointLoopback, selfIdentity };
-				await publishLocalDevice(
+				localDeviceId = await publishLocalDevice(
 					registry,
 					options.localDevicePath,
 					`ws://${options.remoteEndpointLoopback.address}:${options.remoteEndpointLoopback.port}/v1/ws`,
@@ -274,8 +273,19 @@ export async function createRemoteAppserver(options: RemoteAppserverOptions): Pr
 			remotePolicy: policy,
 			...(resolver ? { remoteResolver: resolver } : undefined),
 			admin: {
-				issuePairingTicket: (capabilities, ttlMs, expectedNodeId) =>
-					policy.issuePairingTicket(capabilities, ttlMs, expectedNodeId),
+				issuePairingTicket: (capabilities, ttlMs, expectedNodeId) => ({
+					...policy.issuePairingTicket(capabilities, ttlMs, expectedNodeId),
+					transport: options.remoteEndpointTls
+						? {
+								scheme: "wss",
+								port: options.remoteEndpointTls.port,
+								path: "/v1/ws",
+								tlsFingerprint: options.remoteEndpointTls.tlsFingerprint,
+							}
+						: options.remoteEndpoint.serveProxy
+							? { scheme: "wss", port: 443, path: "/v1/ws" }
+							: { scheme: "ws", port: options.remoteEndpoint.port, path: "/v1/ws" },
+				}),
 				listDevices: () => policy.listDeviceSummaries(),
 				revokeDevice: deviceId => policy.revokeDevice(deviceId),
 			},
@@ -301,6 +311,10 @@ export async function createRemoteAppserver(options: RemoteAppserverOptions): Pr
 				try {
 					await inner.start();
 				} catch (error) {
+					if (options.localDevicePath) {
+						await withdrawLocalDevice(registry, options.localDevicePath, localDeviceId);
+						localDeviceId = undefined;
+					}
 					closePolicy();
 					throw error;
 				}
@@ -309,7 +323,8 @@ export async function createRemoteAppserver(options: RemoteAppserverOptions): Pr
 				try {
 					await inner.stop();
 				} finally {
-					if (options.localDevicePath) await withdrawLocalDevice(options.localDevicePath);
+					if (options.localDevicePath) await withdrawLocalDevice(registry, options.localDevicePath, localDeviceId);
+					localDeviceId = undefined;
 					closePolicy();
 				}
 			},
@@ -318,6 +333,7 @@ export async function createRemoteAppserver(options: RemoteAppserverOptions): Pr
 			childFor: sessionId => inner.childFor(sessionId),
 		};
 	} catch (error) {
+		if (options.localDevicePath) await withdrawLocalDevice(registry, options.localDevicePath, localDeviceId);
 		policy.close();
 		throw error;
 	}

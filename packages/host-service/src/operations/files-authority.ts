@@ -1,8 +1,8 @@
 import { MAX_FILE_BYTES, type SessionId } from "@t4-code/host-wire";
 import { execFile } from "node:child_process";
-import { open, readdir, realpath, stat } from "node:fs/promises";
-import type { Dirent } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { constants, type Dirent } from "node:fs";
+import { open, readdir, realpath, type FileHandle } from "node:fs/promises";
+import { isAbsolute, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { DesktopOperationsAuthority, OperationContext } from "./dispatcher.ts";
 
@@ -60,43 +60,48 @@ export class FilesAuthority {
 		if (sessionId === undefined) throw operationError("NOT_FOUND", "session was not found");
 		const root = await this.#canonicalRoot(await this.#projectRootForSession(sessionId));
 		const rel = typeof args.path === "string" && args.path.length > 0 ? args.path : "";
-		const dir = await this.#contained(root, rel);
+		const dir = await this.#openBeneath(root, rel, true);
 		const includeHidden = args.includeHidden === true;
-		let dirents: Dirent[];
 		try {
-			dirents = await readdir(dir, { withFileTypes: true });
-		} catch {
-			throw operationError("NOT_FOUND", "path was not found");
-		}
-		dirents.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-		const entries: Array<{ path: string; kind: FileKind; size?: number }> = [];
-		let truncated = false;
-		for (const dirent of dirents) {
-		if (!includeHidden && dirent.name.startsWith(".")) continue;
-			if (entries.length >= this.#maxListEntries) {
-				truncated = true;
-				break;
-			}
-			const kind: FileKind = dirent.isSymbolicLink()
-				? "symlink"
-				: dirent.isDirectory()
-					? "directory"
-					: "file";
-			const entry: { path: string; kind: FileKind; size?: number } = {
-				path: rel === "" ? dirent.name : `${rel}/${dirent.name}`,
-				kind,
-			};
-			if (kind === "file") {
-				try {
-					const info = await stat(join(dir, dirent.name));
-					if (info.size <= MAX_REPORTED_SIZE) entry.size = info.size;
-				} catch {
-					// A file that vanished mid-listing is reported without a size.
+			const dirents: Dirent[] = await readdir(dir.path, { withFileTypes: true });
+			dirents.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+			const entries: Array<{ path: string; kind: FileKind; size?: number }> = [];
+			let truncated = false;
+			for (const dirent of dirents) {
+				if (!includeHidden && dirent.name.startsWith(".")) continue;
+				if (entries.length >= this.#maxListEntries) {
+					truncated = true;
+					break;
 				}
+				const kind: FileKind = dirent.isSymbolicLink()
+					? "symlink"
+					: dirent.isDirectory()
+						? "directory"
+						: "file";
+				const entry: { path: string; kind: FileKind; size?: number } = {
+					path: rel === "" ? dirent.name : `${rel}/${dirent.name}`,
+					kind,
+				};
+				if (kind === "file") {
+					try {
+						const child = await this.#openBeneathHandle(dir.handle, dirent.name, false);
+						const info = await child.stat();
+						await child.close();
+						if (info.size <= MAX_REPORTED_SIZE) entry.size = info.size;
+					} catch {
+						// A file that vanished mid-listing is reported without a size.
+					}
+				}
+				entries.push(entry);
 			}
-			entries.push(entry);
+			return { entries, ...(truncated ? { truncated: true } : {}) };
+		} catch (error) {
+			if ((error as { code?: string }).code === "NOT_FOUND")
+				throw operationError("NOT_FOUND", "path was not found");
+			throw error;
+		} finally {
+			await dir.handle.close();
 		}
-		return { entries, ...(truncated ? { truncated: true } : {}) };
 	}
 
 	async filesRead(args: Record<string, unknown>, context: OperationContext): Promise<Record<string, unknown>> {
@@ -105,17 +110,12 @@ export class FilesAuthority {
 		const root = await this.#canonicalRoot(await this.#projectRootForSession(sessionId));
 		if (typeof args.path !== "string" || args.path.length === 0)
 			throw operationError("INVALID_FRAME", "path is required");
-		const target = await this.#contained(root, args.path);
-		let info;
+		const target = await this.#openBeneath(root, args.path, false);
+		const handle = target.handle;
 		try {
-			info = await stat(target);
-		} catch {
-			throw operationError("NOT_FOUND", "path was not found");
-		}
-		if (info.isDirectory()) throw operationError("FORBIDDEN", "path is a directory");
-		const total = info.size;
-		const handle = await open(target, "r");
-		try {
+			const info = await handle.stat();
+			if (info.isDirectory()) throw operationError("FORBIDDEN", "path is a directory");
+			const total = info.size;
 			const buffer = Buffer.alloc(MAX_FILE_BYTES);
 			const { bytesRead } = await handle.read(buffer, 0, MAX_FILE_BYTES, 0);
 			const data = buffer.subarray(0, bytesRead);
@@ -156,18 +156,74 @@ export class FilesAuthority {
 			throw operationError("UNSUPPORTED", "turn review snapshots require a desktop bridge host");
 		const root = await this.#canonicalRoot(await this.#projectRootForSession(sessionId));
 		const rel = typeof args.path === "string" && args.path.length > 0 ? args.path : undefined;
-		if (rel !== undefined) await this.#contained(root, rel);
-		const argv = ["-C", root, "diff", "HEAD", "--", ...(rel !== undefined ? [rel] : [])];
-		let stdout: string;
+		const rootAnchor = await this.#openBeneath(root, "", true);
+		if (rel !== undefined) {
+			try {
+				const target = await this.#openBeneathHandle(rootAnchor.handle, rel, false);
+				await target.close();
+			} catch (error) {
+				const code = (error as NodeJS.ErrnoException).code;
+				if (code !== "ENOENT" && code !== "NOT_FOUND") {
+					await rootAnchor.handle.close();
+					throw error;
+				}
+				const parts = this.#components(rel);
+				const parent = parts.slice(0, -1).join("/");
+				if (parent) {
+					const parentHandle = await this.#openBeneathHandle(rootAnchor.handle, parent, true);
+					await parentHandle.close();
+				}
+			}
+		}
+		const pathspec = rel !== undefined ? ["--", rel] : [];
+		let statusOutput: string;
+		let trackedDiff: string;
 		try {
-			({ stdout } = await execFileAsync("git", argv, {
-				maxBuffer: MAX_FILE_BYTES * 2,
-				timeout: 15_000,
-			}));
+			[{ stdout: statusOutput }, { stdout: trackedDiff }] = await Promise.all([
+				execFileAsync("git", ["status", "--porcelain=v2", "-z", "--untracked-files=all", ...pathspec], {
+					cwd: rootAnchor.path,
+					maxBuffer: MAX_FILE_BYTES * 2,
+					timeout: 15_000,
+				}),
+				execFileAsync("git", ["diff", "HEAD", ...pathspec], {
+					cwd: rootAnchor.path,
+					maxBuffer: MAX_FILE_BYTES * 2,
+					timeout: 15_000,
+				}),
+			]);
 		} catch (error) {
+			await rootAnchor.handle.close();
 			throw operationError("FAILED", `git diff failed: ${error instanceof Error ? error.message : String(error)}`);
 		}
-		let diff = stdout;
+		const untracked = statusOutput
+			.split("\0")
+			.filter(record => record.startsWith("? "))
+			.map(record => record.slice(2));
+		let diff = trackedDiff;
+		for (const path of untracked) {
+			const file = await this.#openBeneathHandle(rootAnchor.handle, path, false);
+			try {
+				const info = await file.stat();
+				if (!info.isFile()) continue;
+				const cap = Math.max(0, MAX_FILE_BYTES - Buffer.byteLength(diff, "utf8"));
+				if (cap === 0) break;
+				const buffer = Buffer.alloc(Math.min(cap, Number(info.size), MAX_FILE_BYTES));
+				const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+				const bytes = buffer.subarray(0, bytesRead);
+				const header = `diff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n`;
+				if (bytes.includes(0)) diff += `${header}Binary files /dev/null and b/${path} differ\n`;
+				else {
+					const text = bytes.toString("utf8");
+					diff += `${header}@@ -0,0 +1,${text.split("\n").length} @@\n${text
+						.split("\n")
+						.map(line => `+${line}`)
+						.join("\n")}\n`;
+				}
+			} finally {
+				await file.close();
+			}
+		}
+		await rootAnchor.handle.close();
 		let truncated = false;
 		while (Buffer.byteLength(diff, "utf8") > MAX_FILE_BYTES) {
 			diff = diff.slice(0, -1);
@@ -193,21 +249,69 @@ export class FilesAuthority {
 	}
 
 	/**
-	 * Resolve a safe-relative path under the canonical root and contain it by
-	 * canonical `realpath`. A lexical check passes for an in-project symlink
-	 * that points outside the root; only the resolved path reveals the escape.
+	 * Traverse from an already-open directory descriptor. Each component is
+	 * opened with O_NOFOLLOW; subsequent components are addressed through the
+	 * descriptor rather than by reopening the validated pathname.
 	 */
-	async #contained(canonicalRoot: string, rel: string): Promise<string> {
-		const candidate = join(canonicalRoot, rel);
-		let resolved: string;
+	async #openBeneath(
+		canonicalRoot: string,
+		rel: string,
+		directory: boolean,
+	): Promise<{ handle: FileHandle; path: string }> {
+		const root = await open(
+			canonicalRoot,
+			constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_DIRECTORY,
+		);
 		try {
-			resolved = await realpath(candidate);
-		} catch {
-			throw operationError("NOT_FOUND", "path was not found");
+			const handle = await this.#openBeneathHandle(root, rel, directory);
+			if (handle !== root) await root.close();
+			return { handle, path: this.#descriptorPath(handle.fd) };
+		} catch (error) {
+			await root.close();
+			throw error;
 		}
-		const escaped = relative(canonicalRoot, resolved);
-		if (escaped.startsWith("..") || isAbsolute(escaped))
+	}
+
+	async #openBeneathHandle(root: FileHandle, rel: string, directory: boolean): Promise<FileHandle> {
+		const components = this.#components(rel);
+		if (components.length === 0) return root;
+		let current = root;
+		let ownsCurrent = false;
+		try {
+			for (let index = 0; index < components.length; index += 1) {
+				const final = index === components.length - 1;
+				const flags =
+					constants.O_RDONLY |
+					constants.O_NOFOLLOW |
+					(!final || directory ? constants.O_DIRECTORY : 0);
+				const next = await open(`${this.#descriptorPath(current.fd)}/${components[index]}`, flags);
+				if (ownsCurrent) await current.close();
+				current = next;
+				ownsCurrent = true;
+			}
+			return current;
+		} catch (error) {
+			if (ownsCurrent) await current.close();
+			const code = (error as NodeJS.ErrnoException).code;
+			if (code === "ELOOP" || code === "ENOTDIR")
+				throw operationError("FORBIDDEN", "symlinks and non-directories are not permitted in file paths");
+			if (code === "ENOENT") throw operationError("NOT_FOUND", "path was not found");
+			throw error;
+		}
+	}
+
+	#components(rel: string): string[] {
+		if (isAbsolute(rel) || rel.includes("\\") || rel.includes("\0"))
 			throw operationError("FORBIDDEN", "path escapes the session root");
-		return resolved;
+		const components = rel.split("/").filter(Boolean);
+		if (components.some(component => component === "." || component === ".."))
+			throw operationError("FORBIDDEN", "path escapes the session root");
+		return components;
+	}
+
+	#descriptorPath(fd: number): string {
+		if (process.platform === "linux") return `/proc/self/fd/${fd}`;
+		if (process.platform === "darwin") return `/dev/fd/${fd}`;
+		throw operationError("UNSUPPORTED", "descriptor-relative file access is unavailable on this platform");
 	}
 }

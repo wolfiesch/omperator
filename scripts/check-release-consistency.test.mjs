@@ -335,7 +335,7 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]",
+          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug, hostwire-swift, ios-build, macos-build, ios-ui-tests]",
           "needs: [changes, check, tooling, android-debug]",
         ),
     ],
@@ -343,18 +343,18 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "needs: [changes, legacy-bridge-continuity, official-omp-gate0, ios]",
           "needs: [changes, legacy-bridge-continuity, official-omp-gate0]",
+          "needs: [changes, legacy-bridge-continuity]",
         ),
     ],
-    // Dropping the iOS leg from the aggregator, or ungating it, would let Swift
-    // ship with no job that compiles it.
+    // Dropping a native leg from verify, or ungating it, would let Swift ship
+    // without the required platform proof.
     [
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "needs: [changes, legacy-bridge-continuity, official-omp-gate0, ios]",
-          "needs: [changes, legacy-bridge-continuity, ios]",
+          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug, hostwire-swift, ios-build, macos-build, ios-ui-tests]",
+          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug, ios-build, macos-build, ios-ui-tests]",
         ),
     ],
     [
@@ -369,8 +369,8 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]",
-          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, maintainer, android-debug]",
+          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug, hostwire-swift, ios-build, macos-build, ios-ui-tests]",
+          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, maintainer, android-debug, hostwire-swift, ios-build, macos-build, ios-ui-tests]",
         ),
     ],
     [
@@ -695,12 +695,15 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("if: ${{ always() }}"));
   assert.ok(
     ciWorkflow.includes(
-      "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]",
+      "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug, hostwire-swift, ios-build, macos-build, ios-ui-tests]",
     ),
   );
   assert.ok(ciWorkflow.includes("name: release-gates"));
-  assert.ok(ciWorkflow.includes("needs: [changes, legacy-bridge-continuity, official-omp-gate0, ios]"));
-  assert.ok(ciWorkflow.includes("IOS_RESULT: ${{ needs.ios.result }}"));
+  assert.ok(ciWorkflow.includes("needs: [changes, legacy-bridge-continuity, official-omp-gate0]"));
+  assert.ok(ciWorkflow.includes("HOSTWIRE_SWIFT_RESULT: ${{ needs.hostwire-swift.result }}"));
+  assert.ok(ciWorkflow.includes("IOS_BUILD_RESULT: ${{ needs.ios-build.result }}"));
+  assert.ok(ciWorkflow.includes("MACOS_BUILD_RESULT: ${{ needs.macos-build.result }}"));
+  assert.ok(ciWorkflow.includes("IOS_UI_TESTS_RESULT: ${{ needs.ios-ui-tests.result }}"));
   assert.ok(ciWorkflow.includes('test "$CHANGES_RESULT" = success'));
   assert.ok(ciWorkflow.includes('test "$T4_API_GENERATION_RESULT" = success'));
   assert.ok(ciWorkflow.includes('test "$CHECK_RESULT" = success'));

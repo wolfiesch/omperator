@@ -1,13 +1,13 @@
 // T4CertPinning.swift
-// TOFU certificate pinning for wss:// host connections. The t4-host serves a
+// Explicit certificate pinning for wss:// host connections. The t4-host serves a
 // per-profile self-signed cert on its wss listener (see --remote-tls-port);
 // there is no CA chain to validate, so the security anchor is the leaf cert's
 // sha256 fingerprint, pinned on first connect and enforced thereafter.
 //
 // Threat model: this authenticates the host *inside* the tailnet tunnel — a
 // rogue tailnet peer can complete a TCP handshake but cannot present the
-// pinned cert. First-connect trust (TOFU) matches the existing pairing trust
-// model: the device-token pairing flow is already the moment of trust.
+// pinned cert. The operator-presented pairing payload supplies the expected fingerprint;
+// an absent pin falls back only to the platform CA policy, never implicit TOFU.
 //
 // The fingerprint the app pins is exactly what the host prints as
 // `tlsFingerprint` on GET /healthz, so an operator can verify out-of-band.
@@ -40,6 +40,19 @@ final class T4CertPinner: NSObject, URLSessionDelegate {
         Keychain.get(pinKey(host: host, port: port))
     }
 
+    /// Install the fingerprint carried by a pairing payload before opening the
+    /// socket. Existing pins must match; a persistence failure rejects pairing.
+    static func establishExpectedPin(host: String, port: Int, fingerprint: String) -> Bool {
+        guard fingerprint.wholeMatch(of: #/[0-9a-f]{64}/#) != nil else { return false }
+        let key = pinKey(host: host, port: port)
+        do {
+            if let stored = try Keychain.read(key) { return stored == fingerprint }
+            return Keychain.set(fingerprint, forKey: key)
+        } catch {
+            return false
+        }
+    }
+
     /// Forget a pin (e.g. after deliberate host cert rotation).
     static func forget(host: String, port: Int) {
         Keychain.remove(forKey: pinKey(host: host, port: port))
@@ -57,19 +70,26 @@ final class T4CertPinner: NSObject, URLSessionDelegate {
             completionHandler(.performDefaultHandling, nil)
             return
         }
-        if let stored = Keychain.get(key) {
+        let stored: String?
+        do {
+            stored = try Keychain.read(key)
+        } catch {
+            t4pinLog.error("certificate pin unavailable for \(self.label, privacy: .public)")
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            return
+        }
+        if let stored {
             if stored == fingerprint {
                 completionHandler(.useCredential, URLCredential(trust: trust))
             } else {
-                t4pinLog.error("cert pin MISMATCH for \(self.label, privacy: .public): got \(fingerprint, privacy: .public), pinned \(stored, privacy: .public)")
+                t4pinLog.error("certificate pin mismatch for \(self.label, privacy: .public)")
                 completionHandler(.cancelAuthenticationChallenge, nil)
             }
         } else {
-            // TOFU: accept and pin. Logged loudly so a compromised first
-            // connect is at least audible in the logs.
-            t4pinLog.notice("TOFU pin for \(self.label, privacy: .public): \(fingerprint, privacy: .public)")
-            Keychain.set(fingerprint, forKey: key)
-            completionHandler(.useCredential, URLCredential(trust: trust))
+            // No explicit pin: use the platform CA policy. Self-signed direct
+            // hosts therefore fail until a pairing payload installs their
+            // advertised fingerprint; publicly trusted wss remains usable.
+            completionHandler(.performDefaultHandling, nil)
         }
     }
 

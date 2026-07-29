@@ -34,6 +34,14 @@ function authorityFixture(root: string): { authority: FilesAuthority; ctx: Opera
 	return { authority, ctx: context() };
 }
 
+function git(root: string, args: readonly string[]): void {
+	const result = Bun.spawnSync(["git", ...args], {
+		cwd: root,
+		env: { ...process.env, GIT_AUTHOR_NAME: "T4 Test", GIT_AUTHOR_EMAIL: "t4@example.invalid", GIT_COMMITTER_NAME: "T4 Test", GIT_COMMITTER_EMAIL: "t4@example.invalid" },
+	});
+	if (result.exitCode !== 0) throw new Error(result.stderr.toString());
+}
+
 describe("FilesAuthority filesList", () => {
 	test("lists entries relative to the session root, skipping hidden unless asked", async () => {
 		const root = await temporaryDirectory("t4-files-list-");
@@ -147,5 +155,36 @@ describe("FilesAuthority filesRead", () => {
 	test("operations() advertises exactly filesList, filesRead, and filesDiff", () => {
 		const { authority } = authorityFixture("/tmp");
 		expect(Object.keys(authority.operations()).sort()).toEqual(["filesDiff", "filesList", "filesRead"]);
+	});
+});
+
+describe("FilesAuthority filesDiff", () => {
+	test("includes untracked files instead of reporting a false-clean tree", async () => {
+		const root = await temporaryDirectory("t4-files-diff-untracked-");
+		git(root, ["init", "-q"]);
+		await writeFile(join(root, "tracked.txt"), "tracked\n");
+		git(root, ["add", "tracked.txt"]);
+		git(root, ["commit", "-qm", "initial"]);
+		await writeFile(join(root, "new.txt"), "new content\n");
+		const { authority, ctx } = authorityFixture(root);
+
+		const result = await authority.filesDiff({}, ctx);
+		expect(result.diff).toContain("diff --git a/new.txt b/new.txt");
+		expect(result.diff).toContain("+new content");
+	});
+
+	test("reviews a deleted path through its existing parent", async () => {
+		const root = await temporaryDirectory("t4-files-diff-deleted-");
+		git(root, ["init", "-q"]);
+		await mkdir(join(root, "src"));
+		await writeFile(join(root, "src", "old.txt"), "old content\n");
+		git(root, ["add", "src/old.txt"]);
+		git(root, ["commit", "-qm", "initial"]);
+		await rm(join(root, "src", "old.txt"));
+		const { authority, ctx } = authorityFixture(root);
+
+		const result = await authority.filesDiff({ path: "src/old.txt" }, ctx);
+		expect(result.diff).toContain("deleted file mode");
+		expect(result.diff).toContain("-old content");
 	});
 });

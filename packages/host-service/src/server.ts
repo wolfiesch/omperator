@@ -1098,7 +1098,12 @@ export class LocalAppserver implements AppserverHandle {
 			: undefined;
 		this.#lockStatus = options.lockStatus ?? (() => "missing");
 		this.#factory = options.childFactory ??
-			new BunRpcChildFactory(options.rpcChildInvocation, this.#imageUploads.root, options.rpcChildEnvironment);
+			new BunRpcChildFactory(
+				options.rpcChildInvocation,
+				this.#imageUploads.root,
+				options.rpcChildEnvironment,
+				options.rpcChildRegistry,
+			);
 		this.#ringSize = options.ringSize ?? 256;
 		if (options.lockStatus && !options.lockCheck)
 			this.#lockCheck = () => {

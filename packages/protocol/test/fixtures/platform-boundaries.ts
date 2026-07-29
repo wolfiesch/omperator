@@ -1,7 +1,32 @@
+function pairLink(payload: Readonly<Record<string, unknown>>): string {
+  const bytes = new TextEncoder().encode(JSON.stringify(payload));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return `t4-code://pair/${btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "")}`;
+}
+
 export const pairLinkFixtures = Object.freeze({
   valid: [
-    ["t4-code://pair/bunker/123456", { hostHint: "bunker", code: "123456", issuedAt: 1234 }],
-    ["t4-code://pair/host-a.example/654321", { hostHint: "host-a.example", code: "654321", issuedAt: 1234 }],
+    [
+      pairLink({ version: 1, hostHint: "bunker", endpoint: "wss://bunker/v1/ws", code: "123456" }),
+      { hostHint: "bunker", endpoint: "wss://bunker/v1/ws", code: "123456", issuedAt: 1234 },
+    ],
+    [
+      pairLink({
+        version: 1,
+        hostHint: "host-a.example",
+        endpoint: "wss://host-a.example:9443/v1/ws",
+        tlsFingerprint: "a".repeat(64),
+        code: "654321",
+      }),
+      {
+        hostHint: "host-a.example",
+        endpoint: "wss://host-a.example:9443/v1/ws",
+        tlsFingerprint: "a".repeat(64),
+        code: "654321",
+        issuedAt: 1234,
+      },
+    ],
   ] as const,
   invalid: [
     "not a URL",
@@ -13,6 +38,8 @@ export const pairLinkFixtures = Object.freeze({
     "t4-code://pair/host-a/123456?token=secret",
     "t4-code://pair/host-a/123456#secret",
     "t4-code://pair/host%00a/123456",
+    pairLink({ version: 1, hostHint: "host-a", endpoint: "ws://host-a/v1/ws", tlsFingerprint: "a".repeat(64), code: "123456" }),
+    pairLink({ version: 1, hostHint: "host-a", endpoint: "wss://other/v1/ws", code: "123456" }),
   ] as const,
 });
 

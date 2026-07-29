@@ -17,6 +17,11 @@ import Foundation
 import Security
 
 enum Keychain {
+    struct AccessError: Error {
+        let operation: String
+        let status: OSStatus
+    }
+
     /// Service prefix shared by every T4 Code keychain item (matches the
     /// `sh.t4code.ios` logger subsystem).
     static let service = "sh.t4code.ios"
@@ -30,22 +35,29 @@ enum Keychain {
             return remove(forKey: key)
         }
         let data = Data(value.utf8)
-        // Upsert via delete-then-add: idempotent and avoids the
-        // errSecDuplicateItem update-query dance.
-        remove(forKey: key)
-        let query: [String: Any] = [
+        let identity: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
             kSecAttrSynchronizable as String: false,
+        ]
+        let update: [String: Any] = [
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
             kSecValueData as String: data,
         ]
+        let updateStatus = SecItemUpdate(identity as CFDictionary, update as CFDictionary)
+        if updateStatus == errSecSuccess { return true }
+        if updateStatus != errSecItemNotFound { return false }
+        let query: [String: Any] = identity.merging([
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+            kSecValueData as String: data,
+        ]) { _, new in new }
         return SecItemAdd(query as CFDictionary, nil) == errSecSuccess
     }
 
-    /// Read the string stored under `key`, or nil if absent/unreadable.
-    static func get(_ key: String) -> String? {
+    /// Read the string stored under `key`. Absence is nil; access and decode
+    /// failures are distinct errors so trust decisions can fail closed.
+    static func read(_ key: String) throws -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -60,11 +72,22 @@ enum Keychain {
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
         ]
         var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data,
-              let string = String(data: data, encoding: .utf8)
-        else { return nil }
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess else {
+            throw AccessError(operation: "read", status: status)
+        }
+        guard let data = item as? Data,
+              let string = String(data: data, encoding: .utf8) else {
+            throw AccessError(operation: "decode", status: errSecDecode)
+        }
         return string
+    }
+
+    /// Convenience for non-security UI state. Security boundaries must call
+    /// `read` and handle the error explicitly.
+    static func get(_ key: String) -> String? {
+        try? read(key)
     }
 
     /// Remove the item under `key`. Returns true if it is now gone (deleted

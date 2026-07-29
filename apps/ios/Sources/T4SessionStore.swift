@@ -9,6 +9,7 @@ import SwiftUI
 import HostWire
 import CryptoKit
 import os
+import Security
 
 private let t4log = Logger(subsystem: "sh.t4code.ios", category: "store")
 
@@ -289,6 +290,8 @@ final class T4SessionStore: ObservableObject {
     }
 
     private var client: HostClient?
+    private var observationTask: Task<Void, Never>?
+    private var connectionGeneration: UInt64 = 0
     private var hostId: String = ""
     /// Capabilities the host granted at welcome — gates optional commands
     /// (e.g. catalog.get needs catalog.read; an unauthorized command gets
@@ -301,6 +304,7 @@ final class T4SessionStore: ObservableObject {
     private static let savedEndpointKey = "t4.endpoint"
     private static let savedDeviceIdKey = "t4.deviceId"
     private static let savedDeviceTokenKey = "t4.deviceToken"
+    private static let installationDeviceIdKey = "t4.installationDeviceId"
     /// UserDefaults flag set once the legacy plist credentials have been
     /// copied into the Keychain and the plist entries deleted.
     private static let keychainMigratedKey = "t4.keychainMigrated"
@@ -902,9 +906,13 @@ final class T4SessionStore: ObservableObject {
         defer { connecting = false }
         let transport = makeTransport(endpoint: endpoint)
         let c = HostClient(transport: transport, config: HostClient.Config(identity: identity, authentication: authentication, requestedFeatures: Self.clientFeatures))
-        client = c
+        let generation = await replaceConnection(with: c)
         do {
             let welcome = try await c.connect()
+            guard generation == connectionGeneration, client === c else {
+                await c.close()
+                return
+            }
             hostId = welcome.hostId
             hostInfo = HostInfo(hostId: welcome.hostId, ompVersion: welcome.ompVersion, appserverVersion: welcome.appserverVersion)
             grantedCapabilities = welcome.grantedCapabilities
@@ -914,11 +922,18 @@ final class T4SessionStore: ObservableObject {
                 persist(endpoint: endpoint, authentication: authentication)
                 await refresh()
                 await loadCatalog()
-                Task { await observe() }
+                observationTask = Task { [weak self] in
+                    await self?.observe(client: c, generation: generation, expectedHostId: welcome.hostId)
+                }
             } else {
                 t4log.error("connect: auth not accepted (\(welcome.authentication.rawValue, privacy: .public))")
             }
         } catch {
+            if generation == connectionGeneration, client === c {
+                await c.close()
+                client = nil
+                clearHostScopedState()
+            }
             t4log.error("connect failed: \(error)")
             lastError = "\(error)"
         }
@@ -936,9 +951,13 @@ final class T4SessionStore: ObservableObject {
         let transport = makeTransport(endpoint: endpoint)
         let identity = ClientIdentity(name: "t4-ios", version: "0.1", build: "dev", platform: "ios")
         let c = HostClient(transport: transport, config: HostClient.Config(identity: identity, authentication: nil, requestedFeatures: Self.clientFeatures))
-        client = c
+        let generation = await replaceConnection(with: c)
         do {
             let welcome = try await c.connect()
+            guard generation == connectionGeneration, client === c else {
+                await c.close()
+                return
+            }
             hostId = welcome.hostId
             hostInfo = HostInfo(hostId: welcome.hostId, ompVersion: welcome.ompVersion, appserverVersion: welcome.appserverVersion)
             if welcome.authentication == .paired || welcome.authentication == .local {
@@ -948,13 +967,15 @@ final class T4SessionStore: ObservableObject {
                 persist(endpoint: endpoint, authentication: nil)
                 await refresh()
                 await loadCatalog()
-                Task { await observe() }
+                observationTask = Task { [weak self] in
+                    await self?.observe(client: c, generation: generation, expectedHostId: welcome.hostId)
+                }
                 return
             }
-            let slug = Self.slugify(deviceName)
+            let deviceId = try Self.installationDeviceId()
             let intent = PairStartIntent(
                 code: code,
-                deviceId: "ios-\(slug)",
+                deviceId: deviceId,
                 deviceName: deviceName,
                 platform: "ios",
                 requestedCapabilities: ["sessions.read", "sessions.prompt", "sessions.control", "sessions.manage", "catalog.read", "files.list", "files.read", "files.diff", "term.open", "term.input", "term.resize", "preview.control", "preview.read", "usage.read", "agents.control", "audit.read", "config.read", "config.write"]
@@ -968,28 +989,24 @@ final class T4SessionStore: ObservableObject {
             await connect(endpoint: endpoint, identity: identity, authentication: auth)
             if connected { pairedEndpoint = endpoint.absoluteString }
         } catch {
+            if generation == connectionGeneration, client === c {
+                await c.close()
+                client = nil
+                clearHostScopedState()
+            }
             lastError = "Pairing failed — check the code and that the host is running (\(error))"
         }
     }
 
-    /// Lowercase the device name into a host-safe id slug: alphanumerics
-    /// kept, every other run collapsed to a single hyphen, trimmed. Falls
-    /// back to "device" when the name has no usable characters.
-    private static func slugify(_ name: String) -> String {
-        let lowered = name.lowercased()
-        var slug = ""
-        var lastWasDash = true
-        for ch in lowered {
-            if ch.isLetter || ch.isNumber {
-                slug.append(ch)
-                lastWasDash = false
-            } else if !lastWasDash {
-                slug.append("-")
-                lastWasDash = true
-            }
+    private static func installationDeviceId() throws -> String {
+        if let existing = try Keychain.read(installationDeviceIdKey), !existing.isEmpty {
+            return existing
         }
-        if slug.hasSuffix("-") { slug.removeLast() }
-        return slug.isEmpty ? "device" : slug
+        let created = "ios-\(UUID().uuidString.lowercased())"
+        guard Keychain.set(created, forKey: installationDeviceIdKey) else {
+            throw Keychain.AccessError(operation: "write", status: errSecIO)
+        }
+        return created
     }
 
     /// Re-fetch the authoritative session list (session.list).
@@ -1809,9 +1826,12 @@ final class T4SessionStore: ObservableObject {
     }
 
     /// Live frames keep the inventory, transcripts, and confirmations current.
-    private func observe() async {
-        guard let client else { return }
+    private func observe(client: HostClient, generation: UInt64, expectedHostId: String) async {
         for await frame in await client.frames {
+            guard !Task.isCancelled,
+                  generation == connectionGeneration,
+                  self.client === client,
+                  hostId == expectedHostId else { return }
             switch frame {
             case .sessions(let inventory):
                 sessions = inventory.sessions
@@ -1981,21 +2001,62 @@ final class T4SessionStore: ObservableObject {
     }
 
     func disconnect() async {
+        connectionGeneration &+= 1
+        observationTask?.cancel()
+        observationTask = nil
         await client?.close()
         client = nil
-        connected = false
+        clearHostScopedState()
         pairedEndpoint = nil
-        hostInfo = nil
         localAutoconnect = false
-        // Drop any open terminals — the transport is gone, no close frame.
+        Keychain.remove(forKey: Self.savedEndpointKey)
+        Keychain.remove(forKey: Self.savedDeviceIdKey)
+        Keychain.remove(forKey: Self.savedDeviceTokenKey)
+    }
+
+    private func replaceConnection(with next: HostClient) async -> UInt64 {
+        connectionGeneration &+= 1
+        let generation = connectionGeneration
+        observationTask?.cancel()
+        observationTask = nil
+        if let previous = client { await previous.close() }
+        clearHostScopedState()
+        client = next
+        return generation
+    }
+
+    private func clearHostScopedState() {
+        connected = false
+        hostId = ""
+        hostInfo = nil
+        grantedCapabilities.removeAll()
+        sessions.removeAll()
+        selectedSession = nil
+        unreadSessions.removeAll()
+        liveEntries.removeAll()
+        streamingText.removeAll()
+        activeTurns.removeAll()
+        todoPhasesBySession.removeAll()
+        catalog.removeAll()
+        pendingConfirmation = nil
+        pendingAsk = nil
+        pagingState.removeAll()
+        agentsBySession.removeAll()
         terminalOutput.removeAll()
         terminalExits.removeAll()
         openTerminalIds.removeAll()
         activeTerminalId.removeAll()
         terminalErrors.removeAll()
-        Keychain.remove(forKey: Self.savedEndpointKey)
-        Keychain.remove(forKey: Self.savedDeviceIdKey)
-        Keychain.remove(forKey: Self.savedDeviceTokenKey)
+        browserURLBySession.removeAll()
+        reviewsBySession.removeAll()
+        usageSnapshot = nil
+        settingsSnapshot = nil
+        settingsRevision = nil
+        artifactChunks.removeAll()
+        previewIdBySession.removeAll()
+        previewCaptureImages.removeAll()
+        previewCaptureRowsBySession.removeAll()
+        hasLiveInventory = false
     }
 
     // MARK: - Sample inventory (simulator preview without a live host)

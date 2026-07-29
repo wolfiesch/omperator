@@ -660,48 +660,73 @@ jobs:
       - name: Verify unsigned Android debug application
         run: pnpm --filter @t4-code/mobile check:android:debug
 
-  # Runs on macOS, so it stays out of the required `verify` gate below and is
-  # aggregated into `release-gates` instead: a queued macOS runner must not
-  # hold branch protection. Unlike the other deferred gates this one is not
-  # restricted to push events, because a pull request that changes Swift is
-  # exactly when the result is worth having.
-  ios:
+  hostwire-swift:
     needs: changes
     if: ${{ needs.changes.outputs.ios == 'true' }}
-    # macos-15 preselects Xcode 16.4, whose simulator SDK compiles only to
-    # iOS 18.5, while project.yml targets iOS 26 and the UI uses iOS 26 APIs.
-    # macos-26 ships an Xcode 26 toolchain.
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Test the Swift wire package
+        run: swift test --package-path apps/ios/HostWire
+
+  ios-build:
+    needs: changes
+    if: ${{ needs.changes.outputs.ios == 'true' }}
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate the Xcode project
+        working-directory: apps/ios
+        run: xcodegen generate
+      - name: Build the iOS application
+        working-directory: apps/ios
+        run: xcodebuild build -scheme T4Code -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO -quiet
+
+  macos-build:
+    needs: changes
+    if: ${{ needs.changes.outputs.ios == 'true' }}
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate the Xcode project
+        working-directory: apps/ios
+        run: xcodegen generate
+      - name: Build the macOS application
+        working-directory: apps/ios
+        run: xcodebuild build -scheme T4CodeMac -destination 'generic/platform=macOS' CODE_SIGNING_ALLOWED=NO -quiet
+
+  ios-ui-tests:
+    needs: changes
+    if: ${{ needs.changes.outputs.ios == 'true' }}
     runs-on: macos-26
     timeout-minutes: 30
     steps:
       - name: Check out source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-
       - name: Install Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24.13.1
-
       - name: Install XcodeGen
         run: brew install xcodegen
-
-      - name: Report the toolchain under test
-        run: |
-          xcodebuild -version
-          xcrun simctl list runtimes available
-
-      - name: Build the application and run its XCUITest bundle
+      - name: Run the iOS UI-test bundle
         run: node scripts/verify-ios.mjs
 
-  # The branch-protection gate. It waits only on legs that run on ubuntu-24.04
-  # for a pull request, so a merge run's macOS and arm64 matrix cannot hold the
-  # required check behind a queued runner. The deferred release gates are
-  # aggregated separately below and still decide the workflow run conclusion,
-  # which is what `scripts/wait-for-exact-ci.mjs` requires before a release.
+  # Branch protection includes every selected native build and test surface.
   verify:
     name: verify
     if: ${{ always() }}
-    needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]
+    needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug, hostwire-swift, ios-build, macos-build, ios-ui-tests]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -718,6 +743,10 @@ jobs:
           TOOLING_RESULT: ${{ needs.tooling.result }}
           MAINTAINER_RESULT: ${{ needs.maintainer.result }}
           ANDROID_RESULT: ${{ needs.android-debug.result }}
+          HOSTWIRE_SWIFT_RESULT: ${{ needs.hostwire-swift.result }}
+          IOS_BUILD_RESULT: ${{ needs.ios-build.result }}
+          MACOS_BUILD_RESULT: ${{ needs.macos-build.result }}
+          IOS_UI_TESTS_RESULT: ${{ needs.ios-ui-tests.result }}
         run: |
           set -euo pipefail
           test "$CHANGES_RESULT" = success
@@ -730,7 +759,11 @@ jobs:
             "$CLUSTER_RESULT" \
             "$TOOLING_RESULT" \
             "$MAINTAINER_RESULT" \
-            "$ANDROID_RESULT"
+            "$ANDROID_RESULT" \
+            "$HOSTWIRE_SWIFT_RESULT" \
+            "$IOS_BUILD_RESULT" \
+            "$MACOS_BUILD_RESULT" \
+            "$IOS_UI_TESTS_RESULT"
           do
             case "$result" in
               success|skipped) ;;
@@ -738,15 +771,11 @@ jobs:
             esac
           done
 
-  # The deferred release-time legs, plus the macOS iOS build. The release gates
-  # are skipped on pull requests; the iOS leg is not, so this job can fail a
-  # pull request run without ever blocking the required `verify` check. A
-  # failure here fails the run that `scripts/wait-for-exact-ci.mjs` demands be
-  # green before publishing.
+  # Deferred release-only legs.
   release-gates:
     name: release-gates
     if: ${{ always() }}
-    needs: [changes, legacy-bridge-continuity, official-omp-gate0, ios]
+    needs: [changes, legacy-bridge-continuity, official-omp-gate0]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -756,14 +785,12 @@ jobs:
           CHANGES_RESULT: ${{ needs.changes.result }}
           CONTINUITY_RESULT: ${{ needs.legacy-bridge-continuity.result }}
           OFFICIAL_OMP_GATE0_RESULT: ${{ needs.official-omp-gate0.result }}
-          IOS_RESULT: ${{ needs.ios.result }}
         run: |
           set -euo pipefail
           test "$CHANGES_RESULT" = success
           for result in \
             "$CONTINUITY_RESULT" \
-            "$OFFICIAL_OMP_GATE0_RESULT" \
-            "$IOS_RESULT"
+            "$OFFICIAL_OMP_GATE0_RESULT"
           do
             case "$result" in
               success|skipped) ;;

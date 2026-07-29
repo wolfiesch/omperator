@@ -1,4 +1,5 @@
 export * from "./boot-reaper.ts";
+export * from "./rpc-child-registry.ts";
 export * from "./artifact-reader.ts";
 export * from "./acp-runtime-adapter.ts";
 export * from "./discovery.ts";

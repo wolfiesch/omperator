@@ -2,12 +2,12 @@ import { describe, expect, it } from "bun:test";
 import { Buffer } from "node:buffer";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { validatePreviewUrl, previewUrlAllowed } from "../src/preview/url-policy.ts";
+import { resolvePreviewUrl, validatePreviewUrl, previewUrlAllowed } from "../src/preview/url-policy.ts";
 import { PreviewServiceError } from "../src/preview/types.ts";
 import { PreviewService } from "../src/preview/preview-service.ts";
 import { createPreviewChromiumResolver } from "../src/preview/chromium-resolver.ts";
 import type { PreviewChromiumResolver } from "../src/preview/types.ts";
-import type { Page } from "playwright-core";
+import type { Browser, BrowserContext, Page, Route } from "playwright-core";
 import type { SessionId } from "@t4-code/host-wire";
 
 const SESSION_ID = "sess_test" as SessionId;
@@ -95,6 +95,11 @@ describe("preview URL policy", () => {
 			expect(previewUrlAllowed("")).toBe(false);
 		});
 	});
+
+	it("resolves and pins IPv4 and IPv6 loopback addresses", async () => {
+		expect((await resolvePreviewUrl("http://127.0.0.1:8080")).addresses).toEqual(["127.0.0.1"]);
+		expect((await resolvePreviewUrl("http://[::1]:8080")).addresses).toEqual(["::1"]);
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -160,6 +165,25 @@ function fakeChromiumResolver(_page: Page): PreviewChromiumResolver {
 		// capture chunking, lease management, policy check.
 		return { path: "/fake/chrome", browserVersion: "0.0.0.0" };
 	};
+}
+
+function fakeBrowser(
+	page: Page,
+	onRoute?: (handler: (route: Route) => Promise<void>) => void,
+): Browser {
+	const context = {
+		newPage: async () => page,
+		route: async (_pattern: string, handler: (route: Route) => Promise<void>) => {
+			onRoute?.(handler);
+		},
+		routeWebSocket: async () => undefined,
+		on: () => undefined,
+		close: async () => undefined,
+	} as unknown as BrowserContext;
+	return {
+		newContext: async () => context,
+		close: async () => undefined,
+	} as unknown as Browser;
 }
 
 // ---------------------------------------------------------------------------
@@ -277,6 +301,55 @@ describe("PreviewService non-browser logic", () => {
 			expect(async () =>
 				svc.state({ sessionId: SESSION_ID, previewId: "pv_missing" as never }),
 			).toThrow();
+		});
+
+		it("scopes preview lookup and leases to the owning session", async () => {
+			const page = fakePage("http://localhost:3000");
+			const svc = new PreviewService({
+				chromiumResolver: fakeChromiumResolver(page),
+				browserLauncher: async () => fakeBrowser(page),
+			});
+			const owned = await svc.launch({ sessionId: SESSION_ID, url: "http://127.0.0.1:3000" });
+			const otherSession = "sess_other" as SessionId;
+			await expect(
+				svc.state({ sessionId: otherSession, previewId: owned.previewId }),
+			).rejects.toMatchObject({ code: "not_found" });
+			expect(() =>
+				svc.leaseAcquire({ sessionId: otherSession, previewId: owned.previewId }),
+			).toThrow(PreviewServiceError);
+			await svc.stop();
+		});
+
+		it("launches sandboxed Chromium and blocks off-origin subresources", async () => {
+			const page = fakePage("http://127.0.0.1:3000");
+			let launchArgs: readonly string[] = [];
+			let routeHandler: ((route: Route) => Promise<void>) | undefined;
+			const svc = new PreviewService({
+				chromiumResolver: fakeChromiumResolver(page),
+				browserLauncher: async options => {
+					launchArgs = options.args;
+					return fakeBrowser(page, handler => {
+						routeHandler = handler;
+					});
+				},
+			});
+			await svc.launch({ sessionId: SESSION_ID, url: "http://localhost:3000" });
+			expect(launchArgs).not.toContain("--no-sandbox");
+			expect(launchArgs.some(argument => argument.startsWith("--host-resolver-rules="))).toBe(true);
+			let continued = false;
+			let aborted = false;
+			await routeHandler!({
+				request: () => ({ url: () => "http://127.0.0.1:4000/private" }),
+				continue: async () => {
+					continued = true;
+				},
+				abort: async () => {
+					aborted = true;
+				},
+			} as unknown as Route);
+			expect(continued).toBe(false);
+			expect(aborted).toBe(true);
+			await svc.stop();
 		});
 	});
 

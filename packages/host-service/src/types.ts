@@ -156,6 +156,7 @@ export interface SessionDiscovery {
 	page?(session: SessionRecord, args: TranscriptPageArguments): Promise<TranscriptPageResult>;
 }
 export interface ChildHandle {
+	pid?: number;
 	stdin: { write(data: string): Promise<void> | void };
 	stderr?: AsyncIterable<string | Uint8Array>;
 	stdout: AsyncIterable<string | Uint8Array>;
@@ -175,7 +176,16 @@ export interface AppserverAdminCallbacks {
 		capabilities: readonly string[],
 		ttlMs?: number,
 		expectedNodeId?: string,
-	): { readonly code: string; readonly expiresAt: number };
+	): {
+		readonly code: string;
+		readonly expiresAt: number;
+		readonly transport?: {
+			readonly scheme: "ws" | "wss";
+			readonly port: number;
+			readonly path: "/v1/ws";
+			readonly tlsFingerprint?: string;
+		};
+	};
 	listDevices(): readonly {
 		readonly deviceId: string;
 		readonly label: string;
@@ -297,6 +307,8 @@ export interface AppserverOptions {
 	rpcChildInvocation?: RpcChildInvocation;
 	/** Bounded profile environment applied only to per-session OMP children. */
 	rpcChildEnvironment?: Readonly<Record<string, string>>;
+	/** Identity ledger for safely reaping dedicated OMP process groups. */
+	rpcChildRegistry?: import("./rpc-child-registry.ts").RpcChildRegistry;
 	/** Exact child RPC command dialect; official OMP intentionally exposes a narrower command set. */
 	rpcDialect?: "fork" | "official-17.0.9";
 	appserverVersion?: string;

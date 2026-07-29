@@ -9,12 +9,15 @@
 	"scripts": {
 		"build": "bun build --compile src/main.ts --outfile dist/t4",
 		"check": "tsgo -p tsconfig.json --noEmit",
-		"dev": "bun run src/main.ts"
+		"dev": "bun run src/main.ts",
+		"test": "bun test test"
 	},
 	"dependencies": {
+		"@t4-code/host-wire": "workspace:*",
 		"ws": "^8.18.0"
 	},
 	"devDependencies": {
+		"@types/bun": "^1.2.22",
 		"@types/ws": "^8.5.10"
 	}
 }

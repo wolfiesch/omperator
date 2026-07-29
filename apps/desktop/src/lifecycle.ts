@@ -305,11 +305,7 @@ export class DesktopLifecycle {
     const ingest = (value: string): void => {
       const parsed = parsePairDeepLink(value);
       if (parsed === null) return;
-      const pending: PendingPair = {
-        hostHint: parsed.hostHint,
-        code: parsed.code,
-        issuedAt: parsed.issuedAt,
-      };
+      const pending: PendingPair = parsed;
       if (this.rendererLoaded && this.mainWindow !== undefined && !this.mainWindow.isDestroyed())
         this.ipc?.emitPairLink(pending);
       else this.pendingPairs.push(pending);

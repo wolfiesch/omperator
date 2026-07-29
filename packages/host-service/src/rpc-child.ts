@@ -10,6 +10,7 @@ import {
 import type { RpcResponse, RpcSessionEntryFrame } from "./omp-rpc-contract.ts";
 import type { ManagedRpcImageRef } from "./image-upload-store.ts";
 import { OfficialOmpCapabilityAdapter } from "./official-omp-capabilities.ts";
+import type { RpcChildIdentity, RpcChildRegistry } from "./rpc-child-registry.ts";
 import type { ChildHandle, RpcChildFactory, SessionRecord } from "./types.ts";
 
 const MAX_LINE_BYTES = 1024 * 1024;
@@ -398,11 +399,13 @@ export class BunRpcChildFactory implements RpcChildFactory {
 	#prefixArgv: readonly string[];
 	#imageRoot: string | undefined;
 	#environment: Readonly<Record<string, string>>;
+	#registry: RpcChildRegistry | undefined;
 
 	constructor(
 		invocation: string | RpcChildInvocation = resolveRpcChildInvocation(),
 		imageRoot?: string,
 		environment: Readonly<Record<string, string>> = {},
+		registry?: RpcChildRegistry,
 	) {
 		const resolved = typeof invocation === "string" ? { executable: invocation, prefixArgv: [] } : invocation;
 		if (typeof resolved.executable !== "string" || resolved.executable.trim().length === 0) {
@@ -418,6 +421,7 @@ export class BunRpcChildFactory implements RpcChildFactory {
 		this.#prefixArgv = Object.freeze([...resolved.prefixArgv]);
 		this.#imageRoot = imageRoot;
 		this.#environment = Object.freeze({ ...environment });
+		this.#registry = registry;
 	}
 
 	spawn(spec: { session: SessionRecord; argv: string[]; cwd: string }): ChildHandle {
@@ -434,12 +438,19 @@ export class BunRpcChildFactory implements RpcChildFactory {
 			stdin: "pipe",
 			stdout: "pipe",
 			stderr: "pipe",
+			detached: process.platform !== "win32",
+		});
+		let identity: RpcChildIdentity | undefined;
+		if (this.#registry && child.pid) identity = this.#registry.register(child.pid);
+		const exited = child.exited.finally(() => {
+			if (identity) this.#registry?.unregister(identity);
 		});
 		return {
+			pid: child.pid,
 			stdin: { write: data => Promise.resolve(child.stdin.write(data)).then(() => undefined) },
 			stdout: child.stdout as unknown as AsyncIterable<Uint8Array>,
 			stderr: child.stderr as unknown as AsyncIterable<Uint8Array>,
-			exited: child.exited,
+			exited,
 			kill: signal => child.kill(signal as never),
 		};
 	}

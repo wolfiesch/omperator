@@ -1,8 +1,6 @@
-// Boot reaping cleans state a previous host incarnation left behind when it
-// died without a graceful shutdown: orphan omp children still running in the
-// dead host's process group, and the stale owner lock files that incarnation
-// took. The reaper must fail closed — a live or unparseable owner is never
-// killed or cleared — and must log every decision.
+// Legacy owner markers may authorize stale-lock cleanup, but never process
+// signaling: they contain a PID rather than a verified boot/process-group
+// identity. Dedicated child groups are reaped by RpcChildRegistry.
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -86,8 +84,8 @@ describe("boot reaper reads owner markers", () => {
 	});
 });
 
-describe("boot reaper kills orphans and clears stale locks", () => {
-	test("kills the dead host's process group and clears a clearable lock", async () => {
+describe("legacy boot reaper clears stale locks without signaling processes", () => {
+	test("does not signal a dead marker's potentially reused process group", async () => {
 		const root = await mkdtemp(join(tmpdir(), "t4-reap-dead-"));
 		const lockPath = join(root, ".t4-exclusive-owner.lock");
 		await writeFile(lockPath, `${JSON.stringify(fakeOfficialMarker(9999))}\n`, { mode: 0o600 });
@@ -101,14 +99,20 @@ describe("boot reaper kills orphans and clears stale locks", () => {
 			log,
 		});
 
-		// Negative pid targets the dead host's process group, not the pid itself.
-		expect(killed).toEqual([{ pid: -9999, signal: 9 }]);
-		expect(result.killedPids).toEqual([9999]);
+		expect(killed).toEqual([]);
+		expect(result.killedPids).toEqual([]);
 		expect(result.clearedLocks).toEqual([lockPath]);
-		expect(result.skipped).toEqual([]);
+		expect(result.skipped).toEqual([
+			{
+				source: "official",
+				path: lockPath,
+				pid: 9999,
+				reason: "legacy marker cannot authorize process signaling",
+			},
+		]);
 		// The lock file is gone.
 		expect(await Bun.file(lockPath).exists()).toBe(false);
-		expect(events.find(e => e.event === "supervisor.killed")?.fields).toMatchObject({
+		expect(events.find(e => e.event === "reap.signal.skipped")?.fields).toMatchObject({
 			source: "official",
 			pid: 9999,
 		});
@@ -129,8 +133,8 @@ describe("boot reaper kills orphans and clears stale locks", () => {
 			kill: pid => killed.push(pid),
 		});
 
-		expect(killed).toEqual([-7777]);
-		expect(result.killedPids).toEqual([7777]);
+		expect(killed).toEqual([]);
+		expect(result.killedPids).toEqual([]);
 		// The appserver reclaims its own marker (plus backing socket + symlink),
 		// so the reaper must not unlink it.
 		expect(result.clearedLocks).toEqual([]);
@@ -172,7 +176,7 @@ describe("boot reaper kills orphans and clears stale locks", () => {
 		expect(result.skipped[0]?.reason).toBe("owner still alive");
 	});
 
-	test("reports a kill failure without clearing the lock", async () => {
+	test("ignores a legacy kill callback and still clears an authorized stale lock", async () => {
 		const root = await mkdtemp(join(tmpdir(), "t4-reap-killfail-"));
 		const lockPath = join(root, ".t4-exclusive-owner.lock");
 		await writeFile(lockPath, `${JSON.stringify(fakeOfficialMarker(8888))}\n`, { mode: 0o600 });
@@ -188,10 +192,10 @@ describe("boot reaper kills orphans and clears stale locks", () => {
 		});
 
 		expect(result.killedPids).toEqual([]);
-		expect(result.clearedLocks).toEqual([]);
-		expect(result.skipped[0]?.reason).toBe("kill failed");
-		expect(events.find(e => e.event === "reap.kill.failed")?.fields?.level).toBe("error");
-		expect(await Bun.file(lockPath).exists()).toBe(true);
+		expect(result.clearedLocks).toEqual([lockPath]);
+		expect(result.skipped[0]?.reason).toBe("legacy marker cannot authorize process signaling");
+		expect(events.find(e => e.event === "reap.signal.skipped")?.fields?.level).toBe("warn");
+		expect(await Bun.file(lockPath).exists()).toBe(false);
 	});
 	test("treats an ENOENT during unlink as benign (lock already gone)", async () => {
 		const lockPath = "/tmp/t4-reap-benign-enoent.lock";
@@ -205,12 +209,19 @@ describe("boot reaper kills orphans and clears stale locks", () => {
 		});
 		// Another reaper (or the authority) removed it first: not a failure.
 		expect(result.clearedLocks).toEqual([]);
-		expect(result.skipped).toEqual([]);
+		expect(result.skipped).toEqual([
+			{
+				source: "official",
+				path: lockPath,
+				pid: 6666,
+				reason: "legacy marker cannot authorize process signaling",
+			},
+		]);
 });
 });
 
-describe("boot reaper end-to-end with fake on-disk ownership records", () => {
-	test("reads fake markers, reaps dead orphans, and clears the official lock", async () => {
+describe("legacy boot reaper end-to-end with fake on-disk ownership records", () => {
+	test("reads fake markers, skips signaling, and clears only the official lock", async () => {
 		const root = await mkdtemp(join(tmpdir(), "t4-reap-e2e-"));
 		const appserverMarker = join(root, "app.sock.owner");
 		const officialLock = join(root, ".t4-exclusive-owner.lock");
@@ -236,16 +247,14 @@ describe("boot reaper end-to-end with fake on-disk ownership records", () => {
 			log,
 		});
 
-		// Both markers point at the same dead host, so its process group is
-		// signalled once per marker.
-		expect(killed).toEqual([-13579, -13579]);
-		expect(result.killedPids).toEqual([13579, 13579]);
+		expect(killed).toEqual([]);
+		expect(result.killedPids).toEqual([]);
 		// Only the official lock is cleared; the appserver marker is left for
 		// the appserver's own recoverStale.
 		expect(result.clearedLocks).toEqual([officialLock]);
 		expect(await Bun.file(officialLock).exists()).toBe(false);
 		expect(await Bun.file(appserverMarker).exists()).toBe(true);
-		expect(events.filter(e => e.event === "supervisor.killed")).toHaveLength(2);
+		expect(events.filter(e => e.event === "reap.signal.skipped")).toHaveLength(2);
 		expect(events.find(e => e.event === "reap.lock.cleared")?.fields?.path).toBe(officialLock);
 	});
 });

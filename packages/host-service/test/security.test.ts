@@ -10,6 +10,7 @@ import {
 	DefaultRedactor,
 	JsonlAuditSink,
 	LeaseRegistry,
+	LocalPairingTicketIssuer,
 	OutboundQueue,
 	SecureConfirmationStore,
 	SqliteDeviceRegistry,
@@ -100,6 +101,33 @@ describe("security core", () => {
 		);
 		expect(() => registry.authenticate(result.deviceId, "wrong", identity, "connection-a")).toThrow();
 		registry.close();
+	});
+
+	it("replays a lost pair.ok result idempotently without consuming enrollment twice", () => {
+		const registry = new FakeRegistry();
+		const pairing = new LocalPairingTicketIssuer(
+			registry,
+			new Uint8Array(32).fill(1),
+			clock,
+			{ bytes: length => new Uint8Array(length).fill(7) },
+		);
+		const ticket = pairing.issue(["sessions.read"]);
+		const first = pairing.consume(
+			ticket.code,
+			identity,
+			"installation-device-id",
+			{ label: "iPhone", platform: "ios" },
+			["sessions.read"],
+		);
+		const retry = pairing.consume(
+			ticket.code,
+			identity,
+			"installation-device-id",
+			{ label: "iPhone", platform: "ios" },
+			["sessions.read"],
+		);
+		expect(retry).toEqual(first);
+		expect(registry.records.size).toBe(1);
 	});
 
 	it("binds authorization to the authenticated capability intersection", () => {

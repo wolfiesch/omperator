@@ -6,6 +6,7 @@
 import { T4Client, type SessionRef, type TranscriptEntry, type HostEvents, type Frame } from "./client.ts";
 import { Screen, wrap, clip, type Cell } from "./render.ts";
 import { FG, palette as p, statusColor, RESET } from "./theme.ts";
+import { serverRelativeFilePath } from "./wire-helpers.ts";
 
 const RAIL_W = 28;
 /** Scrolled-up lines that still count as "following" the stream. */
@@ -419,8 +420,9 @@ export class Tui implements HostEvents {
 		this.state.statusLine = "creating session…";
 		this.draw();
 		try {
-			const cwd = this.state.sessions[this.state.selected]?.cwd;
-			const { session } = await this.client.sessionCreate(cwd);
+			const projectId = this.state.sessions[this.state.selected]?.project.projectId;
+			if (!projectId) throw new Error("select a project-backed session first");
+			const { session } = await this.client.sessionCreate(projectId);
 			await this.refresh();
 			const idx = this.state.sessions.findIndex(s => s.sessionId === session.sessionId);
 			if (idx >= 0) {
@@ -536,6 +538,17 @@ export class Tui implements HostEvents {
 	}
 
 	private setPane(pane: Pane): void {
+		const requiredFeature: Partial<Record<Pane, string>> = {
+			files: "files.list",
+			search: "files.search",
+			diff: "files.diff",
+			term: "terminal.io",
+		};
+		const feature = requiredFeature[pane];
+		if (feature && !this.client.supportsFeature(feature)) {
+			this.error(`${pane}: host did not grant ${feature}`);
+			return;
+		}
 		this.state.pane = pane;
 		if (pane === "files") void this.loadFiles(this.state.filePath);
 		if (pane === "diff") void this.loadDiff();
@@ -640,7 +653,7 @@ export class Tui implements HostEvents {
 		if (name === "quit") return this.destroy();
 		if (s.pendingConfirm) {
 			if (name === "escape") {
-				this.client.confirmAnswer(s.pendingConfirm, "reject");
+				this.client.confirmAnswer(s.pendingConfirm, "deny");
 				s.pendingConfirm = undefined;
 				s.statusLine = "rejected";
 				this.draw();
@@ -745,7 +758,7 @@ export class Tui implements HostEvents {
 			case "enter": {
 				const entry = s.fileEntries[s.fileSelected];
 				if (!entry) break;
-				const full = s.filePath ? `${s.filePath}/${entry.path}` : entry.path;
+				const full = serverRelativeFilePath(entry);
 				if (entry.kind === "directory") void this.loadFiles(full);
 				else void this.openFile(full);
 				break;
@@ -818,7 +831,7 @@ export class Tui implements HostEvents {
 		const s = this.state;
 		if (s.pendingConfirm) {
 			if (ch === "y" || ch === "n") {
-				this.client.confirmAnswer(s.pendingConfirm, ch === "y" ? "accept" : "reject");
+				this.client.confirmAnswer(s.pendingConfirm, ch === "y" ? "approve" : "deny");
 				s.statusLine = ch === "y" ? "accepted" : "rejected";
 				s.pendingConfirm = undefined;
 				this.draw();

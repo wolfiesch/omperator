@@ -73,12 +73,11 @@ export interface ReadOwnerMarkersOptions {
 export interface ReapBootStateOptions {
 	readonly markers: readonly OwnerMarker[];
 	readonly pidIsAlive?: (pid: number) => boolean;
+	/** Deprecated. Legacy owner markers do not contain enough identity to authorize a signal. */
 	readonly kill?: (pid: number, signal?: number) => void;
 	readonly unlink?: (path: string) => Promise<void>;
 	readonly log?: ReapLog;
 }
-
-const REAP_SIGNAL = 9;
 
 function defaultPidIsAlive(pid: number): boolean {
 	try {
@@ -88,15 +87,6 @@ function defaultPidIsAlive(pid: number): boolean {
 		// ESRCH: no such process. EPERM or anything else: treat as alive so a
 		// permissions glitch can never trigger an orphan kill.
 		return (error as NodeJS.ErrnoException).code !== "ESRCH";
-	}
-}
-
-function defaultKill(pid: number, signal: number = REAP_SIGNAL): void {
-	// The process group may already be gone (host died cleanly); ignore that.
-	try {
-		process.kill(pid, signal);
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
 	}
 }
 
@@ -156,7 +146,6 @@ export async function readOwnerMarkers(
  */
 export async function reapBootState(options: ReapBootStateOptions): Promise<ReapResult> {
 	const pidIsAlive = options.pidIsAlive ?? defaultPidIsAlive;
-	const kill = options.kill ?? defaultKill;
 	const unlinkFile = options.unlink ?? unlink;
 	const log = options.log ?? (() => {});
 	const killedPids: number[] = [];
@@ -175,18 +164,22 @@ export async function reapBootState(options: ReapBootStateOptions): Promise<Reap
 			log("reap.skip", { source: marker.source, path: marker.path, pid: marker.pid, reason: "owner still alive" });
 			continue;
 		}
-		// The previous host is gone. Signal its process group negatively so any
-		// omp children still running under the dead leader's pgid are reaped;
-		// the negative pid targets exactly that group and nothing else.
-		try {
-			kill(-marker.pid, REAP_SIGNAL);
-		} catch (error) {
-			skipped.push({ source: marker.source, path: marker.path, pid: marker.pid, reason: "kill failed" });
-			log("reap.kill.failed", { source: marker.source, path: marker.path, pid: marker.pid, level: "error", error: String(error) });
-			continue;
-		}
-		killedPids.push(marker.pid);
-		log("supervisor.killed", { source: marker.source, pid: marker.pid, reason: "orphan process group reaped at boot" });
+		// A legacy owner marker proves only that one PID used to own the lock.
+		// It does not prove the PGID, boot identity, start time, or executable,
+		// so it can authorize stale-lock cleanup but never a process signal.
+		skipped.push({
+			source: marker.source,
+			path: marker.path,
+			pid: marker.pid,
+			reason: "legacy marker cannot authorize process signaling",
+		});
+		log("reap.signal.skipped", {
+			source: marker.source,
+			path: marker.path,
+			pid: marker.pid,
+			reason: "legacy marker lacks process identity",
+			level: "warn",
+		});
 		if (!marker.clearLock) continue;
 		try {
 			await unlinkFile(marker.path);

@@ -9,6 +9,9 @@ const hostRoots = [
   join(repoRoot, "packages", "host-wire"),
   join(repoRoot, "packages", "host-service"),
   join(repoRoot, "packages", "cluster-server"),
+  // The terminal client intentionally consumes the shared command codecs instead of
+  // maintaining a parallel Record<string, unknown> wire implementation.
+  join(repoRoot, "packages", "t4-cli"),
 ];
 const scannedRoots = [join(repoRoot, "apps"), join(repoRoot, "packages")];
 
