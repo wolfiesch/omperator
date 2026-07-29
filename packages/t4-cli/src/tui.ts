@@ -152,6 +152,7 @@ export class Tui implements HostEvents {
 	private attachedId: string | undefined;
 	private client!: T4Client;
 	private reconnectDelay = 1;
+	private connectLoopRunning = false;
 	private searchTimer: Timer | undefined;
 	private termScreen = new TermScreen();
 	/** Tail of an incomplete escape sequence held across stdin chunks. */
@@ -216,21 +217,29 @@ export class Tui implements HostEvents {
 	private quit: () => void = () => {};
 
 	private async connectLoop(): Promise<void> {
-		for (;;) {
-			try {
-				this.state.connecting = true;
-				this.draw();
-				await this.client.connect();
-				this.reconnectDelay = 1;
-				await this.refresh();
-				return; // connected; close() event re-enters the loop
-			} catch (error) {
-				this.state.connecting = false;
-				this.state.statusLine = `connect failed (${error instanceof Error ? error.message : error}) — retry in ${this.reconnectDelay}s`;
-				this.draw();
-				await new Promise(r => setTimeout(r, this.reconnectDelay * 1000));
-				this.reconnectDelay = Math.min(15, this.reconnectDelay * 2);
+		// Reconnect storms burn a core: every failed attempt also emits close,
+		// which used to schedule ANOTHER parallel loop. One loop, ever.
+		if (this.connectLoopRunning) return;
+		this.connectLoopRunning = true;
+		try {
+			for (;;) {
+				try {
+					this.state.connecting = true;
+					this.draw();
+					await this.client.connect();
+					this.reconnectDelay = 1;
+					await this.refresh();
+					return; // connected; close() event re-enters the loop
+				} catch (error) {
+					this.state.connecting = false;
+					this.state.statusLine = `connect failed (${error instanceof Error ? error.message : error}) — retry in ${this.reconnectDelay}s`;
+					this.draw();
+					await new Promise(r => setTimeout(r, this.reconnectDelay * 1000));
+					this.reconnectDelay = Math.min(15, this.reconnectDelay * 2);
+				}
 			}
+		} finally {
+			this.connectLoopRunning = false;
 		}
 	}
 
