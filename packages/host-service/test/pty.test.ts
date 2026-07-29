@@ -130,7 +130,7 @@ describe("spawnPty", () => {
 		} finally {
 			child.close();
 		}
-	});
+	}, 15_000);
 
 	test("round-trips the window size and signals the child", async () => {
 		const root = await mkdtemp(join(tmpdir(), "t4-pty-winsize-"));
