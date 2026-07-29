@@ -71,6 +71,9 @@ function gitSource(cwd) {
   );
   for (const line of changedLines.filter((entry) => entry.startsWith("?? ")).sort()) {
     const path = line.slice(3);
+    // Untracked entries can be directories (e.g. Xcode's build-device output
+    // from the iOS gate leg); git hash-object only accepts files.
+    if (path.endsWith("/")) continue;
     const blob = commandOutput("git", ["hash-object", "--", path], cwd).trim();
     fingerprint.update(`\0${path}\0${blob}`);
   }
