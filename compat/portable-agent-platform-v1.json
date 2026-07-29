@@ -45,6 +45,24 @@
     "packagedInProduct": false,
     "packagingRequiresLicenseReview": true
   },
+  "runtimeTopology": {
+    "decision": "host-owned-single-rpc-authority",
+    "documentation": "docs/adr/020-portable-runtime-single-authority.md",
+    "documentationSha256": "da84f4b15fb7c68770ed77baacf5802da84e7fda496b5df20435f209c4e874d3",
+    "schedulingUnit": "top-level-runtime",
+    "cmuxMachinesPerRuntime": 1,
+    "writableOmpAuthoritiesPerSession": 1,
+    "authorityProcessOwner": "t4-host",
+    "authorityInvocation": "omp --mode rpc --session <runtime-owned-session-path>",
+    "authorityTransport": "stdio",
+    "applicationAttachProtocol": "omp-app/1",
+    "cmuxTerminalAttachProtocol": "omp-app/1",
+    "cmuxTerminalAttachMode": "client-to-existing-authority",
+    "interactiveWriterInvocationAllowed": false,
+    "rawRpcNetworkExposureAllowed": false,
+    "implementationAdmission": "requires-terminal-client-and-writer-proof",
+    "requiredWorkPackage": "P3-04"
+  },
   "ompPinResolution": {
     "contractCommit": "d16c6168c86f40fc44f25118c2fd06fe160fcb93",
     "currentPackagedCommit": "ca2902bc095a0b17067f4b8b34ecf454390f85ff",

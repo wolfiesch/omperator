@@ -28,6 +28,8 @@ const expected = Object.freeze({
   cmuxProviderCrateTree: "983bee74116c7d5f5832a7695379c870cd41ef60",
   cmuxProviderSourceTreeSha256: "ecf8ea6183275110d6270bd6d563d39eb3cecf7296a7c8e44e21f9ca6a46ca63",
   cmuxProviderFixtureCorpusSha256: "bdcb88ee9f46f300b400165cdb2dac2eebc186cb6b78c068ccab3caae4460f23",
+  topologyDocumentation: "docs/adr/020-portable-runtime-single-authority.md",
+  topologyDocumentationSha256: "da84f4b15fb7c68770ed77baacf5802da84e7fda496b5df20435f209c4e874d3",
   pinResolutionReason:
     "The packaged authority bridge is based on OMP v17.0.5, while the portable contract was reviewed against a newer official OMP commit. Portable runtime behavior must use a new fork integration commit descended from the contract commit and must pass the pinned OMP RPC and authority-bridge gates before packaging.",
 });
@@ -152,6 +154,55 @@ export async function checkPortablePlatformBaseline(root = process.cwd()) {
   }
   if (JSON.stringify(manifest.baselines?.omp?.rpcProtocols) !== "[1,2]") {
     failures.push(diagnostic("baselines.omp.rpcProtocols must be exactly [1,2]"));
+  }
+
+  const topology = manifest.runtimeTopology;
+  for (const [label, actual, wanted] of [
+    ["runtimeTopology.decision", topology?.decision, "host-owned-single-rpc-authority"],
+    ["runtimeTopology.documentation", topology?.documentation, expected.topologyDocumentation],
+    ["runtimeTopology.documentationSha256", topology?.documentationSha256, expected.topologyDocumentationSha256],
+    ["runtimeTopology.schedulingUnit", topology?.schedulingUnit, "top-level-runtime"],
+    ["runtimeTopology.cmuxMachinesPerRuntime", topology?.cmuxMachinesPerRuntime, 1],
+    ["runtimeTopology.writableOmpAuthoritiesPerSession", topology?.writableOmpAuthoritiesPerSession, 1],
+    ["runtimeTopology.authorityProcessOwner", topology?.authorityProcessOwner, "t4-host"],
+    [
+      "runtimeTopology.authorityInvocation",
+      topology?.authorityInvocation,
+      "omp --mode rpc --session <runtime-owned-session-path>",
+    ],
+    ["runtimeTopology.authorityTransport", topology?.authorityTransport, "stdio"],
+    ["runtimeTopology.applicationAttachProtocol", topology?.applicationAttachProtocol, "omp-app/1"],
+    ["runtimeTopology.cmuxTerminalAttachProtocol", topology?.cmuxTerminalAttachProtocol, "omp-app/1"],
+    [
+      "runtimeTopology.cmuxTerminalAttachMode",
+      topology?.cmuxTerminalAttachMode,
+      "client-to-existing-authority",
+    ],
+    ["runtimeTopology.interactiveWriterInvocationAllowed", topology?.interactiveWriterInvocationAllowed, false],
+    ["runtimeTopology.rawRpcNetworkExposureAllowed", topology?.rawRpcNetworkExposureAllowed, false],
+    [
+      "runtimeTopology.implementationAdmission",
+      topology?.implementationAdmission,
+      "requires-terminal-client-and-writer-proof",
+    ],
+    ["runtimeTopology.requiredWorkPackage", topology?.requiredWorkPackage, "P3-04"],
+  ]) {
+    requireEqual(failures, label, actual, wanted);
+  }
+  if (!SHA256.test(topology?.documentationSha256 ?? "")) {
+    failures.push(diagnostic("runtimeTopology.documentationSha256 must be 64 lowercase hex characters"));
+  }
+  try {
+    const documentationBytes = await readFile(path.join(root, expected.topologyDocumentation));
+    const digest = createHash("sha256").update(documentationBytes).digest("hex");
+    requireEqual(
+      failures,
+      "runtimeTopology.documentationSha256",
+      digest,
+      expected.topologyDocumentationSha256,
+    );
+  } catch (error) {
+    failures.push(diagnostic(`runtimeTopology.documentation is unreadable: ${error.message}`));
   }
 
   requireEqual(failures, "ompPinResolution.contractCommit", manifest.ompPinResolution?.contractCommit, expected.ompBaseline);
