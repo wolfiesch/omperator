@@ -37,7 +37,36 @@ export interface HostEvents {
 	close(reason: string): void;
 }
 
-export type Frame = Record<string, any>;
+export type Frame = Record<string, unknown>;
+
+/** The server→client frames the TUI consumes, validated at the socket. */
+interface WireFrame {
+	v?: string;
+	type?: string;
+	hostId?: string;
+	sessionId?: string;
+	requestId?: string;
+	commandId?: string;
+	command?: string;
+	ok?: boolean;
+	error?: { message?: string; code?: string };
+	result?: unknown;
+	cursor?: unknown;
+	sessions?: SessionRef[];
+	entries?: TranscriptEntry[];
+	entry?: TranscriptEntry;
+	ref?: { sessionId?: string; status?: string; revision?: string };
+	confirmationId?: string;
+	summary?: string;
+	terminalId?: string;
+	stream?: string;
+	data?: string;
+	encoding?: string;
+	message?: string;
+	code?: string;
+	reason?: string;
+	[key: string]: unknown;
+}
 
 const CLIENT_FEATURES = [
 	"resume", "prompt.lease", "controller.lease", "prompt.images", "transcript.page",
@@ -94,13 +123,15 @@ export class T4Client {
 				...(this.auth ? { authentication: { deviceId: this.auth.deviceId, deviceToken: this.auth.deviceToken } } : {}),
 			}));
 		});
-		ws.on("message", raw => {
-			let f: Frame;
-			try { f = JSON.parse(raw.toString()); } catch { return; }
+		ws.on("message", (raw: WebSocket.RawData) => {
+			// Socket boundary: frames are server JSON; the WireFrame surface is the
+			// complete set of fields this client consumes, so assert once here.
+			let f: WireFrame;
+			try { f = JSON.parse(raw.toString()) as WireFrame; } catch { return; }
 			if (f.type === "welcome") {
-				this.hostId = f.hostId;
+				this.hostId = f.hostId ?? "";
 				this.events.open();
-				resolve(f);
+				resolve(f as Frame);
 				return;
 			}
 			if (f.requestId && this.pending.has(f.requestId)) {
@@ -108,12 +139,15 @@ export class T4Client {
 				this.pending.delete(f.requestId);
 				clearTimeout(p.timer);
 				// Command responses that carry the inventory also refresh revisions.
-				if (f.command === "session.list" && f.ok !== false && Array.isArray(f.result?.sessions)) {
-					for (const s of f.result.sessions as SessionRef[]) {
+				// (session.list's result shape is asserted by the caller.)
+				const result = f.result as { sessions?: SessionRef[] } | undefined;
+				if (f.command === "session.list" && f.ok !== false && Array.isArray(result?.sessions)) {
+					for (const s of result.sessions!) {
 						if (s.revision) this.revisions.set(s.sessionId, s.revision);
 					}
 				}
-				f.ok === false ? p.reject(new Error(f.error?.message ?? f.error?.code ?? "command failed")) : p.resolve(f);
+				if (f.ok === false) p.reject(new Error(String(f.error?.message ?? f.error?.code ?? "command failed")));
+				else p.resolve(f);
 				return;
 			}
 			if (f.cursor && f.sessionId) this.cursors.set(f.sessionId, { sessionId: f.sessionId, cursor: f.cursor });
@@ -128,7 +162,7 @@ export class T4Client {
 		return promise;
 	}
 
-	private route(f: Frame): void {
+	private route(f: WireFrame): void {
 		switch (f.type) {
 			case "sessions": {
 				for (const s of (f.sessions ?? []) as SessionRef[]) {
@@ -136,15 +170,15 @@ export class T4Client {
 				}
 				return this.events.sessions(f.sessions ?? []);
 			}
-			case "snapshot": return this.events.snapshot(f.sessionId, f.entries ?? []);
-			case "entry": return this.events.entry(f.sessionId, f.entry);
+			case "snapshot": return this.events.snapshot(f.sessionId ?? "", f.entries ?? []);
+			case "entry": return this.events.entry(f.sessionId ?? "", f.entry ?? { id: "", kind: "entry" });
 			case "session.delta":
-				if (f.ref) this.events.status(f.sessionId ?? f.ref.sessionId, f.ref.status ?? "idle");
+				if (f.ref) this.events.status(f.sessionId ?? f.ref.sessionId ?? "", f.ref.status ?? "idle");
 				return;
-			case "confirmation": return this.events.confirm(f);
+			case "confirmation": return this.events.confirm(f as Frame);
 			case "terminal.output":
-				return this.events.termOutput(f.sessionId, f.terminalId, f.stream ?? "stdout", f.data ?? "", f.encoding);
-			case "terminal.exit": return this.events.termExit(f.sessionId, f.terminalId);
+				return this.events.termOutput(f.sessionId ?? "", f.terminalId ?? "", f.stream ?? "stdout", f.data ?? "", f.encoding);
+			case "terminal.exit": return this.events.termExit(f.sessionId ?? "", f.terminalId ?? "");
 			case "error": return this.events.error(f.message ?? f.code ?? "host error");
 		}
 	}

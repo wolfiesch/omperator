@@ -74,13 +74,13 @@ class TermScreen {
 	feed(text: string): void {
 		// Strip OSC and charset/mode sequences we don't model.
 		const s = text
-			.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
-			.replace(/\x1b[()][A-Z0-9]/gi, "")
-			.replace(/\x1b[>=]/g, "");
+			.replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "")
+			.replace(/\u001b[()][A-Z0-9]/gi, "")
+			.replace(/\u001b[>=]/g, "");
 		for (let i = 0; i < s.length; i += 1) {
 			const ch = s[i]!;
-			if (ch === "\x1b") {
-				const m = /^\x1b\[([0-9;?]*)([A-Za-z])/.exec(s.slice(i));
+			if (ch === "\u001b") {
+				const m = /^\u001b\[([0-9;?]*)([A-Za-z])/.exec(s.slice(i));
 				if (m) {
 					if (m[1]!.includes("?")) { i += m[0].length - 1; continue; } // private modes: drop
 					const nums = m[1]!.split(";").map(v => (v === "" ? 0 : Number(v)));
@@ -161,12 +161,12 @@ export class Tui implements HostEvents {
 		// Parse as much as possible; hold a trailing incomplete escape.
 		let consumed = this.inputBuf.length;
 		for (let i = 0; i < this.inputBuf.length; i += 1) {
-			if (this.inputBuf[i] !== "\x1b") continue;
+			if (this.inputBuf[i] !== "\u001b") continue;
 			const rest = this.inputBuf.slice(i);
 			// Complete forms: CSI letter/~, SGR mouse M/m, SS3, or lone ESC.
-			if (/^\x1b\[[<0-9;?]*[A-Za-z~]/.test(rest) || /^\x1b[()][A-Z0-9]/i.test(rest) || /^\x1b[>=]/.test(rest)) continue;
-			if (/^\x1b\][^\x07\x1b]*(\x07|\x1b\\)/.test(rest)) continue;
-			if (rest.length === 1 || /^\x1b\[[<0-9;?]*$/.test(rest) || /^\x1b\][^\x07\x1b]*$/.test(rest)) {
+			if (/^\u001b\[[<0-9;?]*[A-Za-z~]/.test(rest) || /^\u001b[()][A-Z0-9]/i.test(rest) || /^\u001b[>=]/.test(rest)) continue;
+			if (/^\u001b\][^\u0007\u001b]*(\u0007|\u001b\\)/.test(rest)) continue;
+			if (rest.length === 1 || /^\u001b\[[<0-9;?]*$/.test(rest) || /^\u001b\][^\u0007\u001b]*$/.test(rest)) {
 				consumed = i; // possibly incomplete — hold from here
 				break;
 			}
@@ -179,7 +179,7 @@ export class Tui implements HostEvents {
 			this.inputFlushTimer = setTimeout(() => {
 				const tail = this.inputBuf;
 				this.inputBuf = "";
-				if (tail === "\x1b") this.key("escape");
+				if (tail === "\u001b") this.key("escape");
 				else this.input(tail);
 			}, 60);
 		}
@@ -201,7 +201,7 @@ export class Tui implements HostEvents {
 		process.stdin.on("data", d => this.feedInput(d.toString("utf8")));
 		this.screen.enter();
 		// SGR mouse: button events + any-motion + SGR extended coords.
-		process.stdout.write("\x1b[?1000h\x1b[?1002h\x1b[?1006h");
+		process.stdout.write("\u001b[?1000h\u001b[?1002h\u001b[?1006h");
 		void this.connectLoop();
 		await new Promise<void>(resolve => {
 			this.quit = resolve;
@@ -475,7 +475,9 @@ export class Tui implements HostEvents {
 		this.draw();
 		try {
 			const result = await this.client.filesSearch(id, q);
-			this.state.searchResults = (result.matches ?? []).map((m: Frame) => m.path as string);
+			// files.search result: { matches: [{ path }] } per the wire contract.
+			const matches = (result as { matches?: { path?: string }[] }).matches ?? [];
+			this.state.searchResults = matches.map(m => m.path ?? "").filter(Boolean);
 			this.state.searchSelected = 0;
 			this.state.searchScroll = 0;
 		} catch (error) {
@@ -532,8 +534,8 @@ export class Tui implements HostEvents {
 	private input(data: string): void {
 		for (let i = 0; i < data.length; i += 1) {
 			const ch = data[i]!;
-			if (ch === "\x1b") {
-				// SGR mouse: \x1b[<b;x;yM (down) / \x1b[<b;x;ym (up)
+			if (ch === "\u001b") {
+				// SGR mouse: \u001b[<b;x;yM (down) / \u001b[<b;x;ym (up)
 				if (data[i + 1] === "[" && data[i + 2] === "<") {
 					const upIdx = data.indexOf("m", i + 3);
 					const downIdx = data.indexOf("M", i + 3);
@@ -546,14 +548,14 @@ export class Tui implements HostEvents {
 					}
 				}
 				const seq = data.slice(i, i + 3);
-				if (seq === "\x1b[A") this.key("up");
-				else if (seq === "\x1b[B") this.key("down");
-				else if (seq === "\x1b[C") this.key("right");
-				else if (seq === "\x1b[D") this.key("left");
-				else if (data.slice(i, i + 4) === "\x1b[5~") { this.key("pageup"); i += 1; }
-				else if (data.slice(i, i + 4) === "\x1b[6~") { this.key("pagedown"); i += 1; }
-				else if (seq === "\x1b[H") this.key("home");
-				else if (seq === "\x1b[F") this.key("end");
+				if (seq === "\u001b[A") this.key("up");
+				else if (seq === "\u001b[B") this.key("down");
+				else if (seq === "\u001b[C") this.key("right");
+				else if (seq === "\u001b[D") this.key("left");
+				else if (data.slice(i, i + 4) === "\u001b[5~") { this.key("pageup"); i += 1; }
+				else if (data.slice(i, i + 4) === "\u001b[6~") { this.key("pagedown"); i += 1; }
+				else if (seq === "\u001b[H") this.key("home");
+				else if (seq === "\u001b[F") this.key("end");
 				else if (data.length === i + 1) { this.key("escape"); }
 				i += 2;
 				continue;
@@ -562,7 +564,7 @@ export class Tui implements HostEvents {
 			else if (ch === "\t") this.key("tab");
 			else if (ch === "\x7f") this.key("backspace");
 			else if (ch === "\x03") this.key("quit");
-			else if (ch === "\x1b") this.key("escape");
+			else if (ch === "\u001b") this.key("escape");
 			else if (ch === "\x01") this.key("home");
 			else if (ch === "\x05") this.key("end");
 			else if (ch === "\x15") {
@@ -790,8 +792,8 @@ export class Tui implements HostEvents {
 			case "pagedown": s.termScroll = Math.max(0, s.termScroll - (this.bodyRows() - 2)); break;
 			case "enter": this.client.termInput(id, tid, "\r"); break;
 			case "backspace": this.client.termInput(id, tid, "\x7f"); break;
-			case "left": this.client.termInput(id, tid, "\x1b[D"); break;
-			case "right": this.client.termInput(id, tid, "\x1b[C"); break;
+			case "left": this.client.termInput(id, tid, "\u001b[D"); break;
+			case "right": this.client.termInput(id, tid, "\u001b[C"); break;
 			case "tab": this.client.termInput(id, tid, "\t"); break;
 			default: return;
 		}
@@ -872,7 +874,7 @@ export class Tui implements HostEvents {
 	}
 
 	private destroy(): void {
-		process.stdout.write("\x1b[?1000l\x1b[?1002l\x1b[?1006l");
+		process.stdout.write("\u001b[?1000l\u001b[?1002l\u001b[?1006l");
 		this.screen.exit();
 		this.client.close();
 		this.quit();
@@ -932,7 +934,7 @@ export class Tui implements HostEvents {
 		const s = this.state;
 		const cells: Cell[] = [{ text: " " }];
 		for (const name of PANES) {
-			if (s.pane === name) cells.push({ text: `${FG(p.accent)}\x1b[7m ${name} ${RESET}` });
+			if (s.pane === name) cells.push({ text: `${FG(p.accent)}\u001b[7m ${name} ${RESET}` });
 			else cells.push({ text: ` ${name} `, fg: p.label });
 			cells.push({ text: " " });
 		}
@@ -1111,7 +1113,7 @@ export class Tui implements HostEvents {
 				{ text: focused ? label : `  ${label.trim()} `, fg: focused ? p.accent : p.label, bold: focused },
 				...(s.composer
 					? focused
-						? [{ text: before, fg: p.ink }, { text: `${FG(p.accent)}\x1b[7m${at}${RESET}` }, { text: after, fg: p.ink }]
+						? [{ text: before, fg: p.ink }, { text: `${FG(p.accent)}\u001b[7m${at}${RESET}` }, { text: after, fg: p.ink }]
 						: [{ text: clip(s.composer, this.screen.cols - 14), fg: p.ink }]
 					: [{ text: "message the agent…  (tab to focus)", fg: p.ghost, dim: true }]),
 			]);

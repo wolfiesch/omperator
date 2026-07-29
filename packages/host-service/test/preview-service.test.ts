@@ -154,15 +154,8 @@ function fakeContext(page: Page): BrowserContext {
 	} as unknown as BrowserContext;
 }
 
-function fakeBrowser(page: Page): Browser {
-	return {
-		newContext: async () => fakeContext(page),
-		close: async () => undefined,
-	} as unknown as Browser;
-}
-
 /** A chromium resolver that injects a fake browser via a monkey-patched launch. */
-function fakeChromiumResolver(page: Page): PreviewChromiumResolver {
+function fakeChromiumResolver(_page: Page): PreviewChromiumResolver {
 	return async () => {
 		// Patch chromium.launch to return our fake browser instead of spawning.
 		// We can't easily monkey-patch the module, so we return a path and
@@ -210,10 +203,6 @@ describe("PreviewService non-browser logic", () => {
 
 	describe("captureRead chunking", () => {
 		it("chunks a capture into base64 segments ≤ chunkBytes", () => {
-			const svc = new PreviewService({
-				chromiumResolver: fakeChromiumResolver(fakePage("http://localhost:3000")),
-				captureChunkBytes: 100,
-			});
 			// Build a 500-byte payload → base64 is ~680 chars → ~7 chunks of 100
 			const payload = new Uint8Array(500).fill(0xab);
 			const base64 = Buffer.from(payload).toString("base64");

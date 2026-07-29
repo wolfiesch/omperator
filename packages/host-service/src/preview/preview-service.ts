@@ -7,7 +7,6 @@ import {
 	type PreviewAuthorityDescriptor,
 	type PreviewCaptureId,
 	type PreviewCaptureMetadata,
-	type PreviewCaptureMimeType,
 	type PreviewId,
 	type PreviewSnapshot,
 	PREVIEW_ACTIONS,
@@ -57,7 +56,6 @@ const DEFAULT_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_ACTION_TIMEOUT_MS = 15_000;
 const DEFAULT_CAPTURE_QUALITY = 60;
 const IDLE_SWEEP_INTERVAL_MS = 30_000;
-const MIGRATED_HOST_TAILNET_SUFFIX = ".ts.net";
 
 const AVAILABLE_ACTIONS: readonly PreviewAction[] = PREVIEW_ACTIONS;
 
@@ -93,9 +91,6 @@ function toBase64(bytes: Uint8Array): string {
 	return Buffer.from(bytes).toString("base64");
 }
 
-function fromBase64(text: string): Uint8Array {
-	return new Uint8Array(Buffer.from(text, "base64"));
-}
 
 /**
  * Host-side preview service: runs a headless Chromium per session preview so

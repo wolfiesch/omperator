@@ -8,7 +8,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readOwnerMarkers, reapBootState } from "../src/boot-reaper.ts";
-import type { OwnerMarker, ReapLog } from "../src/boot-reaper.ts";
+import type { ReapLog } from "../src/boot-reaper.ts";
 
 // A fake owner record matches the shape the appserver and official authority
 // persist: a JSON object whose `pid` names the host incarnation that wrote it.

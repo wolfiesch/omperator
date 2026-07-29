@@ -10,5 +10,11 @@
 		"build": "bun build --compile src/main.ts --outfile dist/t4",
 		"check": "tsgo -p tsconfig.json --noEmit",
 		"dev": "bun run src/main.ts"
+	},
+	"dependencies": {
+		"ws": "^8.18.0"
+	},
+	"devDependencies": {
+		"@types/ws": "^8.5.10"
 	}
 }
