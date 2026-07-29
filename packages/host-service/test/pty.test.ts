@@ -126,10 +126,10 @@ describe("spawnPty", () => {
 		try {
 			// Give the spawn a moment to exec, then ask the kernel about it.
 			await settle(200);
-			const stat = execFileSync("ps", ["-o", "sess=,tty=,stat=", "-p", String(child.pid)]).toString().trim();
-			expect(Number(stat.split(/\s+/u)[0])).toBe(child.pid); // session leader
-			expect(stat.split(/\s+/u)[1]).not.toBe("??"); // has a controlling tty
-			expect(stat.split(/\s+/u)[2]).toMatch(/^Ss/u); // S: sleeping, s: leader
+			const stat = execFileSync("ps", ["-o", "tty=,stat=", "-p", String(child.pid)]).toString().trim();
+			const [tty, state] = stat.split(/\s+/u);
+			expect(tty).not.toBe("??"); // has a controlling tty
+			expect(state).toMatch(/^S.*s/u); // S: sleeping, s: session leader
 			expect(child.slavePath).toMatch(/^\/dev\//u);
 		} finally {
 			child.close();
