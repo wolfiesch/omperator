@@ -425,6 +425,18 @@ importers:
         specifier: 0.2.2
         version: 0.2.2(@types/node@24.12.4)(jiti@2.7.0)(typescript@6.0.3)(yaml@2.9.0)
 
+  packages/portable-core:
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.12.4
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+      vite-plus:
+        specifier: 'catalog:'
+        version: 0.2.2(@types/node@24.12.4)(jiti@2.7.0)(typescript@6.0.3)
+
   packages/protocol:
     dependencies:
       '@t4-code/host-wire':
@@ -465,6 +477,9 @@ importers:
 
   packages/t4-api-client:
     dependencies:
+      '@t4-code/portable-core':
+        specifier: workspace:*
+        version: link:../portable-core
       openapi-fetch:
         specifier: 0.17.0
         version: 0.17.0

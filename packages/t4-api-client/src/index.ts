@@ -1,3 +1,19 @@
+import {
+  decodeCapabilities,
+  decodeProblemDetails,
+  decodeGeneration,
+  decodeOpaqueId,
+  decodePhase,
+  decodeRevision,
+  decodeRuntime,
+  decodeRuntimePage,
+  decodeScopePage,
+  decodeTimestamp,
+  decodeWorkspace,
+  decodeWorkspacePage,
+  type Decoder,
+} from "@t4-code/portable-core";
+
 import createClient, { type Client } from "openapi-fetch";
 
 import type { components, paths } from "./generated/schema.ts";
@@ -12,16 +28,10 @@ const MAX_ERROR_BYTES = 1024 * 1024;
 const MAX_EVENT_BYTES = 1024 * 1024;
 const MAX_JSON_RESPONSE_BYTES = 16 * 1024 * 1024;
 const EVENT_ID = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/u;
-const OPAQUE_ID = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/u;
-const REVISION = /^[A-Za-z0-9][A-Za-z0-9:._~-]{0,127}$/u;
-const GENERATION = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,63}$/u;
 const PUBLIC_HOST = /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/u;
 const SSH_USER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
-const BOUNDED_CODE = /^[A-Za-z][A-Za-z0-9._-]{0,127}$/u;
 const ETAG = /^"[A-Za-z0-9][A-Za-z0-9:._~-]{0,127}"$/u;
-const RFC3339 = /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:(?:[0-5]\d|60)(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/u;
-const PHASES = new Set(["Pending", "Provisioning", "Starting", "Ready", "Sleeping", "Stopped", "Deleting", "Unavailable", "Degraded", "Failed"]);
-const RESOURCE_KINDS = new Set(["scope", "workspace", "runtime"]);
+const RESOURCE_KINDS = ["scope", "workspace", "runtime"] as const;
 
 export interface T4ApiClientOptions {
   readonly baseUrl: string;
@@ -178,27 +188,25 @@ async function boundedResponseText(response: Response, maximumBytes: number): Pr
   }
 }
 
+function validDecoded<T>(value: unknown, decoder: Decoder<T>): value is T {
+  try {
+    decoder(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function validTimestamp(value: unknown): value is string {
-  if (typeof value !== "string" || value.length > 64) return false;
-  const parts = RFC3339.exec(value);
-  if (parts === null) return false;
-  const year = Number(parts[1]);
-  const month = Number(parts[2]);
-  const day = Number(parts[3]);
-  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-  return day <= days[month - 1]! && Number.isFinite(Date.parse(value.replace(/:60(?=(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$)/u, ":59")));
+  return validDecoded(value, decodeTimestamp);
 }
 
 function validProblem(value: unknown, status: number): value is Problem {
-  const item = record(value);
-  return item !== undefined && typeof item.type === "string" && item.type.length > 0 && item.type.length <= 2048 &&
-    typeof item.title === "string" && item.title.length > 0 && item.title.length <= 256 && item.status === status &&
-    typeof item.detail === "string" && item.detail.length > 0 && item.detail.length <= 2048 &&
-    typeof item.instance === "string" && item.instance.length > 0 && item.instance.length <= 2048 &&
-    typeof item.code === "string" && /^[a-z][a-z0-9_]{0,127}$/u.test(item.code) && typeof item.retryable === "boolean" &&
-    (item.retryAfterMs === undefined || (Number.isInteger(item.retryAfterMs) && Number(item.retryAfterMs) >= 0 && Number(item.retryAfterMs) <= 86_400_000)) &&
-    (item.currentRevision === undefined || (typeof item.currentRevision === "string" && REVISION.test(item.currentRevision)));
+  try {
+    return decodeProblemDetails(value).status === status;
+  } catch {
+    return false;
+  }
 }
 
 async function parsedProblem(response: Response): Promise<T4ApiError | undefined> {
@@ -209,52 +217,6 @@ async function parsedProblem(response: Response): Promise<T4ApiError | undefined
   return validProblem(value, response.status) ? new T4ApiError(value) : undefined;
 }
 
-function validBoundedCodes(value: unknown): boolean {
-  if (!Array.isArray(value) || value.length > 64) return false;
-  const seen = new Set<string>();
-  return value.every((code) => typeof code === "string" && BOUNDED_CODE.test(code) && !seen.has(code) && seen.add(code));
-}
-
-function validCondition(value: unknown): boolean {
-  const condition = record(value);
-  return condition !== undefined && typeof condition.type === "string" && BOUNDED_CODE.test(condition.type) &&
-    (condition.status === "True" || condition.status === "False" || condition.status === "Unknown") &&
-    typeof condition.reason === "string" && BOUNDED_CODE.test(condition.reason) &&
-    (condition.message === undefined || (typeof condition.message === "string" && condition.message.length >= 1 && condition.message.length <= 1024)) &&
-    validTimestamp(condition.lastTransitionTime);
-}
-
-function schemaInteger(value: unknown, minimum: number, maximum: number): boolean {
-  return Number.isSafeInteger(value) && Number(value) >= minimum && Number(value) <= maximum;
-}
-
-function validLifecycleResource(value: unknown, kind: "workspace" | "runtime"): boolean {
-  const item = record(value);
-  if (item === undefined || typeof item.id !== "string" || !OPAQUE_ID.test(item.id) || typeof item.scopeId !== "string" || !OPAQUE_ID.test(item.scopeId) ||
-    typeof item.revision !== "string" || !REVISION.test(item.revision) || typeof item.displayName !== "string" || item.displayName.length < 1 || item.displayName.length > 128 ||
-    typeof item.phase !== "string" || !PHASES.has(item.phase) || !validTimestamp(item.createdAt) || !validTimestamp(item.updatedAt) ||
-    !Array.isArray(item.conditions) || item.conditions.length > 64 || !item.conditions.every(validCondition)) return false;
-  if (kind === "workspace") {
-    return schemaInteger(item.capacityBytes, 1_048_576, 1_125_899_906_842_624) && (item.retention === "Retain" || item.retention === "Delete") &&
-      schemaInteger(item.attachmentCount, 0, 100_000);
-  }
-  return typeof item.workspaceId === "string" && OPAQUE_ID.test(item.workspaceId) && typeof item.hostProfileId === "string" && OPAQUE_ID.test(item.hostProfileId) &&
-    (item.desiredState === "Running" || item.desiredState === "Sleeping" || item.desiredState === "Stopped") && typeof item.generation === "string" &&
-    GENERATION.test(item.generation) && validBoundedCodes(item.capabilities);
-}
-
-function validPage(value: unknown, kind: "scope" | "workspace" | "runtime"): boolean {
-  const page = record(value);
-  if (page === undefined || !Array.isArray(page.items) || page.items.length > 200 ||
-    (page.nextCursor !== undefined && (typeof page.nextCursor !== "string" || page.nextCursor.length > 512 || !/^[A-Za-z0-9_-]+={0,2}$/u.test(page.nextCursor)))) return false;
-  if (kind === "scope") return page.items.every((entry) => {
-    const scope = record(entry);
-    return scope !== undefined && typeof scope.id === "string" && OPAQUE_ID.test(scope.id) && typeof scope.displayName === "string" &&
-      scope.displayName.length >= 1 && scope.displayName.length <= 128 && (scope.kind === "Personal" || scope.kind === "Team") &&
-      typeof scope.revision === "string" && REVISION.test(scope.revision);
-  });
-  return page.items.every((entry) => validLifecycleResource(entry, kind));
-}
 
 function validDiscovery(value: unknown): boolean {
   const item = record(value);
@@ -272,22 +234,7 @@ function validDiscovery(value: unknown): boolean {
 }
 
 function validCapabilities(value: unknown): boolean {
-  const item = record(value);
-  const protocols = record(item?.protocols);
-  const machineProvider = record(protocols?.machineProvider);
-  const cmux = record(protocols?.cmux);
-  const ompApp = record(protocols?.ompApp);
-  const limits = record(item?.limits);
-  const features = record(item?.features);
-  return item?.apiVersion === "v1" && protocols !== undefined && machineProvider !== undefined && cmux !== undefined && ompApp !== undefined &&
-    Array.isArray(machineProvider.versions) && machineProvider.versions.length === 1 && machineProvider.versions[0] === 1 &&
-    validBoundedCodes(machineProvider.capabilities) && Array.isArray(cmux.versions) && cmux.versions.length === 1 && cmux.versions[0] === 10 &&
-    Array.isArray(ompApp.versions) && ompApp.versions.length === 1 && ompApp.versions[0] === 1 && limits !== undefined &&
-    schemaInteger(limits.maxActiveRuntimes, 0, 100_000) && schemaInteger(limits.maxRetainedRuntimes, 0, 1_000_000) &&
-    schemaInteger(limits.idempotencyRetentionSeconds, 86_400, 31_536_000) && schemaInteger(limits.eventRetentionSeconds, 60, 2_592_000) &&
-    schemaInteger(limits.maxPageSize, 1, 200) && features !== undefined && typeof features.restLifecycle === "boolean" &&
-    typeof features.sshProvider === "boolean" && typeof features.directCmuxWebSocket === "boolean" && typeof features.browser === "boolean" &&
-    typeof features.scaleToZero === "boolean";
+  return validDecoded(value, decodeCapabilities);
 }
 
 function validVersion(value: unknown): boolean {
@@ -301,7 +248,7 @@ function validVersion(value: unknown): boolean {
 function validConnections(value: unknown): boolean {
   const item = record(value);
   if (item === undefined || !hasOnlyKeys(item, ["runtimeId", "generation", "expiresAt", "routes"]) ||
-    typeof item.runtimeId !== "string" || !OPAQUE_ID.test(item.runtimeId) || typeof item.generation !== "string" || !GENERATION.test(item.generation) ||
+    !validDecoded(item.runtimeId, decodeOpaqueId) || !validDecoded(item.generation, decodeGeneration) ||
     !Array.isArray(item.routes) || item.routes.length > 3 || !validTimestamp(item.expiresAt)) return false;
   const kinds = new Set<string>();
   return item.routes.every((routeValue) => {
@@ -332,19 +279,22 @@ interface ResponseContract {
 
 const PROBLEM_COMMON = [400, 401, 403, 404, 409, 412, 422, 503] as const;
 const PUT_ERRORS = [400, 401, 403, 409, 412, 422, 503] as const;
-const WORKSPACE = (value: unknown): boolean => validLifecycleResource(value, "workspace");
-const RUNTIME = (value: unknown): boolean => validLifecycleResource(value, "runtime");
+const WORKSPACE: Validator = (value) => validDecoded(value, decodeWorkspace);
+const RUNTIME: Validator = (value) => validDecoded(value, decodeRuntime);
+const SCOPE_PAGE: Validator = (value) => validDecoded(value, decodeScopePage);
+const WORKSPACE_PAGE: Validator = (value) => validDecoded(value, decodeWorkspacePage);
+const RUNTIME_PAGE: Validator = (value) => validDecoded(value, decodeRuntimePage);
 const ROUTES: ReadonlyArray<{ method: string; pattern: RegExp; contract: ResponseContract }> = [
   { method: "GET", pattern: /^\/\.well-known\/omperator$/u, contract: { success: { 200: validDiscovery }, errors: [503], noStore: true } },
   { method: "GET", pattern: /^\/v1\/version$/u, contract: { success: { 200: validVersion }, errors: [401, 503] } },
   { method: "GET", pattern: /^\/v1\/capabilities$/u, contract: { success: { 200: validCapabilities }, errors: [401, 503] } },
-  { method: "GET", pattern: /^\/v1\/scopes$/u, contract: { success: { 200: (v) => validPage(v, "scope") }, errors: [400, 401, 503] } },
-  { method: "GET", pattern: /^\/v1\/workspaces$/u, contract: { success: { 200: (v) => validPage(v, "workspace") }, errors: [400, 401, 503] } },
+  { method: "GET", pattern: /^\/v1\/scopes$/u, contract: { success: { 200: SCOPE_PAGE }, errors: [400, 401, 503] } },
+  { method: "GET", pattern: /^\/v1\/workspaces$/u, contract: { success: { 200: WORKSPACE_PAGE }, errors: [400, 401, 503] } },
   { method: "GET", pattern: /^\/v1\/workspaces\/[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/u, contract: { success: { 200: WORKSPACE }, errors: [401, 404, 503], etag: true } },
   { method: "PUT", pattern: /^\/v1\/workspaces\/[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/u, contract: { success: { 200: WORKSPACE, 201: WORKSPACE, 202: WORKSPACE }, errors: PUT_ERRORS, etag: true, location: [201, 202] } },
   { method: "PATCH", pattern: /^\/v1\/workspaces\/[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/u, contract: { success: { 200: WORKSPACE, 202: WORKSPACE }, errors: PROBLEM_COMMON, etag: true, location: [202] } },
   { method: "DELETE", pattern: /^\/v1\/workspaces\/[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/u, contract: { success: { 202: WORKSPACE, 204: "empty" }, errors: [401, 403, 404, 409, 412, 503], etag: [202], location: [202] } },
-  { method: "GET", pattern: /^\/v1\/runtimes$/u, contract: { success: { 200: (v) => validPage(v, "runtime") }, errors: [400, 401, 503] } },
+  { method: "GET", pattern: /^\/v1\/runtimes$/u, contract: { success: { 200: RUNTIME_PAGE }, errors: [400, 401, 503] } },
   { method: "GET", pattern: /^\/v1\/runtimes\/[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/u, contract: { success: { 200: RUNTIME }, errors: [401, 404, 503], etag: true } },
   { method: "PUT", pattern: /^\/v1\/runtimes\/[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/u, contract: { success: { 200: RUNTIME, 201: RUNTIME, 202: RUNTIME }, errors: PUT_ERRORS, etag: true, location: [201, 202] } },
   { method: "PATCH", pattern: /^\/v1\/runtimes\/[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/u, contract: { success: { 200: RUNTIME, 202: RUNTIME }, errors: PROBLEM_COMMON, etag: true, location: [202] } },
@@ -434,9 +384,11 @@ function lifecycleEvent(value: unknown, sseEvent: string | undefined, sseId: str
     if (item.reason !== "cursor_expired") throw protocolError("T4 API returned malformed reset event data");
     return item as unknown as components["schemas"]["ResetEvent"];
   }
-  if (typeof item.resourceKind !== "string" || !RESOURCE_KINDS.has(item.resourceKind) || typeof item.resourceId !== "string" || !OPAQUE_ID.test(item.resourceId) ||
-    typeof item.scopeId !== "string" || !OPAQUE_ID.test(item.scopeId) || typeof item.revision !== "string" || !REVISION.test(item.revision) ||
-    typeof item.phase !== "string" || !PHASES.has(item.phase)) throw protocolError("T4 API returned malformed invalidation event data");
+  if (typeof item.resourceKind !== "string" || !RESOURCE_KINDS.includes(item.resourceKind as typeof RESOURCE_KINDS[number]) ||
+    !validDecoded(item.resourceId, decodeOpaqueId) || !validDecoded(item.scopeId, decodeOpaqueId) ||
+    !validDecoded(item.revision, decodeRevision) || !validDecoded(item.phase, decodePhase)) {
+    throw protocolError("T4 API returned malformed invalidation event data");
+  }
   return item as unknown as components["schemas"]["InvalidationEvent"];
 }
 
@@ -559,7 +511,7 @@ async function* watchEvents(baseUrl: string, credential: string, fetchImpl: type
   const maxReconnectAttempts = boundedInteger(options.maxReconnectAttempts, 3, 0, 10, "maxReconnectAttempts");
   const retryBackoffMs = boundedInteger(options.retryBackoffMs, 250, 0, 30_000, "retryBackoffMs");
   const inactivityTimeoutMs = boundedInteger(options.inactivityTimeoutMs, 30_000, 1_000, 300_000, "inactivityTimeoutMs");
-  if (options.scopeId !== undefined && !OPAQUE_ID.test(options.scopeId)) throw new TypeError("scopeId is invalid");
+  if (options.scopeId !== undefined && !validDecoded(options.scopeId, decodeOpaqueId)) throw new TypeError("scopeId is invalid");
   if (options.lastEventId !== undefined && !EVENT_ID.test(options.lastEventId)) throw new TypeError("lastEventId is invalid");
   const controller = new AbortController();
   const abort = (): void => controller.abort(options.signal?.reason);
