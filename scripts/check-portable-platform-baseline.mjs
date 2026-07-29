@@ -40,6 +40,9 @@ const expected = Object.freeze({
   authorizationDocumentation: "docs/adr/022-portable-identity-authorization-contract.md",
   authorizationDocumentationSha256: "76c1f3f13387b7fbf0beed0b7f643135848f6bdc9431b9de86c43b137845ac1a",
   authorizationContractsSha256: "ee53955763299dc51907c029a33c6ebcbefc95bdf3fa33a522cc8af4e0c0236a",
+  lifecycleDocumentation: "docs/adr/023-portable-lifecycle-state-machines.md",
+  lifecycleDocumentationSha256: "7dd48e64ae618e9cc31ec52fa2285195e79f9af79499f0a01176451c7a181944",
+  lifecycleContractsSha256: "552b62ff96873215c7fda259acb6e7203dca98ddb722d78607371786d8d71eb6",
   controlContracts: {
     decision: "backend-neutral-driver-and-control-store",
     documentation: "docs/adr/021-portable-driver-control-contracts.md",
@@ -445,6 +448,127 @@ const authorizationSemanticInvariants = [
   ["non-challenge confirmation fail open", (c) => c?.ompAppWss?.nonChallengeConfirmation === "none"],
 ];
 
+const lifecycleSemanticInvariants = [
+  ["desired state authority must remain resource input", (c) =>
+    c?.authorities?.desiredStateSource === "authoritative-resource-input" &&
+    c?.authorities?.workloadMayRewriteDesiredState === false],
+  ["runtime generation authorities must remain distinct", (c) => sameJson(c?.authorities?.distinctValues, [
+    "resourceRevision", "runtimeGeneration", "kubernetesMetadataGeneration",
+    "kubernetesObservedGeneration", "eventCursor", "providerControlGeneration", "routeReference",
+  ]) && sameJson(c?.authorities?.runtimeGenerationDerivationAllowedFrom, [])],
+  ["generation advance must wait for positive fence proof", (c) =>
+    c?.generationMachine?.advanceBeforeFenceProvenAllowed === false &&
+    sameJson(c?.generationMachine?.advanceRequires, [
+      "NoPriorWriterOrFenceProven", "expectedResourceRevision", "authoritativeCas",
+    ])],
+  ["potential writer attempts must never reuse a generation", (c) =>
+    c?.generationMachine?.potentialWriterAttemptGenerationReuseAllowed === false],
+  ["FenceUncertain must be the sole uncertain terminal", (c) =>
+    sameJson(c?.fenceMachine?.uncertainTerminalOutcomes, ["FenceUncertain"]) &&
+    c?.fenceMachine?.fenceUncertainAutomaticRetryAllowed === false],
+  ["FenceUncertain public projection must fail closed", (c) => sameJson(
+    c?.fenceMachine?.fenceUncertainPublicProjection,
+    { phase: "Degraded", condition: "Fenced", status: "False", reason: "FenceUncertain" },
+  )],
+  ["FenceUncertain must block every writer-capable progression", (c) => sameJson(
+    c?.generationMachine?.fenceUncertainBlocks,
+    ["generationAdvance", "route", "ticket", "credential", "attachment", "replacement",
+      "finalizerProgress", "writerCapableStart"],
+  )],
+  ["FenceUncertain recovery must use a new resource revision", (c) => sameJson(
+    c?.generationMachine?.fenceUncertainExitRequires,
+    ["fresh-authoritative-proof-under-new-resource-revision",
+      "explicit-manual-recovery-under-new-resource-revision"],
+  )],
+  ["drain ordering must revoke admission before fence verification", (c) => sameJson(
+    c?.drainMachine?.orderedStates,
+    ["RouteDraining", "TicketsRevoked", "CredentialsRevoked", "ConnectionsClosing",
+      "AuthorityQuiescing", "FenceVerifying"],
+  ) && sameJson(c?.drainMachine?.resultStates, ["FenceProven", "FenceUncertain"])],
+  ["replacement must prove process and attachment fence before generation CAS", (c) =>
+    sameJson(c?.replacementMachine?.orderedActions, [
+      "recordCauseAndRemoveRouteReadiness",
+      "revokeTicketsCredentialsAndCloseConnections",
+      "terminateAndProveProcessPlusAttachmentFence",
+      "casFreshRuntimeGeneration",
+      "attachExclusiveRuntimeStateAndCreateOneProcessGroup",
+      "acquireWriterLeaseAndStartAuthorities",
+      "proveCompositeReadinessThenPublishRoutesAndMintTickets",
+      "onPotentialWriterFailureReturnThroughDrainFenceAndFreshGeneration",
+    ]) && c?.replacementMachine?.fenceRequiredBeforeAction === "casFreshRuntimeGeneration" &&
+    c?.replacementMachine?.leaseAloneIsFenceProof === false],
+  ["Kubernetes fencing must require the complete positive-proof conjunction", (c) => sameJson(
+    c?.fenceMachine?.kubernetesProofConjunction,
+    ["oldPodUidAuthoritativelyAbsentOrTerminated", "generationCredentialsRevoked",
+      "oldServiceAndEndpointsCannotRoute", "runtimeStateAttachmentReleasedOrOldNodeStorageFenced",
+      "sameResourceRevisionAndGenerationDecision"],
+  ) && c?.fenceMachine?.kubernetesInsufficientAlone?.includes("lease")],
+  ["local fencing must require descendants, revocation, lease, and write exclusion", (c) => sameJson(
+    c?.fenceMachine?.localProofConjunction,
+    ["supervisedProcessGroupAndDescendantsDead", "generationCredentialsAndSocketRoutesRevoked",
+      "exclusiveRuntimeStateWriterLeaseReacquired", "oldProcessWriteAccessAbsent"],
+  )],
+  ["Ready-only route and ticket publication must remain exact", (c) =>
+    c?.readiness?.routeAndTicketPublication === "after-full-conjunction-only" &&
+    c?.desiredStateMachine?.Running?.routePublicationPhase === "Ready" &&
+    c?.routeTicketInvalidation?.publicationPhase === "Ready" &&
+    c?.replacementMachine?.readinessFailureRoutesPresent === false],
+  ["composite readiness must retain every authority check", (c) => sameJson(
+    c?.readiness?.conjunction,
+    ["desiredStateRunning", "publicPhaseReady", "authoritativeAndWorkloadRuntimeGenerationMatch",
+      "everyOlderGenerationFenced", "runtimeStateStorageReady", "exclusiveWriterLeaseHeld",
+      "cmuxIdentifyProtocol10Ready", "singlePinnedOmpAuthorityReady",
+      "internalGenerationAuthenticationReady", "profileRequiredBrowserReady"],
+  ) && c?.readiness?.properSubsetSufficient === false && c?.readiness?.tcpOrPodReadinessSufficient === false],
+  ["ticket invalidation must include runtime generation replacement", (c) =>
+    c?.routeTicketInvalidation?.invalidationTriggers?.includes("runtimeGenerationReplacement")],
+  ["tombstone must follow positive fence and immediately precede backend cleanup", (c) => {
+    const states = c?.deletionMachine?.orderedStates;
+    return Array.isArray(states) &&
+      states.includes("Tombstoned") &&
+      states.includes("BackendCleanup") &&
+      sameJson(states, [
+        "DeleteAccepted", "DrainingAndFencing", "Tombstoned", "BackendCleanup",
+        "RetentionDisposition", "FinalizerComplete",
+      ]) &&
+      states.indexOf("DrainingAndFencing") < states.indexOf("Tombstoned") &&
+      states.indexOf("Tombstoned") + 1 === states.indexOf("BackendCleanup") &&
+      c?.deletionMachine?.tombstoneBeforeBackendDelete === true &&
+      c?.deletionMachine?.backendDeleteOnTombstoneUncertaintyAllowed === false &&
+      c?.deletionMachine?.fenceProvenBeforeTombstone === true &&
+      c?.deletionMachine?.tombstoneImmediatelyBeforeBackendCleanup === true &&
+      c?.deletionMachine?.tombstoneRetainedAfterRetentionDisposition === true;
+  }],
+  ["finalizer must wait for fence cleanup absence and retention", (c) => sameJson(
+    c?.deletionMachine?.finalizerRequires,
+    ["durableRetainedTombstone", "writerAndAttachmentFenceProven", "ownedWorkloadCleanupComplete",
+      "routesAbsent", "ticketsAbsent", "credentialsAbsent", "retentionDispositionComplete"],
+  ) && c?.deletionMachine?.fenceUncertainAllowsFinalizerRemoval === false],
+  ["sleep and stop semantics must remain distinct from deletion and auto-wake", (c) =>
+    c?.desiredStateMachine?.Sleeping?.equivalentToDelete === false &&
+    c?.desiredStateMachine?.Stopped?.equivalentToDelete === false &&
+    c?.desiredStateMachine?.Stopped?.providerPolicyWakeAllowed === false &&
+    c?.desiredStateMachine?.Stopped?.explicitAuthorizedStartRequired === true],
+  ["consistent snapshots must require quiescence and drained routes", (c) => sameJson(
+    c?.snapshotRestore?.consistentSnapshotRequires,
+    ["SleepingOrOmpAndCmuxConfirmedQuiescence", "routesAndTicketsDrained"],
+  ) && c?.snapshotRestore?.unquiescedSnapshotLabel === "crash-consistent"],
+  ["restore must use a fresh fence and forbid dual live attachment", (c) =>
+    c?.snapshotRestore?.restoreRequires?.includes("freshFencedRuntimeGeneration") &&
+    c?.snapshotRestore?.sourceGenerationReuseAllowed === false &&
+    c?.snapshotRestore?.oneSnapshotAttachedToTwoLiveRuntimesAllowed === false &&
+    c?.snapshotRestore?.uncertainAttachmentOutcome === "FenceUncertain"],
+  ["workspace and runtime-state storage fencing must remain separate", (c) =>
+    c?.storageSeparation?.workspaceAttachmentProvesRuntimeStateFence === false &&
+    sameJson(c?.storageSeparation?.runtimeStateFenceProofRequiredFor, [
+      "generationAdvance", "replacement", "restore", "purge", "finalizerCompletion",
+    ])],
+  ["legacy CRD evolution must remain additive and default-safe", (c) =>
+    c?.legacyCrdCompatibility?.missingDesiredStateDefault === "Running" &&
+    c?.legacyCrdCompatibility?.newFieldsRequired === false &&
+    c?.legacyCrdCompatibility?.existingPersistedObjectsRemainValid === true],
+];
+
 function requireCommit(failures, label, value) {
   if (typeof value !== "string" || !SHA1.test(value)) {
     failures.push(diagnostic(`${label} must be a full 40-character lowercase Git commit`));
@@ -633,6 +757,123 @@ export async function checkPortablePlatformBaseline(root = process.cwd()) {
     );
   } catch (error) {
     failures.push(diagnostic(`portableControlContracts.documentation is unreadable: ${error.message}`));
+  }
+
+  const lifecycleContracts = manifest.portableLifecycleContracts;
+  requireEqual(
+    failures,
+    "portableLifecycleContracts.documentation",
+    lifecycleContracts?.documentation,
+    expected.lifecycleDocumentation,
+  );
+  requireEqual(
+    failures,
+    "portableLifecycleContracts.documentationSha256",
+    lifecycleContracts?.documentationSha256,
+    expected.lifecycleDocumentationSha256,
+  );
+  requireEqual(failures, "portableLifecycleContracts.contractOnly", lifecycleContracts?.contractOnly, true);
+  requireEqual(
+    failures,
+    "portableLifecycleContracts.runtimeImplementationIncluded",
+    lifecycleContracts?.runtimeImplementationIncluded,
+    false,
+  );
+  requireEqual(
+    failures,
+    "portableLifecycleContracts.publicSchemaChangesIncluded",
+    lifecycleContracts?.publicSchemaChangesIncluded,
+    false,
+  );
+  requireEqual(
+    failures,
+    "portableLifecycleContracts exact object digest",
+    sha256Json(lifecycleContracts),
+    expected.lifecycleContractsSha256,
+  );
+  for (const [name, holds] of lifecycleSemanticInvariants) {
+    if (!holds(lifecycleContracts)) {
+      failures.push(diagnostic(`portableLifecycleContracts semantic invariant "${name}" must hold`));
+    }
+  }
+  if (!SHA256.test(lifecycleContracts?.documentationSha256 ?? "")) {
+    failures.push(diagnostic("portableLifecycleContracts.documentationSha256 must be 64 lowercase hex characters"));
+  }
+  try {
+    const documentationBytes = await readFile(path.join(root, expected.lifecycleDocumentation));
+    const digest = createHash("sha256").update(documentationBytes).digest("hex");
+    requireEqual(
+      failures,
+      "portableLifecycleContracts.documentationSha256",
+      digest,
+      expected.lifecycleDocumentationSha256,
+    );
+  } catch (error) {
+    failures.push(diagnostic(`portableLifecycleContracts.documentation is unreadable: ${error.message}`));
+  }
+  if (
+    topology?.writableOmpAuthoritiesPerSession !== lifecycleContracts?.desiredStateMachine?.Running?.writerCardinalityMaximum ||
+    topology?.interactiveWriterInvocationAllowed !== false
+  ) {
+    failures.push(diagnostic("portableLifecycleContracts ADR-020 single-authority alignment must hold"));
+  }
+  if (
+    !sameJson(controlContracts?.revision?.distinctFrom, ["generation", "eventCursor"]) ||
+    !lifecycleContracts?.authorities?.distinctValues?.includes("resourceRevision") ||
+    !lifecycleContracts?.authorities?.distinctValues?.includes("runtimeGeneration") ||
+    !lifecycleContracts?.authorities?.distinctValues?.includes("eventCursor")
+  ) {
+    failures.push(diagnostic("portableLifecycleContracts ADR-021 revision/generation/cursor separation must hold"));
+  }
+  if (
+    !sameJson(controlContracts?.routes?.boundTo, ["runtimeId", "generation"]) ||
+    !sameJson(lifecycleContracts?.routeTicketInvalidation?.routesAndTicketsBoundTo, ["runtimeId", "runtimeGeneration"])
+  ) {
+    failures.push(diagnostic("portableLifecycleContracts ADR-021 generation-bound route alignment must hold"));
+  }
+  const lifecycleInvalidationTriggers = new Set(
+    lifecycleContracts?.routeTicketInvalidation?.invalidationTriggers ?? [],
+  );
+  const lifecycleTriggerForControlTrigger = {
+    controlDisconnect: "controlDisconnect",
+    providerControlGenerationReplacement: "providerControlGenerationReplacement",
+    runtimeGenerationReplacement: "runtimeGenerationReplacement",
+    explicitCancellation: "explicitCancellation",
+  };
+  if (
+    controlContracts?.tickets?.invalidationTriggers?.some(
+      (trigger) => !lifecycleInvalidationTriggers.has(lifecycleTriggerForControlTrigger[trigger]),
+    )
+  ) {
+    failures.push(diagnostic("portableLifecycleContracts ADR-021 ticket invalidation alignment must hold"));
+  }
+  if (
+    controlContracts?.tombstones?.creationOrder !== "before-backend-delete" ||
+    controlContracts?.tombstones?.deletionOnCreationUncertaintyAllowed !== false ||
+    lifecycleContracts?.deletionMachine?.tombstoneBeforeBackendDelete !== true ||
+    lifecycleContracts?.deletionMachine?.backendDeleteOnTombstoneUncertaintyAllowed !== false ||
+    lifecycleContracts?.deletionMachine?.fenceProvenBeforeTombstone !== true ||
+    lifecycleContracts?.deletionMachine?.tombstoneImmediatelyBeforeBackendCleanup !== true ||
+    lifecycleContracts?.deletionMachine?.tombstoneRetainedAfterRetentionDisposition !== true
+  ) {
+    failures.push(diagnostic("portableLifecycleContracts ADR-021 tombstone ordering and retention must hold"));
+  }
+  try {
+    const openApi = JSON.parse(await readFile(path.join(root, OPENAPI_PATH), "utf8"));
+    requireJsonEqual(
+      failures,
+      "portableLifecycleContracts OpenAPI DesiredState registry",
+      lifecycleContracts?.openApiRegistry?.desiredStates,
+      openApi?.components?.schemas?.DesiredState?.enum,
+    );
+    requireJsonEqual(
+      failures,
+      "portableLifecycleContracts OpenAPI Phase registry",
+      lifecycleContracts?.openApiRegistry?.publicPhases,
+      openApi?.components?.schemas?.Phase?.enum,
+    );
+  } catch (error) {
+    failures.push(diagnostic(`portable lifecycle OpenAPI registry is unreadable: ${error.message}`));
   }
 
   const authorizationContracts = manifest.portableAuthorizationContracts;
@@ -907,7 +1148,7 @@ export async function checkPortablePlatformBaseline(root = process.cwd()) {
     const patchResolver = authorizationContracts?.rest?.operations?.patchRuntime?.canonicalActionResolver;
     requireJsonEqual(
       failures,
-      "portableAuthorizationContracts.rest.operations.patchRuntime schema property registry",
+      "portableAuthorizationContracts.rest.operations.patchRuntime RuntimePatch schema property registry",
       [...Object.keys(patchResolver?.fieldActions ?? {}), "desiredState"].sort(),
       [...patchShape.propertyKeys].sort(),
     );

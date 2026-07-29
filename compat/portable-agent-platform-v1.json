@@ -750,6 +750,263 @@
       "retentionRequiredByP006": false
     }
   },
+  "portableLifecycleContracts": {
+    "decision": "fail-closed-writer-fence-state-machines",
+    "documentation": "docs/adr/023-portable-lifecycle-state-machines.md",
+    "documentationSha256": "7dd48e64ae618e9cc31ec52fa2285195e79f9af79499f0a01176451c7a181944",
+    "contractOnly": true,
+    "runtimeImplementationIncluded": false,
+    "publicSchemaChangesIncluded": false,
+    "authorities": {
+      "desiredStateSource": "authoritative-resource-input",
+      "workloadMayRewriteDesiredState": false,
+      "runtimeGenerationSource": "authoritative-control-plane-cas",
+      "distinctValues": [
+        "resourceRevision",
+        "runtimeGeneration",
+        "kubernetesMetadataGeneration",
+        "kubernetesObservedGeneration",
+        "eventCursor",
+        "providerControlGeneration",
+        "routeReference"
+      ],
+      "runtimeGenerationDerivationAllowedFrom": []
+    },
+    "openApiRegistry": {
+      "desiredStates": ["Running", "Sleeping", "Stopped"],
+      "publicPhases": [
+        "Pending",
+        "Provisioning",
+        "Starting",
+        "Ready",
+        "Sleeping",
+        "Stopped",
+        "Deleting",
+        "Unavailable",
+        "Degraded",
+        "Failed"
+      ]
+    },
+    "desiredStateMachine": {
+      "Running": {
+        "sequence": ["Pending", "Provisioning", "Starting", "Ready"],
+        "writerCardinalityMaximum": 1,
+        "routePublicationPhase": "Ready"
+      },
+      "Sleeping": {
+        "sequence": ["Draining", "Fencing", "Sleeping"],
+        "terminalRequiresAbsent": ["runtimeProcess", "writer", "route", "ticket", "generationCredential"],
+        "durableStateRetained": true,
+        "providerPolicyWakeAllowed": true,
+        "equivalentToDelete": false
+      },
+      "Stopped": {
+        "sequence": ["Draining", "Fencing", "Stopped"],
+        "terminalRequiresAbsent": ["runtimeProcess", "writer", "route", "ticket", "generationCredential"],
+        "durableStateRetained": true,
+        "providerPolicyWakeAllowed": false,
+        "explicitAuthorizedStartRequired": true,
+        "equivalentToDelete": false
+      }
+    },
+    "generationMachine": {
+      "initialGenerationAllocatedForEveryDesiredState": true,
+      "advanceRequires": ["NoPriorWriterOrFenceProven", "expectedResourceRevision", "authoritativeCas"],
+      "advanceBeforeFenceProvenAllowed": false,
+      "advanceOnNoWriterTerminalPhase": false,
+      "potentialWriterAttemptGenerationReuseAllowed": false,
+      "casConflictOutcome": "no-attach-no-start",
+      "readinessRequiresWorkloadGenerationMatch": true,
+      "fenceUncertainBlocks": [
+        "generationAdvance",
+        "route",
+        "ticket",
+        "credential",
+        "attachment",
+        "replacement",
+        "finalizerProgress",
+        "writerCapableStart"
+      ],
+      "fenceUncertainExitRequires": [
+        "fresh-authoritative-proof-under-new-resource-revision",
+        "explicit-manual-recovery-under-new-resource-revision"
+      ]
+    },
+    "drainMachine": {
+      "orderedStates": [
+        "RouteDraining",
+        "TicketsRevoked",
+        "CredentialsRevoked",
+        "ConnectionsClosing",
+        "AuthorityQuiescing",
+        "FenceVerifying"
+      ],
+      "resultStates": ["FenceProven", "FenceUncertain"],
+      "missingQuiesceAcknowledgement": "continue-to-external-fencing-never-assume-success",
+      "controlStoreUncertainty": "fail-closed"
+    },
+    "fenceMachine": {
+      "states": [
+        "NoPriorWriter",
+        "DrainRequired",
+        "ShutdownRequested",
+        "FenceVerifying",
+        "FenceProven",
+        "FenceUncertain"
+      ],
+      "uncertainTerminalOutcomes": ["FenceUncertain"],
+      "fenceUncertainAutomaticRetryAllowed": false,
+      "fenceUncertainPublicProjection": {
+        "phase": "Degraded",
+        "condition": "Fenced",
+        "status": "False",
+        "reason": "FenceUncertain"
+      },
+      "kubernetesProofConjunction": [
+        "oldPodUidAuthoritativelyAbsentOrTerminated",
+        "generationCredentialsRevoked",
+        "oldServiceAndEndpointsCannotRoute",
+        "runtimeStateAttachmentReleasedOrOldNodeStorageFenced",
+        "sameResourceRevisionAndGenerationDecision"
+      ],
+      "kubernetesInsufficientAlone": [
+        "lease",
+        "deletionRequest",
+        "cachedPodMiss",
+        "tcpFailure",
+        "rwxAnnotation",
+        "timeout"
+      ],
+      "localProofConjunction": [
+        "supervisedProcessGroupAndDescendantsDead",
+        "generationCredentialsAndSocketRoutesRevoked",
+        "exclusiveRuntimeStateWriterLeaseReacquired",
+        "oldProcessWriteAccessAbsent"
+      ],
+      "localInsufficientAlone": ["pidAbsence", "filesystemLock"],
+      "timersMayConvertUncertaintyToSuccess": false
+    },
+    "replacementMachine": {
+      "orderedActions": [
+        "recordCauseAndRemoveRouteReadiness",
+        "revokeTicketsCredentialsAndCloseConnections",
+        "terminateAndProveProcessPlusAttachmentFence",
+        "casFreshRuntimeGeneration",
+        "attachExclusiveRuntimeStateAndCreateOneProcessGroup",
+        "acquireWriterLeaseAndStartAuthorities",
+        "proveCompositeReadinessThenPublishRoutesAndMintTickets",
+        "onPotentialWriterFailureReturnThroughDrainFenceAndFreshGeneration"
+      ],
+      "fenceRequiredBeforeAction": "casFreshRuntimeGeneration",
+      "leaseAloneIsFenceProof": false,
+      "readinessFailureRoutesPresent": false
+    },
+    "readiness": {
+      "conjunction": [
+        "desiredStateRunning",
+        "publicPhaseReady",
+        "authoritativeAndWorkloadRuntimeGenerationMatch",
+        "everyOlderGenerationFenced",
+        "runtimeStateStorageReady",
+        "exclusiveWriterLeaseHeld",
+        "cmuxIdentifyProtocol10Ready",
+        "singlePinnedOmpAuthorityReady",
+        "internalGenerationAuthenticationReady",
+        "profileRequiredBrowserReady"
+      ],
+      "properSubsetSufficient": false,
+      "tcpOrPodReadinessSufficient": false,
+      "routeAndTicketPublication": "after-full-conjunction-only"
+    },
+    "deletionMachine": {
+      "orderedStates": [
+        "DeleteAccepted",
+        "DrainingAndFencing",
+        "Tombstoned",
+        "BackendCleanup",
+        "RetentionDisposition",
+        "FinalizerComplete"
+      ],
+      "tombstoneBeforeBackendDelete": true,
+      "backendDeleteOnTombstoneUncertaintyAllowed": false,
+      "fenceProvenBeforeTombstone": true,
+      "tombstoneImmediatelyBeforeBackendCleanup": true,
+      "tombstoneRetainedAfterRetentionDisposition": true,
+      "finalizerRequires": [
+        "durableRetainedTombstone",
+        "writerAndAttachmentFenceProven",
+        "ownedWorkloadCleanupComplete",
+        "routesAbsent",
+        "ticketsAbsent",
+        "credentialsAbsent",
+        "retentionDispositionComplete"
+      ],
+      "fenceUncertainAllowsFinalizerRemoval": false,
+      "stableIdentifierReuseAllowed": false,
+      "workspaceAndRuntimeStateRetentionIndependent": true
+    },
+    "snapshotRestore": {
+      "consistentSnapshotRequires": ["SleepingOrOmpAndCmuxConfirmedQuiescence", "routesAndTicketsDrained"],
+      "unquiescedSnapshotLabel": "crash-consistent",
+      "restoreRequires": [
+        "authorizedExpectedRevisionAndIdentityDecision",
+        "targetHasNoLiveWriter",
+        "sourceSnapshotNotAttachedToAnotherLiveRuntime",
+        "storageAndControlAuthoritiesAvailable",
+        "freshFencedRuntimeGeneration"
+      ],
+      "sourceGenerationReuseAllowed": false,
+      "oneSnapshotAttachedToTwoLiveRuntimesAllowed": false,
+      "uncertainAttachmentOutcome": "FenceUncertain",
+      "restoreRoutePublication": "after-full-readiness-only"
+    },
+    "storageSeparation": {
+      "workspaceStorage": "shared-project-files-policy-governed-rwx",
+      "runtimeStateStorage": "exclusive-single-writer-omp-cmux-browser-supervisor-state",
+      "workspaceAttachmentProvesRuntimeStateFence": false,
+      "runtimeStateFenceProofRequiredFor": [
+        "generationAdvance",
+        "replacement",
+        "restore",
+        "purge",
+        "finalizerCompletion"
+      ]
+    },
+    "routeTicketInvalidation": {
+      "routesAndTicketsBoundTo": ["runtimeId", "runtimeGeneration"],
+      "publicationPhase": "Ready",
+      "invalidationTriggers": [
+        "drainInitiation",
+        "desiredStateLeavesRunning",
+        "runtimeGenerationReplacement",
+        "providerControlGenerationReplacement",
+        "controlDisconnect",
+        "explicitCancellation",
+        "deletion",
+        "restoreStart",
+        "resourceScopeProfileOrAuthorizationChange"
+      ],
+      "invalidationActions": [
+        "removeDriverRouteReferences",
+        "removeEdgeDescriptors",
+        "stopTicketMinting",
+        "atomicallyRevokeApplicableUnconsumedTickets"
+      ]
+    },
+    "legacyCrdCompatibility": {
+      "missingDesiredStateDefault": "Running",
+      "newFieldsRequired": false,
+      "existingPersistedObjectsRemainValid": true
+    },
+    "implementationBoundaries": {
+      "productNeutralTypes": ["P1-01", "P1-03"],
+      "kubernetesLifecycle": ["P2-01", "P2-02", "P2-03", "P2-04", "P2-05", "P2-06", "P2-07"],
+      "runtimeSupervision": ["P3-02", "P3-03", "P3-05"],
+      "gatewayRouting": ["P4-01", "P4-02", "P4-03", "P4-04", "P4-05"],
+      "storageAndRestore": ["P5-06", "P5-07"],
+      "conformance": ["P7-05", "P7-06", "P7-07", "P7-08", "P7-09"]
+    }
+  },
   "runtimeTopology": {
     "decision": "host-owned-single-rpc-authority",
     "documentation": "docs/adr/020-portable-runtime-single-authority.md",

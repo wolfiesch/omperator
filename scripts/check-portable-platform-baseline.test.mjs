@@ -36,6 +36,10 @@ async function fixture(mutator = () => {}) {
     await readFile(path.join(repositoryRoot, "docs/adr/022-portable-identity-authorization-contract.md")),
   );
   await writeFile(
+    path.join(root, "docs/adr/023-portable-lifecycle-state-machines.md"),
+    await readFile(path.join(repositoryRoot, "docs/adr/023-portable-lifecycle-state-machines.md")),
+  );
+  await writeFile(
     path.join(root, "packages/t4-api-contract/openapi.json"),
     await readFile(path.join(repositoryRoot, "packages/t4-api-contract/openapi.json")),
   );
@@ -518,6 +522,184 @@ test("rejects backend coordinate and edge endpoint field leakage in route descri
       failure.includes("leaks a backend coordinate or edge endpoint field"),
     ),
   );
+});
+
+test("rejects portable lifecycle-contract manifest and ADR digest drift", async () => {
+  const manifestRoot = await fixture((manifest) => {
+    manifest.portableLifecycleContracts.documentationSha256 = "a".repeat(64);
+  });
+  const manifestResult = await checkPortablePlatformBaseline(manifestRoot);
+  assert(
+    manifestResult.failures.some((failure) => failure.includes("portableLifecycleContracts")),
+    "missing portable lifecycle-contract manifest drift diagnostic",
+  );
+
+  const adrRoot = await fixture();
+  await writeFile(path.join(adrRoot, "docs/adr/023-portable-lifecycle-state-machines.md"), "drift\n");
+  const adrResult = await checkPortablePlatformBaseline(adrRoot);
+  assert(
+    adrResult.failures.some((failure) =>
+      failure.includes("portableLifecycleContracts.documentationSha256"),
+    ),
+    "missing portable lifecycle-contract ADR digest diagnostic",
+  );
+});
+
+const weakenedLifecycleContractCases = [
+  ["workload-inferred desired state", "desired state authority", (contract) => {
+    contract.authorities.desiredStateSource = "workload-observation";
+    contract.authorities.workloadMayRewriteDesiredState = true;
+  }],
+  ["generation authority conflation", "runtime generation authorities", (contract) => {
+    contract.authorities.distinctValues = ["resourceRevision", "eventCursor"];
+    contract.authorities.runtimeGenerationDerivationAllowedFrom = ["kubernetesMetadataGeneration"];
+  }],
+  ["generation advance before fencing", "generation advance must wait", (contract) => {
+    contract.generationMachine.advanceBeforeFenceProvenAllowed = true;
+  }],
+  ["generation reuse after potential writer", "must never reuse a generation", (contract) => {
+    contract.generationMachine.potentialWriterAttemptGenerationReuseAllowed = true;
+  }],
+  ["FenceUncertain replaced by Failed", "sole uncertain terminal", (contract) => {
+    contract.fenceMachine.uncertainTerminalOutcomes = ["Failed"];
+  }],
+  ["second uncertain terminal added", "sole uncertain terminal", (contract) => {
+    contract.fenceMachine.uncertainTerminalOutcomes.push("Failed");
+  }],
+  ["FenceUncertain made retryable", "sole uncertain terminal", (contract) => {
+    contract.fenceMachine.fenceUncertainAutomaticRetryAllowed = true;
+  }],
+  ["FenceUncertain projected as Failed", "public projection must fail closed", (contract) => {
+    contract.fenceMachine.fenceUncertainPublicProjection.phase = "Failed";
+  }],
+  ["FenceUncertain recovery omits fresh proof", "recovery must use a new resource revision", (contract) => {
+    contract.generationMachine.fenceUncertainExitRequires =
+      ["explicit-manual-recovery-under-new-resource-revision"];
+  }],
+  ["FenceUncertain recovery omits manual action", "recovery must use a new resource revision", (contract) => {
+    contract.generationMachine.fenceUncertainExitRequires =
+      ["fresh-authoritative-proof-under-new-resource-revision"];
+  }],
+  ["route allowed during Starting", "Ready-only route", (contract) => {
+    contract.routeTicketInvalidation.publicationPhase = "Starting";
+  }],
+  ["runtime generation invalidation removed", "ticket invalidation", (contract) => {
+    contract.routeTicketInvalidation.invalidationTriggers =
+      contract.routeTicketInvalidation.invalidationTriggers.filter(
+        (trigger) => trigger !== "runtimeGenerationReplacement",
+      );
+  }],
+  ["replacement CAS moved before attachment proof", "replacement must prove process", (contract) => {
+    const actions = contract.replacementMachine.orderedActions;
+    [actions[2], actions[3]] = [actions[3], actions[2]];
+  }],
+  ["Lease accepted as sole fence proof", "replacement must prove process", (contract) => {
+    contract.replacementMachine.leaseAloneIsFenceProof = true;
+  }],
+  ["Kubernetes attachment proof removed", "Kubernetes fencing", (contract) => {
+    contract.fenceMachine.kubernetesProofConjunction =
+      contract.fenceMachine.kubernetesProofConjunction.filter(
+        (proof) => proof !== "runtimeStateAttachmentReleasedOrOldNodeStorageFenced",
+      );
+  }],
+  ["cmux readiness removed", "composite readiness", (contract) => {
+    contract.readiness.conjunction =
+      contract.readiness.conjunction.filter((check) => check !== "cmuxIdentifyProtocol10Ready");
+  }],
+  ["OMP authority readiness removed", "composite readiness", (contract) => {
+    contract.readiness.conjunction =
+      contract.readiness.conjunction.filter((check) => check !== "singlePinnedOmpAuthorityReady");
+  }],
+  ["generation authentication readiness removed", "composite readiness", (contract) => {
+    contract.readiness.conjunction =
+      contract.readiness.conjunction.filter(
+        (check) => check !== "internalGenerationAuthenticationReady",
+      );
+  }],
+  ["backend deletion before tombstone", "tombstone must follow positive fence", (contract) => {
+    contract.deletionMachine.orderedStates = [
+      "DeleteAccepted",
+      "DrainingAndFencing",
+      "BackendCleanup",
+      "Tombstoned",
+      "RetentionDisposition",
+      "FinalizerComplete",
+    ];
+  }],
+  ["Tombstoned state removed", "tombstone must follow positive fence", (contract) => {
+    contract.deletionMachine.orderedStates =
+      contract.deletionMachine.orderedStates.filter((state) => state !== "Tombstoned");
+  }],
+  ["BackendCleanup state removed", "tombstone must follow positive fence", (contract) => {
+    contract.deletionMachine.orderedStates =
+      contract.deletionMachine.orderedStates.filter((state) => state !== "BackendCleanup");
+  }],
+  ["backend deletion on uncertain tombstone", "tombstone must follow positive fence", (contract) => {
+    contract.deletionMachine.backendDeleteOnTombstoneUncertaintyAllowed = true;
+  }],
+  ["finalizer skips retention", "finalizer must wait", (contract) => {
+    contract.deletionMachine.finalizerRequires =
+      contract.deletionMachine.finalizerRequires.filter(
+        (requirement) => requirement !== "retentionDispositionComplete",
+      );
+  }],
+  ["sleep equated with delete", "sleep and stop semantics", (contract) => {
+    contract.desiredStateMachine.Sleeping.equivalentToDelete = true;
+  }],
+  ["stop becomes provider-auto-wakeable", "sleep and stop semantics", (contract) => {
+    contract.desiredStateMachine.Stopped.providerPolicyWakeAllowed = true;
+  }],
+  ["consistent snapshot permits unquiesced state", "consistent snapshots", (contract) => {
+    contract.snapshotRestore.consistentSnapshotRequires = ["storageSnapshotAvailable"];
+  }],
+  ["restore reuses source generation", "restore must use a fresh fence", (contract) => {
+    contract.snapshotRestore.sourceGenerationReuseAllowed = true;
+  }],
+  ["snapshot attached to two live runtimes", "restore must use a fresh fence", (contract) => {
+    contract.snapshotRestore.oneSnapshotAttachedToTwoLiveRuntimesAllowed = true;
+  }],
+  ["workspace mount accepted as runtime-state fence", "storage fencing must remain separate", (contract) => {
+    contract.storageSeparation.workspaceAttachmentProvesRuntimeStateFence = true;
+  }],
+  ["legacy desired state no longer defaults Running", "legacy CRD evolution", (contract) => {
+    contract.legacyCrdCompatibility.missingDesiredStateDefault = "Stopped";
+  }],
+  ["new CRD lifecycle fields made required", "legacy CRD evolution", (contract) => {
+    contract.legacyCrdCompatibility.newFieldsRequired = true;
+  }],
+];
+
+for (const [name, diagnostic, weaken] of weakenedLifecycleContractCases) {
+  test(`rejects weakened portable lifecycle contract: ${name}`, async () => {
+    const root = await fixture((manifest) => weaken(manifest.portableLifecycleContracts));
+    const result = await checkPortablePlatformBaseline(root);
+    assert(
+      result.failures.some((failure) => failure.includes(diagnostic)),
+      `missing portable lifecycle-contract diagnostic for ${name}`,
+    );
+  });
+}
+
+test("rejects OpenAPI DesiredState and Phase registry drift from lifecycle contracts", async () => {
+  for (const [schemaName, mutate] of [
+    ["DesiredState", (schema) => schema.enum.push("Paused")],
+    ["Phase", (schema) => {
+      schema.enum = schema.enum.filter((phase) => phase !== "Degraded");
+    }],
+  ]) {
+    const root = await fixture();
+    const openApiPath = path.join(root, "packages/t4-api-contract/openapi.json");
+    const openApi = JSON.parse(await readFile(openApiPath, "utf8"));
+    mutate(openApi.components.schemas[schemaName]);
+    await writeFile(openApiPath, `${JSON.stringify(openApi, null, 2)}\n`);
+    const result = await checkPortablePlatformBaseline(root);
+    assert(
+      result.failures.some((failure) =>
+        failure.includes(`portableLifecycleContracts OpenAPI ${schemaName} registry`),
+      ),
+      `missing lifecycle OpenAPI ${schemaName} registry diagnostic`,
+    );
+  }
 });
 
 test("rejects portable authorization-contract manifest and ADR digest drift", async () => {
