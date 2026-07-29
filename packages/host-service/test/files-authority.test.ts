@@ -144,8 +144,8 @@ describe("FilesAuthority filesRead", () => {
 		await expect(authority.filesRead({ path: "nope.txt" }, ctx)).rejects.toMatchObject({ code: "NOT_FOUND" });
 	});
 
-	test("operations() advertises exactly filesList and filesRead", () => {
+	test("operations() advertises exactly filesList, filesRead, and filesDiff", () => {
 		const { authority } = authorityFixture("/tmp");
-		expect(Object.keys(authority.operations()).sort()).toEqual(["filesList", "filesRead"]);
+		expect(Object.keys(authority.operations()).sort()).toEqual(["filesDiff", "filesList", "filesRead"]);
 	});
 });
