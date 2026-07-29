@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { lstatSync, mkdirSync, readdirSync, rmSync, statfsSync } from "node:fs";
-import { join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const GIB = 1024 ** 3;
@@ -35,6 +35,23 @@ export function prepareIosCiCache(
   if (!root.includes(CACHE_MARKER)) {
     throw new Error("cache root must be a versioned child of Library/Caches/omperator-ci/ios");
   }
+  const cacheBase = dirname(root);
+  if (!basename(root).startsWith("xcode-") || !cacheBase.endsWith(CACHE_MARKER.slice(0, -1))) {
+    throw new Error("cache root must be a versioned child of Library/Caches/omperator-ci/ios");
+  }
+
+  const prunedVersionRoots = [];
+  mkdirSync(cacheBase, { recursive: true });
+  for (const entry of readdirSync(cacheBase, { withFileTypes: true })) {
+    if (
+      entry.isDirectory() &&
+      entry.name.startsWith("xcode-") &&
+      entry.name !== basename(root)
+    ) {
+      rmSync(join(cacheBase, entry.name), { recursive: true, force: true });
+      prunedVersionRoots.push(entry.name);
+    }
+  }
 
   const derivedData = join(root, "derived-data");
   mkdirSync(derivedData, { recursive: true });
@@ -62,6 +79,7 @@ export function prepareIosCiCache(
     cacheBytesBefore,
     freeBytesBefore,
     freeBytesAfter,
+    prunedVersionRoots,
     resetReason: resetReason ?? "none",
   };
 }

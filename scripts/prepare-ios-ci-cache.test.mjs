@@ -60,6 +60,28 @@ test("resets only DerivedData when the cache exceeds its bound", (t) => {
   assert.equal(readFileSync(join(root, "preserved"), "utf8"), "sibling");
 });
 
+test("prunes obsolete Xcode version roots", (t) => {
+  const { temporary, root } = fixture(t);
+  const obsolete = join(
+    temporary,
+    "Library",
+    "Caches",
+    "omperator-ci",
+    "ios",
+    "xcode-old",
+  );
+  mkdirSync(join(obsolete, "derived-data"), { recursive: true });
+  writeFileSync(join(obsolete, "derived-data", "stale"), "stale");
+  const report = prepareIosCiCache(root, {
+    maxBytes: 1024,
+    minFreeBytes: 100,
+    measureAvailableBytes: () => 1000,
+  });
+  assert.deepEqual(report.prunedVersionRoots, ["xcode-old"]);
+  assert.equal(existsSync(obsolete), false);
+  assert.equal(existsSync(root), true);
+});
+
 test("fails before building when pruning cannot restore the free-space floor", (t) => {
   const { root } = fixture(t);
   assert.throws(
