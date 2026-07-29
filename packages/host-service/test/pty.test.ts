@@ -120,7 +120,9 @@ describe("spawnPty", () => {
 		});
 		try {
 			child.write("ps -o tty,stat -p $$\n");
-			const output = await drainUntil(() => child.drain(), /\bSs\b/u);
+			// macOS bashrc prints a zsh-migration banner before the shell is ready;
+			// under full-suite load the 4s default budget can expire first.
+			const output = await drainUntil(() => child.drain(), /\bSs\b/u, 10_000);
 			// A session leader (Ss) attached to a real tty, not "??".
 			expect(output).toMatch(/\bSs\b/u);
 			expect(output).not.toContain("no job control");
