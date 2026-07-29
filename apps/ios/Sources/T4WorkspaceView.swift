@@ -67,7 +67,7 @@ struct T4WorkspaceView: View {
             }
             .onOpenURL { url in handleDeepLink(url) }
             .onAppear {
-                if store.selectedSession == nil { store.select(store.sessions.first) }
+                store.selectDefaultVisibleSessionIfNeeded()
                 // UI-test seam: launch with -T4RailOpen to boot with the rail open.
                 if ProcessInfo.processInfo.arguments.contains("-T4RailOpen") { railProgress = 1 }
                 // UI-test seam: launch with -T4ShowInbox to boot with the inbox open.
@@ -77,6 +77,14 @@ struct T4WorkspaceView: View {
                 notifier.attach(store)
                 await store.restore()
             }
+            #if DEBUG
+            .task {
+                if ProcessInfo.processInfo.arguments.contains("-T4StreamingProof") {
+                    if store.selectedSession == nil { store.select(store.sessions.first) }
+                    await store.runStreamingProofFixture()
+                }
+            }
+            #endif
             .task {
                 // UI-test seam: launch with -T4PairCode <code> [-T4PairHost <host[:port]>]
                 // to run the pair handshake on first boot. Default host is the

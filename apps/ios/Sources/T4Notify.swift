@@ -83,6 +83,9 @@ final class T4Notifier: ObservableObject {
     private func requestAuthorizationIfNeeded() {
         guard !didAuthorize else { return }
         didAuthorize = true
+        guard !ProcessInfo.processInfo.arguments.contains("-T4NoNotifications") else {
+            return
+        }
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound]) { granted, error in
             if let error { t4logNotify.error("notif auth: \(error, privacy: .public)") }

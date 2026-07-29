@@ -14,8 +14,14 @@ final class T4CodeUITests: XCTestCase {
     @MainActor
     private func launch(arguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
-        // Fresh state every run: no persisted endpoint/creds, no restores.
-        app.launchArguments = ["-T4NoRestore", "-T4Demo"] + arguments
+        // Fresh state every run: no Keychain access, restored connection,
+        // persisted rail state, or system permission prompts.
+        app.launchArguments = [
+            "-T4NoRestore",
+            "-T4Demo",
+            "-T4ResetRailPreferences",
+            "-T4NoNotifications",
+        ] + arguments
         app.launch()
         return app
     }
@@ -31,11 +37,14 @@ final class T4CodeUITests: XCTestCase {
         app.buttons["Show sessions"].tap()
         XCTAssertTrue(app.searchFields["Search sessions"].waitForExistence(timeout: 3))
 
-        // Project group header with all four sample sessions.
-        XCTAssertTrue(app.staticTexts["Host-wire Swift port"].exists)
+        // The organization controls intentionally consume the first viewport;
+        // scroll to prove rows below them remain reachable in the bounded list.
+        let target = app.buttons["session-row-s2"]
+        if !target.isHittable { app.swipeUp() }
+        XCTAssertTrue(target.waitForExistence(timeout: 3))
 
         // Tapping a session closes the drawer and shows its detail.
-        app.staticTexts["Host-wire Swift port"].tap()
+        target.tap()
         XCTAssertTrue(app.staticTexts["Host-wire Swift port"].waitForExistence(timeout: 3))
         XCTAssertFalse(app.searchFields["Search sessions"].exists)
     }
@@ -47,8 +56,36 @@ final class T4CodeUITests: XCTestCase {
         XCTAssertTrue(search.waitForExistence(timeout: 5))
         search.tap()
         search.typeText("agent")
-        XCTAssertTrue(app.staticTexts["Agent view"].waitForExistence(timeout: 3))
-        XCTAssertFalse(app.staticTexts["Hosts & usage"].exists)
+        XCTAssertTrue(app.buttons["session-row-s3"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["session-row-s4"].exists)
+    }
+
+    @MainActor
+    func testRailSwitchesBetweenCurrentAndArchivedSessions() throws {
+        let app = launch(arguments: ["-T4RailOpen"])
+        XCTAssertTrue(app.buttons["session-row-s1"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["session-row-s5"].exists)
+
+        let archived = app.buttons["Archived sessions"]
+        XCTAssertTrue(archived.waitForExistence(timeout: 3))
+        archived.tap()
+
+        XCTAssertTrue(app.buttons["session-row-s5"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["session-row-s1"].exists)
+        XCTAssertTrue(app.staticTexts["Finished release audit"].exists)
+    }
+
+    @MainActor
+    func testRailAttentionFilterUsesAuthoritativeSessionSignals() throws {
+        let app = launch(arguments: ["-T4RailOpen"])
+        XCTAssertTrue(app.buttons["session-row-s3"].waitForExistence(timeout: 5))
+
+        app.buttons["session-filter-attention"].tap()
+
+        XCTAssertTrue(app.buttons["session-row-s1"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["session-row-s4"].exists)
+        XCTAssertFalse(app.buttons["session-row-s2"].exists)
+        XCTAssertFalse(app.buttons["session-row-s3"].exists)
     }
 
     // MARK: - Model menu
@@ -88,5 +125,25 @@ final class T4CodeUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Not connected"].waitForExistence(timeout: 5))
         // Pairing lives in onboarding/palette, not the rail.
         XCTAssertFalse(app.buttons["Connect to a T4 Code host"].exists)
+    }
+
+    @MainActor
+    func testStreamingProofRevealsThinkingAndWriteIntermediateFrames() throws {
+        let app = launch(arguments: ["-T4StreamingProof"])
+        var thinkingFrames = Set<String>()
+        var writeFrames = Set<String>()
+        let deadline = Date().addingTimeInterval(18)
+        let thinking = app.staticTexts["live-turn-thinking"]
+        let write = app.staticTexts["live-turn-tool-write"].firstMatch
+
+        while Date() < deadline {
+            if thinking.exists { thinkingFrames.insert(thinking.label) }
+            if write.exists { writeFrames.insert(write.label) }
+            if thinkingFrames.count >= 3 && writeFrames.count >= 3 { break }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+
+        XCTAssertGreaterThanOrEqual(thinkingFrames.count, 3)
+        XCTAssertGreaterThanOrEqual(writeFrames.count, 3)
     }
 }

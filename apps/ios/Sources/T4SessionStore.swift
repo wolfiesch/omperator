@@ -13,12 +13,90 @@ import Security
 
 private let t4log = Logger(subsystem: "sh.t4code.ios", category: "store")
 
+private struct PendingTranscriptQueue {
+    private(set) var entries: [TranscriptEntry] = []
+
+    var isEmpty: Bool { entries.isEmpty }
+
+    mutating func enqueue(_ entry: TranscriptEntry) {
+        if let index = entries.firstIndex(where: { $0.id == entry.id }) {
+            entries[index] = entry
+        } else {
+            entries.append(entry)
+        }
+    }
+
+    mutating func removeAll(where predicate: (TranscriptEntry) -> Bool) {
+        entries.removeAll(where: predicate)
+    }
+
+    mutating func drainReadyPrefix(
+        while isReady: (TranscriptEntry) -> Bool
+    ) -> [TranscriptEntry] {
+        var count = 0
+        while count < entries.count, isReady(entries[count]) { count += 1 }
+        guard count > 0 else { return [] }
+        let ready = Array(entries.prefix(count))
+        entries.removeFirst(count)
+        return ready
+    }
+}
+
+enum T4SessionListView: String, CaseIterable, Identifiable {
+    case current
+    case archived
+
+    var id: String { rawValue }
+    var label: String { self == .current ? "Current" : "Archived" }
+}
+
+enum T4RailOrganization: String, CaseIterable, Identifiable {
+    case byProject
+    case flat
+
+    var id: String { rawValue }
+    var label: String { self == .byProject ? "By project" : "In one list" }
+}
+
+enum T4RailSort: String, CaseIterable, Identifiable {
+    case priority
+    case updated
+    case manual
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .priority: "Priority"
+        case .updated: "Last updated"
+        case .manual: "Manual order"
+        }
+    }
+}
+
+enum T4RailFilter: String, CaseIterable, Identifiable {
+    case all
+    case attention
+    case running
+    case errors
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .all: "All"
+        case .attention: "Attention"
+        case .running: "Running"
+        case .errors: "Errors"
+        }
+    }
+}
+
 @MainActor
 final class T4SessionStore: ObservableObject {
     struct Group: Identifiable {
+        let projectId: String
         let project: String
         let sessions: [SessionRef]
-        var id: String { project }
+        var id: String { projectId }
     }
 
     /// A host-asked question awaiting the user's answer (question mode).
@@ -102,6 +180,15 @@ final class T4SessionStore: ObservableObject {
 
     @Published private(set) var sessions: [SessionRef]
     @Published var query: String = ""
+    /// Search and quick-filter state is deliberately ephemeral so relaunching
+    /// can never make sessions appear to be missing.
+    @Published var railFilter: T4RailFilter = .all
+    @Published private(set) var sessionListView: T4SessionListView
+    @Published private(set) var railOrganization: T4RailOrganization
+    @Published private(set) var railSort: T4RailSort
+    @Published private(set) var pinnedSessionIds: Set<String>
+    @Published private(set) var projectManualOrder: [String]
+    @Published private(set) var sessionManualOrderByScope: [String: [String]]
     @Published private(set) var connecting = false
     @Published private(set) var connected = false
     @Published var lastError: String?
@@ -131,6 +218,14 @@ final class T4SessionStore: ObservableObject {
     /// transcript view renders this as a pulsing live tail row after the
     /// durable entries.
     @Published private(set) var streamingText: [String: String] = [:]
+    /// Paced compatibility projection for hosts that emit flattened
+    /// `message.update` snapshots rather than ordered assistant blocks.
+    @Published private(set) var streamingMessages: [String: StreamingAssistantBuffer] = [:]
+    /// Ordered in-flight thinking, text, and tool-input blocks.
+    @Published private(set) var liveTurns: [String: LiveTurnTimeline] = [:]
+    /// Compatibility projection for hosts that emit tool lifecycle events
+    /// without ordered assistant blocks.
+    @Published private(set) var liveTools: [String: LiveToolProjection] = [:]
     /// Sessions with a turn in flight, from turn.start/turn.end events — the
     /// composer's stop button keys off this (the ref's `status` sticks at
     /// "active" long after the turn actually ends).
@@ -293,10 +388,23 @@ final class T4SessionStore: ObservableObject {
     private var observationTask: Task<Void, Never>?
     private var connectionGeneration: UInt64 = 0
     private var hostId: String = ""
+    private var streamingTasks: [String: Task<Void, Never>] = [:]
+    private var liveTurnTasks: [String: Task<Void, Never>] = [:]
+    private var toolStreamingTasks: [String: Task<Void, Never>] = [:]
+    private var pendingTranscriptEntries: [String: PendingTranscriptQueue] = [:]
     /// Capabilities the host granted at welcome — gates optional commands
     /// (e.g. catalog.get needs catalog.read; an unauthorized command gets
     /// the connection closed by the remote policy).
     private var grantedCapabilities: [String] = []
+    /// Negotiated additive protocol features. Ownership UI uses these to
+    /// expose safe copy/adoption actions only when the host supports them.
+    private var grantedFeatures: Set<ProtocolFeature> = []
+
+    var canForkSessions: Bool {
+        connected
+            && grantedCapabilities.contains("sessions.manage")
+            && grantedFeatures.contains(.sessionFork)
+    }
 
     // Persisted connection credentials, stored in the device Keychain (see
     // Keychain.swift). The account names are reused as the legacy
@@ -305,9 +413,314 @@ final class T4SessionStore: ObservableObject {
     private static let savedDeviceIdKey = "t4.deviceId"
     private static let savedDeviceTokenKey = "t4.deviceToken"
     private static let installationDeviceIdKey = "t4.installationDeviceId"
+    private static let railListViewKey = "t4.rail.listView"
+    private static let railOrganizationKey = "t4.rail.organization"
+    private static let railSortKey = "t4.rail.sort"
+    private static let railPinnedSessionIdsKey = "t4.rail.pinnedSessionIds"
+    private static let railProjectManualOrderKey = "t4.rail.projectManualOrder"
+    private static let railSessionManualOrderKey = "t4.rail.sessionManualOrder"
     /// UserDefaults flag set once the legacy plist credentials have been
     /// copied into the Keychain and the plist entries deleted.
     private static let keychainMigratedKey = "t4.keychainMigrated"
+
+    private func receiveStreamingMessage(sessionId: String, text: String, reasoning: String) {
+        var buffer = streamingMessages[sessionId] ?? StreamingAssistantBuffer()
+        buffer.receive(text: text, reasoning: reasoning)
+        streamingMessages[sessionId] = buffer
+        guard streamingTasks[sessionId] == nil else { return }
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled, var next = self.streamingMessages[sessionId] {
+                let hasMore = next.advance()
+                self.streamingMessages[sessionId] = next
+                if !hasMore {
+                    self.finishPendingAssistantEntry(sessionId: sessionId)
+                    break
+                }
+                try? await Task.sleep(nanoseconds: 16_666_667)
+            }
+            if !Task.isCancelled { self.streamingTasks[sessionId] = nil }
+        }
+        streamingTasks[sessionId] = task
+    }
+
+    private func clearStreamingMessage(sessionId: String) {
+        streamingTasks.removeValue(forKey: sessionId)?.cancel()
+        streamingMessages.removeValue(forKey: sessionId)
+        guard var pending = pendingTranscriptEntries[sessionId] else { return }
+        pending.removeAll { $0.kind == .message && $0.role != "user" }
+        if pending.isEmpty { pendingTranscriptEntries.removeValue(forKey: sessionId) }
+        else { pendingTranscriptEntries[sessionId] = pending }
+    }
+
+    private func receiveLiveTurnBlock(sessionId: String, event: SessionEvent) {
+        // The ordered event supersedes the flattened compatibility projection.
+        // Keep any already-arrived durable row pending while the new timeline
+        // finishes revealing its final snapshot.
+        streamingTasks.removeValue(forKey: sessionId)?.cancel()
+        streamingMessages.removeValue(forKey: sessionId)
+
+        var timeline = liveTurns[sessionId] ?? LiveTurnTimeline()
+        guard timeline.apply(event) else { return }
+        liveTurns[sessionId] = timeline
+        scheduleLiveTurnFrames(sessionId: sessionId)
+    }
+
+    #if DEBUG
+    /// Deterministic visual-proof seam shared by the macOS and iOS targets.
+    /// It enters through the same SessionEvent projection as live host frames,
+    /// then lets the production 60 fps pacing tasks reveal each snapshot.
+    func runStreamingProofFixture() async {
+        guard let sessionId = selectedSession?.sessionId ?? sessions.first?.sessionId else { return }
+        let entryId = "assistant:native-stream-proof"
+        let blocks: [(Int, String, String, String?, String?)] = [
+            (0, "thinking", "I’ll preserve block order while every character appears smoothly.", nil, nil),
+            (1, "text", "I’m updating the implementation first.", nil, nil),
+            (
+                2,
+                "tool-input",
+                #"{"path":"Sources/Streaming.swift","content":"struct StreamState {\n    let isSmooth = true\n}"}"#,
+                "proof-write",
+                "write"
+            ),
+        ]
+        activeTurns.insert(sessionId)
+        defer { activeTurns.remove(sessionId) }
+        for (index, kind, content, callId, tool) in blocks {
+            var length = 3
+            while length < content.count {
+                receiveLiveTurnBlock(
+                    sessionId: sessionId,
+                    event: Self.streamingProofEvent(
+                        entryId: entryId,
+                        blockIndex: index,
+                        blockKind: kind,
+                        content: String(content.prefix(length)),
+                        callId: callId,
+                        tool: tool
+                    )
+                )
+                try? await Task.sleep(for: .milliseconds(180))
+                length += 3
+            }
+            receiveLiveTurnBlock(
+                sessionId: sessionId,
+                event: Self.streamingProofEvent(
+                    entryId: entryId,
+                    blockIndex: index,
+                    blockKind: kind,
+                    content: content,
+                    callId: callId,
+                    tool: tool
+                )
+            )
+        }
+    }
+
+    private static func streamingProofEvent(
+        entryId: String,
+        blockIndex: Int,
+        blockKind: String,
+        content: String,
+        callId: String?,
+        tool: String?
+    ) -> SessionEvent {
+        var fields: [String: JSONValue] = [
+            "type": .string("assistant.block.update"),
+            "entryId": .string(entryId),
+            "blockIndex": .number(Double(blockIndex)),
+            "blockKind": .string(blockKind),
+            "content": .string(content),
+        ]
+        if let callId { fields["callId"] = .string(callId) }
+        if let tool { fields["tool"] = .string(tool) }
+        let frame: JSONValue = .object([
+            "v": .string("omp-app/1"),
+            "type": .string("event"),
+            "cursor": .object(["epoch": .string("native-stream-proof"), "seq": .number(1)]),
+            "hostId": .string("native-stream-proof-host"),
+            "sessionId": .string("native-stream-proof-session"),
+            "event": .object(fields),
+        ])
+        let data = try! JSONEncoder().encode(frame)
+        guard case .event(let decoded) = try! ServerFrame.decode(data) else {
+            preconditionFailure("streaming proof event did not decode")
+        }
+        return decoded.event
+    }
+    #endif
+
+    private func receiveLiveTurnToolLifecycle(sessionId: String, event: SessionEvent) -> Bool {
+        guard var timeline = liveTurns[sessionId],
+              timeline.applyToolLifecycle(event) else { return false }
+        liveTurns[sessionId] = timeline
+        scheduleLiveTurnFrames(sessionId: sessionId)
+        return true
+    }
+
+    private func scheduleLiveTurnFrames(sessionId: String) {
+        guard liveTurnTasks[sessionId] == nil else { return }
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled, var next = self.liveTurns[sessionId] {
+                let hasMore = next.advance()
+                self.liveTurns[sessionId] = next
+                self.finishPendingLiveTurnEntries(sessionId: sessionId)
+                if !hasMore { break }
+                try? await Task.sleep(nanoseconds: 16_666_667)
+            }
+            if !Task.isCancelled { self.liveTurnTasks[sessionId] = nil }
+        }
+        liveTurnTasks[sessionId] = task
+    }
+
+    private func finishPendingLiveTurnEntries(sessionId: String) {
+        finishPendingTranscriptEntries(sessionId: sessionId)
+    }
+
+    private func settleLiveTurnTool(sessionId: String, callId: String) {
+        guard var timeline = liveTurns[sessionId], timeline.contains(callId: callId) else { return }
+        timeline.removeTool(callId: callId)
+        if timeline.isEmpty {
+            liveTurnTasks.removeValue(forKey: sessionId)?.cancel()
+            liveTurns.removeValue(forKey: sessionId)
+        } else {
+            liveTurns[sessionId] = timeline
+        }
+    }
+
+    private func settleLiveTurnAssistant(sessionId: String, entryId: String? = nil) {
+        guard var timeline = liveTurns[sessionId],
+              timeline.hasAssistantBlocks() else { return }
+        if let entryId, timeline.hasAssistantBlocks(entryId: entryId) {
+            timeline.removeAssistantBlocks(entryId: entryId)
+        } else {
+            timeline.removeAssistantBlocks()
+        }
+        if timeline.isEmpty {
+            liveTurnTasks.removeValue(forKey: sessionId)?.cancel()
+            liveTurns.removeValue(forKey: sessionId)
+        } else {
+            liveTurns[sessionId] = timeline
+        }
+    }
+
+    private func clearLiveTurn(sessionId: String) {
+        liveTurnTasks.removeValue(forKey: sessionId)?.cancel()
+        liveTurns.removeValue(forKey: sessionId)
+    }
+
+    private func appendDurableEntry(_ entry: TranscriptEntry, sessionId: String) {
+        var entries = liveEntries[sessionId] ?? []
+        guard !entries.contains(where: { $0.id == entry.id }) else { return }
+        entries.append(entry)
+        liveEntries[sessionId] = entries
+    }
+
+    private func finishPendingAssistantEntry(sessionId: String) {
+        finishPendingTranscriptEntries(sessionId: sessionId)
+    }
+
+    private func receiveToolEvent(sessionId: String, event: SessionEvent) {
+        var projection = liveTools[sessionId] ?? LiveToolProjection()
+        projection.apply(event)
+        if projection.calls.isEmpty { liveTools.removeValue(forKey: sessionId) }
+        else { liveTools[sessionId] = projection }
+        guard !projection.isCaughtUp, toolStreamingTasks[sessionId] == nil else { return }
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled, var next = self.liveTools[sessionId] {
+                let hasMore = next.advance()
+                self.liveTools[sessionId] = next
+                if !hasMore {
+                    self.finishPendingToolEntries(sessionId: sessionId)
+                    break
+                }
+                try? await Task.sleep(nanoseconds: 16_666_667)
+            }
+            if !Task.isCancelled { self.toolStreamingTasks[sessionId] = nil }
+        }
+        toolStreamingTasks[sessionId] = task
+    }
+
+    private func finishPendingToolEntries(sessionId: String) {
+        finishPendingTranscriptEntries(sessionId: sessionId)
+    }
+
+    private func enqueuePendingTranscriptEntry(_ entry: TranscriptEntry, sessionId: String) {
+        var pending = pendingTranscriptEntries[sessionId] ?? PendingTranscriptQueue()
+        pending.enqueue(entry)
+        pendingTranscriptEntries[sessionId] = pending
+    }
+
+    private func shouldDeferTranscriptEntry(_ entry: TranscriptEntry, sessionId: String) -> Bool {
+        if pendingTranscriptEntries[sessionId]?.isEmpty == false { return true }
+        return !pendingTranscriptEntryIsReady(entry, sessionId: sessionId)
+    }
+
+    private func pendingTranscriptEntryIsReady(
+        _ entry: TranscriptEntry,
+        sessionId: String
+    ) -> Bool {
+        if entry.kind == .message, entry.role != "user" {
+            if let timeline = liveTurns[sessionId] {
+                if timeline.hasAssistantBlocks(entryId: entry.id) {
+                    return timeline.assistantIsCaughtUp(entryId: entry.id)
+                }
+                if timeline.hasAssistantBlocks() {
+                    return timeline.assistantIsCaughtUp()
+                }
+            }
+            if let buffer = streamingMessages[sessionId] {
+                return buffer.isCaughtUp
+            }
+        }
+        if entry.kind == .toolUse, let callId = entry.toolCallId {
+            if let timeline = liveTurns[sessionId], timeline.contains(callId: callId) {
+                return timeline.toolIsCaughtUp(callId: callId)
+            }
+            if let projection = liveTools[sessionId],
+               projection.calls.contains(where: { $0.id == callId }) {
+                return projection.isCaughtUp
+            }
+        }
+        return true
+    }
+
+    private func finishPendingTranscriptEntries(sessionId: String) {
+        guard var pending = pendingTranscriptEntries[sessionId] else { return }
+        let finished = pending.drainReadyPrefix {
+            pendingTranscriptEntryIsReady($0, sessionId: sessionId)
+        }
+        if pending.isEmpty { pendingTranscriptEntries.removeValue(forKey: sessionId) }
+        else { pendingTranscriptEntries[sessionId] = pending }
+        for entry in finished {
+            appendDurableEntry(entry, sessionId: sessionId)
+            settleLiveProjection(for: entry, sessionId: sessionId)
+        }
+    }
+
+    private func settleLiveProjection(for entry: TranscriptEntry, sessionId: String) {
+        if entry.kind == .message, entry.role != "user" {
+            streamingText.removeValue(forKey: sessionId)
+            streamingMessages.removeValue(forKey: sessionId)
+            settleLiveTurnAssistant(sessionId: sessionId, entryId: entry.id)
+        }
+        if let callId = entry.toolCallId {
+            settleLiveTurnTool(sessionId: sessionId, callId: callId)
+            settleTool(sessionId: sessionId, callId: callId)
+        }
+    }
+
+    private func settleTool(sessionId: String, callId: String) {
+        guard var projection = liveTools[sessionId] else { return }
+        projection.remove(callId: callId)
+        if projection.calls.isEmpty {
+            toolStreamingTasks.removeValue(forKey: sessionId)?.cancel()
+            liveTools.removeValue(forKey: sessionId)
+        }
+        else { liveTools[sessionId] = projection }
+    }
 
     /// One-time migration of the prior dev-grade UserDefaults credentials
     /// into the Keychain. Copies any legacy endpoint/deviceId/deviceToken
@@ -500,7 +913,13 @@ final class T4SessionStore: ObservableObject {
     }
 
     private func acquireLease(sessionId: String, kind: LeaseKind = .prompt) async -> String? {
-        guard let client, connected, !hostId.isEmpty, var revision = revision(of: sessionId) else { return nil }
+        guard let client, connected, !hostId.isEmpty,
+              sessions.first(where: { $0.sessionId == sessionId })?.t4IsWritable == true,
+              var revision = revision(of: sessionId)
+        else {
+            lastError = "This session is read-only."
+            return nil
+        }
         for attempt in 0...1 {
             do {
                 let result = try await client.sendCommand(CommandIntent(
@@ -672,31 +1091,95 @@ final class T4SessionStore: ObservableObject {
         }
     }
 
-    /// Fork a session (session.fork) — a full-history copy. Session-scoped,
-    /// no revision/lease/confirmation, capability sessions.manage; sent
-    /// directly like session.attach. The result is the same {session} shape
-    /// as session.create, so we reuse sessionCreateResult(). After the host
-    /// confirms, refresh() surfaces the fork in the rail and we select it.
+    /// Copy an observer/unverified session into a fresh session this app owns.
+    /// The source is read-only and never mutated by `session.fork`.
     @discardableResult
-    func forkSession(sessionId: String) async -> SessionRef? {
-        guard let client, connected, !hostId.isEmpty else { return nil }
-        // Gate on sessions.manage: an unauthorized command gets the
-        // connection closed by the remote policy.
-        guard grantedCapabilities.contains("sessions.manage") else {
-            lastError = "Fork requires the sessions.manage capability."
+    func forkSession(sessionId: String, cwd: String? = nil) async -> SessionRef? {
+        guard let client, connected, !hostId.isEmpty, canForkSessions,
+              let source = sessions.first(where: { $0.sessionId == sessionId })
+        else { return nil }
+        switch source.sessionControl {
+        case .observer, .unverified:
+            break
+        default:
+            lastError = "This session does not need a read-only copy."
             return nil
         }
+        var args: [String: JSONValue] = [:]
+        if let cwd, !cwd.isEmpty { args["cwd"] = .string(cwd) }
         do {
             let result = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "session.fork", sessionId: sessionId))
-            let forked = try result.sessionCreateResult()
+                hostId: hostId, command: "session.fork", args: args,
+                sessionId: sessionId))
+            let created = try result.sessionCreateResult()
             await refresh()
-            select(forked)
-            return forked
+            let fresh = sessions.first(where: { $0.sessionId == created.sessionId }) ?? created
+            select(fresh)
+            return fresh
         } catch {
             t4log.error("forkSession failed: \(error)")
             lastError = "\(error)"
             return nil
+        }
+    }
+
+    /// Stop the app-owned writer and publish the terminal resume command.
+    /// The host issues a confirmation challenge before completing this call.
+    @discardableResult
+    func releaseSession(sessionId: String) async -> String? {
+        guard let client, connected, !hostId.isEmpty,
+              sessions.first(where: { $0.sessionId == sessionId })?.sessionControl == nil,
+              !activeTurns.contains(sessionId)
+        else { return nil }
+        var resumeCommand: String?
+        await withLease(sessionId: sessionId, kind: .controller) { leaseId in
+            guard let revision = revision(of: sessionId) else {
+                lastError = "session revision unknown"
+                return
+            }
+            do {
+                let result = try await client.sendCommand(CommandIntent(
+                    hostId: hostId,
+                    command: "session.release",
+                    args: ["leaseId": .string(leaseId)],
+                    sessionId: sessionId,
+                    expectedRevision: revision
+                ))
+                resumeCommand = try result.sessionReleaseResult()
+            } catch {
+                t4log.error("releaseSession failed: \(error)")
+                lastError = "\(error)"
+            }
+        }
+        if resumeCommand != nil { await refresh() }
+        return resumeCommand
+    }
+
+    /// Bring a released session back under appserver ownership.
+    func reclaimSession(sessionId: String) async {
+        guard let client, connected, !hostId.isEmpty,
+              case .released = sessions.first(where: { $0.sessionId == sessionId })?.sessionControl,
+              var revision = revision(of: sessionId)
+        else { return }
+        for attempt in 0...1 {
+            do {
+                let result = try await client.sendCommand(CommandIntent(
+                    hostId: hostId,
+                    command: "session.reclaim",
+                    sessionId: sessionId,
+                    expectedRevision: revision
+                ))
+                try result.sessionReclaimResult()
+                await refresh()
+                return
+            } catch {
+                if attempt == 0, let fresh = try? await refreshRevision(of: sessionId) {
+                    revision = fresh
+                    continue
+                }
+                t4log.error("reclaimSession failed: \(error)")
+                lastError = "\(error)"
+            }
         }
     }
 
@@ -727,9 +1210,58 @@ final class T4SessionStore: ObservableObject {
         _ = await control(sessionId: sessionId, command: "session.close", args: [:])
     }
 
-    /// Delete a session (session.delete). Same confirmation flow as close.
+    /// Archive is reversible: the host retains the transcript and artifacts,
+    /// while Current stops rendering the session.
+    func archiveSession(sessionId: String) async {
+        guard sessions.first(where: { $0.sessionId == sessionId })?.t4IsWritable == true else {
+            return
+        }
+        if await runLeaseFreeLifecycleCommand(sessionId: sessionId, command: "session.archive") {
+            await refresh()
+        }
+    }
+
+    /// Restore an archived session to Current.
+    func restoreSession(sessionId: String) async {
+        guard sessions.first(where: { $0.sessionId == sessionId })?.t4CanRestore == true else {
+            return
+        }
+        if await runLeaseFreeLifecycleCommand(sessionId: sessionId, command: "session.restore") {
+            await refresh()
+        }
+    }
+
+    /// Archive, restore, and archived-session delete are lifecycle mutations
+    /// rather than in-session writes. They intentionally bypass controller
+    /// leases because an archived session cannot acquire one.
+    private func runLeaseFreeLifecycleCommand(sessionId: String, command: String) async -> Bool {
+        guard let client, connected, !hostId.isEmpty,
+              let revision = revision(of: sessionId) else { return false }
+        do {
+            _ = try await client.sendCommand(CommandIntent(
+                hostId: hostId,
+                command: command,
+                sessionId: sessionId,
+                expectedRevision: revision
+            ))
+            return true
+        } catch {
+            lastError = "\(error)"
+            return false
+        }
+    }
+
+    /// Current sessions keep the controller-lease delete path. Archived
+    /// sessions dispatch the lifecycle command directly.
     func deleteSession(sessionId: String) async {
-        _ = await control(sessionId: sessionId, command: "session.delete", args: [:])
+        guard let session = sessions.first(where: { $0.sessionId == sessionId }) else { return }
+        if session.archivedAt != nil {
+            if await runLeaseFreeLifecycleCommand(sessionId: sessionId, command: "session.delete") {
+                await refresh()
+            }
+        } else {
+            _ = await control(sessionId: sessionId, command: "session.delete", args: [:])
+        }
     }
 
     /// Upload one JPEG: begin {mimeType,size,sha256} → chunk loop (base64,
@@ -760,6 +1292,39 @@ final class T4SessionStore: ObservableObject {
     static let demoMode = ProcessInfo.processInfo.arguments.contains("-T4Demo")
 
     init() {
+        let defaults = UserDefaults.standard
+        if ProcessInfo.processInfo.arguments.contains("-T4ResetRailPreferences") {
+            for key in [
+                Self.railListViewKey,
+                Self.railOrganizationKey,
+                Self.railSortKey,
+                Self.railPinnedSessionIdsKey,
+                Self.railProjectManualOrderKey,
+                Self.railSessionManualOrderKey,
+            ] {
+                defaults.removeObject(forKey: key)
+            }
+        }
+        self.sessionListView = T4SessionListView(
+            rawValue: defaults.string(forKey: Self.railListViewKey) ?? ""
+        ) ?? .current
+        self.railOrganization = T4RailOrganization(
+            rawValue: defaults.string(forKey: Self.railOrganizationKey) ?? ""
+        ) ?? .byProject
+        self.railSort = T4RailSort(
+            rawValue: defaults.string(forKey: Self.railSortKey) ?? ""
+        ) ?? .priority
+        self.pinnedSessionIds = Set(
+            defaults.stringArray(forKey: Self.railPinnedSessionIdsKey) ?? []
+        )
+        self.projectManualOrder =
+            defaults.stringArray(forKey: Self.railProjectManualOrderKey) ?? []
+        if let data = defaults.data(forKey: Self.railSessionManualOrderKey),
+           let decoded = try? JSONDecoder().decode([String: [String]].self, from: data) {
+            self.sessionManualOrderByScope = decoded
+        } else {
+            self.sessionManualOrderByScope = [:]
+        }
         Self.migrateCredentialsToKeychainIfNeeded()
         self.sessions = Self.demoMode ? Self.sample : []
         // Per-session region/tile layouts (UserDefaults JSON) — restored once
@@ -767,23 +1332,226 @@ final class T4SessionStore: ObservableObject {
         loadLayouts()
     }
 
-    /// Filtered + project-grouped view of the inventory (the rail model).
-    var groups: [Group] {
-        let filtered: [SessionRef]
-        if query.isEmpty {
-            filtered = sessions
+    var currentSessionCount: Int {
+        sessions.lazy.filter { $0.archivedAt == nil }.count
+    }
+
+    var archivedSessionCount: Int {
+        sessions.lazy.filter { $0.archivedAt != nil }.count
+    }
+
+    var pinnedSessions: [SessionRef] {
+        sortSessions(
+            filteredSessions.filter { pinnedSessionIds.contains($0.sessionId) },
+            scope: "__pinned__"
+        )
+    }
+
+    func setSessionListView(_ view: T4SessionListView) {
+        guard sessionListView != view else { return }
+        sessionListView = view
+        UserDefaults.standard.set(view.rawValue, forKey: Self.railListViewKey)
+        reconcileSelectionForVisibleList()
+    }
+
+    func setRailOrganization(_ organization: T4RailOrganization) {
+        guard railOrganization != organization else { return }
+        railOrganization = organization
+        UserDefaults.standard.set(organization.rawValue, forKey: Self.railOrganizationKey)
+    }
+
+    func setRailSort(_ sort: T4RailSort) {
+        guard railSort != sort else { return }
+        railSort = sort
+        UserDefaults.standard.set(sort.rawValue, forKey: Self.railSortKey)
+    }
+
+    func setRailFilter(_ filter: T4RailFilter) {
+        railFilter = filter
+    }
+
+    func setSessionPinned(_ sessionId: String, pinned: Bool) {
+        if pinned {
+            pinnedSessionIds.insert(sessionId)
         } else {
-            let q = query
-            filtered = sessions.filter {
-                $0.title.localizedCaseInsensitiveContains(q)
-                    || ($0.project.name ?? $0.project.projectId).localizedCaseInsensitiveContains(q)
-                    || $0.status.localizedCaseInsensitiveContains(q)
-                    || ($0.model ?? "").localizedCaseInsensitiveContains(q)
-            }
+            pinnedSessionIds.remove(sessionId)
         }
-        let keyed = Dictionary(grouping: filtered) { $0.project.name ?? $0.project.projectId }
-        return keyed.sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
-            .map { Group(project: $0.key, sessions: $0.value.sorted { $0.updatedAt > $1.updatedAt }) }
+        UserDefaults.standard.set(
+            pinnedSessionIds.sorted(),
+            forKey: Self.railPinnedSessionIdsKey
+        )
+    }
+
+    func moveSession(_ session: SessionRef, direction: Int) {
+        guard railSort == .manual, direction == -1 || direction == 1 else { return }
+        let scope = manualScope(for: session)
+        let visibleIds: [String]
+        if railOrganization == .flat {
+            visibleIds = filteredSessions.map(\.sessionId)
+        } else {
+            visibleIds = filteredSessions
+                .filter { $0.project.projectId == session.project.projectId }
+                .map(\.sessionId)
+        }
+        var order = normalizedManualOrder(
+            stored: sessionManualOrderByScope[scope] ?? [],
+            visibleIds: visibleIds
+        )
+        guard let index = order.firstIndex(of: session.sessionId) else { return }
+        let target = index + direction
+        guard target >= 0, target < visibleIds.count else { return }
+        order.swapAt(index, target)
+        sessionManualOrderByScope[scope] = order
+        persistSessionManualOrder()
+    }
+
+    func moveProject(_ projectId: String, direction: Int) {
+        guard railSort == .manual, railOrganization == .byProject,
+              direction == -1 || direction == 1 else { return }
+        let visibleIds = groups.map(\.projectId)
+        var order = normalizedManualOrder(stored: projectManualOrder, visibleIds: visibleIds)
+        guard let index = order.firstIndex(of: projectId) else { return }
+        let target = index + direction
+        guard target >= 0, target < visibleIds.count else { return }
+        order.swapAt(index, target)
+        projectManualOrder = order
+        UserDefaults.standard.set(order, forKey: Self.railProjectManualOrderKey)
+    }
+
+    private var filteredSessions: [SessionRef] {
+        let queryText = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return sessions.filter { session in
+            let archived = session.archivedAt != nil
+            guard archived == (sessionListView == .archived) else { return false }
+            guard matchesFilter(session) else { return false }
+            guard !queryText.isEmpty else { return true }
+            return [
+                session.title,
+                session.project.name ?? session.project.projectId,
+                session.status,
+                session.model ?? "",
+                session.hostId,
+            ].contains { $0.localizedCaseInsensitiveContains(queryText) }
+        }
+    }
+
+    /// Filtered + organized view of the inventory (the rail model).
+    var groups: [Group] {
+        let filtered = filteredSessions
+        if railOrganization == .flat {
+            return [
+                Group(
+                    projectId: "__flat__",
+                    project: sessionListView == .current
+                        ? "All current sessions"
+                        : "All archived sessions",
+                    sessions: sortSessions(filtered, scope: "__flat__")
+                ),
+            ].filter { !$0.sessions.isEmpty }
+        }
+        let keyed = Dictionary(grouping: filtered) { $0.project.projectId }
+        return keyed.compactMap { projectId, sessions -> Group? in
+            guard let first = sessions.first else { return nil }
+            return Group(
+                projectId: projectId,
+                project: first.project.name ?? first.project.projectId,
+                sessions: sortSessions(sessions, scope: projectId)
+            )
+        }.sorted(by: compareGroups)
+    }
+
+    private func matchesFilter(_ session: SessionRef) -> Bool {
+        switch railFilter {
+        case .all:
+            return true
+        case .attention:
+            return session.pendingApproval == true
+                || session.pendingUserInput == true
+                || ["pendingApproval", "awaitingInput", "planReady"].contains(session.status)
+        case .running:
+            return ["active", "working"].contains(session.status)
+        case .errors:
+            return ["error", "failed"].contains(session.status)
+        }
+    }
+
+    private func sessionPriority(_ session: SessionRef) -> Int {
+        if session.pendingApproval == true || session.status == "pendingApproval" { return 6 }
+        if session.pendingUserInput == true || session.status == "awaitingInput" { return 5 }
+        if ["active", "working"].contains(session.status) { return 4 }
+        if ["error", "failed"].contains(session.status) { return 2 }
+        if session.proposedPlan != nil || session.status == "planReady" { return 1 }
+        return 0
+    }
+
+    private func sortSessions(_ input: [SessionRef], scope: String) -> [SessionRef] {
+        let manualOrder = sessionManualOrderByScope[scope] ?? []
+        return input.sorted { left, right in
+            if railSort == .manual {
+                let leftRank = manualOrder.firstIndex(of: left.sessionId) ?? Int.max
+                let rightRank = manualOrder.firstIndex(of: right.sessionId) ?? Int.max
+                if leftRank != rightRank { return leftRank < rightRank }
+            }
+            if railSort == .priority {
+                let leftPriority = sessionPriority(left)
+                let rightPriority = sessionPriority(right)
+                if leftPriority != rightPriority { return leftPriority > rightPriority }
+            }
+            if left.updatedAt != right.updatedAt { return left.updatedAt > right.updatedAt }
+            return left.sessionId < right.sessionId
+        }
+    }
+
+    private func compareGroups(_ left: Group, _ right: Group) -> Bool {
+        if railSort == .manual {
+            let leftRank = projectManualOrder.firstIndex(of: left.projectId) ?? Int.max
+            let rightRank = projectManualOrder.firstIndex(of: right.projectId) ?? Int.max
+            if leftRank != rightRank { return leftRank < rightRank }
+        }
+        if railSort == .priority {
+            let leftPriority = left.sessions.map(sessionPriority).max() ?? 0
+            let rightPriority = right.sessions.map(sessionPriority).max() ?? 0
+            if leftPriority != rightPriority { return leftPriority > rightPriority }
+        }
+        let leftUpdated = left.sessions.map(\.updatedAt).max() ?? ""
+        let rightUpdated = right.sessions.map(\.updatedAt).max() ?? ""
+        if leftUpdated != rightUpdated { return leftUpdated > rightUpdated }
+        let nameOrder = left.project.localizedCaseInsensitiveCompare(right.project)
+        if nameOrder != .orderedSame { return nameOrder == .orderedAscending }
+        return left.projectId < right.projectId
+    }
+
+    private func manualScope(for session: SessionRef) -> String {
+        railOrganization == .flat ? "__flat__" : session.project.projectId
+    }
+
+    private func normalizedManualOrder(stored: [String], visibleIds: [String]) -> [String] {
+        var seen = Set<String>()
+        let visible = Set(visibleIds)
+        var result = stored.filter { visible.contains($0) && seen.insert($0).inserted }
+        result.append(contentsOf: visibleIds.filter { seen.insert($0).inserted })
+        result.append(contentsOf: stored.filter { !visible.contains($0) && seen.insert($0).inserted })
+        return result
+    }
+
+    private func persistSessionManualOrder() {
+        guard let data = try? JSONEncoder().encode(sessionManualOrderByScope) else { return }
+        UserDefaults.standard.set(data, forKey: Self.railSessionManualOrderKey)
+    }
+
+    private func reconcileSelectionForVisibleList() {
+        if let selectedSession,
+           (selectedSession.archivedAt != nil) == (sessionListView == .archived) {
+            return
+        }
+        select(sessions.first {
+            ($0.archivedAt != nil) == (sessionListView == .archived)
+        })
+    }
+
+    func selectDefaultVisibleSessionIfNeeded() {
+        guard selectedSession == nil else { return }
+        reconcileSelectionForVisibleList()
     }
 
     // MARK: - Attention inbox
@@ -883,6 +1651,7 @@ final class T4SessionStore: ObservableObject {
         "session.delta", "files.list", "files.diff", "terminal.io",
         "preview.control", "files.search", "transcript.search",
         "session.watch", "host.watch", "project.reveal",
+        "session.observer", "session.unverified", "session.fork",
     ]
 
     /// Transport for an endpoint. `wss://` gets a pinning session (TOFU leaf
@@ -916,6 +1685,7 @@ final class T4SessionStore: ObservableObject {
             hostId = welcome.hostId
             hostInfo = HostInfo(hostId: welcome.hostId, ompVersion: welcome.ompVersion, appserverVersion: welcome.appserverVersion)
             grantedCapabilities = welcome.grantedCapabilities
+            grantedFeatures = Set(welcome.grantedFeatures)
             connected = welcome.authentication == .paired || welcome.authentication == .local
             if connected {
                 pairedEndpoint = endpoint.absoluteString
@@ -962,6 +1732,8 @@ final class T4SessionStore: ObservableObject {
             hostInfo = HostInfo(hostId: welcome.hostId, ompVersion: welcome.ompVersion, appserverVersion: welcome.appserverVersion)
             if welcome.authentication == .paired || welcome.authentication == .local {
                 // Open host — no pairing round-trip needed.
+                grantedCapabilities = welcome.grantedCapabilities
+                grantedFeatures = Set(welcome.grantedFeatures)
                 connected = true
                 pairedEndpoint = endpoint.absoluteString
                 persist(endpoint: endpoint, authentication: nil)
@@ -1029,15 +1801,14 @@ final class T4SessionStore: ObservableObject {
     /// the most recent live session; a surviving one gets the fresh ref.
     private func reconcileSelection() {
         guard let selected = selectedSession else {
-            selectedSession = sessions.first
-            if let s = selectedSession { unreadSessions.remove(s.sessionId) }
+            reconcileSelectionForVisibleList()
             return
         }
-        if let fresh = sessions.first(where: { $0.sessionId == selected.sessionId }) {
+        if let fresh = sessions.first(where: { $0.sessionId == selected.sessionId }),
+           (fresh.archivedAt != nil) == (sessionListView == .archived) {
             selectedSession = fresh
         } else {
-            selectedSession = sessions.first
-            if let s = selectedSession { unreadSessions.remove(s.sessionId) }
+            reconcileSelectionForVisibleList()
         }
     }
 
@@ -1840,27 +2611,31 @@ final class T4SessionStore: ObservableObject {
                 markLive()
                 reconcileSelection()
             case .snapshot(let snapshot):
+                clearStreamingMessage(sessionId: snapshot.sessionId)
+                clearLiveTurn(sessionId: snapshot.sessionId)
+                pendingTranscriptEntries.removeValue(forKey: snapshot.sessionId)
+                toolStreamingTasks.removeValue(forKey: snapshot.sessionId)?.cancel()
+                liveTools.removeValue(forKey: snapshot.sessionId)
                 liveEntries[snapshot.sessionId] = snapshot.entries.map { TranscriptEntry(from: $0) }
                 // The snapshot is the live tail at the current cursor; older
                 // history paging restarts from unknown (hasMore = nil).
                 pagingState[snapshot.sessionId] = TranscriptPaging(nextCursor: nil, hasMore: nil, loading: false)
             case .entry(let entryFrame):
-                var entries = liveEntries[entryFrame.sessionId] ?? []
                 let entry = TranscriptEntry(from: entryFrame.entry)
-                if !entries.contains(where: { $0.id == entry.id }) {
-                    entries.append(entry)
-                    liveEntries[entryFrame.sessionId] = entries
-                    // A durable entry on a session the user isn't viewing → unread dot.
-                    if entryFrame.sessionId != selectedSession?.sessionId {
-                        unreadSessions.insert(entryFrame.sessionId)
-                    }
+                let sid = entryFrame.sessionId
+                let wasKnown = liveEntries[sid]?.contains(where: { $0.id == entry.id }) == true
+                if shouldDeferTranscriptEntry(entry, sessionId: sid) {
+                    enqueuePendingTranscriptEntry(entry, sessionId: sid)
+                    finishPendingTranscriptEntries(sessionId: sid)
+                } else {
+                    appendDurableEntry(entry, sessionId: sid)
+                    settleLiveProjection(for: entry, sessionId: sid)
                 }
-                // De-dupe with the live tail: when the durable assistant
-                // message entry lands, the in-progress streaming text is now
-                // redundant — drop it so the transcript doesn't double-render.
-                if entry.kind == .message, entry.role != "user",
-                   streamingText[entryFrame.sessionId] != nil {
-                    streamingText.removeValue(forKey: entryFrame.sessionId)
+                if !wasKnown {
+                    // A durable entry on a session the user isn't viewing → unread dot.
+                    if sid != selectedSession?.sessionId {
+                        unreadSessions.insert(sid)
+                    }
                 }
             case .confirmation(let challenge):
                 pendingConfirmation = challenge
@@ -1887,16 +2662,38 @@ final class T4SessionStore: ObservableObject {
                     activeTurns.insert(sid)
                 case "turn.end", "turn.error":
                     activeTurns.remove(sid)
+                    streamingText.removeValue(forKey: sid)
+                    if liveTurns[sid] == nil {
+                        finishPendingToolEntries(sessionId: sid)
+                        toolStreamingTasks.removeValue(forKey: sid)?.cancel()
+                        liveTools.removeValue(forKey: sid)
+                    } else {
+                        scheduleLiveTurnFrames(sessionId: sid)
+                    }
                     Task { await refreshTodos(sessionId: sid) }
+                case "assistant.block.update":
+                    receiveLiveTurnBlock(sessionId: sid, event: frame.event)
                 case "message.update":
                     // Only stream the assistant voice; user echoes are sent
                     // by the client itself and settle immediately.
                     if case .string(let role) = frame.event.fields["role"], role == "assistant",
                        case .string(let text) = frame.event.fields["text"] {
                         streamingText[sid] = text
+                        let reasoning: String
+                        if case .string(let value) = frame.event.fields["reasoning"] { reasoning = value }
+                        else { reasoning = "" }
+                        receiveStreamingMessage(sessionId: sid, text: text, reasoning: reasoning)
                     }
-                case "message.settled", "message.discarded", "turn.end":
+                case "message.settled":
+                    break
+                case "message.discarded":
                     streamingText.removeValue(forKey: sid)
+                    clearStreamingMessage(sessionId: sid)
+                    clearLiveTurn(sessionId: sid)
+                case "tool.input.update", "tool.start", "tool.progress", "tool.result":
+                    if !receiveLiveTurnToolLifecycle(sessionId: sid, event: frame.event) {
+                        receiveToolEvent(sessionId: sid, event: frame.event)
+                    }
                 default:
                     break
                 }
@@ -2030,11 +2827,22 @@ final class T4SessionStore: ObservableObject {
         hostId = ""
         hostInfo = nil
         grantedCapabilities.removeAll()
+        grantedFeatures.removeAll()
         sessions.removeAll()
         selectedSession = nil
         unreadSessions.removeAll()
         liveEntries.removeAll()
         streamingText.removeAll()
+        for task in streamingTasks.values { task.cancel() }
+        streamingTasks.removeAll()
+        for task in liveTurnTasks.values { task.cancel() }
+        liveTurnTasks.removeAll()
+        for task in toolStreamingTasks.values { task.cancel() }
+        toolStreamingTasks.removeAll()
+        streamingMessages.removeAll()
+        liveTurns.removeAll()
+        liveTools.removeAll()
+        pendingTranscriptEntries.removeAll()
         activeTurns.removeAll()
         todoPhasesBySession.removeAll()
         catalog.removeAll()
@@ -2067,7 +2875,8 @@ final class T4SessionStore: ObservableObject {
         {"hostId":"studio-mac","sessionId":"s1","project":{"projectId":"t4code","name":"T4 Code"},"revision":"r1","title":"iOS session rail","status":"active","updatedAt":"2026-07-24T11:00:00Z","model":"gpt-5.2","pendingUserInput":true,"contextUsage":{"used":7,"limit":200}},
         {"hostId":"studio-mac","sessionId":"s2","project":{"projectId":"t4code","name":"T4 Code"},"revision":"r2","title":"Host-wire Swift port","status":"closed","updatedAt":"2026-07-20T08:00:00Z","model":"gpt-5.2"},
         {"hostId":"studio-mac","sessionId":"s3","project":{"projectId":"t4code","name":"T4 Code"},"revision":"r3","title":"Agent view","status":"idle","updatedAt":"2026-07-24T08:30:00Z","model":"devin/swe-1-7","contextUsage":{"used":88,"limit":200}},
-        {"hostId":"studio-mac","sessionId":"s4","project":{"projectId":"t4code","name":"T4 Code"},"revision":"r4","title":"Hosts & usage","status":"active","updatedAt":"2026-07-24T12:10:00Z","model":"gpt-5.2","pendingApproval":true,"contextUsage":{"used":33,"limit":200}}
+        {"hostId":"studio-mac","sessionId":"s4","project":{"projectId":"t4code","name":"T4 Code"},"revision":"r4","title":"Hosts & usage","status":"active","updatedAt":"2026-07-24T12:10:00Z","model":"gpt-5.2","pendingApproval":true,"contextUsage":{"used":33,"limit":200}},
+        {"hostId":"studio-mac","sessionId":"s5","project":{"projectId":"archive","name":"Archived work"},"revision":"r5","title":"Finished release audit","status":"closed","updatedAt":"2026-07-18T17:00:00Z","archivedAt":"2026-07-19T09:00:00.000Z","model":"gpt-5.2"}
         ]
         """
         let decoder = JSONDecoder()
