@@ -13,6 +13,12 @@ async function fixture(mutator = () => {}) {
   await mkdir(path.join(root, "compat"), { recursive: true });
   await mkdir(path.join(root, "provenance"), { recursive: true });
   await mkdir(path.join(root, "docs/adr"), { recursive: true });
+  await mkdir(path.join(root, "packages/t4-api-contract"), { recursive: true });
+  await mkdir(path.join(root, "packages/host-wire/src"), { recursive: true });
+  await mkdir(
+    path.join(root, "vendor/cmux-machine-provider-v1/upstream/cmux-tui/crates/cmux-tui-machine-protocol/src"),
+    { recursive: true },
+  );
   await writeFile(
     path.join(root, "provenance/cmux-machine-provider-v1.json"),
     await readFile(path.join(repositoryRoot, "provenance/cmux-machine-provider-v1.json")),
@@ -24,6 +30,31 @@ async function fixture(mutator = () => {}) {
   await writeFile(
     path.join(root, "docs/adr/021-portable-driver-control-contracts.md"),
     await readFile(path.join(repositoryRoot, "docs/adr/021-portable-driver-control-contracts.md")),
+  );
+  await writeFile(
+    path.join(root, "docs/adr/022-portable-identity-authorization-contract.md"),
+    await readFile(path.join(repositoryRoot, "docs/adr/022-portable-identity-authorization-contract.md")),
+  );
+  await writeFile(
+    path.join(root, "packages/t4-api-contract/openapi.json"),
+    await readFile(path.join(repositoryRoot, "packages/t4-api-contract/openapi.json")),
+  );
+  await writeFile(
+    path.join(root, "packages/host-wire/src/command.ts"),
+    await readFile(path.join(repositoryRoot, "packages/host-wire/src/command.ts")),
+  );
+  await writeFile(
+    path.join(root, "packages/host-wire/src/envelope.ts"),
+    await readFile(path.join(repositoryRoot, "packages/host-wire/src/envelope.ts")),
+  );
+  await writeFile(
+    path.join(root, "vendor/cmux-machine-provider-v1/upstream/cmux-tui/crates/cmux-tui-machine-protocol/src/lib.rs"),
+    await readFile(
+      path.join(
+        repositoryRoot,
+        "vendor/cmux-machine-provider-v1/upstream/cmux-tui/crates/cmux-tui-machine-protocol/src/lib.rs",
+      ),
+    ),
   );
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   mutator(manifest);
@@ -486,5 +517,283 @@ test("rejects backend coordinate and edge endpoint field leakage in route descri
     result.failures.some((failure) =>
       failure.includes("leaks a backend coordinate or edge endpoint field"),
     ),
+  );
+});
+
+test("rejects portable authorization-contract manifest and ADR digest drift", async () => {
+  const manifestRoot = await fixture((manifest) => {
+    manifest.portableAuthorizationContracts.documentationSha256 = "a".repeat(64);
+  });
+  const manifestResult = await checkPortablePlatformBaseline(manifestRoot);
+  assert(
+    manifestResult.failures.some((failure) => failure.includes("portableAuthorizationContracts")),
+    "missing portable authorization-contract manifest drift diagnostic",
+  );
+
+  const adrRoot = await fixture();
+  await writeFile(path.join(adrRoot, "docs/adr/022-portable-identity-authorization-contract.md"), "drift\n");
+  const adrResult = await checkPortablePlatformBaseline(adrRoot);
+  assert(
+    adrResult.failures.some((failure) =>
+      failure.includes("portableAuthorizationContracts.documentationSha256"),
+    ),
+    "missing portable authorization-contract ADR digest diagnostic",
+  );
+});
+
+const weakenedAuthorizationContractCases = [
+  ["adapter proves principal", (contract) => {
+    contract.interfaces.IdentityAdapter.provesOnly = "principal";
+  }],
+  ["client principal authority", (contract) => {
+    contract.serverDerivedAuthorities.shift();
+  }],
+  ["unknown action fail open", (contract) => {
+    contract.policy.unknownAction = "allow";
+  }],
+  ["missing capability intersection factor", (contract) => {
+    contract.capabilities.formula.splice(2, 1);
+  }],
+  ["client capability widening", (contract) => {
+    contract.capabilities.clientRequestMayOnlyNarrow = false;
+  }],
+  ["trusted proxy immediate-peer shortcut", (contract) => {
+    contract.trustedProxy.immediatePeerTrustRequired = false;
+  }],
+  ["trusted proxy scope shortcut", (contract) => {
+    contract.trustedProxy.neverSupplies = ["principalId"];
+  }],
+  ["implicit owner role grant", (contract) => {
+    contract.roles.implicitOwnerGrantAllowed = true;
+  }],
+  ["implicit admin role grant", (contract) => {
+    contract.roles.implicitAdminGrantAllowed = true;
+  }],
+  ["authority collapse", (contract) => {
+    contract.distinctAuthorities = ["identityEvidence", "authorization"];
+  }],
+  ["grant invalidation omission", (contract) => {
+    contract.grantInvalidation.pop();
+  }],
+  ["connection descriptor omission weakening", (contract) => {
+    contract.connectionDescriptors.omitUnauthorizedTransports = false;
+  }],
+  ["cross-scope existence disclosure", (contract) => {
+    contract.concealment.existenceLeakAllowed = true;
+  }],
+  ["confirmation without current reauthorization", (contract) => {
+    contract.confirmation.consume = "accept-cached-confirmation";
+  }],
+  ["WSS frame bypass", (contract) => {
+    contract.ompAppWss.authorizeEveryFrame = false;
+  }],
+  ["SSH shell escape", (contract) => {
+    contract.ssh.shell = "allow";
+  }],
+  ["internal workload authority collapse", (contract) => {
+    contract.internalRoute.workloadIdentityImpliesEdgeAuthority = true;
+  }],
+  ["unbounded decision logging", (contract) => {
+    delete contract.decisionLog.maximumRecordBytes;
+  }],
+  ["audit persistence scope expansion", (contract) => {
+    contract.decisionLog.persistenceRequiredByP006 = true;
+  }],
+  ["required identity adapter category omission", (contract) => {
+    contract.identityAdapters.categories.pop();
+  }],
+  ["Tailscale-only identity contract", (contract) => {
+    contract.identityAdapters.tailscaleOnlyContractAllowed = true;
+  }],
+  ["provider subject escapes adapter", (contract) => {
+    contract.identityAdapters.stableProviderSubjectVisibility = "portable-principal";
+  }],
+  ["principal resolution metadata omission", (contract) => {
+    contract.interfaces.PrincipalResolver.output.pop();
+  }],
+  ["authorization decision output weakening", (contract) => {
+    contract.interfaces.AuthorizationChecker.output = ["allow", "deny"];
+  }],
+  ["canonical minimum action omission", (contract) => {
+    contract.canonicalActions.pop();
+  }],
+  ["REST canonical action mapping omission", (contract) => {
+    contract.rest.operations.putRuntime.canonicalActions = [];
+  }],
+  ["command canonical mapping drift", (contract) => {
+    delete contract.ompAppWss.commandCanonicalActions["settings.write"];
+  }],
+  ["confirmation action omission", (contract) => {
+    contract.confirmation.requiredActions.shift();
+  }],
+  ["trusted proxy duplicate-header shortcut", (contract) => {
+    contract.trustedProxy.duplicateIdentityHeader = "first-wins";
+  }],
+  ["trusted proxy unknown-adapter shortcut", (contract) => {
+    contract.trustedProxy.unknownOrDisabledAdapter = "accept";
+  }],
+  ["direct cmux semantic translation", (contract) => {
+    contract.directCmuxWss.semanticTranslationAllowed = true;
+  }],
+  ["direct cmux per-frame action protocol", (contract) => {
+    contract.directCmuxWss.perFrameActionDecodingAllowed = true;
+  }],
+  ["SSH optional command advertised while disabled", (contract) => {
+    contract.ssh.disabledOptionalCommand = "advertise";
+  }],
+  ["SSH attach PTY weakening", (contract) => {
+    contract.ssh.optionalCommands["omperator attach <runtime-id>"].pty = "optional";
+  }],
+  ["provider control connection-time grant", (contract) => {
+    contract.ssh.providerControl.authorizeEveryRequest = false;
+  }],
+  ["provider control lifecycle mapping omission", (contract) => {
+    delete contract.ssh.providerControl.methodCanonicalActions.delete_machine;
+  }],
+  ["runtime patch desired-state action drift", (contract) => {
+    contract.rest.operations.patchRuntime.canonicalActionResolver.desiredStateActions.Running = ["scope.admin"];
+  }],
+  ["runtime patch administrative field omission", (contract) => {
+    delete contract.rest.operations.patchRuntime.canonicalActionResolver.fieldActions.browserPolicy;
+  }],
+  ["runtime patch multi-field union weakening", (contract) => {
+    contract.rest.operations.patchRuntime.canonicalActionResolver.multiField = "first-match";
+  }],
+  ["runtime patch unknown field fail open", (contract) => {
+    contract.rest.operations.patchRuntime.canonicalActionResolver.unknownField = "ignore";
+  }],
+  ["runtime patch unknown value fail open", (contract) => {
+    contract.rest.operations.patchRuntime.canonicalActionResolver.unknownValue = "ignore";
+  }],
+  ["runtime patch finer action omission", (contract) => {
+    contract.rest.operations.patchRuntime.action = "scope.admin";
+  }],
+  ["command confirmation registry omission", (contract) => {
+    contract.ompAppWss.challengeCommandDescriptorKeys.pop();
+  }],
+  ["non-challenge confirmation fail open", (contract) => {
+    contract.ompAppWss.nonChallengeConfirmation = "challenge";
+  }],
+];
+
+for (const [name, weaken] of weakenedAuthorizationContractCases) {
+  test(`rejects weakened portable authorization contract: ${name}`, async () => {
+    const root = await fixture((manifest) => weaken(manifest.portableAuthorizationContracts));
+    const result = await checkPortablePlatformBaseline(root);
+    assert(
+      result.failures.some((failure) =>
+        failure.includes(`portableAuthorizationContracts semantic invariant "${name}"`),
+      ),
+      `missing specific semantic diagnostic for ${name}`,
+    );
+  });
+}
+
+test("rejects identity-provider and backend-specific authorization fields", async () => {
+  const root = await fixture((manifest) => {
+    manifest.portableAuthorizationContracts.identityProvider = "tailscale";
+  });
+  const result = await checkPortablePlatformBaseline(root);
+  assert(
+    result.failures.some((failure) =>
+      failure.includes("backend or identity-provider-specific contract field"),
+    ),
+  );
+});
+
+test("rejects OpenAPI operationId registry drift", async () => {
+  const root = await fixture();
+  const openApiPath = path.join(root, "packages/t4-api-contract/openapi.json");
+  const openApi = JSON.parse(await readFile(openApiPath, "utf8"));
+  openApi.paths["/v1/drift"] = {
+    get: { operationId: "driftOperation" },
+  };
+  await writeFile(openApiPath, `${JSON.stringify(openApi, null, 2)}\n`);
+  const result = await checkPortablePlatformBaseline(root);
+  assert(
+    result.failures.some((failure) => failure.includes("operationId registry")),
+    "missing OpenAPI authorization-registry drift diagnostic",
+  );
+});
+
+test("rejects COMMAND_DESCRIPTORS catalog drift", async () => {
+  const root = await fixture();
+  const commandPath = path.join(root, "packages/host-wire/src/command.ts");
+  const source = await readFile(commandPath, "utf8");
+  const marker = "export const COMMAND_DESCRIPTORS: Readonly<Record<string, CommandDescriptor>> = {";
+  await writeFile(commandPath, source.replace(marker, `${marker}\n\t"drift.command": {\n\t},`));
+  const result = await checkPortablePlatformBaseline(root);
+  assert(
+    result.failures.some((failure) => failure.includes("commandDescriptorKeys")),
+    "missing command authorization-registry drift diagnostic",
+  );
+});
+
+test("rejects client-frame catalog drift", async () => {
+  const root = await fixture();
+  const envelopePath = path.join(root, "packages/host-wire/src/envelope.ts");
+  const source = await readFile(envelopePath, "utf8");
+  const marker = "\t\tcase \"hello\":";
+  await writeFile(envelopePath, source.replace(marker, `\t\tcase "drift.frame":\n${marker}`));
+  const result = await checkPortablePlatformBaseline(root);
+  assert(
+    result.failures.some((failure) => failure.includes("frameActions")),
+    "missing client-frame authorization-registry drift diagnostic",
+  );
+});
+
+test("rejects machine-provider control method drift", async () => {
+  const root = await fixture();
+  const providerPath = path.join(
+    root,
+    "vendor/cmux-machine-provider-v1/upstream/cmux-tui/crates/cmux-tui-machine-protocol/src/lib.rs",
+  );
+  const source = await readFile(providerPath, "utf8");
+  const marker = "pub enum ProviderRequest {";
+  await writeFile(providerPath, source.replace(marker, `${marker}\n    Drift(HelloParams),`));
+  const result = await checkPortablePlatformBaseline(root);
+  assert(
+    result.failures.some((failure) => failure.includes("methodCanonicalActions")),
+    "missing provider-control authorization-registry drift diagnostic",
+  );
+});
+
+test("rejects COMMAND_DESCRIPTORS confirmation drift", async () => {
+  const root = await fixture();
+  const commandPath = path.join(root, "packages/host-wire/src/command.ts");
+  const source = await readFile(commandPath, "utf8");
+  await writeFile(commandPath, source.replace('\t\tconfirmation: "challenge",', '\t\tconfirmation: "none",'));
+  const result = await checkPortablePlatformBaseline(root);
+  assert(
+    result.failures.some((failure) => failure.includes("challengeCommandDescriptorKeys")),
+    "missing command confirmation-registry drift diagnostic",
+  );
+});
+
+test("rejects RuntimePatch property registry drift", async () => {
+  const root = await fixture();
+  const openApiPath = path.join(root, "packages/t4-api-contract/openapi.json");
+  const openApi = JSON.parse(await readFile(openApiPath, "utf8"));
+  openApi.components.schemas.RuntimePatch.properties.futureField = {
+    $ref: "#/components/schemas/DisplayName",
+  };
+  await writeFile(openApiPath, `${JSON.stringify(openApi, null, 2)}\n`);
+  const result = await checkPortablePlatformBaseline(root);
+  assert(
+    result.failures.some((failure) => failure.includes("RuntimePatch schema property registry")),
+    "missing RuntimePatch property-registry drift diagnostic",
+  );
+});
+
+test("rejects DesiredState enum registry drift", async () => {
+  const root = await fixture();
+  const openApiPath = path.join(root, "packages/t4-api-contract/openapi.json");
+  const openApi = JSON.parse(await readFile(openApiPath, "utf8"));
+  openApi.components.schemas.DesiredState.enum.push("Paused");
+  await writeFile(openApiPath, `${JSON.stringify(openApi, null, 2)}\n`);
+  const result = await checkPortablePlatformBaseline(root);
+  assert(
+    result.failures.some((failure) => failure.includes("DesiredState registry")),
+    "missing DesiredState authorization-registry drift diagnostic",
   );
 });
