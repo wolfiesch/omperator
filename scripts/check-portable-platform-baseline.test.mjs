@@ -40,6 +40,10 @@ async function fixture(mutator = () => {}) {
     await readFile(path.join(repositoryRoot, "docs/adr/023-portable-lifecycle-state-machines.md")),
   );
   await writeFile(
+    path.join(root, "docs/adr/024-portable-threat-model.md"),
+    await readFile(path.join(repositoryRoot, "docs/adr/024-portable-threat-model.md")),
+  );
+  await writeFile(
     path.join(root, "packages/t4-api-contract/openapi.json"),
     await readFile(path.join(repositoryRoot, "packages/t4-api-contract/openapi.json")),
   );
@@ -979,3 +983,119 @@ test("rejects DesiredState enum registry drift", async () => {
     "missing DesiredState authorization-registry drift diagnostic",
   );
 });
+
+test("rejects portable threat-model manifest and ADR digest drift", async () => {
+  const manifestRoot = await fixture((manifest) => {
+    manifest.portableThreatModel.documentationSha256 = "a".repeat(64);
+  });
+  const manifestResult = await checkPortablePlatformBaseline(manifestRoot);
+  assert(
+    manifestResult.failures.some((failure) => failure.includes("portableThreatModel")),
+    "missing portable threat-model manifest drift diagnostic",
+  );
+
+  const adrRoot = await fixture();
+  await writeFile(path.join(adrRoot, "docs/adr/024-portable-threat-model.md"), "drift\n");
+  const adrResult = await checkPortablePlatformBaseline(adrRoot);
+  assert(
+    adrResult.failures.some((failure) =>
+      failure.includes("portableThreatModel.documentationSha256"),
+    ),
+    "missing portable threat-model ADR digest diagnostic",
+  );
+});
+
+const weakenedThreatModelCases = [
+  ["ticket replay", (contract) => {
+    contract.ticketReplay.maximumTtlSeconds = 61;
+  }],
+  ["sender identity", (contract) => {
+    contract.senderIdentity.clientClaimsAuthoritative = true;
+  }],
+  ["shell/path injection", (contract) => {
+    contract.shellPathInjection.shellEnabled = true;
+  }],
+  ["credential exposure", (contract) => {
+    contract.credentialExposure.surfaces =
+      contract.credentialExposure.surfaces.filter((surface) => surface !== "logs");
+  }],
+  ["cross-scope access", (contract) => {
+    contract.crossScopeAccess.existenceLeakAllowed = true;
+  }],
+  ["duplicate writers", (contract) => {
+    contract.duplicateWriters.writerCapableProcessGroupsPerRuntimeMaximum = 2;
+  }],
+  ["runtime isolation", (contract) => {
+    contract.runtimeIsolation.cdpExternalReachability = "allow";
+  }],
+  ["audit leakage", (contract) => {
+    contract.auditLeakage.loggingFailureMayAllow = true;
+  }],
+];
+
+for (const [name, weaken] of weakenedThreatModelCases) {
+  test(`rejects weakened portable threat model: ${name}`, async () => {
+    const root = await fixture((manifest) => weaken(manifest.portableThreatModel));
+    const result = await checkPortablePlatformBaseline(root);
+    assert(
+      result.failures.some((failure) =>
+        failure.includes(`portableThreatModel semantic invariant "${name}"`),
+      ),
+      `missing independent portable threat-model diagnostic for ${name}`,
+    );
+  });
+}
+
+test("rejects weakened portable threat model: backend object and storage admission", async () => {
+  const root = await fixture((manifest) => {
+    manifest.portableThreatModel.runtimeIsolation.workspaceMountAuthorization = "client-claimed";
+  });
+  const result = await checkPortablePlatformBaseline(root);
+  assert(
+    result.failures.some((failure) =>
+      failure.includes('portableThreatModel semantic invariant "runtime isolation"'),
+    ),
+    "missing independent backend object and storage admission diagnostic",
+  );
+});
+
+const weakenedThreatCrossContractCases = [
+  ["ticket controls must strengthen control and authorization bindings", (manifest) => {
+    manifest.portableControlContracts.tickets.consumption = "read-then-delete";
+  }],
+  ["sender and scope authority must remain server-derived", (manifest) => {
+    manifest.portableAuthorizationContracts.interfaces.ResourceScopeResolver.clientClaimsAuthoritative = true;
+  }],
+  ["scope-qualified records and concealment must agree", (manifest) => {
+    manifest.portableControlContracts.idempotency.lookupKey =
+      manifest.portableControlContracts.idempotency.lookupKey.filter((field) => field !== "scopeId");
+  }],
+  ["shell controls must retain the SSH deny contract", (manifest) => {
+    manifest.portableAuthorizationContracts.ssh.shell = "allow";
+  }],
+  ["writer controls must retain topology and lifecycle fencing", (manifest) => {
+    manifest.portableLifecycleContracts.generationMachine.fenceUncertainBlocks.pop();
+  }],
+  ["runtime isolation must retain internal RPC and generation fencing", (manifest) => {
+    manifest.runtimeTopology.rawRpcNetworkExposureAllowed = true;
+  }],
+  ["browser isolation must retain lifecycle fencing", (manifest) => {
+    manifest.portableLifecycleContracts.snapshotRestore.oneSnapshotAttachedToTwoLiveRuntimesAllowed = true;
+  }],
+  ["credential and audit exclusions must retain authorization redaction", (manifest) => {
+    manifest.portableAuthorizationContracts.decisionLog.excluded.pop();
+  }],
+];
+
+for (const [name, weaken] of weakenedThreatCrossContractCases) {
+  test(`rejects weakened portable threat-model relationship: ${name}`, async () => {
+    const root = await fixture(weaken);
+    const result = await checkPortablePlatformBaseline(root);
+    assert(
+      result.failures.some((failure) =>
+        failure.includes(`portableThreatModel cross-contract invariant "${name}"`),
+      ),
+      `missing portable threat-model cross-contract diagnostic for ${name}`,
+    );
+  });
+}

@@ -43,6 +43,9 @@ const expected = Object.freeze({
   lifecycleDocumentation: "docs/adr/023-portable-lifecycle-state-machines.md",
   lifecycleDocumentationSha256: "7dd48e64ae618e9cc31ec52fa2285195e79f9af79499f0a01176451c7a181944",
   lifecycleContractsSha256: "552b62ff96873215c7fda259acb6e7203dca98ddb722d78607371786d8d71eb6",
+  threatModelDocumentation: "docs/adr/024-portable-threat-model.md",
+  threatModelDocumentationSha256: "02bb964d1c4599543f7897ac4f1b1a49c75e195c90f57700d85a061617f280af",
+  threatModelContractsSha256: "602627ce2439215365847f360d27d7303ea70eed411b426db7d76d4120aa13b4",
   controlContracts: {
     decision: "backend-neutral-driver-and-control-store",
     documentation: "docs/adr/021-portable-driver-control-contracts.md",
@@ -567,6 +570,198 @@ const lifecycleSemanticInvariants = [
     c?.legacyCrdCompatibility?.missingDesiredStateDefault === "Running" &&
     c?.legacyCrdCompatibility?.newFieldsRequired === false &&
     c?.legacyCrdCompatibility?.existingPersistedObjectsRemainValid === true],
+];
+
+const threatModelSemanticInvariants = [
+  ["ticket replay", (c) =>
+    c?.ticketReplay?.storedMaterial === "sha256-digest-only" &&
+    c?.ticketReplay?.plaintextRetentionAllowed === false &&
+    sameJson(c?.ticketReplay?.boundTo, [
+      "runtimeId", "runtimeGeneration", "providerControlGeneration", "purpose",
+      "audience", "principalId", "scopeId",
+    ]) &&
+    c?.ticketReplay?.currentGenerationRequired === true &&
+    c?.ticketReplay?.maximumTtlSeconds === 60 &&
+    c?.ticketReplay?.consumption === "atomic-compare-and-delete" &&
+    c?.ticketReplay?.singleUse === true &&
+    c?.ticketReplay?.replicaSafe === true &&
+    c?.ticketReplay?.mismatchOrUncertaintyOutcome === "deny-before-side-effect" &&
+    c?.negativeChecks?.ticketReplay?.outcome === "deny-before-side-effect"],
+  ["sender identity", (c) =>
+    c?.senderIdentity?.transportEvidenceVisibility === "adapter-private" &&
+    c?.senderIdentity?.clientClaimsAuthoritative === false &&
+    c?.senderIdentity?.workloadAndDelegatedAuthorityDistinct === true &&
+    c?.senderIdentity?.authorizationOutcome === "explicit-allow-only" &&
+    c?.senderIdentity?.denyOverrides === true &&
+    c?.senderIdentity?.ambiguousOrUnknownEvidence === "deny" &&
+    c?.negativeChecks?.senderIdentity?.mutations?.includes("forged-header")],
+  ["shell/path injection", (c) =>
+    c?.shellPathInjection?.commandExecution === "array-only-exact-argv" &&
+    c?.shellPathInjection?.executionPrimitive === "execFile-or-posix_spawn-equivalent" &&
+    c?.shellPathInjection?.shellEnabled === false &&
+    c?.shellPathInjection?.commandStringAllowed === false &&
+    c?.shellPathInjection?.interpolationAllowed === false &&
+    c?.shellPathInjection?.sshCommandRegistry === "exact-allowlist" &&
+    c?.shellPathInjection?.sshShell === "deny" &&
+    c?.shellPathInjection?.sshForwarding === "deny" &&
+    c?.shellPathInjection?.pathRoot === "controller-owned" &&
+    c?.shellPathInjection?.pathForm === "canonical-normalized-relative" &&
+    sameJson(c?.shellPathInjection?.forbiddenPathForms, [
+      "dot-dot", "leading-slash", "nul", "backslash",
+    ]) &&
+    c?.shellPathInjection?.unknownFields === "deny-before-side-effect" &&
+    c?.shellPathInjection?.imageOverride === "deny" &&
+    c?.shellPathInjection?.rawSecretInput === "deny" &&
+    c?.negativeChecks?.shellPathInjection?.outcome === "deny-before-side-effect"],
+  ["credential exposure", (c) =>
+    c?.credentialExposure?.runtimeReusableProviderCredentialsAllowed === false &&
+    c?.credentialExposure?.references === "pseudonymous" &&
+    sameJson(c?.credentialExposure?.surfaces, [
+      "logs", "metrics", "status", "events", "discovery", "traces", "connectionDescriptors",
+    ]) &&
+    c?.credentialExposure?.redactionFailureOutcome === "drop-emission-never-allow" &&
+    c?.negativeChecks?.credentialExposure?.outcome === "drop-emission-never-allow"],
+  ["cross-scope access", (c) =>
+    c?.crossScopeAccess?.scopeAuthority === "server-side-ResourceScopeResolver" &&
+    c?.crossScopeAccess?.clientScopeClaimsAuthoritative === false &&
+    c?.crossScopeAccess?.authorizationOutcome === "explicit-allow-only" &&
+    c?.crossScopeAccess?.concealmentOutcome === "consistent-not-found-shaped" &&
+    c?.crossScopeAccess?.existenceLeakAllowed === false &&
+    sameJson(c?.crossScopeAccess?.appliesTo, [
+      "list", "get", "mutation", "connect", "watch", "confirmation", "error",
+    ]) &&
+    c?.negativeChecks?.crossScopeAccess?.outcome === "consistent-not-found-shaped"],
+  ["duplicate writers", (c) =>
+    c?.duplicateWriters?.writerCapableProcessGroupsPerRuntimeMaximum === 1 &&
+    c?.duplicateWriters?.writableOmpAuthoritiesPerSessionMaximum === 1 &&
+    c?.duplicateWriters?.freshGenerationAfterPositiveFenceRequired === true &&
+    c?.duplicateWriters?.leaseAloneIsFenceProof === false &&
+    c?.duplicateWriters?.routeAndTicketPublication === "after-full-conjunction-only" &&
+    c?.duplicateWriters?.fenceUncertainWriterCapableActivityAllowed === false &&
+    c?.negativeChecks?.duplicateWriters?.outcome === "block-writer-capable-activity"],
+  ["runtime isolation", (c) =>
+    c?.trustBoundaries?.includes("backend-object-storage-controller-runtime") &&
+    c?.runtimeIsolation?.runtimeUser === "non-root" &&
+    c?.runtimeIsolation?.networkPolicy === "default-deny" &&
+    c?.runtimeIsolation?.runtimeToRuntimeTraffic === "deny" &&
+    c?.runtimeIsolation?.kubernetesApiAccess === "deny" &&
+    c?.runtimeIsolation?.egress === "allowlist-only" &&
+    c?.runtimeIsolation?.backendObjectAdmission === "strict-bounded-allowlist" &&
+    c?.runtimeIsolation?.backendObjectUnknownFields === "deny-before-side-effect" &&
+    c?.runtimeIsolation?.workspaceMountAuthorization === "server-derived-scope-and-ownership" &&
+    c?.runtimeIsolation?.workspaceRoot === "controller-generated" &&
+    c?.runtimeIsolation?.runtimeStateRoot === "controller-generated-generation-bound-exclusive" &&
+    c?.runtimeIsolation?.crossScopeStorageAttachment === "deny-before-side-effect" &&
+    c?.runtimeIsolation?.rawOmpRpcTransport === "stdio-only" &&
+    c?.runtimeIsolation?.rawOmpRpcNetworkExposureAllowed === false &&
+    c?.runtimeIsolation?.cmuxSocketAndFilesystemLocks === "runtime-local" &&
+    c?.runtimeIsolation?.cdpBind === "runtime-loopback-only" &&
+    c?.runtimeIsolation?.cdpExternalReachability === "deny" &&
+    c?.runtimeIsolation?.browserProfileWriter === "single-generation-fenced" &&
+    c?.runtimeIsolation?.reusableProviderCredentialsPresent === false &&
+    c?.negativeChecks?.runtimeIsolation?.mutations?.includes("hostile-backend-object") &&
+    c?.negativeChecks?.runtimeIsolation?.mutations?.includes("cross-scope-workspace-attachment") &&
+    c?.negativeChecks?.runtimeIsolation?.mutations?.includes("dual-runtime-state-attachment") &&
+    c?.negativeChecks?.runtimeIsolation?.outcome === "deny-before-side-effect"],
+  ["audit leakage", (c) =>
+    c?.auditLeakage?.schema === "bounded-allowlist-only" &&
+    c?.auditLeakage?.maximumRecordBytes === 16384 &&
+    c?.auditLeakage?.maximumStringBytes === 512 &&
+    c?.auditLeakage?.references === "pseudonymous" &&
+    sameJson(c?.auditLeakage?.surfaces, [
+      "logs", "metrics", "status", "events", "discovery", "traces",
+    ]) &&
+    c?.auditLeakage?.excludedSameAsCredentialExposure === true &&
+    c?.auditLeakage?.loggingFailureMayAllow === false &&
+    c?.auditLeakage?.loggingFailureMayChangeDecision === false &&
+    c?.auditLeakage?.persistenceClaimed === false &&
+    c?.negativeChecks?.auditLeakage?.outcome === "drop-emission-never-change-authorization"],
+];
+
+const threatCrossContractInvariants = [
+  ["ticket controls must strengthen control and authorization bindings", (m) => {
+    const threat = m?.portableThreatModel?.ticketReplay;
+    const control = m?.portableControlContracts?.tickets;
+    const delegated = m?.portableAuthorizationContracts?.internalRoute?.delegatedAuthorityBoundTo;
+    return control?.recordAndConsumeBoundTo?.every((field) => threat?.boundTo?.includes(field)) &&
+      ["audience", "purpose", "principalId", "scopeId", "runtimeGeneration"].every(
+        (field) => threat?.boundTo?.includes(field) && delegated?.includes(field),
+      ) &&
+      threat?.maximumTtlSeconds <= control?.maximumTtlSeconds &&
+      threat?.storedMaterial === control?.storedMaterial &&
+      threat?.consumption === control?.consumption &&
+      threat?.singleUse === control?.singleUse &&
+      threat?.replicaSafe === control?.replicaSafe &&
+      sameJson(threat?.invalidationTriggers, control?.invalidationTriggers);
+  }],
+  ["sender and scope authority must remain server-derived", (m) =>
+    sameJson(
+      m?.portableThreatModel?.senderIdentity?.serverDerivedAuthorities,
+      m?.portableAuthorizationContracts?.serverDerivedAuthorities,
+    ) &&
+    m?.portableAuthorizationContracts?.interfaces?.ResourceScopeResolver?.clientClaimsAuthoritative === false &&
+    m?.portableAuthorizationContracts?.interfaces?.AuthorizationChecker?.authorizationOutcome === "explicit-allow-only" &&
+    m?.portableAuthorizationContracts?.interfaces?.AuthorizationChecker?.denyOverrides === true &&
+    m?.portableAuthorizationContracts?.internalRoute?.workloadIdentityImpliesEdgeAuthority === false &&
+    m?.portableAuthorizationContracts?.internalRoute?.edgeAuthorityImpliesWorkloadAuthority === false],
+  ["scope-qualified records and concealment must agree", (m) =>
+    sameJson(
+      m?.portableThreatModel?.crossScopeAccess?.idempotencyLookupKey,
+      m?.portableControlContracts?.idempotency?.lookupKey,
+    ) &&
+    m?.portableThreatModel?.crossScopeAccess?.concealmentOutcome ===
+      m?.portableAuthorizationContracts?.concealment?.crossScopeOutcome &&
+    m?.portableThreatModel?.crossScopeAccess?.existenceLeakAllowed ===
+      m?.portableAuthorizationContracts?.concealment?.existenceLeakAllowed],
+  ["shell controls must retain the SSH deny contract", (m) =>
+    m?.portableThreatModel?.shellPathInjection?.sshShell ===
+      m?.portableAuthorizationContracts?.ssh?.shell &&
+    m?.portableThreatModel?.shellPathInjection?.sshForwarding ===
+      m?.portableAuthorizationContracts?.ssh?.forwarding],
+  ["writer controls must retain topology and lifecycle fencing", (m) =>
+    m?.portableThreatModel?.duplicateWriters?.writableOmpAuthoritiesPerSessionMaximum ===
+      m?.runtimeTopology?.writableOmpAuthoritiesPerSession &&
+    m?.portableThreatModel?.duplicateWriters?.writerCapableProcessGroupsPerRuntimeMaximum ===
+      m?.portableLifecycleContracts?.desiredStateMachine?.Running?.writerCardinalityMaximum &&
+    m?.portableThreatModel?.duplicateWriters?.leaseAloneIsFenceProof ===
+      m?.portableLifecycleContracts?.replacementMachine?.leaseAloneIsFenceProof &&
+    m?.portableThreatModel?.duplicateWriters?.routeAndTicketPublication ===
+      m?.portableLifecycleContracts?.readiness?.routeAndTicketPublication &&
+    sameJson(
+      m?.portableThreatModel?.duplicateWriters?.fenceUncertainBlocks,
+      m?.portableLifecycleContracts?.generationMachine?.fenceUncertainBlocks,
+    )],
+  ["runtime isolation must retain internal RPC and generation fencing", (m) =>
+    m?.portableThreatModel?.runtimeIsolation?.rawOmpRpcNetworkExposureAllowed ===
+      m?.runtimeTopology?.rawRpcNetworkExposureAllowed &&
+    m?.portableThreatModel?.runtimeIsolation?.rawOmpRpcTransport === "stdio-only" &&
+    m?.runtimeTopology?.authorityTransport === "stdio" &&
+    m?.portableLifecycleContracts?.storageSeparation?.runtimeStateStorage ===
+      "exclusive-single-writer-omp-cmux-browser-supervisor-state"],
+  ["browser isolation must retain lifecycle fencing", (m) =>
+    m?.portableThreatModel?.runtimeIsolation?.browserProfileWriter ===
+      "single-generation-fenced" &&
+    m?.portableLifecycleContracts?.snapshotRestore?.restoreRequires?.includes(
+      "freshFencedRuntimeGeneration",
+    ) &&
+    m?.portableLifecycleContracts?.snapshotRestore?.oneSnapshotAttachedToTwoLiveRuntimesAllowed ===
+      false &&
+    m?.portableLifecycleContracts?.readiness?.conjunction?.includes(
+      "profileRequiredBrowserReady",
+    )],
+  ["credential and audit exclusions must retain authorization redaction", (m) =>
+    sameJson(
+      m?.portableThreatModel?.credentialExposure?.excluded,
+      m?.portableAuthorizationContracts?.decisionLog?.excluded,
+    ) &&
+    m?.portableThreatModel?.auditLeakage?.maximumRecordBytes ===
+      m?.portableAuthorizationContracts?.decisionLog?.maximumRecordBytes &&
+    m?.portableThreatModel?.auditLeakage?.maximumStringBytes ===
+      m?.portableAuthorizationContracts?.decisionLog?.maximumStringBytes &&
+    m?.portableThreatModel?.auditLeakage?.references ===
+      m?.portableAuthorizationContracts?.decisionLog?.references &&
+    m?.portableThreatModel?.auditLeakage?.loggingFailureMayAllow ===
+      m?.portableAuthorizationContracts?.decisionLog?.loggingFailureMayAllow],
 ];
 
 function requireCommit(failures, label, value) {
@@ -1210,6 +1405,100 @@ export async function checkPortablePlatformBaseline(root = process.cwd()) {
     );
   } catch (error) {
     failures.push(diagnostic(`portable authorization provider-control registry is unreadable: ${error.message}`));
+  }
+
+  const threatModel = manifest.portableThreatModel;
+  for (const [label, actual, wanted] of [
+    [
+      "portableThreatModel.decision",
+      threatModel?.decision,
+      "transport-provider-backend-neutral-fail-closed-threat-controls",
+    ],
+    [
+      "portableThreatModel.documentation",
+      threatModel?.documentation,
+      expected.threatModelDocumentation,
+    ],
+    [
+      "portableThreatModel.documentationSha256",
+      threatModel?.documentationSha256,
+      expected.threatModelDocumentationSha256,
+    ],
+    ["portableThreatModel.specificationSection", threatModel?.specificationSection, "Appendix B.10"],
+    ["portableThreatModel.contractOnly", threatModel?.contractOnly, true],
+    ["portableThreatModel.runtimeImplementationIncluded", threatModel?.runtimeImplementationIncluded, false],
+    ["portableThreatModel.deploymentChangesIncluded", threatModel?.deploymentChangesIncluded, false],
+    ["portableThreatModel.publicSchemaChangesIncluded", threatModel?.publicSchemaChangesIncluded, false],
+    ["portableThreatModel.newProtocolIncluded", threatModel?.newProtocolIncluded, false],
+    [
+      "portableThreatModel.implementationBoundaries.currentImplementationClaim",
+      threatModel?.implementationBoundaries?.currentImplementationClaim,
+      false,
+    ],
+  ]) {
+    requireEqual(failures, label, actual, wanted);
+  }
+  requireJsonEqual(
+    failures,
+    "portableThreatModel.trustBoundaries",
+    threatModel?.trustBoundaries,
+    [
+      "public-rest-sse",
+      "public-omp-app-wss",
+      "public-direct-cmux-wss",
+      "public-ssh-provider",
+      "public-discovery-status-observability",
+      "trusted-ingress-identity-adapter",
+      "edge-control-plane",
+      "driver-backend-control-store",
+      "backend-object-storage-controller-runtime",
+      "controller-runtime",
+      "runtime-process",
+      "runtime-credential-model-gateway",
+      "runtime-browser-cdp",
+      "runtime-network-egress",
+      "component-observability-sink",
+    ],
+  );
+  requireJsonEqual(
+    failures,
+    "portableThreatModel.threatClasses",
+    threatModel?.threatClasses,
+    [
+      "ticketReplay", "senderIdentity", "shellPathInjection", "credentialExposure",
+      "crossScopeAccess", "duplicateWriters", "runtimeIsolation", "auditLeakage",
+    ],
+  );
+  requireEqual(
+    failures,
+    "portableThreatModel contract SHA-256",
+    sha256Json(threatModel),
+    expected.threatModelContractsSha256,
+  );
+  if (!SHA256.test(threatModel?.documentationSha256 ?? "")) {
+    failures.push(diagnostic("portableThreatModel.documentationSha256 must be 64 lowercase hex characters"));
+  }
+  for (const [name, holds] of threatModelSemanticInvariants) {
+    if (!holds(threatModel)) {
+      failures.push(diagnostic(`portableThreatModel semantic invariant "${name}" must hold`));
+    }
+  }
+  for (const [name, holds] of threatCrossContractInvariants) {
+    if (!holds(manifest)) {
+      failures.push(diagnostic(`portableThreatModel cross-contract invariant "${name}" must hold`));
+    }
+  }
+  try {
+    const documentationBytes = await readFile(path.join(root, expected.threatModelDocumentation));
+    const digest = createHash("sha256").update(documentationBytes).digest("hex");
+    requireEqual(
+      failures,
+      "portableThreatModel.documentationSha256",
+      digest,
+      expected.threatModelDocumentationSha256,
+    );
+  } catch (error) {
+    failures.push(diagnostic(`portableThreatModel.documentation is unreadable: ${error.message}`));
   }
 
   requireEqual(failures, "ompPinResolution.contractCommit", manifest.ompPinResolution?.contractCommit, expected.ompBaseline);

@@ -1007,6 +1007,255 @@
       "conformance": ["P7-05", "P7-06", "P7-07", "P7-08", "P7-09"]
     }
   },
+  "portableThreatModel": {
+    "decision": "transport-provider-backend-neutral-fail-closed-threat-controls",
+    "documentation": "docs/adr/024-portable-threat-model.md",
+    "documentationSha256": "02bb964d1c4599543f7897ac4f1b1a49c75e195c90f57700d85a061617f280af",
+    "specificationSection": "Appendix B.10",
+    "contractOnly": true,
+    "runtimeImplementationIncluded": false,
+    "deploymentChangesIncluded": false,
+    "publicSchemaChangesIncluded": false,
+    "newProtocolIncluded": false,
+    "trustBoundaries": [
+      "public-rest-sse",
+      "public-omp-app-wss",
+      "public-direct-cmux-wss",
+      "public-ssh-provider",
+      "public-discovery-status-observability",
+      "trusted-ingress-identity-adapter",
+      "edge-control-plane",
+      "driver-backend-control-store",
+      "backend-object-storage-controller-runtime",
+      "controller-runtime",
+      "runtime-process",
+      "runtime-credential-model-gateway",
+      "runtime-browser-cdp",
+      "runtime-network-egress",
+      "component-observability-sink"
+    ],
+    "assets": [
+      "omp-session-and-user-content",
+      "cmux-and-runtime-durable-state",
+      "workspace-and-runtime-state-storage",
+      "identity-scope-policy-and-resource-authority",
+      "routes-tickets-generations-revisions-and-ledgers",
+      "provider-model-credentials-browser-profile-and-cdp",
+      "bounded-infrastructure-observability"
+    ],
+    "threatClasses": [
+      "ticketReplay",
+      "senderIdentity",
+      "shellPathInjection",
+      "credentialExposure",
+      "crossScopeAccess",
+      "duplicateWriters",
+      "runtimeIsolation",
+      "auditLeakage"
+    ],
+    "ticketReplay": {
+      "stride": ["spoofing", "elevation-of-privilege"],
+      "storedMaterial": "sha256-digest-only",
+      "plaintextRetentionAllowed": false,
+      "boundTo": [
+        "runtimeId",
+        "runtimeGeneration",
+        "providerControlGeneration",
+        "purpose",
+        "audience",
+        "principalId",
+        "scopeId"
+      ],
+      "currentGenerationRequired": true,
+      "maximumTtlSeconds": 60,
+      "consumption": "atomic-compare-and-delete",
+      "singleUse": true,
+      "replicaSafe": true,
+      "invalidationTriggers": [
+        "controlDisconnect",
+        "providerControlGenerationReplacement",
+        "runtimeGenerationReplacement",
+        "explicitCancellation"
+      ],
+      "mismatchOrUncertaintyOutcome": "deny-before-side-effect"
+    },
+    "senderIdentity": {
+      "stride": ["spoofing", "repudiation", "elevation-of-privilege"],
+      "transportEvidenceVisibility": "adapter-private",
+      "serverDerivedAuthorities": [
+        "principalMapping",
+        "scopeMembership",
+        "resourceScope",
+        "resourceGeneration",
+        "resourceProfile",
+        "resourceState",
+        "roleBindings",
+        "currentPolicy"
+      ],
+      "clientClaimsAuthoritative": false,
+      "workloadAndDelegatedAuthorityDistinct": true,
+      "authorizationOutcome": "explicit-allow-only",
+      "denyOverrides": true,
+      "ambiguousOrUnknownEvidence": "deny"
+    },
+    "shellPathInjection": {
+      "stride": ["tampering", "elevation-of-privilege"],
+      "commandExecution": "array-only-exact-argv",
+      "executionPrimitive": "execFile-or-posix_spawn-equivalent",
+      "shellEnabled": false,
+      "commandStringAllowed": false,
+      "interpolationAllowed": false,
+      "sshCommandRegistry": "exact-allowlist",
+      "sshShell": "deny",
+      "sshForwarding": "deny",
+      "pathRoot": "controller-owned",
+      "pathForm": "canonical-normalized-relative",
+      "forbiddenPathForms": ["dot-dot", "leading-slash", "nul", "backslash"],
+      "unknownFields": "deny-before-side-effect",
+      "imageOverride": "deny",
+      "rawSecretInput": "deny"
+    },
+    "credentialExposure": {
+      "stride": ["information-disclosure"],
+      "runtimeReusableProviderCredentialsAllowed": false,
+      "references": "pseudonymous",
+      "surfaces": ["logs", "metrics", "status", "events", "discovery", "traces", "connectionDescriptors"],
+      "excluded": [
+        "credentials",
+        "tickets",
+        "adapterEvidence",
+        "rawProviderSubject",
+        "policyDocument",
+        "roleBindingDocument",
+        "headers",
+        "cookies",
+        "queryString",
+        "requestBody",
+        "responseBody",
+        "prompt",
+        "terminalBytes",
+        "transcript",
+        "browserData",
+        "fileContent",
+        "filePath",
+        "environment",
+        "backendCoordinate",
+        "routeReference"
+      ],
+      "redactionFailureOutcome": "drop-emission-never-allow"
+    },
+    "crossScopeAccess": {
+      "stride": ["spoofing", "information-disclosure", "elevation-of-privilege"],
+      "scopeAuthority": "server-side-ResourceScopeResolver",
+      "clientScopeClaimsAuthoritative": false,
+      "authorizationOutcome": "explicit-allow-only",
+      "concealmentOutcome": "consistent-not-found-shaped",
+      "existenceLeakAllowed": false,
+      "idempotencyLookupKey": [
+        "principalId",
+        "scopeId",
+        "method",
+        "canonicalPath",
+        "idempotencyKey"
+      ],
+      "appliesTo": ["list", "get", "mutation", "connect", "watch", "confirmation", "error"]
+    },
+    "duplicateWriters": {
+      "stride": ["tampering", "denial-of-service", "elevation-of-privilege"],
+      "writerCapableProcessGroupsPerRuntimeMaximum": 1,
+      "writableOmpAuthoritiesPerSessionMaximum": 1,
+      "freshGenerationAfterPositiveFenceRequired": true,
+      "leaseAloneIsFenceProof": false,
+      "routeAndTicketPublication": "after-full-conjunction-only",
+      "fenceUncertainBlocks": [
+        "generationAdvance",
+        "route",
+        "ticket",
+        "credential",
+        "attachment",
+        "replacement",
+        "finalizerProgress",
+        "writerCapableStart"
+      ],
+      "fenceUncertainWriterCapableActivityAllowed": false
+    },
+    "runtimeIsolation": {
+      "stride": ["tampering", "information-disclosure", "denial-of-service", "elevation-of-privilege"],
+      "runtimeUser": "non-root",
+      "networkPolicy": "default-deny",
+      "runtimeToRuntimeTraffic": "deny",
+      "kubernetesApiAccess": "deny",
+      "egress": "allowlist-only",
+      "backendObjectAdmission": "strict-bounded-allowlist",
+      "backendObjectUnknownFields": "deny-before-side-effect",
+      "workspaceMountAuthorization": "server-derived-scope-and-ownership",
+      "workspaceRoot": "controller-generated",
+      "runtimeStateRoot": "controller-generated-generation-bound-exclusive",
+      "crossScopeStorageAttachment": "deny-before-side-effect",
+      "rawOmpRpcTransport": "stdio-only",
+      "rawOmpRpcNetworkExposureAllowed": false,
+      "cmuxSocketAndFilesystemLocks": "runtime-local",
+      "cdpBind": "runtime-loopback-only",
+      "cdpExternalReachability": "deny",
+      "browserProfileWriter": "single-generation-fenced",
+      "reusableProviderCredentialsPresent": false
+    },
+    "auditLeakage": {
+      "stride": ["repudiation", "information-disclosure"],
+      "schema": "bounded-allowlist-only",
+      "maximumRecordBytes": 16384,
+      "maximumStringBytes": 512,
+      "references": "pseudonymous",
+      "surfaces": ["logs", "metrics", "status", "events", "discovery", "traces"],
+      "excludedSameAsCredentialExposure": true,
+      "loggingFailureMayAllow": false,
+      "loggingFailureMayChangeDecision": false,
+      "persistenceClaimed": false
+    },
+    "negativeChecks": {
+      "ticketReplay": {
+        "mutations": ["reuse", "wrong-bearer", "wrong-generation", "wrong-purpose", "wrong-audience", "expiry", "gateway-replay"],
+        "outcome": "deny-before-side-effect"
+      },
+      "senderIdentity": {
+        "mutations": ["forged-header", "client-principal", "client-scope", "ambiguous-evidence", "authority-collapse"],
+        "outcome": "deny-before-side-effect"
+      },
+      "shellPathInjection": {
+        "mutations": ["arbitrary-ssh-command", "shell-string", "forwarding", "path-traversal", "absolute-path", "nul", "backslash", "image-override", "raw-secret"],
+        "outcome": "deny-before-side-effect"
+      },
+      "credentialExposure": {
+        "mutations": ["credential", "ticket", "header", "prompt", "terminal", "transcript", "browser", "file", "environment"],
+        "outcome": "drop-emission-never-allow"
+      },
+      "crossScopeAccess": {
+        "mutations": ["list", "get", "connect", "mutation", "watch", "confirmation", "error"],
+        "outcome": "consistent-not-found-shaped"
+      },
+      "duplicateWriters": {
+        "mutations": ["dual-process-group", "second-omp-authority", "generation-reuse", "lease-only-proof", "early-route", "FenceUncertain-start"],
+        "outcome": "block-writer-capable-activity"
+      },
+      "runtimeIsolation": {
+        "mutations": ["root-user", "runtime-peer", "kubernetes-api", "external-cdp", "non-allowlisted-egress", "raw-rpc-network", "reusable-credential", "hostile-backend-object", "cross-scope-workspace-attachment", "dual-runtime-state-attachment"],
+        "outcome": "deny-before-side-effect"
+      },
+      "auditLeakage": {
+        "mutations": ["unbounded-record", "raw-reference", "secret-field", "user-content", "logging-failure-allows", "logging-changes-decision"],
+        "outcome": "drop-emission-never-change-authorization"
+      }
+    },
+    "implementationBoundaries": {
+      "productNeutralEnforcement": ["P1"],
+      "localAndSingleHostProof": ["P1", "P6"],
+      "kubernetesIsolationAndFencing": ["P2", "P5"],
+      "runtimeBrowserCredentialIntegration": ["P3", "P5"],
+      "gatewayEnforcement": ["P4"],
+      "crossDriverConformance": ["P7"],
+      "currentImplementationClaim": false
+    }
+  },
   "runtimeTopology": {
     "decision": "host-owned-single-rpc-authority",
     "documentation": "docs/adr/020-portable-runtime-single-authority.md",
