@@ -1,6 +1,6 @@
 {
 	"name": "@t4-code/t4-cli",
-	"version": "0.1.0",
+	"version": "0.1.33",
 	"private": true,
 	"description": "t4 — terminal UI for T4 Code hosts (cmux-grade TUI over omp-app/1)",
 	"bin": {
