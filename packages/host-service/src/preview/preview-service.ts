@@ -201,11 +201,6 @@ export class PreviewService {
 		}
 	}
 
-	#refreshNavigation(entry: PreviewEntry): void {
-		entry.url = entry.page.url();
-		entry.canGoBack = Boolean(entry.page.url() && entry.context.pages().length > 0);
-	}
-
 	async #updateFromPage(entry: PreviewEntry): Promise<void> {
 		entry.url = entry.page.url();
 		try {
@@ -645,7 +640,7 @@ export class PreviewService {
 	async closeSession(sessionId: SessionId): Promise<void> {
 		const ids = this.#bySession.get(sessionId);
 		if (!ids) return;
-		for (const id of [...ids]) await this.#closePreview(id, "session_closed");
+		for (const id of ids) await this.#closePreview(id, "session_closed");
 	}
 
 	/** Stops the service: closes all previews and the idle sweep. */
@@ -655,7 +650,7 @@ export class PreviewService {
 			clearInterval(this.#idleTimer);
 			this.#idleTimer = undefined;
 		}
-		for (const id of [...this.#previews.keys()]) await this.#closePreview(id, "stopped");
+		for (const id of this.#previews.keys()) await this.#closePreview(id, "stopped");
 	}
 }
 

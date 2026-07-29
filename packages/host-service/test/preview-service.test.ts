@@ -7,7 +7,7 @@ import { PreviewServiceError } from "../src/preview/types.ts";
 import { PreviewService } from "../src/preview/preview-service.ts";
 import { createPreviewChromiumResolver } from "../src/preview/chromium-resolver.ts";
 import type { PreviewChromiumResolver } from "../src/preview/types.ts";
-import type { Browser, BrowserContext, Page } from "playwright-core";
+import type { Page } from "playwright-core";
 import type { SessionId } from "@t4-code/host-wire";
 
 const SESSION_ID = "sess_test" as SessionId;
@@ -144,14 +144,6 @@ function fakePage(url: string): Page {
 		selectOption: async () => [] as string[],
 		screenshot: async () => new Uint8Array(0),
 	} as unknown as Page;
-}
-
-function fakeContext(page: Page): BrowserContext {
-	return {
-		newPage: async () => page,
-		pages: () => [page],
-		close: async () => undefined,
-	} as unknown as BrowserContext;
 }
 
 /** A chromium resolver that injects a fake browser via a monkey-patched launch. */

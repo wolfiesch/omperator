@@ -281,7 +281,7 @@ export class T4Client {
 	fork(sessionId: string) { return this.command<{ session: SessionRef }>("session.fork", {}, sessionId); }
 	async cancel(sessionId: string) {
 		await this.withLease(sessionId, "controller.lease", async (leaseId, revision) => {
-			await this.command("session.cancel", { ...(leaseId ? { leaseId } : {}) }, sessionId, revision || undefined);
+			await this.command("session.cancel", leaseId ? { leaseId } : {}, sessionId, revision || undefined);
 		});
 	}
 	async rename(sessionId: string, title: string) {
