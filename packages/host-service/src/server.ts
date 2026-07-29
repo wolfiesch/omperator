@@ -34,7 +34,6 @@ import {
 	type ProjectId,
 	type ResultFrame,
 	type PreviewAction,
-	type PreviewCaptureId,
 	type PreviewId,
 	type PreviewSnapshot,
 	previewCaptureId,
