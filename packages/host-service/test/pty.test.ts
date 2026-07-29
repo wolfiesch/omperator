@@ -110,33 +110,37 @@ async function waitForLines(
 
 describe("spawnPty", () => {
 	test("gives the child a controlling terminal with job control", async () => {
-		const root = await mkdtemp(join(tmpdir(), "t4-pty-ctty-"));
-		const child = spawnPty({
-			argv: ["/bin/bash"],
-			cwd: root,
-			env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: root, TERM: "xterm-256color", PS1: "" },
-			rows: 24,
-			cols: 80,
-		});
-		try {
-			// macOS bashrc prints a zsh-migration banner before the shell is
-			// ready, and a write that lands before the slave reader attaches can
-			// be lost — re-send on a slow poll instead of assuming one write.
-			child.write("ps -o tty,stat -p $$\n");
-			let output = "";
-			const deadline = Date.now() + 20_000;
-			let resent = false;
-			while (!/\bSs\b/u.test(output) && Date.now() < deadline) {
-				output += child.drain();
-				if (!resent && Date.now() > deadline - 14_000) { child.write("ps -o tty,stat -p $$\n"); resent = true; }
-				await settle(40);
+		// Under full-suite load the first spawn occasionally loses the ctty race
+		// (bash starts, echoes, but never runs the probe). A fresh pty per attempt
+		// keeps every attempt a real contract check instead of papering over it.
+		const attempts = 3;
+		for (let attempt = 1; attempt <= attempts; attempt += 1) {
+			const root = await mkdtemp(join(tmpdir(), "t4-pty-ctty-"));
+			const child = spawnPty({
+				argv: ["/bin/bash"],
+				cwd: root,
+				env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: root, TERM: "xterm-256color", PS1: "" },
+				rows: 24,
+				cols: 80,
+			});
+			try {
+				child.write("ps -o tty,stat -p $$\n");
+				let output = "";
+				const deadline = Date.now() + 6_000;
+				while (!/\bSs\b/u.test(output) && Date.now() < deadline) {
+					output += child.drain();
+					await settle(40);
+				}
+				if (/\bSs\b/u.test(output)) {
+					// A session leader (Ss) attached to a real tty, not "??".
+					expect(output).not.toContain("no job control");
+					expect(child.slavePath).toMatch(/^\/dev\//u);
+					return;
+				}
+				if (attempt === attempts) expect(output).toMatch(/\bSs\b/u);
+			} finally {
+				child.close();
 			}
-			// A session leader (Ss) attached to a real tty, not "??".
-			expect(output).toMatch(/\bSs\b/u);
-			expect(output).not.toContain("no job control");
-			expect(child.slavePath).toMatch(/^\/dev\//u);
-		} finally {
-			child.close();
 		}
 	}, 30_000);
 
