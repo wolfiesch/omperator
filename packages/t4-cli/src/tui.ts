@@ -73,13 +73,12 @@ class TermScreen {
 
 	feed(text: string): void {
 		// Strip OSC and charset/mode sequences we don't model.
-		// eslint-disable-next-line no-control-regex -- stripping real ANSI escapes is the point.
+		/* eslint-disable no-control-regex -- stripping real ANSI escapes is the point. */
 		const s = text
 			.replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "")
-			// eslint-disable-next-line no-control-regex -- stripping real ANSI escapes is the point.
 			.replace(/\u001b[()][A-Z0-9]/gi, "")
-			// eslint-disable-next-line no-control-regex -- stripping real ANSI escapes is the point.
 			.replace(/\u001b[>=]/g, "");
+		/* eslint-enable no-control-regex */
 		for (let i = 0; i < s.length; i += 1) {
 			const ch = s[i]!;
 			if (ch === "\u001b") {
@@ -168,12 +167,11 @@ export class Tui implements HostEvents {
 			if (this.inputBuf[i] !== "\u001b") continue;
 			const rest = this.inputBuf.slice(i);
 			// Complete forms: CSI letter/~, SGR mouse M/m, SS3, or lone ESC.
-			// eslint-disable-next-line no-control-regex -- escape-sequence framing needs real ANSI escapes.
+			/* eslint-disable no-control-regex -- escape-sequence framing needs real ANSI escapes. */
 			if (/^\u001b\[[<0-9;?]*[A-Za-z~]/.test(rest) || /^\u001b[()][A-Z0-9]/i.test(rest) || /^\u001b[>=]/.test(rest)) continue;
-			// eslint-disable-next-line no-control-regex -- escape-sequence framing needs real ANSI escapes.
 			if (/^\u001b\][^\u0007\u001b]*(\u0007|\u001b\\)/.test(rest)) continue;
-			// eslint-disable-next-line no-control-regex -- escape-sequence framing needs real ANSI escapes.
 			if (rest.length === 1 || /^\u001b\[[<0-9;?]*$/.test(rest) || /^\u001b\][^\u0007\u001b]*$/.test(rest)) {
+			/* eslint-enable no-control-regex */
 				consumed = i; // possibly incomplete — hold from here
 				break;
 			}
