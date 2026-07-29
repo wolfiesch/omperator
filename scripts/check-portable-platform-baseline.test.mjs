@@ -11,6 +11,11 @@ const manifestPath = path.join(repositoryRoot, "compat/portable-agent-platform-v
 async function fixture(mutator = () => {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "portable-platform-baseline-"));
   await mkdir(path.join(root, "compat"), { recursive: true });
+  await mkdir(path.join(root, "provenance"), { recursive: true });
+  await writeFile(
+    path.join(root, "provenance/cmux-machine-provider-v1.json"),
+    await readFile(path.join(repositoryRoot, "provenance/cmux-machine-provider-v1.json")),
+  );
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   mutator(manifest);
   await writeFile(
@@ -46,6 +51,8 @@ test("rejects drift in contract-bearing repositories, dates, tags, and rationale
     manifest.implementationStart.packagedOmpAuthority.upstreamRepository = "https://example.test/upstream";
     manifest.implementationStart.packagedOmpAuthority.upstreamTag = "moving-upstream-tag";
     manifest.ompPinResolution.reason = "trust the current package";
+    manifest.cmuxMachineProviderImport.manifestSha256 = "b".repeat(64);
+    manifest.cmuxMachineProviderImport.fixtureCorpusSha256 = "c".repeat(64);
   });
   const result = await checkPortablePlatformBaseline(root);
   for (const field of [
@@ -58,6 +65,8 @@ test("rejects drift in contract-bearing repositories, dates, tags, and rationale
     "implementationStart.packagedOmpAuthority.upstreamRepository",
     "implementationStart.packagedOmpAuthority.upstreamTag",
     "ompPinResolution.reason",
+    "cmuxMachineProviderImport.manifestSha256",
+    "cmuxMachineProviderImport.fixtureCorpusSha256",
   ]) {
     assert(result.failures.some((failure) => failure.includes(field)), `missing diagnostic for ${field}`);
   }

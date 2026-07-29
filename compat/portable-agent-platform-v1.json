@@ -34,6 +34,17 @@
       "upstreamCommit": "9fd6e97113f5ed3a847e66d346970efdf8afcad9"
     }
   },
+  "cmuxMachineProviderImport": {
+    "manifest": "provenance/cmux-machine-provider-v1.json",
+    "manifestSha256": "ae1e6eafc6f302f201530eed9ee7fba1e1f839e2a05214ef38165efbf2568d4d",
+    "sourceCommit": "192e44428c16b98210c951ec4bd5a86bc7139014",
+    "crateGitTree": "983bee74116c7d5f5832a7695379c870cd41ef60",
+    "sourceTreeSha256": "ecf8ea6183275110d6270bd6d563d39eb3cecf7296a7c8e44e21f9ca6a46ca63",
+    "fixtureCorpusSha256": "bdcb88ee9f46f300b400165cdb2dac2eebc186cb6b78c068ccab3caae4460f23",
+    "toolingAndConformanceOnly": true,
+    "packagedInProduct": false,
+    "packagingRequiresLicenseReview": true
+  },
   "ompPinResolution": {
     "contractCommit": "d16c6168c86f40fc44f25118c2fd06fe160fcb93",
     "currentPackagedCommit": "ca2902bc095a0b17067f4b8b34ecf454390f85ff",

@@ -1,0 +1,1 @@
+{"protocol":"cmux.machine-provider","version":1,"id":"request-negotiate","method":"negotiate_client_capabilities","params":{"capabilities":["provider-action-targets-v1"]}}

@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 
 const MANIFEST_PATH = "compat/portable-agent-platform-v1.json";
@@ -22,6 +23,11 @@ const expected = Object.freeze({
   packagedOmpUpstreamRepository: "https://github.com/can1357/oh-my-pi",
   packagedOmpUpstreamTag: "v17.0.5",
   packagedOmpUpstreamCommit: "9fd6e97113f5ed3a847e66d346970efdf8afcad9",
+  cmuxProviderManifest: "provenance/cmux-machine-provider-v1.json",
+  cmuxProviderManifestSha256: "ae1e6eafc6f302f201530eed9ee7fba1e1f839e2a05214ef38165efbf2568d4d",
+  cmuxProviderCrateTree: "983bee74116c7d5f5832a7695379c870cd41ef60",
+  cmuxProviderSourceTreeSha256: "ecf8ea6183275110d6270bd6d563d39eb3cecf7296a7c8e44e21f9ca6a46ca63",
+  cmuxProviderFixtureCorpusSha256: "bdcb88ee9f46f300b400165cdb2dac2eebc186cb6b78c068ccab3caae4460f23",
   pinResolutionReason:
     "The packaged authority bridge is based on OMP v17.0.5, while the portable contract was reviewed against a newer official OMP commit. Portable runtime behavior must use a new fork integration commit descended from the contract commit and must pass the pinned OMP RPC and authority-bridge gates before packaging.",
 });
@@ -101,6 +107,49 @@ export async function checkPortablePlatformBaseline(root = process.cwd()) {
 
   requireEqual(failures, "baselines.cmux.machineProviderProtocol", manifest.baselines?.cmux?.machineProviderProtocol, 1);
   requireEqual(failures, "baselines.cmux.muxProtocol", manifest.baselines?.cmux?.muxProtocol, 10);
+  const cmuxImport = manifest.cmuxMachineProviderImport;
+  requireEqual(failures, "cmuxMachineProviderImport.manifest", cmuxImport?.manifest, expected.cmuxProviderManifest);
+  requireEqual(
+    failures,
+    "cmuxMachineProviderImport.manifestSha256",
+    cmuxImport?.manifestSha256,
+    expected.cmuxProviderManifestSha256,
+  );
+  requireEqual(failures, "cmuxMachineProviderImport.sourceCommit", cmuxImport?.sourceCommit, expected.cmuxBaseline);
+  requireEqual(failures, "cmuxMachineProviderImport.crateGitTree", cmuxImport?.crateGitTree, expected.cmuxProviderCrateTree);
+  requireEqual(
+    failures,
+    "cmuxMachineProviderImport.sourceTreeSha256",
+    cmuxImport?.sourceTreeSha256,
+    expected.cmuxProviderSourceTreeSha256,
+  );
+  requireEqual(
+    failures,
+    "cmuxMachineProviderImport.fixtureCorpusSha256",
+    cmuxImport?.fixtureCorpusSha256,
+    expected.cmuxProviderFixtureCorpusSha256,
+  );
+  requireEqual(failures, "cmuxMachineProviderImport.toolingAndConformanceOnly", cmuxImport?.toolingAndConformanceOnly, true);
+  requireEqual(failures, "cmuxMachineProviderImport.packagedInProduct", cmuxImport?.packagedInProduct, false);
+  requireEqual(failures, "cmuxMachineProviderImport.packagingRequiresLicenseReview", cmuxImport?.packagingRequiresLicenseReview, true);
+  requireCommit(failures, "cmuxMachineProviderImport.sourceCommit", cmuxImport?.sourceCommit);
+  if (!SHA1.test(cmuxImport?.crateGitTree ?? "")) {
+    failures.push(diagnostic("cmuxMachineProviderImport.crateGitTree must be a full lowercase Git tree ID"));
+  }
+  for (const [label, value] of [
+    ["cmuxMachineProviderImport.manifestSha256", cmuxImport?.manifestSha256],
+    ["cmuxMachineProviderImport.sourceTreeSha256", cmuxImport?.sourceTreeSha256],
+    ["cmuxMachineProviderImport.fixtureCorpusSha256", cmuxImport?.fixtureCorpusSha256],
+  ]) {
+    if (!SHA256.test(value ?? "")) failures.push(diagnostic(`${label} must be 64 lowercase hex characters`));
+  }
+  try {
+    const provenanceBytes = await readFile(path.join(root, expected.cmuxProviderManifest));
+    const digest = createHash("sha256").update(provenanceBytes).digest("hex");
+    requireEqual(failures, "cmuxMachineProviderImport.manifestSha256", digest, expected.cmuxProviderManifestSha256);
+  } catch (error) {
+    failures.push(diagnostic(`cmuxMachineProviderImport.manifest is unreadable: ${error.message}`));
+  }
   if (JSON.stringify(manifest.baselines?.omp?.rpcProtocols) !== "[1,2]") {
     failures.push(diagnostic("baselines.omp.rpcProtocols must be exactly [1,2]"));
   }

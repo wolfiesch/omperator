@@ -1,11 +1,16 @@
 # Portable Agent Platform v1 implementation tracker
 
-- Status: planning complete; implementation not started
+- Status: implementation in progress; P0-01 and P0-02 complete
 - Source specification: <https://roycorp.net/briefs/omperator-portable-agent-platform-v1-f4c81ee5.html>
 - Source SHA-256: `f31778a0d57b3b39b822faa0d6e7a3f1af2888dd09a9a39780025c43acce6194`
 - Specification baseline: `wolfiesch/omperator@2ab8fc7`, `manaflow-ai/cmux@192e444`, `can1357/oh-my-pi@d16c616`
 - Repository review baseline: `48b1ba7b94f468154ed0e0998118d01f7dbffbd0`
 - Execution tracker: project-local `td` database under `.todos/`
+
+## Completed work packages
+
+- **P0-01:** `compat/portable-agent-platform-v1.json` pins the specification and exact Omperator, cmux, official OMP, and packaged OMP authorities. `pnpm check:portable-platform` fails closed on drift.
+- **P0-02:** `vendor/cmux-machine-provider-v1/` contains the byte-exact upstream Rust protocol crate source at the pinned cmux commit. The typed Rust generator emits control and provider-stream handoff fixtures, while `provenance/cmux-machine-provider-v1.json` records source objects, digests, generator inputs, corpus membership, and the tooling-only packaging boundary. `pnpm test:portable-platform` and `pnpm check:portable-platform` enforce the import.
 
 ## Review verdict
 
