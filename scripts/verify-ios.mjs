@@ -167,5 +167,10 @@ run("xcodebuild", [
   "-scheme", SCHEME,
   "-destination", `platform=iOS Simulator,id=${udid}`,
   "-derivedDataPath", derivedData,
+  // A fresh hosted simulator can wedge its first accessibility snapshot while
+  // XCTest finishes loading the runtime's accessibility bundles. Retry only
+  // the failed test once; a repeat failure still fails the verification leg.
+  "-retry-tests-on-failure",
+  "-test-iterations", "2",
   "CODE_SIGNING_ALLOWED=NO",
 ]);

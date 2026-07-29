@@ -82,10 +82,12 @@ final class T4CodeUITests: XCTestCase {
 
         app.buttons["session-filter-attention"].tap()
 
-        XCTAssertTrue(app.buttons["session-row-s1"].waitForExistence(timeout: 3))
+        // s1 was already visible before the tap, so it cannot prove the
+        // asynchronous filter update has reached the accessibility tree.
+        XCTAssertTrue(app.buttons["session-row-s2"].waitForNonExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["session-row-s3"].waitForNonExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["session-row-s1"].exists)
         XCTAssertTrue(app.buttons["session-row-s4"].exists)
-        XCTAssertFalse(app.buttons["session-row-s2"].exists)
-        XCTAssertFalse(app.buttons["session-row-s3"].exists)
     }
 
     // MARK: - Model menu
