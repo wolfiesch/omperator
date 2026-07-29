@@ -144,6 +144,9 @@ struct HostWireFixtureTests {
         #expect(throws: T4WireError.self) {
             _ = try CommandFrame(requestId: "r", commandId: "c", hostId: "h", command: "session.rename", sessionId: "s")
         }
+        #expect(Commands.descriptor(for: "session.delete")?.confirmation == .challenge)
+        #expect(Commands.descriptor(for: "term.open")?.confirmation == .challenge)
+        #expect(Commands.descriptor(for: "preview.launch")?.confirmation == .challenge)
     }
     @Test("Snapshot, entry, and gap frames decode; durable entry decodes standalone")
     func transcriptFrames() throws {

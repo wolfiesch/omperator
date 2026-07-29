@@ -62,7 +62,7 @@ public enum Commands {
         "session.mode.set":     .init(capability: .sessionsManage, scope: .session, revision: .optional, confirmation: .none),
         "session.archive":     .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .none),
         "session.restore":     .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .none),
-        "session.delete":      .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .none),
+        "session.delete":      .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .challenge),
         "session.model.set":    .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .none),
         "session.thinking.set": .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .none),
         "session.ui.respond":   .init(capability: .sessionsPrompt, scope: .session, revision: .optional, confirmation: .none),
@@ -89,7 +89,7 @@ public enum Commands {
         // preview.launch is preview.control (start a preview for a URL);
         // preview.capture triggers a screenshot (preview.read); preview.
         // capture.read streams one base64 chunk of the capture bytes.
-        "preview.launch":       .init(capability: .previewControl, scope: .session, revision: .optional, confirmation: .none),
+        "preview.launch":       .init(capability: .previewControl, scope: .session, revision: .optional, confirmation: .challenge),
         "preview.capture":      .init(capability: .previewRead,    scope: .session, revision: .optional, confirmation: .none),
         "preview.capture.read": .init(capability: .previewRead,    scope: .session, revision: .none,     confirmation: .none),
     ]

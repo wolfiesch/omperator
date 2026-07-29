@@ -1797,7 +1797,9 @@ export class LocalAppserver implements AppserverHandle {
 					details: { feature: requiredFeature },
 				}),
 			};
-		if (descriptor.confirmation === "challenge" && !approved)
+		const trustedLocalTerminalOpen =
+			command.command === "term.open" && ws?.remote === false;
+		if (descriptor.confirmation === "challenge" && !trustedLocalTerminalOpen && !approved)
 			return {
 				frame: response(this.hostId, command, false, undefined, {
 					code: "confirmation_invalid",
@@ -4679,7 +4681,9 @@ export class LocalAppserver implements AppserverHandle {
 				await this.#sendFrame(ws, this.observerBarrierOutcome(frame).frame);
 				return;
 			}
-			if (descriptor?.confirmation === "challenge") {
+			const trustedLocalTerminalOpen =
+				frame.command === "term.open" && ws.remote === false;
+			if (descriptor?.confirmation === "challenge" && !trustedLocalTerminalOpen) {
 				if (frame.confirmationId !== undefined) {
 					await this.#sendFrame(
 						ws,

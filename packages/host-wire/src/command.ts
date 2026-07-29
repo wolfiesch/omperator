@@ -474,10 +474,9 @@ export const COMMAND_DESCRIPTORS: Readonly<Record<string, CommandDescriptor>> = 
 		scope: "session",
 		revision: "optional",
 		revisionOwner: "session",
-		// No interactive challenge: opening a pty is routine, not destructive,
-		// and the capability grant is the security boundary. A per-open
-		// Approve/Deny card only stalled clients behind a 60s expiry.
-		confirmation: "none",
+		// Remote PTY creation remains explicitly confirmed. The host bypasses
+		// this challenge only for a same-machine Unix-socket client.
+		confirmation: "challenge",
 	},
 	"audit.read": {
 		capability: "audit.read",

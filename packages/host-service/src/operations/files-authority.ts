@@ -1,6 +1,7 @@
 import { MAX_FILE_BYTES, type SessionId } from "@t4-code/host-wire";
+import { dlopen, FFIType, ptr, read, toArrayBuffer } from "bun:ffi";
 import { execFile } from "node:child_process";
-import { constants, type Dirent } from "node:fs";
+import { closeSync, constants } from "node:fs";
 import { open, readdir, realpath, type FileHandle } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -35,6 +36,99 @@ function operationError(code: string, message: string): Error {
 }
 
 type FileKind = "file" | "directory" | "symlink";
+type NativePointer = ReturnType<typeof ptr>;
+
+interface DarwinBindings {
+	readonly openat: (directoryFd: number, path: NativePointer, flags: number) => number;
+	readonly dup: (fd: number) => number;
+	readonly fdopendir: (fd: number) => NativePointer;
+	readonly readdir: (directory: NativePointer) => NativePointer;
+	readonly closedir: (directory: NativePointer) => number;
+	readonly __error: () => NativePointer;
+}
+
+let cachedDarwinBindings: DarwinBindings | undefined;
+
+function darwinBindings(): DarwinBindings {
+	if (process.platform !== "darwin")
+		throw operationError("UNSUPPORTED", "Darwin descriptor bindings are unavailable on this platform");
+	if (cachedDarwinBindings) return cachedDarwinBindings;
+	cachedDarwinBindings = dlopen("libSystem.B.dylib", {
+		// openat's first three parameters are fixed; the optional variadic mode
+		// is absent because file creation is never permitted here.
+		openat: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
+		dup: { args: [FFIType.i32], returns: FFIType.i32 },
+		fdopendir: { args: [FFIType.i32], returns: FFIType.ptr },
+		readdir: { args: [FFIType.ptr], returns: FFIType.ptr },
+		closedir: { args: [FFIType.ptr], returns: FFIType.i32 },
+		__error: { args: [], returns: FFIType.ptr },
+	}).symbols as unknown as DarwinBindings;
+	return cachedDarwinBindings;
+}
+
+function darwinErrno(bindings: DarwinBindings): number {
+	return read.i32(bindings.__error(), 0);
+}
+
+function errnoError(errno: number, action: string): Error {
+	const code =
+		errno === 2 ? "ENOENT"
+		: errno === 20 ? "ENOTDIR"
+		: errno === 62 ? "ELOOP"
+		: errno === 13 ? "EACCES"
+		: "EIO";
+	return Object.assign(new Error(`${action} failed with errno ${errno}`), { code, errno });
+}
+
+async function darwinOpenAt(directoryFd: number, component: string, flags: number): Promise<FileHandle> {
+	const bindings = darwinBindings();
+	const componentBytes = Buffer.from(`${component}\0`);
+	const rawFd = bindings.openat(directoryFd, ptr(componentBytes), flags);
+	if (rawFd < 0) throw errnoError(darwinErrno(bindings), "descriptor-relative open");
+	try {
+		// Opening /dev/fd/N without O_DIRECTORY duplicates an already-open
+		// descriptor on Darwin. Directory traversal itself still happens through
+		// openat above; the duplicate only adapts the native fd to FileHandle.
+		return await open(`/dev/fd/${rawFd}`, constants.O_RDONLY);
+	} finally {
+		closeSync(rawFd);
+	}
+}
+
+function darwinReadDirectory(handle: FileHandle): Array<{ name: string; kind: FileKind }> {
+	const bindings = darwinBindings();
+	const duplicate = bindings.dup(handle.fd);
+	if (duplicate < 0) throw errnoError(darwinErrno(bindings), "directory descriptor duplication");
+	const directory = bindings.fdopendir(duplicate);
+	if (!directory) {
+		const errno = darwinErrno(bindings);
+		closeSync(duplicate);
+		throw errnoError(errno, "descriptor directory open");
+	}
+	const entries: Array<{ name: string; kind: FileKind }> = [];
+	try {
+		while (true) {
+			const entry = bindings.readdir(directory);
+			if (!entry) break;
+			// Darwin struct dirent stores d_namlen at byte 18, d_type at byte
+			// 20, and the name bytes at byte 21.
+			const header = new DataView(toArrayBuffer(entry, 0, 21));
+			const nameLength = header.getUint16(18, true);
+			if (nameLength === 0 || nameLength > 1_024)
+				throw operationError("FAILED", "directory returned an invalid entry name");
+			const name = new TextDecoder().decode(new Uint8Array(toArrayBuffer(entry, 21, nameLength)));
+			if (name === "." || name === "..") continue;
+			const type = header.getUint8(20);
+			entries.push({
+				name,
+				kind: type === 4 ? "directory" : type === 10 ? "symlink" : "file",
+			});
+		}
+	} finally {
+		bindings.closedir(directory);
+	}
+	return entries;
+}
 
 /**
  * Standalone-host file operations for `files.list` and `files.read`. Roots
@@ -63,7 +157,17 @@ export class FilesAuthority {
 		const dir = await this.#openBeneath(root, rel, true);
 		const includeHidden = args.includeHidden === true;
 		try {
-			const dirents: Dirent[] = await readdir(dir.path, { withFileTypes: true });
+			const dirents =
+				process.platform === "darwin"
+					? darwinReadDirectory(dir.handle)
+					: (await readdir(dir.path, { withFileTypes: true })).map(dirent => ({
+							name: dirent.name,
+							kind: dirent.isSymbolicLink()
+								? "symlink" as const
+								: dirent.isDirectory()
+									? "directory" as const
+									: "file" as const,
+						}));
 			dirents.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 			const entries: Array<{ path: string; kind: FileKind; size?: number }> = [];
 			let truncated = false;
@@ -73,11 +177,7 @@ export class FilesAuthority {
 					truncated = true;
 					break;
 				}
-				const kind: FileKind = dirent.isSymbolicLink()
-					? "symlink"
-					: dirent.isDirectory()
-						? "directory"
-						: "file";
+				const kind = dirent.kind;
 				const entry: { path: string; kind: FileKind; size?: number } = {
 					path: rel === "" ? dirent.name : `${rel}/${dirent.name}`,
 					kind,
@@ -265,7 +365,13 @@ export class FilesAuthority {
 		try {
 			const handle = await this.#openBeneathHandle(root, rel, directory);
 			if (handle !== root) await root.close();
-			return { handle, path: this.#descriptorPath(handle.fd) };
+			return {
+				handle,
+				path:
+					process.platform === "darwin"
+						? resolve(canonicalRoot, ...this.#components(rel))
+						: this.#descriptorPath(handle.fd),
+			};
 		} catch (error) {
 			await root.close();
 			throw error;
@@ -284,7 +390,10 @@ export class FilesAuthority {
 					constants.O_RDONLY |
 					constants.O_NOFOLLOW |
 					(!final || directory ? constants.O_DIRECTORY : 0);
-				const next = await open(`${this.#descriptorPath(current.fd)}/${components[index]}`, flags);
+				const next =
+					process.platform === "darwin"
+						? await darwinOpenAt(current.fd, components[index], flags)
+						: await open(`${this.#descriptorPath(current.fd)}/${components[index]}`, flags);
 				if (ownsCurrent) await current.close();
 				current = next;
 				ownsCurrent = true;
@@ -311,7 +420,6 @@ export class FilesAuthority {
 
 	#descriptorPath(fd: number): string {
 		if (process.platform === "linux") return `/proc/self/fd/${fd}`;
-		if (process.platform === "darwin") return `/dev/fd/${fd}`;
 		throw operationError("UNSUPPORTED", "descriptor-relative file access is unavailable on this platform");
 	}
 }

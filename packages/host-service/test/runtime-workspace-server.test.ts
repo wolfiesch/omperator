@@ -610,9 +610,8 @@ test("local clients execute challenge commands without a confirmation round trip
 			...command("term-open-1", "term.open", { cols: 80, rows: 24 }),
 			sessionId: "session-local",
 		});
-		// term.open carries no interactive challenge: a per-open Approve/Deny
-		// card parked the command behind a 60s expiry until the client timed
-		// out ("timeout command"). It must execute immediately.
+		// Same-machine Unix-socket clients bypass the remote confirmation
+		// challenge, so routine local terminal opens execute immediately.
 		expect(await response(client, "term-open-1")).toMatchObject({
 			ok: true,
 			result: { terminalId: openedTerminal },
