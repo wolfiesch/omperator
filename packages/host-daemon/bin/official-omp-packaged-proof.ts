@@ -186,7 +186,9 @@ async function main(): Promise<void> {
 		if (!attached.ok) throw new Error(`packaged session attach failed: ${attached.error.message}`);
 		let stateReady = false;
 		let stateFailure = "unknown";
-		for (let attempt = 0; attempt < 40 && !stateReady; attempt += 1) {
+		// The runtime claim round-trip takes seconds on a loaded machine;
+		// 40 × 100ms is not enough when the gates run every package at once.
+		for (let attempt = 0; attempt < 200 && !stateReady; attempt += 1) {
 			const requestId = `state-${attempt}`;
 			send(requestId, "session.state.get", {});
 			const state = await responseFor(client, requestId);
