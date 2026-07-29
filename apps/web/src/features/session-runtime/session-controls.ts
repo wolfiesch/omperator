@@ -220,9 +220,7 @@ export function readSessionControlState(ref: SessionRef | undefined): SessionCon
   let fast: boolean | null = null;
   let fastAvailable: boolean | null = null;
   let fastActive: boolean | null = null;
-  // OMP's default is build. Older/current refs may omit the field until the
-  // user changes it, but omission on an existing ref does not mean unknown.
-  let mode: SessionMode | null = ref === undefined ? null : "build";
+  let mode: SessionMode | null = null;
   if (ref !== undefined) {
     if (typeof ref.model === "string" && ref.model !== "") modelSelector = ref.model;
     if (isThinkingLevel(ref.thinking)) thinking = ref.thinking;

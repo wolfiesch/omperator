@@ -100,8 +100,8 @@ test("rejects duplicate keys in JSON release contracts", () => {
 
 test("promotes the verified runtime into the product release", () => {
   const matrix = JSON.parse(files.get("compat/omp-app-matrix.json"));
-  assert.equal(matrix.verifiedRuntime.sourceTag, "t4code-17.0.5-appserver-19");
-  assert.equal(matrix.publishedRuntime.sourceTag, "t4code-17.0.5-appserver-19");
+  assert.equal(matrix.verifiedRuntime.sourceTag, "t4code-17.0.5-appserver-15");
+  assert.equal(matrix.publishedRuntime.sourceTag, "t4code-17.0.5-appserver-15");
   assert.deepEqual(matrix.publishedRuntime, matrix.verifiedRuntime);
 });
 
@@ -180,7 +180,7 @@ test("pins official OMP artifacts and the Gate 0 proof contract", () => {
 test("rejects a tag that differs from the package version", () => {
   assert.ok(
     collectReleaseConsistencyErrors(files, "v9.9.9").some((error) =>
-      error.includes("release tag v9.9.9 does not match v0.2.1"),
+      error.includes("release tag v9.9.9 does not match v0.1.33"),
     ),
   );
 });
@@ -209,7 +209,7 @@ test("tagged releases reject published provenance drift", () => {
   for (const [field, mutate] of appWireCases) {
     const drifted = changedRuntime("publishedAppWire", mutate);
     assert.ok(
-      collectReleaseConsistencyErrors(drifted, "v0.2.1").some((error) =>
+      collectReleaseConsistencyErrors(drifted, "v0.1.33").some((error) =>
         error.includes(
           `published app-wire ${field} must match current app-wire for tagged releases`,
         ),
@@ -252,7 +252,7 @@ test("tagged releases reject published provenance drift", () => {
   for (const [field, mutate] of runtimeCases) {
     const drifted = changedRuntime("publishedRuntime", mutate);
     assert.ok(
-      collectReleaseConsistencyErrors(drifted, "v0.2.1").some((error) =>
+      collectReleaseConsistencyErrors(drifted, "v0.1.33").some((error) =>
         error.includes(
           `published runtime ${field} must match current verified runtime for tagged releases`,
         ),
@@ -264,7 +264,7 @@ test("tagged releases reject published provenance drift", () => {
     runtime.artifactSha256 = "0".repeat(64);
   });
   assert.ok(
-    collectReleaseConsistencyErrors(extended, "v0.2.1").some((error) =>
+    collectReleaseConsistencyErrors(extended, "v0.1.33").some((error) =>
       error.includes(
         "published runtime must exactly match current verified runtime for tagged releases",
       ),
@@ -274,15 +274,15 @@ test("tagged releases reject published provenance drift", () => {
 
 test("rejects workspace, site, README, and runtime version drift", () => {
   const cases = [
-    ["apps/web/package.json", (text) => text.replace('"version": "0.2.1"', '"version": "0.1.3"')],
+    ["apps/web/package.json", (text) => text.replace('"version": "0.1.33"', '"version": "0.1.3"')],
     [
       "apps/site/src/release.ts",
-      (text) => text.replace('RELEASE_TAG = "v0.2.1"', 'RELEASE_TAG = "v0.1.3"'),
+      (text) => text.replace('RELEASE_TAG = "v0.1.33"', 'RELEASE_TAG = "v0.1.3"'),
     ],
-    ["README.md", (text) => text.replace("Download v0.2.1", "Download v0.1.3")],
+    ["README.md", (text) => text.replace("Download v0.1.33", "Download v0.1.3")],
     [
       "apps/desktop/src/target-manager.ts",
-      (text) => text.replace('version: "0.2.1"', 'version: "0.1.3"'),
+      (text) => text.replace('version: "0.1.33"', 'version: "0.1.3"'),
     ],
     [
       "apps/site/src/docs/content.ts",
@@ -318,7 +318,7 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       (text) =>
         text.replace("RELEASE_MANIFEST_SCHEMA_VERSION = 1", "RELEASE_MANIFEST_SCHEMA_VERSION = 2"),
     ],
-    ["scripts/wait-for-release-assets.mjs", (text) => text.replace('"latest-linux.yml",', "")],
+    ["scripts/wait-for-release-assets.mjs", (text) => text.replace(', "latest-linux.yml"', "")],
     [
       ".github/workflows/release.yml",
       (text) => text.replace("artifacts/latest-linux.yml", "artifacts/missing-linux.yml"),
@@ -335,7 +335,7 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]",
+          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug, hostwire-swift, ios-build, macos-build, ios-ui-tests]",
           "needs: [changes, check, tooling, android-debug]",
         ),
     ],
@@ -343,18 +343,18 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "needs: [changes, legacy-bridge-continuity, official-omp-gate0, ios]",
           "needs: [changes, legacy-bridge-continuity, official-omp-gate0]",
+          "needs: [changes, legacy-bridge-continuity]",
         ),
     ],
-    // Dropping the iOS leg from the aggregator, or ungating it, would let Swift
-    // ship with no job that compiles it.
+    // Dropping a native leg from verify, or ungating it, would let Swift ship
+    // without the required platform proof.
     [
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "needs: [changes, legacy-bridge-continuity, official-omp-gate0, ios]",
-          "needs: [changes, legacy-bridge-continuity, ios]",
+          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug, hostwire-swift, ios-build, macos-build, ios-ui-tests]",
+          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug, ios-build, macos-build, ios-ui-tests]",
         ),
     ],
     [
@@ -368,18 +368,9 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
     [
       ".github/workflows/ci.yml",
       (text) =>
-        replaceRequired(
-          text,
-          "github.event.pull_request.head.repo.full_name == github.repository",
-          "github.event_name == 'pull_request'",
-        ),
-    ],
-    [
-      ".github/workflows/ci.yml",
-      (text) =>
         text.replace(
-          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]",
-          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, maintainer, android-debug]",
+          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug, hostwire-swift, ios-build, macos-build, ios-ui-tests]",
+          "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, maintainer, android-debug, hostwire-swift, ios-build, macos-build, ios-ui-tests]",
         ),
     ],
     [
@@ -638,7 +629,7 @@ test("rejects stale README release URLs while allowing historical prose", () => 
   const staleLink = changed("README.md", (text) => `${text}\n[Old release](${oldReleaseUrl})\n`);
   assert.ok(
     collectReleaseConsistencyErrors(staleLink).some((error) =>
-      error.includes("release URL for v0.1.3; expected v0.2.1"),
+      error.includes("release URL for v0.1.3; expected v0.1.33"),
     ),
   );
   assert.deepEqual(collectReleaseConsistencyErrors(files), []);
@@ -704,12 +695,15 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("if: ${{ always() }}"));
   assert.ok(
     ciWorkflow.includes(
-      "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]",
+      "needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug, hostwire-swift, ios-build, macos-build, ios-ui-tests]",
     ),
   );
   assert.ok(ciWorkflow.includes("name: release-gates"));
-  assert.ok(ciWorkflow.includes("needs: [changes, legacy-bridge-continuity, official-omp-gate0, ios]"));
-  assert.ok(ciWorkflow.includes("IOS_RESULT: ${{ needs.ios.result }}"));
+  assert.ok(ciWorkflow.includes("needs: [changes, legacy-bridge-continuity, official-omp-gate0]"));
+  assert.ok(ciWorkflow.includes("HOSTWIRE_SWIFT_RESULT: ${{ needs.hostwire-swift.result }}"));
+  assert.ok(ciWorkflow.includes("IOS_BUILD_RESULT: ${{ needs.ios-build.result }}"));
+  assert.ok(ciWorkflow.includes("MACOS_BUILD_RESULT: ${{ needs.macos-build.result }}"));
+  assert.ok(ciWorkflow.includes("IOS_UI_TESTS_RESULT: ${{ needs.ios-ui-tests.result }}"));
   assert.ok(ciWorkflow.includes('test "$CHANGES_RESULT" = success'));
   assert.ok(ciWorkflow.includes('test "$T4_API_GENERATION_RESULT" = success'));
   assert.ok(ciWorkflow.includes('test "$CHECK_RESULT" = success'));

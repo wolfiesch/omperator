@@ -8,9 +8,7 @@ import {
   createStableReleaseManifest,
   expectedPublishedAssetNames,
   LINUX_UPDATE_METADATA_NAME,
-  MAC_UPDATE_METADATA_NAME,
 } from "./generate-release-manifest.mjs";
-import { validateMacUpdateMetadata } from "./inspect-macos-update.mjs";
 import { readBoundedResponseBytes } from "./read-bounded-response.mjs";
 
 const REPOSITORY = "wolfiesch/omperator";
@@ -151,17 +149,14 @@ async function fetchReleaseAssetBytes(asset, { token, fetchImpl }) {
 async function exactPublishedContentIsValid({ release, version, assets, token, fetchImpl }) {
   const checksumAsset = assets.get(CHECKSUMS_NAME);
   const metadataAsset = assets.get(LINUX_UPDATE_METADATA_NAME);
-  const macMetadataAsset = assets.get(MAC_UPDATE_METADATA_NAME);
-  const [checksumsBytes, metadataBytes, macMetadataBytes] = await Promise.all([
+  const [checksumsBytes, metadataBytes] = await Promise.all([
     fetchReleaseAssetBytes(checksumAsset, { token, fetchImpl }),
     fetchReleaseAssetBytes(metadataAsset, { token, fetchImpl }),
-    fetchReleaseAssetBytes(macMetadataAsset, { token, fetchImpl }),
   ]);
 
   for (const [asset, bytes] of [
     [checksumAsset, checksumsBytes],
     [metadataAsset, metadataBytes],
-    [macMetadataAsset, macMetadataBytes],
   ]) {
     const digest = createHash("sha256").update(bytes).digest("hex");
     if (`sha256:${digest}` !== asset.digest) {
@@ -175,15 +170,6 @@ async function exactPublishedContentIsValid({ release, version, assets, token, f
       release,
       checksumsText: checksumsBytes.toString("utf8"),
       linuxMetadataText: metadataBytes.toString("utf8"),
-    });
-    const zipName = `Omperator-${version}-mac-arm64.zip`;
-    const dmgName = `Omperator-${version}-mac-arm64.dmg`;
-    validateMacUpdateMetadata(macMetadataBytes.toString("utf8"), {
-      version,
-      zipName,
-      zipSize: assets.get(zipName).size,
-      dmgName,
-      dmgSize: assets.get(dmgName).size,
     });
     return true;
   } catch {

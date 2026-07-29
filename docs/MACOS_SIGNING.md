@@ -1,6 +1,6 @@
 # macOS signing and notarization
 
-Omperator distributes its Mac build directly through GitHub Releases. It does not use the Mac App Store. Starting with the independently owned v0.1.33 release, the protected release workflow must sign the application with the pinned Apple Developer ID and submit it to Apple's automated notarization service before publication.
+T4 Code distributes its Mac build directly through GitHub Releases. It does not use the Mac App Store. Starting with the independently owned v0.1.33 release, the protected release workflow must sign the application with the pinned Apple Developer ID and submit it to Apple's automated notarization service before publication.
 
 ```text
 source tag
@@ -75,7 +75,4 @@ Do not put these values in `.env` files, shell history, source control, build lo
 - a valid stapled notarization ticket; and
 - acceptance by macOS Gatekeeper.
 
-Signed releases publish `latest-mac.yml`, the signed ZIP, and its blockmap for
-the native updater. The release gate checks those metadata records against the
-exact signed ZIP and notarized DMG before publication; the app downloads only
-after the user chooses and restarts only after a second explicit action.
+The first signed release remains a manual GitHub download. Automatic macOS updates are a separate follow-up because migration from the older unsigned build must be tested independently.

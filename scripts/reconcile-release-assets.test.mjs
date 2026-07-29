@@ -6,7 +6,6 @@ import {
   CHECKSUMS_NAME,
   expectedPublishedAssetNames,
   LINUX_UPDATE_METADATA_NAME,
-  MAC_UPDATE_METADATA_NAME,
   releasePackageDescriptors,
 } from "./generate-release-manifest.mjs";
 import {
@@ -19,12 +18,8 @@ const tag = `v${version}`;
 const packageDescriptors = releasePackageDescriptors(version);
 const deb = packageDescriptors.find(({ kind }) => kind === "deb").name;
 const appImage = packageDescriptors.find(({ kind }) => kind === "appimage").name;
-const macZip = packageDescriptors.find(({ kind }) => kind === "zip").name;
-const macDmg = packageDescriptors.find(({ kind }) => kind === "dmg").name;
 const debSha512 = Buffer.alloc(64, 1).toString("base64");
 const appImageSha512 = Buffer.alloc(64, 2).toString("base64");
-const macZipSha512 = Buffer.alloc(64, 3).toString("base64");
-const macDmgSha512 = Buffer.alloc(64, 4).toString("base64");
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -57,9 +52,6 @@ function jsonResponse(status, value) {
 }
 
 function healthyFixture({ corruptChecksums = false } = {}) {
-  const publishedNames = expectedPublishedAssetNames(version);
-  const macZipSize = 300 + publishedNames.indexOf(macZip);
-  const macDmgSize = 300 + publishedNames.indexOf(macDmg);
   const linuxMetadataText = `version: ${version}
 files:
   - url: ${appImage}
@@ -71,18 +63,6 @@ files:
     size: 100
 path: ${appImage}
 sha512: ${appImageSha512}
-releaseDate: '2026-07-15T20:00:00Z'
-`;
-  const macMetadataText = `version: ${version}
-files:
-  - url: ${macZip}
-    sha512: ${macZipSha512}
-    size: ${macZipSize}
-  - url: ${macDmg}
-    sha512: ${macDmgSha512}
-    size: ${macDmgSize}
-path: ${macZip}
-sha512: ${macZipSha512}
 releaseDate: '2026-07-15T20:00:00Z'
 `;
   const checksummedNames = [
@@ -102,7 +82,6 @@ releaseDate: '2026-07-15T20:00:00Z'
   const bodies = new Map([
     [CHECKSUMS_NAME, checksumsText],
     [LINUX_UPDATE_METADATA_NAME, linuxMetadataText],
-    [MAC_UPDATE_METADATA_NAME, macMetadataText],
   ]);
   const assets = expectedPublishedAssetNames(version).map((name, index) => {
     const body = bodies.get(name);
@@ -173,8 +152,8 @@ test("clears every invalid or incomplete asset before a repair publication", asy
     },
   });
 
-  assert.deepEqual(result, { state: "cleared", deleted: 10, publishRequired: true });
-  assert.deepEqual(deleted.sort((a, b) => a - b), [1, 2, 3, 4, 5, 6, 7, 8, 9, 99]);
+  assert.deepEqual(result, { state: "cleared", deleted: 8, publishRequired: true });
+  assert.deepEqual(deleted.sort((a, b) => a - b), [1, 2, 3, 4, 5, 6, 7, 99]);
 });
 
 test("treats only an exact release lookup 404 as a clean first publication", async () => {
@@ -205,8 +184,8 @@ test("repairs exact-looking assets whose checksum manifest disagrees with GitHub
     fetchImpl: fixtureFetch(fixture, { deleted }),
   });
 
-  assert.deepEqual(result, { state: "cleared", deleted: 9, publishRequired: true });
-  assert.deepEqual(deleted.sort((a, b) => a - b), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  assert.deepEqual(result, { state: "cleared", deleted: 7, publishRequired: true });
+  assert.deepEqual(deleted.sort((a, b) => a - b), [1, 2, 3, 4, 5, 6, 7]);
 });
 
 test("does not delete a healthy-looking release when metadata downloads are temporarily unavailable", async () => {
@@ -250,7 +229,7 @@ test("does not delete a healthy-looking release when downloaded metadata fails i
   assert.deepEqual(deleted, []);
 });
 
-test("verifies the exact nine-asset remote release bundle", async () => {
+test("verifies the exact seven-asset remote release bundle", async () => {
   const fixture = healthyFixture();
   const result = await verifyExactPublishedReleaseAssets({
     version,

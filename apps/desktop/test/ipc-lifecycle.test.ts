@@ -361,7 +361,12 @@ describe("desktop IPC lifecycle proof", () => {
     new DesktopIpcRegistry(runtime, ipc).install();
     view.window.isDestroyed = () => true;
     const registry = new DesktopIpcRegistry(runtime, ipc);
-    registry.emitPairLink({ hostHint: "host", code: "123456", issuedAt: 1 });
+    registry.emitPairLink({
+      hostHint: "host",
+      endpoint: "wss://host/v1/ws",
+      code: "123456",
+      issuedAt: 1,
+    });
     expect(view.sent).toEqual([]);
   });
   it("keeps update actions behind exact trusted IPC and emits each state once", async () => {

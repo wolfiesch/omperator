@@ -12,13 +12,7 @@ const REPOSITORY_URL = "https://github.com/wolfiesch/omperator";
 
 export function releaseAssetUrls(version) {
   const tag = `v${version}`;
-  return [
-    ...expectedReleaseAssetNames(version),
-    "latest-linux.yml",
-    "latest-mac.yml",
-    `Omperator-${version}-mac-arm64.zip.blockmap`,
-    "SHA256SUMS.txt",
-  ].map((filename) => ({
+  return [...expectedReleaseAssetNames(version), "latest-linux.yml", "SHA256SUMS.txt"].map((filename) => ({
     filename,
     url: `${REPOSITORY_URL}/releases/download/${tag}/${filename}`,
   }));

@@ -4,28 +4,74 @@
 // fixture uses — and every user action leaves as a typed command through
 // the controller. Nothing here scrapes terminal output, parses logs, or
 // invents runtime truth; what the frames do not say, the UI does not show.
-// Live session runtime: the desktop implementation of the SessionRuntime
-// seam, backed by a DesktopRuntimeController. Frames flow one way — the
-// controller's typed subscription feeds the same transcript reducer the
-// fixture uses — and every user action leaves as a typed command through
-// the controller. Nothing here scrapes terminal output, parses logs, or
-// invents runtime truth; what the frames do not say, the UI does not show.
-import type { DesktopRuntimeController, DesktopRuntimeSnapshot, SessionProjection } from "@t4-code/client";
-import { hostId as brandHostId, PROTOCOL_VERSION, revision as brandRevision, sessionId as brandSessionId, type SessionEvent, type SessionSnapshotFrame } from "@t4-code/protocol";
+import type {
+  DesktopRuntimeController,
+  DesktopRuntimeSnapshot,
+  SessionProjection,
+} from "@t4-code/client";
+import { readTranscriptPage, TranscriptPageClientError } from "@t4-code/client";
+import {
+  hostId as brandHostId,
+  PROTOCOL_VERSION,
+  revision as brandRevision,
+  sessionId as brandSessionId,
+  type CatalogItem,
+  type DurableEntry,
+  type Revision,
+  type SessionEvent,
+  type SessionRef,
+  type SessionSnapshotFrame,
+} from "@t4-code/protocol";
 
-import { initialProjection, reduceTranscript, reduceTranscriptEvent, replayRetainedTranscriptEvents, retainedTranscriptEventsAreValid, settleTranscriptTurn, transcriptIsActive, type TranscriptServerEvent, type TranscriptProjection } from "../transcript/projection.ts";
+import {
+  initialProjection,
+  reduceTranscript,
+  reduceTranscriptEvent,
+  replayRetainedTranscriptEvents,
+  retainedTranscriptEventsAreValid,
+  settleTranscriptTurn,
+  transcriptIsActive,
+  type ApprovalRequest,
+  type TranscriptServerEvent,
+  type TranscriptProjection,
+} from "../transcript/projection.ts";
 import { slashCommandsFromCatalog } from "../composer/slash.ts";
-import type { SessionLink, SessionRuntime, SessionRuntimeSnapshot } from "./controller.ts";
+import type {
+  PromptOutcome,
+  SessionLink,
+  SessionRuntime,
+  SessionRuntimeSnapshot,
+  TranscriptHistoryPageState,
+} from "./controller.ts";
+import { IMAGE_PROMPTS_UNSUPPORTED_REASON, type SessionIntent } from "./intents.ts";
+import { runImagePromptUpload } from "./image-upload.ts";
+import { promptRejectionReason } from "./command-errors.ts";
 import { pendingPromptsFromRef } from "./pending-prompts.ts";
-import { createTranscriptArtifactSource, type TranscriptImageAvailability, type TranscriptMediaReference } from "./transcript-images.ts";
-import { deriveComposerControls } from "./session-controls.ts";
-import { CACHED_WRITE_REASON, gateComposerControls, OFFLINE_WRITE_REASON, presentSessionControl, readSessionControl, sessionControlForLink } from "./session-observer.ts";
-import { sessionWriteLink } from "./session-inventory.ts";
-import { findCancelCommand } from "./live-controls.ts";
-import { createLiveAttachmentController } from "./live-attachment.ts";
-import { createLivePromptDispatcher } from "./live-prompt-dispatcher.ts";
-import { activePendingPromptId, authoritativeWorkingState, getQueuedFollowUps, isTranscriptEvent, retiredPendingPromptId, sessionRefIsCompacting, sessionIsWorkingWithPendingPrompts } from "./live-session-state.ts";
-import { createLiveTranscriptPager } from "./live-transcript-history.ts";
+import {
+  createTranscriptArtifactSource,
+  type TranscriptImageAvailability,
+  type TranscriptMediaReference,
+} from "./transcript-images.ts";
+import {
+  commandSupport,
+  deriveComposerControls,
+  FAST_SET_COMMAND,
+  MODE_SET_COMMAND,
+  MODEL_SET_COMMAND,
+  THINKING_SET_COMMAND,
+  type PendingControl,
+} from "./session-controls.ts";
+import { sessionIsWorking } from "./session-management.ts";
+import {
+  CACHED_WRITE_REASON,
+  gateComposerControls,
+  OFFLINE_WRITE_REASON,
+  presentSessionControl,
+  readSessionControl,
+  sessionControlForLink,
+  WriteGateError,
+} from "./session-observer.ts";
+import { sessionRefIsCurrent, sessionWriteLink } from "./session-inventory.ts";
 
 export interface LiveRuntimeOptions {
   readonly controller: DesktopRuntimeController;
@@ -34,7 +80,168 @@ export interface LiveRuntimeOptions {
   readonly sessionId: string;
 }
 
+const UNKNOWN_REASON =
+  "The connection dropped before the host answered. Your draft is safe. Check the transcript before resending so you do not send it twice.";
+
+/** Bounded failure copy per control; the label itself never lies. */
+const CONTROL_REJECTED: Record<PendingControl, string> = {
+  model: "The host declined the model change. The session keeps its current model.",
+  thinking: "The host declined the thinking change. The session keeps its current level.",
+  fast: "The host declined the fast-mode change.",
+  mode: "The host declined the mode change. The session keeps its current mode.",
+};
+const CONTROL_UNKNOWN =
+  "The connection dropped before the host answered. The control shows the host's last confirmed value.";
 const MAX_RETIRED_PENDING_PROMPTS = 128;
+const INITIAL_TRANSCRIPT_PAGE_ENTRIES = 64;
+const INITIAL_TRANSCRIPT_PAGE_BYTES = 256 * 1024;
+const OLDER_TRANSCRIPT_PAGE_ENTRIES = 128;
+const OLDER_TRANSCRIPT_PAGE_BYTES = 512 * 1024;
+const MAX_PAGED_TRANSCRIPT_ENTRIES = 4_096;
+
+function prependTranscriptPage(
+  current: readonly DurableEntry[],
+  older: readonly DurableEntry[],
+): readonly DurableEntry[] {
+  const existing = new Set(current.map((entry) => entry.id));
+  const added: DurableEntry[] = [];
+  for (const entry of older) {
+    if (existing.has(entry.id)) continue;
+    existing.add(entry.id);
+    added.push(entry);
+  }
+  return [...added, ...current];
+}
+
+function presentPagedTranscript(
+  projection: TranscriptProjection,
+  pagedEntries: readonly DurableEntry[],
+): TranscriptProjection {
+  if (pagedEntries.length === 0) return projection;
+  if (projection.entries.length === 0) return { ...projection, entries: pagedEntries };
+  // The host page is authority for the range it covers, but the warm projection can
+  // extend past that range on both sides. Splice the page between the live entries
+  // that sit outside it, keyed on the shared anchors, so a gappy warm projection is
+  // repaired without reordering history the page never described.
+  const pagedIds = new Set(pagedEntries.map((entry) => entry.id));
+  const firstAnchor = projection.entries.findIndex((entry) => pagedIds.has(entry.id));
+  if (firstAnchor < 0) {
+    // No overlap: the page is strictly older than everything the projection holds.
+    return { ...projection, entries: [...pagedEntries, ...projection.entries] };
+  }
+  const lastAnchor = projection.entries.findLastIndex((entry) => pagedIds.has(entry.id));
+  const before = projection.entries.slice(0, firstAnchor);
+  const after = projection.entries.slice(lastAnchor + 1);
+  return { ...projection, entries: [...before, ...pagedEntries, ...after] };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Event kinds the transcript reducer accepts; mirrors the subscription. */
+const TRANSCRIPT_EVENT_KINDS: ReadonlySet<string> = new Set(["snapshot", "entry", "event", "gap"]);
+
+function isTranscriptEvent(event: { readonly kind: string }): event is TranscriptServerEvent {
+  return TRANSCRIPT_EVENT_KINDS.has(event.kind);
+}
+
+/** Follow-ups the host reports as queued, read strictly from the ref. */
+function getQueuedFollowUps(ref: SessionRef | undefined): readonly string[] {
+  if (!isRecord(ref?.liveState)) return [];
+  const queuedMessages = ref.liveState.queuedMessages;
+  if (!isRecord(queuedMessages)) return [];
+  const followUp = queuedMessages.followUp;
+  if (!Array.isArray(followUp)) return [];
+  const result: string[] = [];
+  for (const item of followUp) {
+    if (typeof item === "string") result.push(item);
+  }
+  return result;
+}
+
+function retiredPendingPromptId(event: SessionEvent): string | null {
+  if (event.type !== "message.settled" && event.type !== "message.discarded") return null;
+  const candidate =
+    typeof event.transientEntryId === "string"
+      ? event.transientEntryId
+      : event.type === "message.discarded" && typeof event.entryId === "string"
+        ? event.entryId
+        : null;
+  return candidate !== null && candidate.length > 0 && candidate.length <= 512 ? candidate : null;
+}
+
+function activePendingPromptId(event: SessionEvent): string | null {
+  if (
+    (event.type !== "message.update" && event.type !== "message.delta") ||
+    event.role !== "user" ||
+    typeof event.entryId !== "string"
+  ) {
+    return null;
+  }
+  return event.entryId.length > 0 && event.entryId.length <= 512 ? event.entryId : null;
+}
+
+function sessionIsWorkingWithPendingPrompts(
+  ref: SessionRef | undefined,
+  pendingPrompts: ReturnType<typeof pendingPromptsFromRef>,
+): boolean {
+  if (ref === undefined) return false;
+  const liveState = isRecord(ref.liveState) ? ref.liveState : {};
+  return sessionIsWorking({
+    ...ref,
+    // A present plural value is authoritative over any lagging singular
+    // fallback, while every independent queue/stream/compaction signal stays.
+    liveState: { ...liveState, pendingPrompts },
+  } as SessionRef);
+}
+
+function sessionRefIsCompacting(ref: SessionRef | undefined): boolean {
+  if (!isRecord(ref?.liveState)) return false;
+  return ref.liveState.isCompacting === true || ref.liveState.phase === "compacting";
+}
+
+/**
+ * Return working truth only when this connected host supplied this session's
+ * ref after the latest reconnect. A bounded/truncated inventory can still be
+ * authoritative for rows it actually returned.
+ */
+function authoritativeWorkingState(
+  runtime: DesktopRuntimeSnapshot,
+  targetId: string,
+  hostId: string,
+  sessionId: string,
+  projectionKey: string,
+  retiredPendingPromptIds: ReadonlySet<string>,
+): boolean | null {
+  if (runtime.connections.get(targetId) !== "connected") return null;
+  if (runtime.targetHosts.get(targetId) !== hostId) return null;
+  if (!sessionRefIsCurrent(runtime, hostId, sessionId)) return null;
+  const ref = runtime.projection.sessionIndex.get(projectionKey);
+  if (ref === undefined) return null;
+  const pendingPrompts = pendingPromptsFromRef(ref).filter(
+    (prompt) => !retiredPendingPromptIds.has(prompt.entryId),
+  );
+  return sessionIsWorkingWithPendingPrompts(ref, pendingPrompts);
+}
+
+/** Commands the runtime recognizes as this session's abort affordance. */
+function findCancelCommand(items: readonly CatalogItem[]): CatalogItem | undefined {
+  return items.find(
+    (item) =>
+      item.kind === "command" &&
+      (String(item.id) === "session.cancel" ||
+        item.name === "session.cancel" ||
+        item.name === "cancel"),
+  );
+}
+
+interface PendingChallenge {
+  readonly challenge: SessionProjection["confirmations"] extends ReadonlyMap<string, infer Value>
+    ? Value
+    : never;
+  readonly approval: ApprovalRequest;
+}
 
 export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRuntime {
   const { controller, targetId } = options;
@@ -64,8 +271,21 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
   // Composer control command state: which control awaits the host, and the
   // last failure. Values themselves always come from server state — the
   // label never swaps optimistically.
+  let pendingControl: PendingControl | null = null;
+  let controlError: string | null = null;
+  // Control commands change the session revision. Keep later revisioned
+  // prompt commands behind the full control round-trip so a fast tap on
+  // Send cannot race the model/thinking/fast delta and be rejected stale.
+  let controlBarrier: Promise<void> | null = null;
+  /** Challenges the user decided and the shell acknowledged; hidden locally. */
+  const decidedChallenges = new Set<string>();
   const listeners = new Set<() => void>();
   let transcriptImagesAttached = false;
+  let pagedEntries: readonly DurableEntry[] = [];
+  let transcriptHistory: TranscriptHistoryPageState | undefined;
+  let transcriptPageGeneration: string | undefined;
+  let transcriptPageCursor: string | undefined;
+  let transcriptPageRequest: Promise<void> | null = null;
 
   const transcriptImages = createTranscriptArtifactSource({
     hostId: options.hostId,
@@ -179,14 +399,96 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
     for (const listener of listeners) listener();
   };
 
-  const transcriptPager = createLiveTranscriptPager({
-    controller,
-    targetId,
-    hostId: options.hostId,
-    sessionId: options.sessionId,
-    isDisposed: () => disposed,
-    notify,
-  });
+  const transcriptPageSupported = (runtime: DesktopRuntimeSnapshot): boolean => {
+    const host = runtime.hosts.get(options.hostId);
+    return (
+      runtime.connections.get(targetId) === "connected" &&
+      runtime.targetHosts.get(targetId) === options.hostId &&
+      host?.grantedCapabilities.includes("sessions.read") === true &&
+      host.grantedFeatures.includes("transcript.page")
+    );
+  };
+
+  const loadTranscriptPage = (before?: string): Promise<void> => {
+    if (transcriptPageRequest !== null) return transcriptPageRequest;
+    const loadingOlder = before !== undefined;
+    const remainingEntries = MAX_PAGED_TRANSCRIPT_ENTRIES - pagedEntries.length;
+    if (loadingOlder && remainingEntries <= 0) return Promise.resolve();
+    transcriptHistory = {
+      phase: "loading",
+      hasMore: transcriptPageCursor !== undefined,
+      error: null,
+    };
+    notify();
+    const request = readTranscriptPage(
+      controller,
+      { targetId, hostId: options.hostId, sessionId: options.sessionId },
+      {
+        ...(before === undefined ? {} : { before }),
+        limit: loadingOlder
+          ? Math.min(OLDER_TRANSCRIPT_PAGE_ENTRIES, remainingEntries)
+          : INITIAL_TRANSCRIPT_PAGE_ENTRIES,
+        maxBytes: loadingOlder ? OLDER_TRANSCRIPT_PAGE_BYTES : INITIAL_TRANSCRIPT_PAGE_BYTES,
+      },
+    )
+      .then((page) => {
+        if (disposed) return;
+        if (
+          loadingOlder &&
+          transcriptPageGeneration !== undefined &&
+          page.generation !== transcriptPageGeneration
+        ) {
+          throw new TranscriptPageClientError(
+            "stale",
+            "The transcript changed while older history was loading.",
+            "transcript_generation_changed",
+          );
+        }
+        pagedEntries = loadingOlder
+          ? prependTranscriptPage(pagedEntries, page.entries)
+          : [...page.entries];
+        transcriptPageGeneration = page.generation;
+        transcriptPageCursor = page.nextCursor;
+        transcriptHistory = {
+          phase: "ready",
+          hasMore: page.hasMore && pagedEntries.length < MAX_PAGED_TRANSCRIPT_ENTRIES,
+          error:
+            page.hasMore && pagedEntries.length >= MAX_PAGED_TRANSCRIPT_ENTRIES
+              ? "This view reached its in-memory history limit."
+              : null,
+        };
+        notify();
+      })
+      .catch((error: unknown) => {
+        if (disposed) return;
+        const unsupported =
+          error instanceof TranscriptPageClientError && error.code === "unsupported";
+        transcriptHistory = {
+          phase: unsupported ? "unsupported" : "error",
+          hasMore: transcriptPageCursor !== undefined,
+          error: unsupported
+            ? null
+            : error instanceof TranscriptPageClientError
+              ? error.message
+              : "Older transcript history could not be loaded.",
+        };
+        notify();
+      })
+      .finally(() => {
+        if (transcriptPageRequest === request) transcriptPageRequest = null;
+      });
+    transcriptPageRequest = request;
+    return request;
+  };
+
+  const primeTranscriptTail = (): Promise<void> => {
+    if (transcriptHistory !== undefined) return transcriptPageRequest ?? Promise.resolve();
+    if (!transcriptPageSupported(controller.getSnapshot())) {
+      transcriptHistory = { phase: "unsupported", hasMore: false, error: null };
+      return Promise.resolve();
+    }
+    return loadTranscriptPage();
+  };
 
   // Seed from the controller's warm projection. Durable entries install at the
   // authoritative warm cursor; the bounded event suffix is then folded in its
@@ -221,18 +523,233 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
     }
   }
 
-  const promptDispatcher = createLivePromptDispatcher({
-    controller,
-    targetId,
-    hostId: options.hostId,
-    sessionId: options.sessionId,
-    projectionKey,
-    wireHostId,
-    wireSessionId,
-    warmSession,
-    writeGate,
-    notify,
-  });
+  const expectedRevision = (): Revision | undefined => {
+    const runtime = controller.getSnapshot();
+    const warmRevision = warmSession(runtime)?.revision;
+    if (warmRevision !== undefined) return brandRevision(warmRevision);
+    const ref = runtime.projection.sessionIndex.get(projectionKey);
+    return ref?.revision;
+  };
+
+  const sendCommand = async (
+    command: string,
+    args: Record<string, unknown>,
+    withRevision: boolean,
+    usePromptLease = true,
+    revisionOverride?: Revision,
+    promptLeaseRevision?: Revision,
+    gatePhase: "strict" | "queued-prompt" = "strict",
+  ): Promise<PromptOutcome> => {
+    const revisionValue = withRevision ? (revisionOverride ?? expectedRevision()) : undefined;
+    if (withRevision && revisionValue === undefined)
+      return { kind: "unknown", reason: UNKNOWN_REASON };
+    // Lease acquisition inside the client is a wait; the gate re-runs
+    // after it, immediately before the command dispatches.
+    const guard = () => {
+      const gated = writeGate(gatePhase);
+      if (gated !== null) throw new WriteGateError(gated.reason);
+    };
+    try {
+      const intentPayload = {
+        hostId: wireHostId,
+        sessionId: wireSessionId,
+        command,
+        args,
+        ...(revisionValue === undefined ? {} : { expectedRevision: revisionValue }),
+      };
+      const result = usePromptLease
+        ? await controller.commandWithPromptLease(
+            targetId,
+            intentPayload,
+            promptLeaseRevision === undefined ? undefined : String(promptLeaseRevision),
+            guard,
+          )
+        : await controller.commandWithControllerLease(targetId, intentPayload, undefined, guard);
+      return result.accepted
+        ? { kind: "accepted" }
+        : { kind: "rejected", reason: promptRejectionReason(result.error) };
+    } catch (error) {
+      if (error instanceof WriteGateError) return { kind: "rejected", reason: error.reason };
+      return { kind: "unknown", reason: UNKNOWN_REASON };
+    }
+  };
+
+  /**
+   * Some valid hosts enqueue a revision-changing control response before the
+   * matching host-wide session.delta reaches this client (notably when another
+   * attached client is ahead of it in the broadcast loop). An authoritative
+   * session.list round-trip closes that ordering window without guessing a
+   * revision or weakening stale-write protection.
+   */
+  const reconcileAcceptedControl = async (sentRevision: Revision): Promise<boolean> => {
+    if (String(expectedRevision()) !== String(sentRevision)) return true;
+    try {
+      const refreshed = await controller.command(targetId, {
+        hostId: wireHostId,
+        command: "session.list",
+        args: {},
+      });
+      return refreshed.accepted && expectedRevision() !== undefined;
+    } catch {
+      return false;
+    }
+  };
+
+  // session.cancel is deliberately revision-optional: the controller lease is
+  // acquired against current session truth, while the challenged command must
+  // remain executable if lifecycle events advance the projection before the
+  // user approves it. Keeping the lease revision off the command prevents a
+  // valid Stop confirmation from replaying as stale.
+  const sendCancelCommand = async (): Promise<PromptOutcome> => {
+    const gated = writeGate();
+    if (gated !== null) return gated;
+    const leaseRevision = expectedRevision();
+    if (leaseRevision === undefined) return { kind: "unknown", reason: UNKNOWN_REASON };
+    try {
+      const result = await controller.commandWithControllerLease(
+        targetId,
+        {
+          hostId: wireHostId,
+          sessionId: wireSessionId,
+          command: "session.cancel",
+          args: {},
+        },
+        String(leaseRevision),
+        () => {
+          // Re-read after the controller-lease acquisition wait.
+          const raced = writeGate();
+          if (raced !== null) throw new WriteGateError(raced.reason);
+        },
+      );
+      return result.accepted
+        ? { kind: "accepted" }
+        : { kind: "rejected", reason: promptRejectionReason(result.error) };
+    } catch (error) {
+      if (error instanceof WriteGateError) return { kind: "rejected", reason: error.reason };
+      return { kind: "unknown", reason: UNKNOWN_REASON };
+    }
+  };
+
+  const grantedFor = (runtime: DesktopRuntimeSnapshot): readonly string[] => {
+    const host = runtime.hosts.get(options.hostId);
+    return host === undefined ? [] : [...host.grantedCapabilities, ...host.grantedFeatures];
+  };
+
+  /**
+   * One control command round-trip: honest refusal when the catalog does
+   * not offer it, a pending mark while in flight, and a bounded error on
+   * anything but acceptance. Reconciliation is the server's session state
+   * arriving as frames — never a local echo.
+   */
+  const runControlCommand = async (
+    control: PendingControl,
+    command: string,
+    args: Record<string, unknown>,
+  ): Promise<PromptOutcome> => {
+    // This runs behind the control barrier: the session may have been taken
+    // over by another app while an earlier control round-trip was in flight.
+    const gated = writeGate();
+    if (gated !== null) {
+      controlError = gated.reason;
+      notify();
+      return gated;
+    }
+    const runtime = controller.getSnapshot();
+    const support = commandSupport(
+      runtime.catalogs.get(options.hostId),
+      grantedFor(runtime),
+      command,
+    );
+    if (!support.supported) {
+      const reason = support.reason ?? "Not available on this host";
+      controlError = reason;
+      notify();
+      return { kind: "rejected", reason };
+    }
+    pendingControl = control;
+    controlError = null;
+    notify();
+    const sentRevision = expectedRevision();
+    let outcome =
+      sentRevision === undefined
+        ? ({ kind: "unknown", reason: UNKNOWN_REASON } as const)
+        : await sendCommand(command, args, true, false, sentRevision);
+    if (
+      outcome.kind === "accepted" &&
+      sentRevision !== undefined &&
+      !(await reconcileAcceptedControl(sentRevision))
+    ) {
+      outcome = { kind: "unknown", reason: CONTROL_UNKNOWN };
+    }
+    pendingControl = null;
+    if (outcome.kind === "rejected") controlError = CONTROL_REJECTED[control];
+    else if (outcome.kind === "unknown") controlError = CONTROL_UNKNOWN;
+    notify();
+    return outcome;
+  };
+
+  const applyControlCommand = (
+    control: PendingControl,
+    command: string,
+    args: Record<string, unknown>,
+  ): Promise<PromptOutcome> => {
+    const previous = controlBarrier;
+    const task =
+      previous === null
+        ? runControlCommand(control, command, args)
+        : previous.then(() => runControlCommand(control, command, args));
+    const barrier = task.then(
+      () => undefined,
+      () => undefined,
+    );
+    controlBarrier = barrier;
+    void barrier.then(() => {
+      if (controlBarrier === barrier) controlBarrier = null;
+    });
+    return task;
+  };
+
+  const waitForControlCommands = async (): Promise<void> => {
+    while (controlBarrier !== null) {
+      const barrier = controlBarrier;
+      await barrier;
+      if (controlBarrier === barrier) return;
+    }
+  };
+
+  const sendAfterControlCommands = async (
+    command: string,
+    args: Record<string, unknown>,
+  ): Promise<PromptOutcome> => {
+    await waitForControlCommands();
+    // The barrier wait can span a takeover; recheck before dispatch.
+    const gated = writeGate("queued-prompt");
+    if (gated !== null) return gated;
+    const leaseRevision = expectedRevision();
+    if (leaseRevision === undefined) return { kind: "unknown", reason: UNKNOWN_REASON };
+    // Ordinary prompts are revision-optional on the wire for the same reason
+    // as steer/follow-up: live output or a just-reconciled control can advance
+    // the projection between composition and host receipt. The prompt lease
+    // still binds against the captured authoritative revision; only the
+    // volatile compare-and-swap field stays off the command itself.
+    return sendCommand(command, args, false, true, undefined, leaseRevision, "queued-prompt");
+  };
+
+  // Active turns advance the session revision while output streams. Steer and
+  // follow-up are revision-optional on the wire, so bind any negotiated prompt
+  // lease to current session truth without putting that volatile revision on
+  // the command itself.
+  const sendActiveTurnMessage = async (
+    command: "session.steer" | "session.followUp",
+    args: Record<string, unknown>,
+  ): Promise<PromptOutcome> => {
+    await waitForControlCommands();
+    const gated = writeGate();
+    if (gated !== null) return gated;
+    const leaseRevision = expectedRevision();
+    if (leaseRevision === undefined) return { kind: "unknown", reason: UNKNOWN_REASON };
+    return sendCommand(command, args, false, true, undefined, leaseRevision);
+  };
 
   const applyServerEvent = (event: TranscriptServerEvent) => {
     // Renderer events are sanitized to their global retention budget before
@@ -257,6 +774,13 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
     }
   };
 
+  let attached = false;
+  let attaching = false;
+  let retryAfterAttach = false;
+  let connectionGeneration = 0;
+  let previousAttachAuthority =
+    controller.getSnapshot().connections.get(targetId) === "connected" &&
+    controller.getSnapshot().targetHosts.get(targetId) === options.hostId;
   const initialAuthoritativeWorking = authoritativeWorkingState(
     controller.getSnapshot(),
     targetId,
@@ -279,21 +803,77 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
     // turn/compaction whose active ref delta has not arrived yet.
     transcript = settleTranscriptTurn(transcript);
   }
-  const attachment = createLiveAttachmentController({
-    controller,
-    targetId,
-    hostId: options.hostId,
-    sessionId: options.sessionId,
-    projectionKey,
-    cursor: () => transcript.cursor,
-    isDisposed: () => disposed,
-    notify,
-    primeTranscriptTail: () => transcriptPager.prime(),
-    setTranscriptImagesAttached: (nextAttached, runtime) => {
-      transcriptImagesAttached = nextAttached;
+  const attachIfAuthoritative = (runtime: DesktopRuntimeSnapshot) => {
+    if (disposed) return;
+    const hasAttachAuthority =
+      runtime.connections.get(targetId) === "connected" &&
+      runtime.targetHosts.get(targetId) === options.hostId;
+    if (hasAttachAuthority !== previousAttachAuthority) {
+      previousAttachAuthority = hasAttachAuthority;
+      connectionGeneration += 1;
+      if (!hasAttachAuthority) {
+        attached = false;
+        transcriptImagesAttached = false;
+        syncTranscriptImageAvailability(runtime);
+      }
+    }
+    if (!hasAttachAuthority) return;
+    if (
+      attached &&
+      !attaching &&
+      runtime.projection.sessions.get(projectionKey)?.freshness !== "fresh"
+    ) {
+      // A replacement host can publish its welcome before the renderer sees
+      // the transient disconnected state. The welcome correctly invalidates
+      // the old live projection; treat that loss of freshness as a new attach
+      // boundary instead of leaving the composer cached forever.
+      attached = false;
+      transcriptImagesAttached = false;
       syncTranscriptImageAvailability(runtime);
-    },
-  });
+    }
+    if (attached) return;
+    if (attaching) {
+      retryAfterAttach = true;
+      return;
+    }
+    attaching = true;
+    retryAfterAttach = false;
+    const generation = connectionGeneration;
+    attached = true;
+    const tailPrime = primeTranscriptTail();
+    const startAttach = () =>
+      controller.attachSession(
+        targetId,
+        options.hostId,
+        options.sessionId,
+        transcript.cursor ?? undefined,
+      );
+    const attachRequest = transcript.cursor === null ? tailPrime.then(startAttach) : startAttach();
+    void attachRequest
+      .then((result) => {
+        const current = controller.getSnapshot();
+        transcriptImagesAttached = result.accepted === true && generation === connectionGeneration;
+        if (!transcriptImagesAttached) attached = false;
+        syncTranscriptImageAvailability(current);
+        notify();
+      })
+      .catch(() => {
+        attached = false;
+        transcriptImagesAttached = false;
+        syncTranscriptImageAvailability(controller.getSnapshot());
+        notify();
+      })
+      .finally(() => {
+        attaching = false;
+        if (disposed) return;
+        if (retryAfterAttach && generation !== connectionGeneration) {
+          retryAfterAttach = false;
+          attachIfAuthoritative(controller.getSnapshot());
+        } else {
+          retryAfterAttach = false;
+        }
+      });
+  };
   const unsubscribeEvents = controller.subscribeEvents(
     {
       targetId,
@@ -315,7 +895,7 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
   const unsubscribeRuntime = controller.subscribe((runtime) => {
     const retainedTranscript = withWarmHistoryTruncation(transcript, runtime);
     if (retainedTranscript !== transcript) transcript = retainedTranscript;
-    attachment.attachIfAuthoritative(runtime);
+    attachIfAuthoritative(runtime);
     const authoritativeWorking = authoritativeWorkingState(
       runtime,
       targetId,
@@ -348,8 +928,220 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
   // part of the attach round-trip; no replay frame may land in the gap between
   // runtime construction and listener registration.
   syncTranscriptImageAvailability(controller.getSnapshot());
-  attachment.attachIfAuthoritative(controller.getSnapshot());
+  attachIfAuthoritative(controller.getSnapshot());
 
+  const pendingChallenge = (runtime: DesktopRuntimeSnapshot): PendingChallenge | null => {
+    const confirmations = warmSession(runtime)?.confirmations;
+    if (confirmations === undefined) return null;
+    const results = warmSession(runtime)?.results;
+    for (const challenge of confirmations.values()) {
+      const confirmationId = String(challenge.confirmationId);
+      if (decidedChallenges.has(confirmationId)) continue;
+      const expiresAtMs = Date.parse(challenge.expiresAt);
+      if (!Number.isNaN(expiresAtMs) && expiresAtMs <= Date.now()) continue;
+      let resolved = false;
+      if (results !== undefined) {
+        for (const result of results.values()) {
+          if (result.commandId !== undefined && result.commandId === String(challenge.commandId)) {
+            resolved = true;
+            break;
+          }
+        }
+      }
+      if (resolved) continue;
+      return {
+        challenge,
+        approval: {
+          approvalId: confirmationId,
+          title: "Approval needed",
+          message: challenge.summary,
+          command: challenge.summary,
+          args: challenge.preview === undefined ? {} : { preview: challenge.preview },
+          requestedAt: challenge.expiresAt,
+          expiresAt: challenge.expiresAt,
+        },
+      };
+    }
+    return null;
+  };
+
+  const confirmChallenge = async (
+    approvalId: string,
+    decision: "approve" | "deny",
+  ): Promise<PromptOutcome> => {
+    // The approval dialog is a wait: ownership can change while it is open.
+    // Recheck immediately before the decision leaves; a gated challenge
+    // simply stays on screen with the surfaces explaining why.
+    const gated = writeGate();
+    if (gated !== null) return gated;
+    const runtime = controller.getSnapshot();
+    const challenge = warmSession(runtime)?.confirmations.get(approvalId);
+    if (challenge === undefined) {
+      return { kind: "rejected", reason: "This approval was already resolved on the host." };
+    }
+    try {
+      const result = await controller.confirm({
+        targetId,
+        confirmationId: challenge.confirmationId,
+        commandId: challenge.commandId,
+        hostId: challenge.hostId,
+        ...(challenge.sessionId === undefined ? {} : { sessionId: challenge.sessionId }),
+        decision,
+      });
+      // The decision reached the host; the card retires. On a thrown or
+      // unaccepted round-trip the challenge stays visible — never an
+      // optimistic disappearance.
+      if (result.accepted) {
+        decidedChallenges.add(approvalId);
+        notify();
+        return { kind: "accepted" };
+      }
+      return {
+        kind: "rejected",
+        reason: "The host did not accept this decision. The approval stays on screen.",
+      };
+    } catch {
+      return {
+        kind: "unknown",
+        reason:
+          "The connection dropped before the host answered. The approval stays on screen; decide again once you're back.",
+      };
+    }
+  };
+
+  const submitPrompt = async (intent: SessionIntent): Promise<PromptOutcome> => {
+    // Every intent below writes. Gate on CURRENT freshness precedence —
+    // cached/offline copy first, then strict ownership truth — never a
+    // stale raw ref. While another app owns this session (or this app is
+    // still reconciling the transcript), refuse locally with the same
+    // reason the surfaces show; the host would refuse anyway.
+    {
+      const gated = writeGate();
+      if (gated !== null) return gated;
+    }
+    if (intent.kind === "prompt") {
+      if (intent.attachments.length > 0) {
+        const granted = grantedFor(controller.getSnapshot());
+        if (!granted.includes("sessions.prompt") || !granted.includes("prompt.images")) {
+          return { kind: "rejected", reason: IMAGE_PROMPTS_UNSUPPORTED_REASON };
+        }
+        await waitForControlCommands();
+        return runImagePromptUpload({
+          targetId,
+          attachments: intent.attachments,
+          // Upload begin/chunk are session mutations; each dispatch rechecks
+          // current freshness + ownership (discard cleanup stays allowed).
+          writeGate: () => writeGate(),
+          command: (command, args) =>
+            controller.command(targetId, {
+              hostId: wireHostId,
+              sessionId: wireSessionId,
+              command,
+              args: { ...args },
+            }),
+          sendPrompt: (images) =>
+            sendAfterControlCommands("session.prompt", {
+              message: intent.text,
+              images: images.map((image) => ({ ...image })),
+            }),
+          rejectionReason: promptRejectionReason,
+        });
+      }
+      return sendAfterControlCommands("session.prompt", { message: intent.text });
+    }
+    if (intent.kind === "steer") {
+      return sendActiveTurnMessage("session.steer", { message: intent.text });
+    }
+    if (intent.kind === "followUp") {
+      return sendActiveTurnMessage("session.followUp", { message: intent.text });
+    }
+    if (intent.kind === "setModel") {
+      // Session-scoped switch: the host resolves a role or a concrete
+      // selector; the renderer never writes settings from the composer.
+      // The wire takes role XOR selector — a cycle-role pick sends the
+      // role and lets the host resolve it, never the cached selector.
+      const args: Record<string, unknown> = { persistence: "session" };
+      if (intent.role !== null) args.role = intent.role;
+      else if (intent.selector !== null) args.selector = intent.selector;
+      return applyControlCommand("model", MODEL_SET_COMMAND, args);
+    }
+    if (intent.kind === "setThinking") {
+      return applyControlCommand("thinking", THINKING_SET_COMMAND, { level: intent.level });
+    }
+    if (intent.kind === "setFast") {
+      return applyControlCommand("fast", FAST_SET_COMMAND, { enabled: intent.enabled });
+    }
+    if (intent.kind === "setMode") {
+      return applyControlCommand("mode", MODE_SET_COMMAND, { mode: intent.mode });
+    }
+    if (intent.kind === "ask") {
+      const value = intent.text !== "" ? intent.text : intent.optionIds.join(", ");
+      return sendCommand(
+        "session.ui.respond",
+        {
+          requestId: intent.askId,
+          value,
+        },
+        true,
+      );
+    }
+    if (intent.kind === "plan") {
+      if (intent.action === "approve") {
+        return sendCommand(
+          "session.ui.respond",
+          {
+            requestId: intent.planId,
+            confirmed: true,
+          },
+          true,
+        );
+      } else if (intent.action === "reject") {
+        return sendCommand(
+          "session.ui.respond",
+          {
+            requestId: intent.planId,
+            confirmed: false,
+          },
+          true,
+        );
+      } else {
+        return sendCommand(
+          "session.ui.respond",
+          {
+            requestId: intent.planId,
+            value: intent.note,
+          },
+          true,
+        );
+      }
+    }
+    if (intent.kind === "cancel") {
+      const runtime = controller.getSnapshot();
+      const catalog = runtime.catalogs.get(options.hostId);
+      if (catalog === undefined || findCancelCommand(catalog.items) === undefined) {
+        return { kind: "rejected", reason: "This host does not offer a stop command." };
+      }
+      return sendCancelCommand();
+    }
+    // approval
+    const runtime = controller.getSnapshot();
+    const hasChallenge = warmSession(runtime)?.confirmations.has(intent.approvalId) ?? false;
+    if (hasChallenge) {
+      return confirmChallenge(
+        intent.approvalId,
+        intent.decision === "approve" ? "approve" : "deny",
+      );
+    } else {
+      return sendCommand(
+        "session.ui.respond",
+        {
+          requestId: intent.approvalId,
+          confirmed: intent.decision === "approve",
+        },
+        true,
+      );
+    }
+  };
 
   return {
     transcriptImages,
@@ -364,7 +1156,7 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
           options.hostId,
           options.sessionId,
         );
-        const granted = promptDispatcher.grantedFor(runtime);
+        const granted = grantedFor(runtime);
         const catalog = runtime.catalogs.get(options.hostId);
         // Session control truth: warm ref first, session index second.
         const ref = warmNow?.ref ?? indexedRef;
@@ -390,7 +1182,7 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
               : catalog === undefined
                 ? "Waiting for this host's command list"
                 : (cancelItem?.reason ?? "This host does not offer a stop command");
-        const challenge = promptDispatcher.pendingChallenge(runtime);
+        const challenge = pendingChallenge(runtime);
         let projection: TranscriptProjection =
           transcript.approval === null && challenge !== null
             ? { ...transcript, approval: challenge.approval }
@@ -423,10 +1215,10 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
           settings: runtime.settings.get(options.hostId),
           ref,
           granted,
-          pendingControl: promptDispatcher.pendingControl,
-          controlError: promptDispatcher.controlError,
+          pendingControl,
+          controlError,
         });
-        projection = transcriptPager.present(projection);
+        projection = presentPagedTranscript(projection, pagedEntries);
 
         snapshot = {
           projection,
@@ -458,9 +1250,7 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
               : gateComposerControls(derivedControls, controlGate.controlReason),
           sessionControl,
           providerTransport: ref?.liveState?.providerTransport ?? null,
-          ...(transcriptPager.history === undefined
-            ? {}
-            : { transcriptHistory: transcriptPager.history }),
+          ...(transcriptHistory === undefined ? {} : { transcriptHistory }),
           nowMs: Date.now(),
         };
       }
@@ -471,11 +1261,13 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
       return () => listeners.delete(listener);
     },
     dispatch(intent) {
-      void promptDispatcher.submitPrompt(intent);
+      void submitPrompt(intent);
     },
-    submitPrompt: promptDispatcher.submitPrompt,
+    submitPrompt,
     async loadEarlierTranscript() {
-      await transcriptPager.loadEarlier();
+      if (transcriptHistory?.phase === "loading") return;
+      if (transcriptPageCursor === undefined && transcriptHistory?.phase !== "error") return;
+      await loadTranscriptPage(transcriptPageCursor);
     },
     pause() {
       // Live frames keep applying in the background so switch-back is warm.

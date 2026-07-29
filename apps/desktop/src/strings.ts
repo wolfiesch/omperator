@@ -1,5 +1,5 @@
 /**
- * Native shell string catalog for Omperator.
+ * Native shell string catalog for T4 Code.
  *
  * Single source of truth for every human-visible string owned by the
  * Electron main process: application menus, native dialogs, window
@@ -12,7 +12,7 @@
  * - `menu.view.toggleDevTools` is shown in development builds only.
  */
 
-export const APP_NAME = 'Omperator' as const;
+export const APP_NAME = 'T4 Code' as const;
 
 export const strings = {
   app: {

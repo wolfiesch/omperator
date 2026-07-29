@@ -45,11 +45,6 @@ export function isTailnetAddress(address: string): boolean {
 	const v6 = ipv6(normalized);
 	return v6 !== undefined && v6 >> 80n === 0xfd7a115ca1e0n;
 }
-function isLoopbackAddress(address: string): boolean {
-	const normalized = normalizeIpAddress(address);
-	const v4 = ipv4(normalized);
-	return v4 ? v4[0] === 127 : normalized === "::1";
-}
 export function createListenerPlan(config: RemoteListenerConfig): ListenerPlan {
 	if (!isTailnetAddress(config.address) || normalizeIpAddress(config.address) !== config.address)
 		throw new Error("direct listener address must be an explicit Tailscale address");
@@ -68,6 +63,17 @@ export function createInternalListenerPlan(config: RemoteListenerConfig): Listen
 }
 export function originAllowed(origin: string | null, allowlist: readonly string[] = []): boolean {
 	return origin === null || allowlist.includes(origin);
+}
+export function isLoopbackAddress(address: string): boolean {
+	const normalized = normalizeIpAddress(address);
+	return normalized === "127.0.0.1" || normalized === "::1";
+}
+export function createLoopbackListenerPlan(config: RemoteListenerConfig): ListenerPlan {
+	if (!isLoopbackAddress(config.address)) throw new Error("loopback listener must bind a loopback address");
+	if (!config.selfIdentity) throw new Error("loopback listener requires a self identity");
+	if (!Number.isInteger(config.port) || config.port < 1 || config.port > 65535)
+		throw new Error("listener port is invalid");
+	return { mode: "loopback", address: config.address, port: config.port, path: "/v1/ws", trustedServeProxy: false };
 }
 export function createServeProxyPlan(config: RemoteListenerConfig): ListenerPlan {
 	if (config.address !== "127.0.0.1" && config.address !== "::1") throw new Error("Serve proxy must bind loopback");
@@ -159,33 +165,19 @@ export class BunRemoteListener {
 					if (!requested) return new Response("Unauthorized", { status: 401 });
 					const address = normalizeIpAddress(requested);
 					let peer: ListenerPeerContext | undefined;
-					if (this.plan.mode === "direct") {
+					if (this.plan.mode === "loopback") {
+						// Every loopback peer is the host's own node: only credentials
+						// bound to that node (paired on this machine, or the 0600
+						// local-device file) authenticate — no whois needed.
+						peer = { address, source: "direct", identity: this.config.selfIdentity! };
+					} else if (this.plan.mode === "direct") {
 						if (this.config.internalPeerNodeId) {
 							const normalized = normalizeIpAddress(address);
 							peer = { address: normalized, source: "direct", identity: { nodeId: this.config.internalPeerNodeId, addresses: [normalized], source: "direct" } };
 						}
 						else {
-							// A client on this same Mac reaches the explicitly
-							// Tailnet-bound listener either from loopback or the
-							// Mac's own Tailnet address. Give that self-connection
-							// a stable local identity without depending on
-							// `tailscale whois` accepting a self-query. Remote
-							// peers still require verified Tailscale identity.
-							const local = isLoopbackAddress(address) || address === this.plan.address;
-							const peerAddress = local ? this.plan.address : address;
-							if (!isTailnetAddress(peerAddress) || !this.resolver)
-								return new Response("Unauthorized", { status: 401 });
-							peer = {
-								address: peerAddress,
-								source: "direct",
-								identity: local
-									? {
-											nodeId: `local:${peerAddress}`,
-											addresses: [peerAddress],
-											source: "direct",
-										}
-									: await this.resolver.resolve(peerAddress),
-							};
+							if (!isTailnetAddress(address) || !this.resolver) return new Response("Unauthorized", { status: 401 });
+							peer = { address, source: "direct", identity: await this.resolver.resolve(address) };
 						}
 					} else {
 						peer = resolveServePeer(address, request.headers, this.plan.trustedServeProxy);

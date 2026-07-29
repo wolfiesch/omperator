@@ -108,7 +108,7 @@ function hasEnabledEntitlement(output, entitlement) {
 export function validateMacosLibraryValidationBoundary(appEntitlements, runtimeEntitlements) {
   const entitlement = "com.apple.security.cs.disable-library-validation";
   if (hasEnabledEntitlement(appEntitlements, entitlement)) {
-    throw new Error("top-level Omperator app must keep library validation enabled");
+    throw new Error("top-level T4 Code app must keep library validation enabled");
   }
   if (!hasEnabledEntitlement(runtimeEntitlements, entitlement)) {
     throw new Error("bundled OMP runtime must disable library validation");

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { appendFile, mkdir, mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OfficialOmpProfileAuthority } from "../src/official-omp-profile-authority.ts";
@@ -90,39 +90,6 @@ test("official OMP profile authority serializes concurrent archive metadata", as
 	await authority.close();
 });
 
-test("official OMP profile authority forks the durable transcript into an owned session", async () => {
-	const root = await mkdtemp(join(tmpdir(), "t4-official-authority-fork-"));
-	const sourceCwd = join(root, "source-project");
-	const forkCwd = join(root, "fork-project");
-	await Promise.all([mkdir(sourceCwd), mkdir(forkCwd)]);
-	const authority = new OfficialOmpProfileAuthority({
-		sessionsRoot: join(root, "sessions"),
-		metadataPath: join(root, "state", "sessions.json"),
-	});
-	await authority.initialize();
-	const created = await authority.create(sourceCwd, "Fork source");
-	await appendFile(
-		created.path,
-		`${JSON.stringify({ type: "message", role: "user", content: "keep me" })}\n{"type":"message","role":"assistant"`,
-	);
-	const [source] = await authority.list();
-	const forked = await authority.fork(source!, forkCwd);
-	const records = (await readFile(forked.path, "utf8"))
-		.split("\n")
-		.filter(Boolean)
-		.map(line => JSON.parse(line) as Record<string, unknown>);
-	expect(records[0]).toMatchObject({ type: "title", title: "Fork source" });
-	expect(records[1]).toMatchObject({
-		type: "session",
-		id: forked.sessionId,
-		cwd: forked.cwd,
-	});
-	expect(records[2]).toMatchObject({ type: "message", role: "user", content: "keep me" });
-	expect(records).toHaveLength(3);
-	expect(forked).toMatchObject({ title: "Fork source", entries: [] });
-	await authority.close();
-});
-
 test("official OMP delete validates artifact ownership before moving the transcript", async () => {
 	const root = await mkdtemp(join(tmpdir(), "t4-official-authority-delete-"));
 	const cwd = join(root, "project");
@@ -154,7 +121,6 @@ test("official OMP profile authority rejects paths outside its exclusive root", 
 	const [record] = await authority.list();
 	const outside = join(root, "outside.jsonl");
 	await writeFile(outside, await readFile(created.path));
-	await expect(authority.fork({ ...record!, path: outside })).rejects.toThrow("outside");
 	await expect(authority.delete({ ...record!, path: outside })).rejects.toThrow("outside");
 	expect((await stat(outside)).isFile()).toBe(true);
 	await authority.close();

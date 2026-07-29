@@ -4,8 +4,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { type SessionId, sessionId } from "@t4-code/host-wire";
 
-const LEDGER_VERSION = 2;
-const LEGACY_LEDGER_VERSION = 1;
+const LEDGER_VERSION = 1;
 const MAX_SESSIONS = 10_000;
 const MAX_LEDGER_BYTES = 3 * 1024 * 1024;
 const MAX_PATH_BYTES = 16 * 1024;
@@ -13,7 +12,6 @@ const MAX_PATH_BYTES = 16 * 1024;
 interface OwnedSessionRecord {
 	readonly sessionId: SessionId;
 	readonly path: string;
-	readonly transfer?: "waiting" | "observed";
 }
 
 interface SessionOwnershipLedger {
@@ -29,16 +27,10 @@ function exactKeys(value: Record<string, unknown>, expected: readonly string[]):
 function decodeRecord(value: unknown): OwnedSessionRecord | undefined {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
 	const record = value as Record<string, unknown>;
-	const expected = ["sessionId", "path", ...(record.transfer === undefined ? [] : ["transfer"])];
-	if (!exactKeys(record, expected) || typeof record.path !== "string") return undefined;
-	if (record.transfer !== undefined && record.transfer !== "waiting" && record.transfer !== "observed") return undefined;
+	if (!exactKeys(record, ["sessionId", "path"]) || typeof record.path !== "string") return undefined;
 	if (!path.isAbsolute(record.path) || Buffer.byteLength(record.path, "utf8") > MAX_PATH_BYTES) return undefined;
 	try {
-		return {
-			sessionId: sessionId(record.sessionId, "sessions[].sessionId"),
-			path: record.path,
-			...(record.transfer === undefined ? {} : { transfer: record.transfer }),
-		};
+		return { sessionId: sessionId(record.sessionId, "sessions[].sessionId"), path: record.path };
 	} catch {
 		return undefined;
 	}
@@ -47,18 +39,13 @@ function decodeRecord(value: unknown): OwnedSessionRecord | undefined {
 function decodeLedger(value: unknown): SessionOwnershipLedger | undefined {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
 	const ledger = value as Record<string, unknown>;
-	if (
-		!exactKeys(ledger, ["version", "sessions"]) ||
-		(ledger.version !== LEDGER_VERSION && ledger.version !== LEGACY_LEDGER_VERSION)
-	)
-		return undefined;
+	if (!exactKeys(ledger, ["version", "sessions"]) || ledger.version !== LEDGER_VERSION) return undefined;
 	if (!Array.isArray(ledger.sessions) || ledger.sessions.length > MAX_SESSIONS) return undefined;
 	const sessions: OwnedSessionRecord[] = [];
 	const seen = new Set<SessionId>();
 	for (const value of ledger.sessions) {
 		const record = decodeRecord(value);
 		if (!record || seen.has(record.sessionId)) return undefined;
-		if (ledger.version === LEGACY_LEDGER_VERSION && record.transfer !== undefined) return undefined;
 		seen.add(record.sessionId);
 		sessions.push(record);
 	}
@@ -68,7 +55,7 @@ function decodeLedger(value: unknown): SessionOwnershipLedger | undefined {
 /** Private profile-local proof that a session was created through this T4 host profile. */
 export class SessionOwnershipStore {
 	readonly path: string;
-	#sessions = new Map<SessionId, OwnedSessionRecord>();
+	#sessions = new Map<SessionId, string>();
 	#tail = Promise.resolve();
 	constructor(filePath: string) {
 		this.path = filePath;
@@ -90,14 +77,10 @@ export class SessionOwnershipStore {
 		}
 		const ledger = decodeLedger(parsed);
 		if (!ledger) return;
-		this.#sessions = new Map(ledger.sessions.map(record => [record.sessionId, record]));
+		this.#sessions = new Map(ledger.sessions.map(record => [record.sessionId, record.path]));
 	}
 	owns(id: SessionId, transcriptPath: string): boolean {
-		return this.#sessions.get(id)?.path === transcriptPath;
-	}
-	transfer(id: SessionId, transcriptPath: string): "waiting" | "observed" | undefined {
-		const record = this.#sessions.get(id);
-		return record?.path === transcriptPath ? record.transfer : undefined;
+		return this.#sessions.get(id) === transcriptPath;
 	}
 	add(id: SessionId, transcriptPath: string): Promise<void> {
 		if (!path.isAbsolute(transcriptPath) || Buffer.byteLength(transcriptPath, "utf8") > MAX_PATH_BYTES)
@@ -106,57 +89,12 @@ export class SessionOwnershipStore {
 			if (!this.#sessions.has(id) && this.#sessions.size >= MAX_SESSIONS)
 				throw new Error("owned session ledger is full");
 			const previous = this.#sessions.get(id);
-			this.#sessions.set(id, { sessionId: id, path: transcriptPath });
+			this.#sessions.set(id, transcriptPath);
 			try {
 				await this.#write(this.#ledger());
 			} catch (error) {
 				if (previous === undefined) this.#sessions.delete(id);
 				else this.#sessions.set(id, previous);
-				throw error;
-			}
-		});
-		this.#tail = operation;
-		return operation;
-	}
-	release(id: SessionId, transcriptPath: string): Promise<void> {
-		const operation = this.#tail.catch(() => undefined).then(async () => {
-			const previous = this.#sessions.get(id);
-			if (previous?.path !== transcriptPath) throw new Error("released session is not owned by this host");
-			this.#sessions.set(id, { ...previous, transfer: "waiting" });
-			try {
-				await this.#write(this.#ledger());
-			} catch (error) {
-				this.#sessions.set(id, previous);
-				throw error;
-			}
-		});
-		this.#tail = operation;
-		return operation;
-	}
-	observeReleasedWriter(id: SessionId, transcriptPath: string): Promise<void> {
-		const operation = this.#tail.catch(() => undefined).then(async () => {
-			const previous = this.#sessions.get(id);
-			if (previous?.path !== transcriptPath || previous.transfer !== "waiting") return;
-			this.#sessions.set(id, { ...previous, transfer: "observed" });
-			try {
-				await this.#write(this.#ledger());
-			} catch (error) {
-				this.#sessions.set(id, previous);
-				throw error;
-			}
-		});
-		this.#tail = operation;
-		return operation;
-	}
-	clearTransfer(id: SessionId, transcriptPath: string): Promise<void> {
-		const operation = this.#tail.catch(() => undefined).then(async () => {
-			const previous = this.#sessions.get(id);
-			if (previous?.path !== transcriptPath || previous.transfer === undefined) return;
-			this.#sessions.set(id, { sessionId: id, path: transcriptPath });
-			try {
-				await this.#write(this.#ledger());
-			} catch (error) {
-				this.#sessions.set(id, previous);
 				throw error;
 			}
 		});
@@ -184,9 +122,9 @@ export class SessionOwnershipStore {
 	#ledger(): SessionOwnershipLedger {
 		return {
 			version: LEDGER_VERSION,
-			sessions: [...this.#sessions.values()].sort((left, right) =>
-				left.sessionId.localeCompare(right.sessionId),
-			),
+			sessions: [...this.#sessions]
+				.map(([id, transcriptPath]) => ({ sessionId: id, path: transcriptPath }))
+				.sort((left, right) => left.sessionId.localeCompare(right.sessionId)),
 		};
 	}
 	async #write(ledger: SessionOwnershipLedger): Promise<void> {

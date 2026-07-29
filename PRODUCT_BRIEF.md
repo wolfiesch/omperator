@@ -1,8 +1,8 @@
-# Omperator Product Brief
+# T4 Code Product Brief
 
 ## Product
 
-Omperator is an Electron desktop workspace with a shared React compatibility client for official Oh
+T4 Code is an Electron desktop workspace with a shared React compatibility client for official Oh
 My Pi (OMP). It makes
 projects, concurrent sessions, live streaming, tools, terminal activity, task agents, reviews, files,
 settings, and local or remote execution easier to operate without reimplementing OMP behavior.
@@ -29,7 +29,7 @@ settings, and local or remote execution easier to operate without reimplementing
 
 ## Product modes
 
-Omperator presents one desktop-first client experience across four execution profiles. The
+T4 Code presents one desktop-first client experience across four execution profiles. The
 responsive browser/PWA and React/Capacitor Android builds are compatibility clients for paired
 hosts; they do not promise native desktop parity.
 

@@ -68,17 +68,13 @@ export function fixtureCatalogItems(): Record<string, unknown>[] {
   const commands = DESKTOP_CATALOG_COMMANDS.map((name) => {
     const descriptor = COMMAND_DESCRIPTORS[name];
     if (descriptor === undefined) throw new Error(`desktop catalog command has no descriptor: ${name}`);
-    const transferUnavailable = name === "session.release" || name === "session.reclaim";
     return {
       id: `cmd-${name.replaceAll(".", "-")}`,
       kind: "command",
       name,
       description: `${name} fixture command`,
       capabilities: [descriptor.capability],
-      supported: !transferUnavailable,
-      ...(transferUnavailable
-        ? { reason: "Session transfer is unavailable in deterministic fixtures" }
-        : {}),
+      supported: true,
     };
   });
   const models = Array.from({ length: 184 }, (_, index) => {

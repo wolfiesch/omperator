@@ -211,7 +211,7 @@ export function LiveAttentionInbox() {
     if (controller === null || item.session.targetId === undefined) {
       setActionErrors((current) => ({
         ...current,
-        [action.itemKey]: "Open Omperator on the connected desktop to respond.",
+        [action.itemKey]: "Open T4 Code on the connected desktop to respond.",
       }));
       return;
     }

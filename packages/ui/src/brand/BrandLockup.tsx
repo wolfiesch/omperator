@@ -1,5 +1,5 @@
-// Omperator brand lockup: the exact OMP pi/plugin mark beside the product
-// wordmark. The mark is decorative here — "Omperator" is real text, so the
+// T4 Code brand lockup: the exact OMP pi/plugin mark beside the product
+// wordmark. The mark is decorative here — "T4 Code" is real text, so the
 // lockup carries its own accessible name. `byline` adds the runtime
 // relationship ("Powered by Oh My Pi") for hierarchy surfaces only
 // (onboarding, about, empty welcome) — never on working chrome.
@@ -33,7 +33,7 @@ function BrandLockup({ size = "sm", byline = false, className, ...props }: Brand
 						size === "lg" ? "font-heading font-semibold text-xl" : "font-medium text-sm",
 					)}
 				>
-					Omperator
+					T4 Code
 				</span>
 			</span>
 			{byline && <span className="text-muted-foreground text-xs">Powered by Oh My Pi</span>}

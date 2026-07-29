@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>t4 code — three faces, one host</title>
+<style>
+	/* t4 palette (Rosé Pine lineage, mirrors the native apps' Theme.swift) */
+	:root {
+		--bg: #000000;
+		--panel: #0c0c0e;
+		--line: #262626;
+		--line-faint: #141414;
+		--ink: #ffffff;
+		--body: #cccccc;
+		--muted: #949494;
+		--label: #666666;
+		--ghost: #404040;
+		--accent: #c8d6e5;
+		--gold: #f6c177;
+		--foam: #7fd6c8;
+		--iris: #b9a3e3;
+		--pine: #7bb8d4;
+		--love: #e8919f;
+		--ok: #86e0b0;
+	}
+	* { margin: 0; padding: 0; box-sizing: border-box; }
+	html { background: var(--bg); }
+	body {
+		font: 15px/1.55 -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
+		color: var(--body);
+		max-width: 1180px;
+		margin: 0 auto;
+		padding: 64px 32px 96px;
+	}
+	a { color: var(--pine); text-decoration: none; }
+	h1, h2, h3 { color: var(--ink); font-weight: 700; letter-spacing: -0.02em; }
+	h1 { font-size: 44px; }
+	h2 { font-size: 22px; margin: 64px 0 16px; }
+	h2 .dot { color: var(--accent); }
+	h3 { font-size: 15px; margin-bottom: 6px; }
+	.lede { color: var(--muted); font-size: 17px; max-width: 640px; margin-top: 10px; }
+	.wordmark { display: flex; align-items: baseline; gap: 14px; }
+	.wordmark .live { color: var(--ok); font-size: 13px; letter-spacing: 0.04em; }
+	.wordmark .live::before { content: "●"; margin-right: 6px; }
+
+	/* palette */
+	.swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin-top: 20px; }
+	.swatch { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--panel); }
+	.swatch .chip { height: 56px; }
+	.swatch .name { padding: 8px 10px 2px; font-size: 12px; color: var(--body); }
+	.swatch .hex { padding: 0 10px 8px; font: 11px ui-monospace, monospace; color: var(--label); }
+
+	/* feature cards */
+	.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; margin-top: 20px; }
+	.card {
+		background: var(--panel);
+		border: 1px solid var(--line);
+		border-radius: 14px;
+		overflow: hidden;
+		transition: border-color 120ms;
+	}
+	.card:hover { border-color: var(--ghost); }
+	.card img, .card video { display: block; width: 100%; background: var(--line-faint); }
+	.card .body { padding: 14px 16px 16px; }
+	.card .tag {
+		display: inline-block; font-size: 10px; font-weight: 600; letter-spacing: 0.08em;
+		text-transform: uppercase; padding: 2px 8px; border-radius: 99px; margin-bottom: 8px;
+	}
+	.tag-ios { color: var(--foam); border: 1px solid var(--foam); }
+	.tag-mac { color: var(--iris); border: 1px solid var(--iris); }
+	.tag-tui { color: var(--gold); border: 1px solid var(--gold); }
+	.tag-new { color: var(--love); border: 1px solid var(--love); }
+	.card p { color: var(--muted); font-size: 13px; }
+
+	/* keyline lists */
+	.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0 32px; margin-top: 12px; }
+	.fact { display: flex; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line-faint); }
+	.fact .k { color: var(--accent); font: 12px ui-monospace, monospace; white-space: nowrap; padding-top: 2px; }
+	.fact div { color: var(--muted); font-size: 13px; }
+	footer { margin-top: 72px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--label); font-size: 12px; display: flex; justify-content: space-between; }
+
+	/* ── terminal mockup (pixel-true to the t4 TUI) ─────────────── */
+	.termwrap { margin-top: 20px; }
+	.term {
+		background: #000;
+		border: 1px solid var(--line);
+		border-radius: 12px;
+		overflow: hidden;
+		box-shadow: 0 24px 80px rgba(0,0,0,0.55), 0 0 0 1px rgba(200,214,229,0.04);
+		font: 13px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+	}
+	.term-chrome {
+		display: flex; align-items: center; gap: 7px;
+		padding: 10px 14px;
+		background: var(--panel);
+		border-bottom: 1px solid var(--line);
+	}
+	.tl { width: 11px; height: 11px; border-radius: 50%; }
+	.tl:nth-child(1) { background: #ff5f57; }
+	.tl:nth-child(2) { background: #febc2e; }
+	.tl:nth-child(3) { background: #28c840; }
+	.term-title { margin-left: 10px; color: var(--muted); font-size: 12px; }
+	.term-title-right { margin-left: auto; color: var(--label); font-size: 11px; }
+	.term-status {
+		display: flex; align-items: center; gap: 8px;
+		padding: 8px 14px;
+		border-bottom: 1px solid var(--line);
+	}
+	.term-status .brand { color: var(--ink); font-weight: 700; }
+	.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); animation: pulse 2.4s ease-in-out infinite; }
+	@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
+	.term-status .connected { color: var(--muted); }
+	.status-host { color: var(--label); }
+	.help-hint { margin-left: auto; color: var(--label); font-size: 11px; }
+	.term-body { display: flex; min-height: 380px; }
+	.rail {
+		width: 250px; flex: none;
+		border-right: 1px solid var(--line);
+		padding: 8px 0;
+	}
+	.rail-head { color: var(--label); font-weight: 700; padding: 4px 14px 8px; }
+	.rail-row { display: flex; align-items: center; gap: 8px; padding: 5px 10px 5px 0; }
+	.rail-row.dim .rail-title { color: var(--label); }
+	.selbar { width: 3px; height: 18px; border-radius: 2px; background: var(--accent); margin-left: 6px; }
+	.selbar.off { background: transparent; }
+	.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+	.d-foam { background: var(--foam); }
+	.d-gold { background: var(--gold); }
+	.d-muted { background: var(--ghost); }
+	.rail-title { color: var(--body); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	.rail-row.sel .rail-title { color: var(--ink); font-weight: 600; }
+	.unread { width: 6px; height: 6px; border-radius: 50%; background: var(--gold); margin-left: auto; margin-right: 10px; animation: pulse 1.8s ease-in-out infinite; }
+	.main { flex: 1; padding: 12px 18px; min-width: 0; }
+	.main .line { color: var(--body); }
+	.main .line.dim { color: var(--label); }
+	.main .gap { height: 12px; }
+	.role-you { color: var(--gold); font-weight: 700; }
+	.role-agent { color: var(--foam); font-weight: 700; }
+	.role-tool { color: var(--pine); font-weight: 700; }
+	.mono { color: var(--iris); font-weight: 600; }
+	.caret {
+		display: inline-block; width: 7px; height: 15px;
+		background: var(--accent); vertical-align: -2px; margin-left: 3px;
+		animation: blink 1.05s steps(1) infinite;
+	}
+	@keyframes blink { 50% { opacity: 0; } }
+	.stream .w1, .stream .w2, .stream .w3 { opacity: 0; animation: stream-in 0.4s forwards; }
+	.stream .w1 { animation-delay: 0.3s; }
+	.stream .w2 { animation-delay: 0.9s; }
+	.stream .w3 { animation-delay: 1.5s; }
+	@keyframes stream-in { to { opacity: 1; } }
+	.term-rule { border-top: 1px solid var(--line); }
+	.composer { display: flex; align-items: center; gap: 8px; padding: 8px 14px; }
+	.composer .prompt { color: var(--accent); font-weight: 700; }
+	.composer .hint { color: var(--ghost); font-style: italic; }
+	.composer .enter-hint { margin-left: auto; color: var(--label); font-size: 11px; }
+	.composer .cur { width: 6px; height: 14px; background: var(--accent); animation: blink 1.05s steps(1) infinite; }
+	.keys { padding: 0 14px 10px; color: var(--label); font-size: 11px; }
+	.rail-legend { display: flex; align-items: center; gap: 6px; padding: 10px 16px 4px; color: var(--label); font-size: 10px; }
+	.rail-legend em { font-style: normal; margin-right: 6px; }
+	.rail-legend .unread { margin-left: 0; margin-right: 0; }
+	.composer .hint { color: var(--ghost); font-style: italic; }
+	@media (max-width: 760px) {
+		.rail { width: 150px; }
+		.term-body { min-height: 300px; }
+	}
+
+	/* mac window frame for desktop captures */
+	.macframe {
+		border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+		background: var(--panel);
+	}
+	.macframe .term-chrome { border-bottom: 1px solid var(--line); }
+	.macframe img { display: block; width: 100%; }
+
+	/* ── carousels ─────────────────────────────────────────────── */
+	.carousel { position: relative; margin-top: 20px; }
+	.car-track {
+		display: flex; gap: 14px;
+		overflow-x: auto;
+		scroll-snap-type: x mandatory;
+		scrollbar-width: none;
+		padding-bottom: 8px;
+	}
+	.car-track::-webkit-scrollbar { display: none; }
+	.car-slide {
+		flex: 0 0 min(340px, 78vw);
+		scroll-snap-align: start;
+		background: var(--panel);
+		border: 1px solid var(--line);
+		border-radius: 14px;
+		overflow: hidden;
+		cursor: zoom-in;
+		transition: border-color 120ms, transform 120ms;
+	}
+	.car-slide:hover { border-color: var(--ghost); transform: translateY(-2px); }
+	.car-slide img { display: block; width: 100%; background: var(--line-faint); }
+	video.motion { display: block; width: 100%; border-radius: 14px; background: var(--line-faint); }
+	.car-slide figcaption { padding: 10px 14px 12px; color: var(--muted); font-size: 13px; }
+	.car-slide figcaption b { color: var(--ink); }
+	.car-btn {
+		position: absolute; top: 38%; z-index: 2;
+		width: 34px; height: 34px; border-radius: 50%;
+		border: 1px solid var(--line);
+		background: rgba(12,12,14,0.9);
+		color: var(--body); cursor: pointer;
+		font-size: 15px; line-height: 1;
+		display: grid; place-items: center;
+		transition: border-color 120ms;
+	}
+	.car-btn:hover { border-color: var(--accent); color: var(--accent); }
+	.car-btn.prev { left: -14px; }
+	.car-btn.next { right: -14px; }
+	.car-btn.prev::before { content: "←"; }
+	.car-btn.next::before { content: "→"; }
+	.car-dots { display: flex; gap: 6px; justify-content: center; padding-top: 10px; }
+	.car-dots button {
+		width: 7px; height: 7px; border-radius: 50%;
+		border: none; background: var(--ghost); cursor: pointer; padding: 0;
+		transition: background 120ms, transform 120ms;
+	}
+	.car-dots button.on { background: var(--accent); transform: scale(1.25); }
+
+	/* ── lightbox ──────────────────────────────────────────────── */
+	.lightbox {
+		position: fixed; inset: 0; z-index: 50;
+		background: rgba(0,0,0,0.88);
+		display: none;
+		align-items: center; justify-content: center;
+		flex-direction: column;
+		padding: 40px;
+		cursor: zoom-out;
+	}
+	.lightbox.open { display: flex; }
+	.lightbox img {
+		max-width: 92vw; max-height: 82vh;
+		border-radius: 12px;
+		border: 1px solid var(--line);
+		box-shadow: 0 32px 120px rgba(0,0,0,0.7);
+	}
+	.lightbox .lb-cap { color: var(--muted); font-size: 13px; margin-top: 14px; }
+	.lightbox .lb-nav {
+		position: absolute; top: 50%; transform: translateY(-50%);
+		width: 42px; height: 42px; border-radius: 50%;
+		border: 1px solid var(--line); background: rgba(12,12,14,0.9);
+		color: var(--body); font-size: 18px; cursor: pointer;
+		display: grid; place-items: center;
+	}
+	.lightbox .lb-nav:hover { border-color: var(--accent); color: var(--accent); }
+	.lightbox .lb-prev { left: 24px; }
+	.lightbox .lb-next { right: 24px; }
+</style>
+</head>
+<body>
+
+<div class="wordmark">
+	<h1>t4 code</h1>
+	<span class="live">host live</span>
+</div>
+<p class="lede">One host, three faces: a native iOS app, a native macOS app, and a terminal UI —
+all speaking the same <code>omp-app/1</code> wire to your <code>t4-host</code>, over the tailnet, with pinned wss.</p>
+
+<h2><span class="dot">●</span> the palette</h2>
+<div class="swatches">
+	<div class="swatch"><div class="chip" style="background:#000000;border-bottom:1px solid var(--line)"></div><div class="name">bg</div><div class="hex">#000000</div></div>
+	<div class="swatch"><div class="chip" style="background:#0c0c0e"></div><div class="name">panel</div><div class="hex">#0c0c0e</div></div>
+	<div class="swatch"><div class="chip" style="background:#c8d6e5"></div><div class="name">accent</div><div class="hex">#c8d6e5</div></div>
+	<div class="swatch"><div class="chip" style="background:#7fd6c8"></div><div class="name">foam</div><div class="hex">#7fd6c8</div></div>
+	<div class="swatch"><div class="chip" style="background:#b9a3e3"></div><div class="name">iris</div><div class="hex">#b9a3e3</div></div>
+	<div class="swatch"><div class="chip" style="background:#7bb8d4"></div><div class="name">pine</div><div class="hex">#7bb8d4</div></div>
+	<div class="swatch"><div class="chip" style="background:#f6c177"></div><div class="name">gold</div><div class="hex">#f6c177</div></div>
+	<div class="swatch"><div class="chip" style="background:#e8919f"></div><div class="name">love</div><div class="hex">#e8919f</div></div>
+	<div class="swatch"><div class="chip" style="background:#86e0b0"></div><div class="name">ok</div><div class="hex">#86e0b0</div></div>
+</div>
+
+<h2><span class="dot">●</span> everything in this build</h2>
+<div class="facts">
+	<div class="fact"><span class="k">regions</span><div>Every pane is a tile: right dock (browser, files, agents, review) concurrent with the transcript and the bottom terminal. Per-session layouts persist.</div></div>
+	<div class="fact"><span class="k">floating</span><div>Any tile pops out into its own floating panel on macOS — and docks back with one click.</div></div>
+	<div class="fact"><span class="k">settings</span><div>Full OMP settings from the app: models per agent role, thinking level, approval mode, provider keys (masked), wss pinning, theme. Writes are confirmed and revision-checked.</div></div>
+	<div class="fact"><span class="k">fork</span><div>Branch any session into a full-history copy — rail row menu, session menu, or the TUI (<code>f</code>).</div></div>
+	<div class="fact"><span class="k">design mode</span><div>Annotate an element in the browser pane, add a note, and a structured prompt lands in the composer.</div></div>
+	<div class="fact"><span class="k">gallery</span><div>The files pane shows real image thumbnails with a full-screen preview.</div></div>
+	<div class="fact"><span class="k">unread</span><div>Accent dots on rail rows with new activity; <code>⌘⌥U</code> cycles unread sessions on macOS.</div></div>
+	<div class="fact"><span class="k">unread</span><div>Terminal mouse reporting — htop, vim, lazygit take clicks and scrolls.</div></div>
+	<div class="fact"><span class="k">wss</span><div>Pinned TLS alongside plain ws on the tailnet — TOFU fingerprint in the Keychain, published on <code>/healthz</code>.</div></div>
+	<div class="fact"><span class="k">preview</span><div>Host-side headless-Chromium preview service: launch, navigate, capture, click/type/scroll, leases — all 22 commands.</div></div>
+	<div class="fact"><span class="k">t4 tui</span><div>The whole product in a terminal: rail, live transcript, composer, fork — one self-contained binary.</div></div>
+</div>
+
+<h2><span class="dot"></span> in motion</h2>
+<video class="motion" src="../screenshots/app-clip.webm" autoplay loop muted playsinline></video>
+<video class="motion" src="../screenshots/t4-tour.webm" autoplay loop muted playsinline style="margin-top:16px;"></video>
+
+<h2><span class="dot"></span> iOS</h2>
+<div class="carousel" data-carousel>
+	<button class="car-btn prev" aria-label="previous"></button>
+	<div class="car-track">
+		<figure class="car-slide"><img src="../screenshots/feature-01-onboarding.png" alt="onboarding"><figcaption><b>Onboarding</b> — pair a host with a code, QR, or deep link.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/feature-03-session.png" alt="session"><figcaption><b>Live transcript</b> — real-time entries, streaming.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/agent-ios.png" alt="agent streaming"><figcaption><b>Agent streaming</b> — a live turn mid-response, with stop affordance.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/feature-04-inbox.png" alt="inbox"><figcaption><b>Inbox</b> — everything that needs attention, one tap away.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/feature-05-plan.png" alt="plan"><figcaption><b>Plan panel</b> — phase progress inline in the session.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/feature-06-ask.png" alt="ask"><figcaption><b>Approvals</b> — ask cards for plan review and confirmations.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/feature-07-files.png" alt="files"><figcaption><b>Files</b> — the session workspace, browsable.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/feature-08-agents.png" alt="agents"><figcaption><b>Agents</b> — subagents spawned by the session.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/feature-09-terminal.png" alt="terminal"><figcaption><b>Terminal</b> — host PTY drawer, four tabs, mouse reporting.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/region-ios.png" alt="browser right slide-over"><figcaption><b>Browser + design mode</b> — right slide-over, live pages, element annotation.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/parity-files.png" alt="files gallery"><figcaption><b>Files gallery</b> — real image thumbnails, full-screen preview.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/feature-11-usage.png" alt="usage"><figcaption><b>Usage</b> — token and cost accounting when the host has it.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/feature-12-review.png" alt="review"><figcaption><b>Review</b> — turn diffs when the session produces them.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/feature-13-artifacts.png" alt="artifacts"><figcaption><b>Artifacts</b> — files the agent produced.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/feature-15-searchdiff.png" alt="search and diff"><figcaption><b>Search & diff</b> — find any file in the workspace.</figcaption></figure>
+	</div>
+	<button class="car-btn next" aria-label="next"></button>
+	<div class="car-dots"></div>
+</div>
+
+<h2><span class="dot">●</span> macOS</h2>
+<div class="carousel" data-carousel>
+	<button class="car-btn prev" aria-label="previous"></button>
+	<div class="car-track">
+		<figure class="car-slide"><img src="../screenshots/mac-02-files.png" alt="files"><figcaption><b>Files</b> — workspace browser, with the host PTY docked and loaded below.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/mac-03-agents.png" alt="agents"><figcaption><b>Agents</b> — two parallel subagents, orchestrated live from one prompt.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/mac-05-browser.png" alt="browser right dock"><figcaption><b>Browser</b> — right dock, live and concurrent with the agent chat.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/floating-tile.png" alt="floating tile"><figcaption><b>Floating tiles</b> — pop any pane into its own window; Dock Back returns it.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/mac-10-search.png" alt="search"><figcaption><b>Search</b> — find any file in the session workspace, live results.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/mac-11-diff.png" alt="diff"><figcaption><b>Diff</b> — the working tree as a syntax-tinted patch, straight from the host.</figcaption></figure>
+	</div>
+	<button class="car-btn next" aria-label="next"></button>
+	<div class="car-dots"></div>
+</div>
+
+<h2><span class="dot">●</span> terminal</h2>
+
+<!-- Hand-rendered terminal: pixel-true to the real t4 TUI, pure CSS. -->
+<div class="termwrap">
+<div class="term">
+	<div class="term-chrome">
+		<span class="tl"></span><span class="tl"></span><span class="tl"></span>
+		<span class="term-title">t4 &nbsp;—&nbsp; 118×32</span>
+		<span class="term-title-right">omp-app/1 · wss</span>
+	</div>
+		<div class="term-status"><span class="brand">t4</span> <span class="live-dot"></span><span class="connected">connected</span><span class="status-host">host.tailnet.example</span><span class="help-hint">? help</span></div>
+	<div class="term-body">
+		<div class="rail">
+			<div class="rail-head">sessions</div>
+			<div class="rail-row sel"><span class="selbar"></span><span class="dot d-foam"></span><span class="rail-title">transcript renderer ref…</span></div>
+			<div class="rail-row"><span class="selbar off"></span><span class="dot d-muted"></span><span class="rail-title">⌄ fork · split-pane var…</span><span class="unread"></span></div>
+			<div class="rail-row"><span class="selbar off"></span><span class="dot d-gold"></span><span class="rail-title">preview service spike</span><span class="unread"></span></div>
+			<div class="rail-row"><span class="selbar off"></span><span class="dot d-muted"></span><span class="rail-title">wss pinning</span></div>
+			<div class="rail-row dim"><span class="selbar off"></span><span class="dot d-muted"></span><span class="rail-title">vault search ui</span></div>
+			<div class="rail-row dim"><span class="selbar off"></span><span class="dot d-muted"></span><span class="rail-title">release notes pass</span></div>
+			<div class="rail-legend"><span class="dot d-foam"></span><em>working</em><span class="dot d-gold"></span><em>attention</em><span class="dot d-muted"></span><em>idle</em><span class="unread"></span><em>unread</em></div>
+		</div><div class="main">
+			<div class="line role-you">you</div>
+			<div class="line">fork the session and compare both designs side by side</div>
+			<div class="gap"></div>
+			<div class="line role-agent">agent</div>
+			<div class="line">Forked into <span class="mono">019fa1d2</span> — full history carried over. I'll build</div>
+			<div class="line">the split-pane variant there while this thread keeps the</div>
+			<div class="line">drawer approach. Diff at the end.</div>
+			<div class="gap"></div>
+			<div class="line role-tool">tool</div>
+			<div class="line dim">session.fork → ok · session.prompt → accepted</div>
+			<div class="gap"></div>
+			<div class="line role-agent">agent</div>
+			<div class="line stream"><span class="w1">The rail stays flat — no card stacking —</span> <span class="w2">and the drawer</span></div>
+			<div class="line stream"><span class="w3">mirrors the desktop narrow-width sheet overlay.</span><span class="caret"></span></div>
+		</div>
+	</div>
+	<div class="term-rule"></div>
+	<div class="composer"><span class="prompt">›</span><span class="hint">compare the forks' approaches…</span><span class="enter-hint">enter ↵</span><span class="cur"></span></div>
+	<div class="keys">j/k move · enter open · 1-5 panes · f fork · x cancel · / filter · ? help</div>
+</div>
+</div>
+
+
+<div class="carousel" data-carousel>
+	<button class="car-btn prev" aria-label="previous"></button>
+	<div class="car-track">
+		<figure class="car-slide"><img src="../screenshots/t4-chat.webp" alt="t4 chat"><figcaption><b>Chat</b> — project rail, live rich transcript, timestamps.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/t4-files.webp" alt="t4 files"><figcaption><b>Files</b> — the session workspace as a browsable tree.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/t4-search.webp" alt="t4 search"><figcaption><b>Search</b> — live files.search results as you type.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/t4-diff.webp" alt="t4 diff"><figcaption><b>Diff</b> — the working tree as a tinted patch.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/t4-term.webp" alt="t4 terminal"><figcaption><b>Terminal</b> — a real host PTY; keystrokes forwarded, output live.</figcaption></figure>
+		<figure class="car-slide"><img src="../screenshots/t4-help.webp" alt="t4 help"><figcaption><b>Help</b> — the whole keymap, mouse included.</figcaption></figure>
+	</div>
+	<button class="car-btn next" aria-label="next"></button>
+	<div class="car-dots"></div>
+</div>
+
+<footer>
+	<span>t4 code · omperator</span>
+	<span>Rosé Pine · omp-app/1 · tailnet + pinned wss</span>
+</footer>
+
+<div class="lightbox" id="lb" role="dialog" aria-modal="true">
+	<button class="lb-nav lb-prev" aria-label="previous">←</button>
+	<img id="lb-img" alt="">
+	<div class="lb-cap" id="lb-cap"></div>
+	<button class="lb-nav lb-next" aria-label="next">→</button>
+</div>
+
+<script>
+// Carousels: scroll-snap + buttons + dots + keyboard. Lightbox: click any
+// slide (or the TUI hero) to expand; arrows/esc navigate.
+(() => {
+	const lb = document.getElementById("lb");
+	const lbImg = document.getElementById("lb-img");
+	const lbCap = document.getElementById("lb-cap");
+	const shots = []; // {src, cap}
+	let lbIndex = 0;
+
+	const openLb = i => {
+		lbIndex = (i + shots.length) % shots.length;
+		lbImg.src = shots[lbIndex].src;
+		lbCap.textContent = shots[lbIndex].cap;
+		lb.classList.add("open");
+		document.body.style.overflow = "hidden";
+	};
+	const closeLb = () => {
+		lb.classList.remove("open");
+		document.body.style.overflow = "";
+	};
+	lb.addEventListener("click", e => { if (e.target === lb || e.target === lbImg) closeLb(); });
+	document.querySelector(".lb-prev").addEventListener("click", e => { e.stopPropagation(); openLb(lbIndex - 1); });
+	document.querySelector(".lb-next").addEventListener("click", e => { e.stopPropagation(); openLb(lbIndex + 1); });
+	document.addEventListener("keydown", e => {
+		if (!lb.classList.contains("open")) return;
+		if (e.key === "Escape") closeLb();
+		if (e.key === "ArrowLeft") openLb(lbIndex - 1);
+		if (e.key === "ArrowRight") openLb(lbIndex + 1);
+	});
+
+	// Register shots in page order: carousels first, then hero/terminal shots.
+	const register = img => {
+		const idx = shots.length;
+		shots.push({ src: img.src, cap: img.alt });
+		img.closest(".car-slide, .card").addEventListener("click", () => openLb(idx));
+	};
+	document.querySelectorAll(".car-slide img, .grid .card img").forEach(register);
+
+	// Carousels.
+	document.querySelectorAll("[data-carousel]").forEach(root => {
+		const track = root.querySelector(".car-track");
+		const slides = [...root.querySelectorAll(".car-slide")];
+		const dots = root.querySelector(".car-dots");
+		const step = () => slides[0].getBoundingClientRect().width + 14;
+		const at = i => track.scrollTo({ left: i * step(), behavior: "smooth" });
+		root.querySelector(".prev").addEventListener("click", () => track.scrollBy({ left: -step(), behavior: "smooth" }));
+		root.querySelector(".next").addEventListener("click", () => track.scrollBy({ left: step(), behavior: "smooth" }));
+		slides.forEach((_, i) => {
+			const b = document.createElement("button");
+			b.addEventListener("click", () => at(i));
+			dots.appendChild(b);
+		});
+		const mark = () => {
+			const i = Math.round(track.scrollLeft / step());
+			dots.querySelectorAll("button").forEach((b, j) => b.classList.toggle("on", j === i));
+		};
+		track.addEventListener("scroll", mark, { passive: true });
+		mark();
+		root.tabIndex = 0;
+		root.addEventListener("keydown", e => {
+			if (e.key === "ArrowLeft") track.scrollBy({ left: -step(), behavior: "smooth" });
+			if (e.key === "ArrowRight") track.scrollBy({ left: step(), behavior: "smooth" });
+		});
+	});
+})();
+</script>
+
+</body>
+</html>

@@ -1,34 +1,22 @@
-// omp-settings-authority.ts — settings.read/settings.write against the OMP
-// profile's real stores on an official host.
+// settings.read/settings.write against OMP's config.yml and agent.db.
 //
-// Schema (verified against oh-my-pi v17.0.9 sources):
-//   ~/.omp/config.yml      — primary settings store (YAML). modelRoles,
-//                            defaultThinkingLevel, tools.approvalMode,
-//                            enabledModels, disabledProviders, cycleOrder.
-//   ~/.omp/agent/agent.db  — auth_credentials table holds provider keys as
-//                            JSON plaintext in `data` ({key, source}).
-//
-// Reads mask secrets (sk-…last4); writes replace them wholesale. The file
-// revision is a content hash so concurrent writers conflict loudly instead of
-// silently last-write-winning. Unknown config.yml keys round-trip untouched —
-// omp owns the schema, we only touch the paths listed above.
+// The two stores are serialized behind one authority lock and one revision.
+// A private journal records the exact pre-write state before either store is
+// mutated; any interrupted write is rolled back on the next read or write.
 import { Database } from "bun:sqlite";
-import { createHash } from "node:crypto";
-import { open, readFile, rename } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { open, readFile, rename, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type { CommandResult } from "@t4-code/host-wire";
 import type { OperationContext } from "./operations/dispatcher.ts";
 
 export interface OmpSettingsAuthorityOptions {
-	/** Directory holding config.yml; defaults to ~/.omp. */
 	readonly ompRoot?: string;
-	/** agent.db path; defaults to <ompRoot>/agent/agent.db. */
 	readonly agentDbPath?: string;
 }
 
-/** Settings keys this authority exposes/writes. Everything else is left alone. */
 const CONFIG_KEYS = [
 	"modelRoles",
 	"defaultThinkingLevel",
@@ -37,164 +25,342 @@ const CONFIG_KEYS = [
 	"cycleOrder",
 ] as const;
 
+interface ProviderRow {
+	readonly id: number;
+	readonly provider: string;
+	readonly credential_type: string;
+	readonly data: string;
+	readonly created_at: number;
+	readonly updated_at: number;
+}
+
+interface SettingsJournal {
+	readonly version: 1;
+	readonly configText: string;
+	readonly providers: readonly {
+		readonly provider: string;
+		readonly rows: readonly ProviderRow[];
+	}[];
+}
+
 function maskSecret(value: unknown): string {
 	const text = String(value ?? "");
 	if (text.length <= 8) return "…";
 	return `${text.slice(0, 3)}…${text.slice(-4)}`;
 }
 
+function parseConfig(text: string): Record<string, unknown> {
+	const parsed = text ? parseYaml(text) : undefined;
+	return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+		? (parsed as Record<string, unknown>)
+		: {};
+}
+
 export class OmpSettingsAuthority {
 	readonly #configPath: string;
 	readonly #agentDbPath: string;
+	readonly #journalPath: string;
+	#lockTail: Promise<void> = Promise.resolve();
 
 	constructor(options: OmpSettingsAuthorityOptions = {}) {
 		const root = options.ompRoot ?? join(homedir(), ".omp");
 		this.#configPath = join(root, "config.yml");
 		this.#agentDbPath = options.agentDbPath ?? join(root, "agent", "agent.db");
+		this.#journalPath = join(root, ".settings-write-journal.json");
 	}
 
-	// ── config.yml ──────────────────────────────────────────────────────
-	async #readConfig(): Promise<{ doc: Record<string, unknown>; revision: string }> {
-		let text = "";
+	async #locked<T>(operation: () => Promise<T>): Promise<T> {
+		const previous = this.#lockTail;
+		const gate = Promise.withResolvers<void>();
+		this.#lockTail = previous.then(() => gate.promise);
+		await previous;
 		try {
-			text = await readFile(this.#configPath, "utf8");
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+			return await operation();
+		} finally {
+			gate.resolve();
 		}
-		const parsed = text ? parseYaml(text) : undefined;
-		const doc = parsed && typeof parsed === "object" && !Array.isArray(parsed)
-			? (parsed as Record<string, unknown>)
-			: {};
-		return { doc, revision: createHash("sha256").update(text).digest("hex").slice(0, 16) };
 	}
 
-	async #writeConfig(doc: Record<string, unknown>): Promise<void> {
-		const text = stringifyYaml(doc, { indent: 2 });
-		const tmp = `${this.#configPath}.tmp`;
-		const handle = await open(tmp, "w", 0o600);
+	async #readConfigText(): Promise<string> {
+		try {
+			return await readFile(this.#configPath, "utf8");
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+			throw error;
+		}
+	}
+
+	async #writeAtomic(path: string, text: string): Promise<void> {
+		const temporary = `${path}.tmp-${process.pid}-${randomUUID()}`;
+		const handle = await open(temporary, "wx", 0o600);
 		try {
 			await handle.writeFile(text, "utf8");
 			await handle.sync();
 		} finally {
 			await handle.close();
 		}
-		await rename(tmp, this.#configPath);
+		try {
+			await rename(temporary, path);
+			const directory = await open(dirname(path), "r");
+			try {
+				await directory.sync();
+			} finally {
+				await directory.close();
+			}
+		} catch (error) {
+			await unlink(temporary).catch(() => undefined);
+			throw error;
+		}
 	}
 
-	// ── agent.db auth_credentials ────────────────────────────────────────
 	#openDb(): Database {
 		return new Database(this.#agentDbPath);
 	}
 
-	#readProviderKeys(): Record<string, string> {
-		try {
-			const db = this.#openDb();
+	#providerRows(db: Database): ProviderRow[] {
+		return db
+			.prepare(
+				"SELECT id, provider, credential_type, data, created_at, updated_at FROM auth_credentials ORDER BY provider, credential_type, id",
+			)
+			.all() as ProviderRow[];
+	}
+
+	#revision(configText: string, providerRows: readonly ProviderRow[]): string {
+		const credentials = providerRows.map(row => [
+			row.id,
+			row.provider,
+			row.credential_type,
+			row.data,
+			row.created_at,
+			row.updated_at,
+		]);
+		return createHash("sha256")
+			.update(configText)
+			.update("\0")
+			.update(JSON.stringify(credentials))
+			.digest("hex")
+			.slice(0, 16);
+	}
+
+	#maskedProviderKeys(rows: readonly ProviderRow[]): Record<string, string> {
+		const output: Record<string, string> = {};
+		for (const row of rows) {
+			if (row.credential_type !== "api_key") continue;
+			let secret: unknown;
 			try {
-				const rows = db
-					.prepare("SELECT provider, credential_type, data FROM auth_credentials ORDER BY provider")
-					.all() as { provider: string; credential_type: string; data: string }[];
-				const out: Record<string, string> = {};
-				for (const row of rows) {
-					let secret: unknown;
-					try {
-						const data = JSON.parse(row.data) as Record<string, unknown>;
-						secret = data.key ?? data.access_token;
-					} catch {
-						secret = undefined;
-					}
-					out[row.provider] = maskSecret(secret);
-				}
-				return out;
-			} finally {
-				db.close();
+				const data = JSON.parse(row.data) as Record<string, unknown>;
+				secret = data.key ?? data.access_token;
+			} catch {
+				secret = undefined;
 			}
-		} catch {
-			// A missing/corrupt agent.db means "no keys yet", not a settings failure.
-			return {};
+			output[row.provider] = maskSecret(secret);
+		}
+		return output;
+	}
+
+	async #writeJournal(journal: SettingsJournal): Promise<void> {
+		await this.#writeAtomic(this.#journalPath, `${JSON.stringify(journal)}\n`);
+	}
+
+	async #readJournal(): Promise<SettingsJournal | undefined> {
+		let text: string;
+		try {
+			text = await readFile(this.#journalPath, "utf8");
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+			throw error;
+		}
+		const value = JSON.parse(text) as SettingsJournal;
+		if (value.version !== 1 || typeof value.configText !== "string" || !Array.isArray(value.providers))
+			throw new Error("settings recovery journal is malformed");
+		return value;
+	}
+
+	#restoreProviders(db: Database, journal: SettingsJournal): void {
+		for (const snapshot of journal.providers) {
+			if (!/^[A-Za-z0-9._-]{1,64}$/u.test(snapshot.provider) || !Array.isArray(snapshot.rows))
+				throw new Error("settings recovery journal is malformed");
+			db.prepare("DELETE FROM auth_credentials WHERE provider = ? AND credential_type = 'api_key'").run(
+				snapshot.provider,
+			);
+			for (const row of snapshot.rows) {
+				db.prepare(
+					"INSERT INTO auth_credentials (id, provider, credential_type, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+				).run(row.id, row.provider, row.credential_type, row.data, row.created_at, row.updated_at);
+			}
 		}
 	}
 
-	#writeProviderKey(provider: string, key: string): void {
-		if (!/^[A-Za-z0-9._-]{1,64}$/u.test(provider)) throw new Error("provider name is invalid");
+	async #recoverJournal(): Promise<void> {
+		const journal = await this.#readJournal();
+		if (!journal) return;
 		const db = this.#openDb();
+		db.run("BEGIN IMMEDIATE");
 		try {
-			const now = Date.now();
-			const data = JSON.stringify({ key, source: "settings" });
-			// auth_credentials has no unique constraint on (provider, type) —
-			// upsert by hand.
-			const existing = db
-				.prepare("SELECT id FROM auth_credentials WHERE provider = ? AND credential_type = 'api_key'")
-				.get(provider) as { id: number } | undefined;
-			if (existing)
-				db.prepare("UPDATE auth_credentials SET data = ?, updated_at = ? WHERE id = ?").run(data, now, existing.id);
-			else
-				db.prepare(
-					"INSERT INTO auth_credentials (provider, credential_type, data, created_at, updated_at) VALUES (?, 'api_key', ?, ?, ?)",
-				).run(provider, data, now, now);
+			this.#restoreProviders(db, journal);
+			await this.#writeAtomic(this.#configPath, journal.configText);
+			db.run("COMMIT");
+			await unlink(this.#journalPath);
+		} catch (error) {
+			try {
+				db.run("ROLLBACK");
+			} catch {}
+			throw error;
 		} finally {
 			db.close();
 		}
 	}
 
-	// ── operations ──────────────────────────────────────────────────────
-	// The wire's boundedSettings demands every settings value be an object —
-	// bare scalars die in its JSON-literal parser. So every leaf travels as a
-	// metadata entry {effective, type}.
 	async settingsRead(): Promise<CommandResult> {
-		const { doc, revision } = await this.#readConfig();
-		const settings: Record<string, unknown> = {};
-		for (const key of CONFIG_KEYS) {
-			if (doc[key] === undefined) continue;
-			settings[key] = { type: Array.isArray(doc[key]) ? "list" : typeof doc[key] === "object" ? "map" : "string", effective: doc[key] };
-		}
-		const tools = doc.tools;
-		if (tools && typeof tools === "object" && !Array.isArray(tools)) {
-			const approvalMode = (tools as Record<string, unknown>).approvalMode;
-			if (approvalMode !== undefined) settings["tools.approvalMode"] = { type: "enum", effective: approvalMode, options: ["always-ask", "write", "yolo"] };
-			const approval = (tools as Record<string, unknown>).approval;
-			if (approval !== undefined) settings["tools.approval"] = { type: "map", effective: approval };
-		}
-		const keys = this.#readProviderKeys();
-		if (Object.keys(keys).length > 0) {
-			settings.providerKeys = {
-				type: "map",
-				effective: Object.fromEntries(
-					Object.entries(keys).map(([provider, masked]) => [provider, { type: "string", effective: masked }]),
-				),
-			};
-		}
-		return { settings, revision };
+		return this.#locked(async () => {
+			await this.#recoverJournal();
+			const configText = await this.#readConfigText();
+			const doc = parseConfig(configText);
+			let providerRows: ProviderRow[];
+			const db = this.#openDb();
+			try {
+				providerRows = this.#providerRows(db);
+			} finally {
+				db.close();
+			}
+			const settings: Record<string, unknown> = {};
+			for (const key of CONFIG_KEYS) {
+				if (doc[key] === undefined) continue;
+				settings[key] = {
+					type: Array.isArray(doc[key]) ? "list" : typeof doc[key] === "object" ? "map" : "string",
+					effective: doc[key],
+				};
+			}
+			const tools = doc.tools;
+			if (tools && typeof tools === "object" && !Array.isArray(tools)) {
+				const approvalMode = (tools as Record<string, unknown>).approvalMode;
+				if (approvalMode !== undefined)
+					settings["tools.approvalMode"] = {
+						type: "enum",
+						effective: approvalMode,
+						options: ["always-ask", "write", "yolo"],
+					};
+				const approval = (tools as Record<string, unknown>).approval;
+				if (approval !== undefined) settings["tools.approval"] = { type: "map", effective: approval };
+			}
+			const keys = this.#maskedProviderKeys(providerRows);
+			if (Object.keys(keys).length > 0) {
+				settings.providerKeys = {
+					type: "map",
+					effective: Object.fromEntries(
+						Object.entries(keys).map(([provider, masked]) => [
+							provider,
+							{ type: "string", effective: masked },
+						]),
+					),
+				};
+			}
+			return { settings, revision: this.#revision(configText, providerRows) };
+		});
 	}
 
 	async settingsWrite(args: CommandResult, context: OperationContext): Promise<CommandResult> {
-		const patch = (args.settings ?? args) as Record<string, unknown>;
-		const { doc, revision } = await this.#readConfig();
-		// The dispatcher enforces revision-required; the challenge carries our
-		// current revision, so a concurrent change fails here instead of
-		// clobbering.
-		if (typeof context.expectedRevision === "string" && context.expectedRevision !== revision)
-			throw new Error(`settings revision conflict: expected ${context.expectedRevision}, current ${revision}`);
-
-		const next: Record<string, unknown> = { ...doc };
-		for (const key of CONFIG_KEYS) {
-			if (patch[key] !== undefined) next[key] = patch[key];
-		}
-		if (patch["tools.approvalMode"] !== undefined || patch["tools.approval"] !== undefined) {
-			const tools = { ...(next.tools as Record<string, unknown> | undefined) };
-			if (patch["tools.approvalMode"] !== undefined) tools.approvalMode = patch["tools.approvalMode"];
-			if (patch["tools.approval"] !== undefined) tools.approval = patch["tools.approval"];
-			next.tools = tools;
-		}
-		const providerKeys = patch.providerKeys;
-		if (providerKeys && typeof providerKeys === "object" && !Array.isArray(providerKeys)) {
-			for (const [provider, key] of Object.entries(providerKeys as Record<string, unknown>)) {
-				if (typeof key !== "string" || key.length < 8) throw new Error(`provider key for ${provider} is invalid`);
-				this.#writeProviderKey(provider, key);
+		return this.#locked(async () => {
+			await this.#recoverJournal();
+			const patch = (args.settings ?? args) as Record<string, unknown>;
+			const configText = await this.#readConfigText();
+			const doc = parseConfig(configText);
+			const db = this.#openDb();
+			let providerRows: ProviderRow[];
+			try {
+				providerRows = this.#providerRows(db);
+			} catch (error) {
+				db.close();
+				throw error;
 			}
-		}
-		await this.#writeConfig(next);
-		const { revision: newRevision } = await this.#readConfig();
-		return { written: true, revision: newRevision };
+			const revision = this.#revision(configText, providerRows);
+			if (typeof context.expectedRevision === "string" && context.expectedRevision !== revision) {
+				db.close();
+				throw new Error(`settings revision conflict: expected ${context.expectedRevision}, current ${revision}`);
+			}
+
+			const next: Record<string, unknown> = { ...doc };
+			for (const key of CONFIG_KEYS) if (patch[key] !== undefined) next[key] = patch[key];
+			if (patch["tools.approvalMode"] !== undefined || patch["tools.approval"] !== undefined) {
+				const tools = { ...(next.tools as Record<string, unknown> | undefined) };
+				if (patch["tools.approvalMode"] !== undefined) tools.approvalMode = patch["tools.approvalMode"];
+				if (patch["tools.approval"] !== undefined) tools.approval = patch["tools.approval"];
+				next.tools = tools;
+			}
+			const providerPatch: Record<string, string> = {};
+			if (patch.providerKeys !== undefined) {
+				if (!patch.providerKeys || typeof patch.providerKeys !== "object" || Array.isArray(patch.providerKeys)) {
+					db.close();
+					throw new Error("providerKeys must be a map");
+				}
+				for (const [provider, key] of Object.entries(patch.providerKeys as Record<string, unknown>)) {
+					if (!/^[A-Za-z0-9._-]{1,64}$/u.test(provider) || typeof key !== "string" || key.length < 8) {
+						db.close();
+						throw new Error(`provider key for ${provider} is invalid`);
+					}
+					providerPatch[provider] = key;
+				}
+			}
+			const affected = Object.keys(providerPatch);
+			const journal: SettingsJournal = {
+				version: 1,
+				configText,
+				providers: affected.map(provider => ({
+					provider,
+					rows: providerRows.filter(
+						row => row.provider === provider && row.credential_type === "api_key",
+					),
+				})),
+			};
+			try {
+				await this.#writeJournal(journal);
+				db.run("BEGIN IMMEDIATE");
+			} catch (error) {
+				db.close();
+				throw error;
+			}
+			try {
+				const now = Date.now();
+				for (const [provider, key] of Object.entries(providerPatch)) {
+					const data = JSON.stringify({ key, source: "settings" });
+					const existing = db
+						.prepare(
+							"SELECT id FROM auth_credentials WHERE provider = ? AND credential_type = 'api_key' ORDER BY id",
+						)
+						.all(provider) as { id: number }[];
+					if (existing[0]) {
+						db.prepare("UPDATE auth_credentials SET data = ?, updated_at = ? WHERE id = ?").run(
+							data,
+							now,
+							existing[0].id,
+						);
+						for (const duplicate of existing.slice(1))
+							db.prepare("DELETE FROM auth_credentials WHERE id = ?").run(duplicate.id);
+					} else {
+						db.prepare(
+							"INSERT INTO auth_credentials (provider, credential_type, data, created_at, updated_at) VALUES (?, 'api_key', ?, ?, ?)",
+						).run(provider, data, now, now);
+					}
+				}
+				await this.#writeAtomic(this.#configPath, stringifyYaml(next, { indent: 2 }));
+				db.run("COMMIT");
+				await unlink(this.#journalPath);
+			} catch (error) {
+				try {
+					db.run("ROLLBACK");
+				} catch {}
+				db.close();
+				await this.#recoverJournal();
+				throw error;
+			}
+			try {
+				providerRows = this.#providerRows(db);
+			} finally {
+				db.close();
+			}
+			const newConfigText = await this.#readConfigText();
+			return { written: true, revision: this.#revision(newConfigText, providerRows) };
+		});
 	}
 
 	operations() {

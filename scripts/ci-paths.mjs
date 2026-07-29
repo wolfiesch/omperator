@@ -15,7 +15,6 @@ const FORCE_ALL = [
   /^pnpm-lock\.yaml$/u,
   /^pnpm-workspace\.yaml$/u,
   /^scripts\/check-release-consistency(?:\.test)?\.mjs$/u,
-  /^scripts\/release-consistency\//u,
   /^scripts\/ci-baseline(?:\.test)?\.mjs$/u,
   /^scripts\/ci-paths(?:\.test)?\.mjs$/u,
   /^scripts\/read-bounded-response\.mjs$/u,
@@ -103,7 +102,6 @@ const GROUP_PATTERNS = Object.freeze({
     /^apps\/ios\//u,
     /^packages\/host-wire\//u,
     /^packages\/protocol\//u,
-    /^scripts\/prepare-ios-ci-cache\.mjs$/u,
     /^scripts\/verify-ios\.mjs$/u,
   ],
   android_debug: [

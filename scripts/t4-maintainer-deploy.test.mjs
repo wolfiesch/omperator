@@ -309,7 +309,7 @@ test("local deployment preserves named Tailnet routes and their start policy", a
   assert.equal(installedConfig.startProfiles, true);
 });
 
-test("same-version package repair is an effective reinstall", async (t) => {
+test("same-version package repair is an effective reinstall", { skip: process.platform !== "linux" && "deploy fixture needs GNU dpkg/realpath/systemd" }, async (t) => {
   const fixture = await createDeployFixture({ sameVersion: true });
   t.after(() => fixture.cleanup());
   const result = fixture.run();
@@ -319,10 +319,10 @@ test("same-version package repair is an effective reinstall", async (t) => {
     .filter((line) => line.startsWith("apt-get\t") && !line.includes("--simulate"));
   assert.equal(aptCalls.length, 1);
   assert.match(aptCalls[0], /--reinstall/u);
-  assert.match(aptCalls[0], /Omperator-1\.2\.3-linux-amd64\.deb/u);
+  assert.match(aptCalls[0], /T4-Code-1\.2\.3-linux-amd64\.deb/u);
 });
 
-test("same-version repair accepts the explicit local-unreleased-candidate manifest kind", async (t) => {
+test("same-version repair accepts the explicit local-unreleased-candidate manifest kind", { skip: process.platform !== "linux" && "deploy fixture needs GNU dpkg/realpath/systemd" }, async (t) => {
   const fixture = await createDeployFixture({
     sameVersion: true,
     manifestKind: "local-unreleased-candidate",
@@ -360,7 +360,7 @@ test("same-version deployment rejects a missing or mismatched current overlay re
   }
 });
 
-test("same-version rollback uses the sealed overlay when its original changes", async (t) => {
+test("same-version rollback uses the sealed overlay when its original changes", { skip: process.platform !== "linux" && "deploy fixture needs GNU dpkg/realpath/systemd" }, async (t) => {
   const fixture = await createDeployFixture({ sameVersion: true });
   t.after(() => fixture.cleanup());
   const result = fixture.run({
@@ -372,7 +372,7 @@ test("same-version rollback uses the sealed overlay when its original changes", 
   assert.equal(await pathExists(join(fixture.maintainerRoot, "state", "deployment-blocked.json")), false);
 });
 
-test("same-version rollback rejects a tampered sealed overlay", async (t) => {
+test("same-version rollback rejects a tampered sealed overlay", { skip: process.platform !== "linux" && "deploy fixture needs GNU dpkg/realpath/systemd" }, async (t) => {
   const fixture = await createDeployFixture({ sameVersion: true });
   t.after(() => fixture.cleanup());
   const result = fixture.run({
@@ -495,7 +495,7 @@ test("post-exposure busy or changed appserver preserves new state behind a durab
       assert.equal(effectiveAptBefore.length, 1, callsBefore);
       assert.doesNotMatch(
         callsBefore,
-        /^apt-get\t.*previous-Omperator-1\.2\.2-linux-amd64\.deb/mu,
+        /^apt-get\t.*previous-T4-Code-1\.2\.2-linux-amd64\.deb/mu,
       );
 
       const second = fixture.run();

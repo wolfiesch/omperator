@@ -22,7 +22,7 @@ describe("installable hosted app", () => {
 
     expect(manifest).toMatchObject({
       id: "./",
-      name: "Omperator",
+      name: "T4 Code",
       start_url: "./",
       scope: "./",
       display: "standalone",

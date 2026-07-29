@@ -44,7 +44,7 @@ When you attach logs (issues or PRs), **redact them first**:
 
 - Never paste API keys, tokens, pairing codes, or credentials of any kind.
 - Strip usernames, home paths, hostnames, and project names you don't want public.
-- Appserver logs stay in the compatibility paths `~/.local/state/t4-code/appserver` (Linux) or `~/Library/Logs/T4 Code/appserver` (macOS). Trim them to the relevant window.
+- Appserver logs live in `~/.local/state/t4-code/appserver` (Linux) or `~/Library/Logs/T4 Code/appserver` (macOS). Trim them to the relevant window.
 
 We will close reports containing live secrets and ask you to rotate them.
 

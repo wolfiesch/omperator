@@ -1,6 +1,6 @@
 # Cross-session Attention Inbox
 
-Status: the first vertical slice is implemented in Omperator and the Lycaon OMP fork. The T4 UI
+Status: the first vertical slice is implemented in T4 Code and the Lycaon OMP fork. The T4 UI
 depends on the host contract in `lyc-aon/oh-my-pi#10` before live attention items can appear.
 
 ## Recommended outcome

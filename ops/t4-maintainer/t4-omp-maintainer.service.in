@@ -1,5 +1,5 @@
 [Unit]
-Description=Omperator live OMP release maintainer
+Description=T4 Code live OMP release maintainer
 
 [Service]
 Type=oneshot

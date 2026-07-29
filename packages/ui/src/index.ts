@@ -1,4 +1,4 @@
-// @t4-code/ui — Omperator design-system core.
+// @t4-code/ui — T4 Code design-system core.
 // tokens.css (import "@t4-code/ui/tokens.css") owns every raw
 // color; everything exported here consumes tokens only.
 

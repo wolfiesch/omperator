@@ -8,7 +8,6 @@
 // outcome — the draft clears only on acceptance; the rest exits via
 // `onIntent`.
 import { Button, cn, IconButton, Tooltip, TooltipPopup, TooltipTrigger } from "@t4-code/ui";
-import type { ConnectionState } from "@t4-code/protocol/desktop-ipc";
 import { ArrowUp, FileText, Folder, ListTodo, Paperclip, Square, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -22,7 +21,7 @@ import {
   thinkingLabel,
   type ComposerControlsSnapshot,
 } from "../session-runtime/session-controls.ts";
-import { presentSessionWriteReason } from "../session-runtime/session-state.ts";
+import { CACHED_WRITE_REASON, OFFLINE_WRITE_REASON } from "../session-runtime/session-observer.ts";
 import { useWorkspace, workspaceStore } from "../../state/store-instance.ts";
 import { selectSessionView } from "../../state/workspace-store.ts";
 import { ContextPacketChips } from "../context-packet/ContextPacketChips.tsx";
@@ -104,8 +103,6 @@ function attachmentIntakeState(sessionId: string): {
 export interface ComposerProps {
   readonly sessionId: string;
   readonly link: "live" | "cached" | "offline";
-  /** Host transport state disambiguates reconnect/sync from a real outage. */
-  readonly connectionState?: ConnectionState | null;
   readonly turnActive: boolean;
   readonly canPrompt: boolean;
   /** Explicit host/view policy that keeps an otherwise live composer read-only. */
@@ -139,7 +136,6 @@ export interface ComposerProps {
 export function Composer({
   sessionId,
   link,
-  connectionState = null,
   turnActive,
   canPrompt,
   readOnlyReason = null,
@@ -186,7 +182,9 @@ export function Composer({
   const disabled = !canPrompt || readOnlyReason !== null;
   // Freshness copy always wins: a cached/offline surface explains itself
   // before any view-level read-only (observer/reconciling) policy speaks.
-  const disabledReason = presentSessionWriteReason(link, connectionState) ?? readOnlyReason;
+  const disabledReason =
+    (link === "cached" ? CACHED_WRITE_REASON : link === "offline" ? OFFLINE_WRITE_REASON : null) ??
+    readOnlyReason;
 
   // Slash menu state derives from the draft + caret.
   const slashQuery = disabled ? null : activeSlashQuery(draft, caret);

@@ -2,7 +2,6 @@ import {
   decodeServerFrame as decodeAppWireServerFrame,
   decodeSessionListResult as decodeAppWireSessionListResult,
   decodeSessions as decodeAppWireSessions,
-  controlFree,
   parseBounded,
   type ServerFrame,
   type SessionListResult,
@@ -37,20 +36,6 @@ function isKnownSessionControl(value: unknown): boolean {
         value.lockStatus === "malformed") &&
       (value.transcript === "live" || value.transcript === "snapshot")
     );
-  }
-  if (value.mode === "released") {
-    if (
-      !hasExactKeys(value, ["mode", "transcript", "resumeCommand"]) ||
-      (value.transcript !== "live" && value.transcript !== "snapshot")
-    ) {
-      return false;
-    }
-    try {
-      controlFree(value.resumeCommand, "sessionControl.resumeCommand", 1024);
-      return true;
-    } catch {
-      return false;
-    }
   }
   return (
     (value.mode === "reconciling" || value.mode === "unverified") &&

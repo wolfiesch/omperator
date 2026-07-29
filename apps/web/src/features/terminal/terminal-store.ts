@@ -21,22 +21,6 @@ export const TERMINAL_DRAWER_HEIGHT = { min: 180, default: 280 } as const;
 export const MAX_TERMINAL_BUFFER_CHARS = 200_000;
 /** Rename cap; longer titles truncate rather than overflow the strip. */
 export const MAX_TERMINAL_TITLE_CHARS = 48;
-/**
- * Keep each write below the live bridge's pending-input window. Without
- * chunking, one oversized paste can be rejected before any write is in
- * flight, leaving no future drain event that could retry the queued input.
- */
-export const MAX_TERMINAL_INPUT_WRITE_CHARS = 4_096;
-
-function writeAvailable(pty: PtySession, data: string): string {
-  let offset = 0;
-  while (offset < data.length) {
-    const chunk = data.slice(offset, offset + MAX_TERMINAL_INPUT_WRITE_CHARS);
-    if (!pty.write(chunk)) return data.slice(offset);
-    offset += chunk.length;
-  }
-  return "";
-}
 
 export type TerminalStatus =
   | "starting"
@@ -375,14 +359,13 @@ export function createTerminalStore(options: CreateTerminalStoreOptions): Termin
       if (tab === undefined || pty === undefined || tab.queuedInput.length === 0) return;
       const queued = tab.queuedInput;
       patchTab(terminalId, { queuedInput: "" });
-      const remaining = writeAvailable(pty, queued);
-      if (remaining.length > 0) {
-        // Still saturated: put the unaccepted suffix back; order is preserved
-        // because sendInput always appends behind whatever is already queued.
+      if (!pty.write(queued)) {
+        // Still saturated: put it back untouched; order is preserved because
+        // sendInput always appends behind whatever is already queued.
         set((state) => ({
           tabs: state.tabs.map((entry) =>
             entry.id === terminalId
-              ? { ...entry, queuedInput: remaining + entry.queuedInput }
+              ? { ...entry, queuedInput: queued + entry.queuedInput }
               : entry,
           ),
         }));
@@ -403,9 +386,8 @@ export function createTerminalStore(options: CreateTerminalStoreOptions): Termin
         patchTab(terminalId, { queuedInput: tab.queuedInput + data });
         return;
       }
-      const remaining = writeAvailable(pty, data);
-      if (remaining.length > 0) {
-        patchTab(terminalId, { queuedInput: remaining });
+      if (!pty.write(data)) {
+        patchTab(terminalId, { queuedInput: data });
       }
     };
 

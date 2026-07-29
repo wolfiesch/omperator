@@ -185,11 +185,11 @@ export function decodeReleaseManifest(value: unknown): ReleaseManifest {
   const names = new Set(assets.map((asset) => asset.name));
   if (names.size !== assets.length) throw new Error("duplicate release asset");
   const canonical = [
-    ["android", "apk", "universal", `Omperator-${releaseVersion}-android.apk`],
-    ["linux", "deb", "x86_64", `Omperator-${releaseVersion}-linux-amd64.deb`],
-    ["linux", "appimage", "x86_64", `Omperator-${releaseVersion}-linux-x86_64.AppImage`],
-    ["mac", "dmg", "arm64", `Omperator-${releaseVersion}-mac-arm64.dmg`],
-    ["mac", "zip", "arm64", `Omperator-${releaseVersion}-mac-arm64.zip`],
+    ["android", "apk", "universal", `T4-Code-${releaseVersion}-android.apk`],
+    ["linux", "deb", "x86_64", `T4-Code-${releaseVersion}-linux-amd64.deb`],
+    ["linux", "appimage", "x86_64", `T4-Code-${releaseVersion}-linux-x86_64.AppImage`],
+    ["mac", "dmg", "arm64", `T4-Code-${releaseVersion}-mac-arm64.dmg`],
+    ["mac", "zip", "arm64", `T4-Code-${releaseVersion}-mac-arm64.zip`],
   ] as const;
   for (const [platform, kind, arch, name] of canonical) {
     if (
@@ -258,13 +258,13 @@ function selectedManualAsset(
           platform: "mac",
           kind: "dmg",
           arch: "arm64",
-          name: `Omperator-${manifest.version}-mac-arm64.dmg`,
+          name: `T4-Code-${manifest.version}-mac-arm64.dmg`,
         }
       : {
           platform: "linux",
           kind: "deb",
           arch: "x86_64",
-          name: `Omperator-${manifest.version}-linux-amd64.deb`,
+          name: `T4-Code-${manifest.version}-linux-amd64.deb`,
         };
   const matches = manifest.assets.filter(
     (asset) =>
@@ -350,7 +350,7 @@ export class DesktopUpdateController {
       ...(this.state.checkedAt === undefined ? {} : { checkedAt: this.state.checkedAt }),
       availableVersion,
       progressPercent: 100,
-      message: "Restart Omperator to finish updating.",
+      message: "Restart T4 Code to finish updating.",
     });
   };
 
@@ -361,8 +361,8 @@ export class DesktopUpdateController {
     this.clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle as NodeJS.Timeout));
     this.nativeEligible =
       options.isPackaged &&
-      (options.platform === "darwin" ||
-        (options.platform === "linux" && options.nativeLinuxPackage !== undefined));
+      options.platform === "linux" &&
+      options.nativeLinuxPackage !== undefined;
     this.state = decodeDesktopUpdateState({
       version: 1,
       currentVersion: options.currentVersion,
@@ -467,7 +467,7 @@ export class DesktopUpdateController {
             ...this.state,
             phase: "ready",
             progressPercent: 100,
-            message: "Restart Omperator to finish updating.",
+            message: "Restart T4 Code to finish updating.",
           });
         }
         return this.state;
@@ -526,7 +526,7 @@ export class DesktopUpdateController {
         currentVersion: this.options.currentVersion,
         phase: "current",
         checkedAt,
-        message: "Omperator is up to date.",
+        message: "T4 Code is up to date.",
       });
       return this.state;
     }
@@ -537,7 +537,7 @@ export class DesktopUpdateController {
         currentVersion: this.options.currentVersion,
         phase: "current",
         checkedAt,
-        message: "Omperator is up to date.",
+        message: "T4 Code is up to date.",
       });
       return this.state;
     }
@@ -547,7 +547,7 @@ export class DesktopUpdateController {
       phase: "available",
       checkedAt,
       availableVersion,
-      message: `Omperator ${availableVersion} is ready to download.`,
+      message: `T4 Code ${availableVersion} is ready to download.`,
     });
     return this.state;
   }
@@ -562,7 +562,7 @@ export class DesktopUpdateController {
         currentVersion: this.options.currentVersion,
         phase: "current",
         checkedAt,
-        message: "Omperator is up to date.",
+        message: "T4 Code is up to date.",
       });
       return this.state;
     }
@@ -574,7 +574,7 @@ export class DesktopUpdateController {
       phase: "manual",
       checkedAt,
       availableVersion: manifest.version,
-      message: `Omperator ${manifest.version} is available from the official release.`,
+      message: `T4 Code ${manifest.version} is available from the official release.`,
     });
     return this.state;
   }

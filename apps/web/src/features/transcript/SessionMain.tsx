@@ -14,7 +14,6 @@ import {
   TooltipTrigger,
   useReducedMotion,
 } from "@t4-code/ui";
-import type { ConnectionState } from "@t4-code/protocol/desktop-ipc";
 import { useNavigate } from "@tanstack/react-router";
 import {
   useCallback,
@@ -78,8 +77,6 @@ export interface SessionMainProps {
   readonly session: WorkspaceSession;
   readonly project: WorkspaceProject;
   readonly nowMs: number;
-  /** Current host transport state, distinct from per-session freshness. */
-  readonly connectionState: ConnectionState | null;
   readonly onOpenHostHealth: () => void;
   /** Export hook: registered with the current rows so the header menu can serialize them. */
   readonly exportRowsRef: RefObject<(() => ExportContent) | null>;
@@ -533,7 +530,6 @@ export function SessionControlBanner({
 }
 
 export function SessionMain({
-  connectionState,
   onOpenHostHealth,
   session,
   sessionId,
@@ -871,7 +867,6 @@ export function SessionMain({
               canCancel={snapshot.canCancel}
               cancelDisabledReason={snapshot.cancelDisabledReason}
               canPrompt={snapshot.canPrompt}
-              connectionState={connectionState}
               contextUsedTokens={snapshot.contextUsedTokens}
               contextWindowTokens={snapshot.contextWindowTokens}
               controls={snapshot.controls}

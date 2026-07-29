@@ -27,7 +27,7 @@ export function UpdateSettingsPanel({ state }: { readonly state: AppUpdateState 
           Updates
         </h2>
         <p className="max-w-[70ch] text-muted-foreground text-xs">
-          Keep Omperator current on your schedule. Checks are quiet; downloads, installs, and restarts stay in your control.
+          Keep T4 Code current on your schedule. Checks are quiet; downloads, installs, and restarts stay in your control.
         </p>
       </div>
 
@@ -35,7 +35,7 @@ export function UpdateSettingsPanel({ state }: { readonly state: AppUpdateState 
         <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-1.5">
-              <h3 className="font-medium text-foreground text-sm">Omperator</h3>
+              <h3 className="font-medium text-foreground text-sm">T4 Code</h3>
               <Badge variant={state.phase === "error" ? "error" : state.phase === "current" ? "success" : "outline"}>
                 {updateStatusLabel(state)}
               </Badge>
@@ -94,10 +94,10 @@ export function UpdateSettingsPanel({ state }: { readonly state: AppUpdateState 
         <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="max-w-[62ch] text-muted-foreground text-xs">
             {state.delivery === "android"
-              ? "Omperator keeps the APK private, verifies its bytes, identity, version, and signer, then Android asks before replacing this installation."
+              ? "T4 Code keeps the APK private, verifies its bytes, identity, version, and signer, then Android asks before replacing this installation."
               : state.delivery === "web"
                 ? "No package is installed in a browser; the deployment provides the application."
-                : "Omperator selects the release package that matches this installation."}
+                : "T4 Code selects the release package that matches this installation."}
           </p>
           <Button
             className="min-h-11 w-full shrink-0 sm:min-h-8 sm:w-auto"

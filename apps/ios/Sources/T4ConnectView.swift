@@ -15,7 +15,7 @@ struct T4ConnectView: View {
     @ObservedObject var store: T4SessionStore
     @Environment(\.dismiss) private var dismiss
 
-    /// Optional deep-link prefill (t4-code://pair/<hostHint>/<code>).
+    /// Optional deep-link prefill carrying the exact listener endpoint and pin.
     var pendingPair: PendingPair? = nil
 
     @State private var pairHost: String = ""
@@ -127,8 +127,17 @@ struct T4ConnectView: View {
     /// pair immediately: opening the link IS the consent gesture.
     private func applyPendingPair() {
         guard let pair = pendingPair, pairHost.isEmpty, pairCode.isEmpty else { return }
-        pairHost = pair.hostHint
+        pairHost = pair.endpoint
         pairCode = pair.code
+        if let fingerprint = pair.tlsFingerprint,
+           let endpoint = URL(string: pair.endpoint),
+           let host = endpoint.host {
+            let port = endpoint.port ?? 443
+            guard T4CertPinner.establishExpectedPin(host: host, port: port, fingerprint: fingerprint) else {
+                store.lastError = "The pairing certificate fingerprint could not be verified or saved."
+                return
+            }
+        }
         Task { await pairAndConnect() }
     }
 
@@ -160,12 +169,7 @@ struct T4ConnectView: View {
             ? DeviceAuthentication(deviceId: deviceId, deviceToken: deviceToken) : nil
         await store.connect(
             endpoint: url,
-            identity: ClientIdentity(
-                name: platformClientName,
-                version: "0.1",
-                build: "dev",
-                platform: platformClientPlatform
-            ),
+            identity: ClientIdentity(name: "t4-ios", version: "0.1", build: "dev", platform: "ios"),
             authentication: auth
         )
         if store.connected { dismiss() }

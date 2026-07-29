@@ -65,28 +65,14 @@ targets:
         TEST_TARGET_NAME: T4Code
         SWIFT_VERSION: "5.0"
         CODE_SIGNING_ALLOWED: NO
-  T4CodeTests:
-    type: bundle.unit-test
-    platform: iOS
-    sources:
-      - Tests
-    dependencies:
-      - target: T4Code
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: sh.t4code.ios.tests
-        SWIFT_VERSION: "5.0"
-        CODE_SIGNING_ALLOWED: NO
 schemes:
   T4Code:
     build:
       targets:
         T4Code: all
-        T4CodeTests: [test]
         T4CodeUITests: [test]
     test:
       targets:
-        - T4CodeTests
         - T4CodeUITests
   T4CodeMac:
     build:

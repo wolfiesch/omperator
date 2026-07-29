@@ -19,7 +19,6 @@ import {
   createTerminalStore,
   MAX_TERMINALS_PER_GROUP,
   MAX_TERMINAL_BUFFER_CHARS,
-  MAX_TERMINAL_INPUT_WRITE_CHARS,
   resolveDrawerNotice,
   safeLabel,
 } from "../src/features/terminal/terminal-store.ts";
@@ -49,7 +48,6 @@ class ScriptedPty implements PtySession {
   readonly request: PtyOpenRequest;
   readonly written: string[] = [];
   accepting = true;
-  maxWriteChars = Number.POSITIVE_INFINITY;
   killed = false;
   resizes: Array<{ cols: number; rows: number }> = [];
   private dataListeners = new Set<(chunk: string) => void>();
@@ -63,7 +61,7 @@ class ScriptedPty implements PtySession {
     this.request = request;
   }
   write(data: string): boolean {
-    if (!this.accepting || data.length > this.maxWriteChars) return false;
+    if (!this.accepting) return false;
     this.written.push(data);
     return true;
   }
@@ -217,22 +215,6 @@ describe("input and backpressure", () => {
     // Nothing overtakes a live queue: order stays a,bc,d.
     store.getState().sendInput(id, "d");
     expect(pty.written).toEqual(["a", "bc", "d"]);
-  });
-
-  it("chunks oversized first input before crossing the bounded PTY write seam", () => {
-    const { bridge, opened } = scriptedBridge();
-    const store = makeStore(bridge);
-    const id = store.getState().openTerminal();
-    const pty = opened[0];
-    if (pty === undefined) throw new Error("pty not opened");
-    pty.maxWriteChars = MAX_TERMINAL_INPUT_WRITE_CHARS;
-    const input = "x".repeat(MAX_TERMINAL_INPUT_WRITE_CHARS * 2 + 1);
-    store.getState().sendInput(id, input);
-    expect(pty.written.every((chunk) => chunk.length <= MAX_TERMINAL_INPUT_WRITE_CHARS)).toBe(
-      true,
-    );
-    expect(pty.written.join("")).toBe(input);
-    expect(store.getState().tabs[0]?.queuedInput).toBe("");
   });
 
   it("a saturated tab reads as paused in the drawer notice", () => {

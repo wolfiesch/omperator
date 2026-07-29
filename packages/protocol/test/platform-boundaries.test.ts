@@ -22,9 +22,14 @@ describe("headless platform contracts", () => {
   it("validates queued pair events before deduplicating and bounding them", () => {
     const queue = new PendingPairQueue(8);
     for (let index = 0; index < 10; index += 1) {
-      queue.push({ hostHint: `host-${index}`, code: "123456", issuedAt: index });
+      queue.push({
+        hostHint: `host-${index}`,
+        endpoint: `wss://host-${index}/v1/ws`,
+        code: "123456",
+        issuedAt: index,
+      });
     }
-    queue.push({ hostHint: "host-8", code: "654321", issuedAt: 99 });
+    queue.push({ hostHint: "host-8", endpoint: "wss://host-8/v1/ws", code: "654321", issuedAt: 99 });
     expect(queue.drain().map((item) => item.hostHint)).toEqual([
       "host-2",
       "host-3",
@@ -36,7 +41,9 @@ describe("headless platform contracts", () => {
       "host-8",
     ]);
     expect(queue.size()).toBe(0);
-    expect(() => queue.push({ hostHint: "bad host", code: "123456", issuedAt: 1 })).toThrow();
+    expect(() =>
+      queue.push({ hostHint: "bad host", endpoint: "wss://host-a/v1/ws", code: "123456", issuedAt: 1 }),
+    ).toThrow();
   });
 
   it("strictly decodes Capacitor updater fixtures without Android", () => {
@@ -70,8 +77,16 @@ describe("headless platform contracts", () => {
   });
 
   it("rejects malformed pair events before Electron IPC receives them", () => {
-    expect(decodePairLinkEvent({ hostHint: "host-a", code: "123456", issuedAt: 1 })).toEqual({
+    expect(
+      decodePairLinkEvent({
+        hostHint: "host-a",
+        endpoint: "wss://host-a/v1/ws",
+        code: "123456",
+        issuedAt: 1,
+      }),
+    ).toEqual({
       hostHint: "host-a",
+      endpoint: "wss://host-a/v1/ws",
       code: "123456",
       issuedAt: 1,
     });

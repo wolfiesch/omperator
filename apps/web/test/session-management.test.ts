@@ -26,7 +26,6 @@ import {
   deleteLiveSession,
   managementCommandSupport,
   projectRevealSupport,
-  releaseLiveSession,
   renameLiveSession,
   revealLiveProject,
   restoreLiveSession,
@@ -81,8 +80,6 @@ function catalog(): CatalogFrame {
       "session.archive",
       "session.restore",
       "session.close",
-      "session.release",
-      "session.reclaim",
       "session.delete",
     ].map((name) => ({
       id: `command-${name}` as never,
@@ -116,7 +113,7 @@ class FakeManagementController {
   inventoryTruncated = false;
   /** Test hook: runs right after a destructive challenge is issued. */
   onChallenge: (() => void) | null = null;
-  private pendingMutation: "rename" | "archive" | "restore" | "close" | "release" | "delete" | null = null;
+  private pendingMutation: "rename" | "archive" | "restore" | "close" | "delete" | null = null;
   private pendingName = "";
   private challengeGate: ReturnType<typeof Promise.withResolvers<void>> | null = null;
   private activeChallengedCommands = 0;
@@ -288,28 +285,6 @@ class FakeManagementController {
       }
       return { ...base, result: { closed: true } };
     }
-    if (intent.command === "session.release") {
-      this.pendingMutation = "release";
-      this.challengeGate = Promise.withResolvers<void>();
-      const current = this.sessionIndex.get(KEY);
-      this.emitFrame({
-        v: "omp-app/1",
-        type: "confirmation",
-        confirmationId: confirmationId("release-confirmation"),
-        commandId: commandId(base.commandId),
-        hostId: hostId(ADDRESS.hostId),
-        sessionId: sessionId(ADDRESS.sessionId),
-        commandHash: "sha256:release",
-        revision: current?.revision ?? revision("missing"),
-        expiresAt: "2999-01-01T00:00:00.000Z",
-        summary: "session.release",
-      });
-      await this.challengeGate.promise;
-      return {
-        ...base,
-        result: { released: true, resumeCommand: "t4-omp --resume session-1" },
-      };
-    }
     if (intent.command === "session.delete") {
       this.pendingMutation = "delete";
       this.challengeGate = Promise.withResolvers<void>();
@@ -435,14 +410,6 @@ class FakeManagementController {
               queuedMessageCount: 0,
               queuedMessages: [],
               liveState: { phase: "idle" },
-            }
-          : {}),
-        ...(this.pendingMutation === "release"
-          ? {
-              liveState: {
-                phase: "idle",
-                sessionControl: { mode: "unknown" },
-              },
             }
           : {}),
       } as SessionRef & { archivedAt?: string };
@@ -693,26 +660,6 @@ describe("session management authority helpers", () => {
     });
   });
 
-  it("returns the authoritative terminal command when a legacy list refresh stays conservative", async () => {
-    const fake = new FakeManagementController();
-    await expect(releaseLiveSession(controller(fake), ADDRESS)).resolves.toBe(
-      "t4-omp --resume session-1",
-    );
-    expect(fake.confirms).toEqual([
-      expect.objectContaining({
-        confirmationId: "release-confirmation",
-        decision: "approve",
-      }),
-    ]);
-    expect(fake.commands.map((intent) => intent.command)).toEqual([
-      "session.release",
-      "session.list",
-    ]);
-    expect(fake.getSnapshot().projection.sessionIndex.get(KEY)?.liveState?.sessionControl).toEqual({
-      mode: "unknown",
-    });
-  });
-
   it("gates every lifecycle mutation while another app controls the session", () => {
     const observed = {
       ...ref(),
@@ -732,8 +679,6 @@ describe("session management authority helpers", () => {
       "session.archive",
       "session.restore",
       "session.close",
-      "session.release",
-      "session.reclaim",
       "session.delete",
     ] as const) {
       expect(managementCommandSupport(fake.getSnapshot(), ADDRESS, command)).toEqual({
@@ -749,30 +694,6 @@ describe("session management authority helpers", () => {
     expect(
       managementCommandSupport(reconciling.getSnapshot(), ADDRESS, "session.archive").supported,
     ).toBe(false);
-  });
-
-  it("offers only reclaim while a released session is waiting for its terminal", () => {
-    const released = new FakeManagementController({
-      ...ref(),
-      liveState: {
-        phase: "idle",
-        sessionControl: {
-          mode: "released",
-          transcript: "live",
-          resumeCommand: "t4-omp --resume session-1",
-        },
-      },
-    } as SessionRef);
-    expect(managementCommandSupport(released.getSnapshot(), ADDRESS, "session.reclaim")).toEqual({
-      supported: true,
-      reason: null,
-    });
-    expect(managementCommandSupport(released.getSnapshot(), ADDRESS, "session.release").supported).toBe(
-      false,
-    );
-    expect(managementCommandSupport(released.getSnapshot(), ADDRESS, "session.close").supported).toBe(
-      false,
-    );
   });
 
   it("keeps restore available when an archived row carries stale takeover state", () => {
@@ -809,7 +730,6 @@ describe("session management authority helpers", () => {
     "session.archive",
     "session.restore",
     "session.close",
-    "session.release",
     "session.delete",
   ] as const;
 

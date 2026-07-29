@@ -214,7 +214,7 @@ describe("session refresh renders without flicker", () => {
           v: "omp-app/1",
           type: "hello",
           protocol: { min: "omp-app/1", max: "omp-app/1" },
-          client: { name: "Omperator", version: "test", build: "test", platform: "android" },
+          client: { name: "T4 Code", version: "test", build: "test", platform: "android" },
           requestedFeatures: ["transcript.images"],
           savedCursors: [],
           authentication: { deviceId: "android", deviceToken: "A".repeat(43) },

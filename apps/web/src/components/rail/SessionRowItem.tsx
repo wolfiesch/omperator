@@ -27,7 +27,6 @@ import {
   Pin,
   PinOff,
   RotateCcw,
-  SquareTerminal,
   Trash2,
 } from "lucide-react";
 import { type FormEvent, type ReactNode, useCallback, useRef, useState } from "react";
@@ -37,8 +36,6 @@ import {
   archiveLiveSession,
   deleteLiveSession,
   managementCommandSupport,
-  reclaimLiveSession,
-  releaseLiveSession,
   renameLiveSession,
   restoreLiveSession,
   terminateLiveSession,
@@ -50,8 +47,8 @@ import { deriveWorkspaceData, resolveLiveSession } from "../../platform/live-wor
 import { useWorkspaceRuntimeSnapshot } from "../../state/shell-data.ts";
 import { useWorkspace, workspaceStore } from "../../state/store-instance.ts";
 
-type SessionDialog = "rename" | "terminate" | "release" | "delete" | null;
-type SessionAction = "rename" | "terminate" | "release" | "reclaim" | "archive" | "restore" | "delete";
+type SessionDialog = "rename" | "terminate" | "delete" | null;
+type SessionAction = "rename" | "terminate" | "archive" | "restore" | "delete";
 
 export function SessionRowItem({
   row,
@@ -91,7 +88,6 @@ export function SessionRowItem({
   const [dialog, setDialog] = useState<SessionDialog>(null);
   const [renameValue, setRenameValue] = useState(session.title);
   const [deleteValue, setDeleteValue] = useState("");
-  const [resumeCommand, setResumeCommand] = useState<string | null>(null);
   const [pending, setPending] = useState<SessionAction | null>(null);
   const pendingRef = useRef<SessionAction | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -104,8 +100,6 @@ export function SessionRowItem({
       | "session.close"
       | "session.archive"
       | "session.restore"
-      | "session.release"
-      | "session.reclaim"
       | "session.delete",
   ) =>
     runtimeSnapshot === null || address === null
@@ -115,8 +109,6 @@ export function SessionRowItem({
   const terminateSupport = support("session.close");
   const archiveSupport = support("session.archive");
   const restoreSupport = support("session.restore");
-  const releaseSupport = support("session.release");
-  const reclaimSupport = support("session.reclaim");
   const deleteSupport = support("session.delete");
   const workingReason =
     archiveSupport.reason === "Terminate the runtime before archiving or deleting it" ||
@@ -133,9 +125,6 @@ export function SessionRowItem({
       try {
         if (action === "rename") await renameLiveSession(controller, address, renameValue);
         else if (action === "terminate") await terminateLiveSession(controller, address);
-        else if (action === "release") {
-          setResumeCommand(await releaseLiveSession(controller, address));
-        } else if (action === "reclaim") await reclaimLiveSession(controller, address);
         else if (action === "archive") await archiveLiveSession(controller, address);
         else if (action === "restore") await restoreLiveSession(controller, address);
         else await deleteLiveSession(controller, address);
@@ -149,26 +138,15 @@ export function SessionRowItem({
             ? "renamed"
             : action === "terminate"
               ? "runtime terminated"
-              : action === "release"
-                ? "released to the terminal"
-                : action === "reclaim"
-                  ? "returned to Omperator"
               : action === "archive"
                 ? "archived"
                 : action === "restore"
                   ? "restored"
                   : "permanently deleted";
         onAnnounce(`${session.title} ${verb}.`);
-        if (action !== "release") {
-          setMenuOpen(false);
-          setDialog(null);
-        }
-        if (
-          action !== "rename" &&
-          action !== "terminate" &&
-          action !== "release" &&
-          action !== "reclaim"
-        ) {
+        setMenuOpen(false);
+        setDialog(null);
+        if (action !== "rename" && action !== "terminate") {
           const navigation = resolveSessionManagementNavigation(
             action,
             session,
@@ -220,11 +198,6 @@ export function SessionRowItem({
         } else if (action === "terminate") {
           setError(null);
           setDialog("terminate");
-          setMenuOpen(false);
-        } else if (action === "release") {
-          setError(null);
-          setResumeCommand(null);
-          setDialog("release");
           setMenuOpen(false);
         } else if (action === "delete") {
           setDeleteValue("");
@@ -490,37 +463,6 @@ export function SessionRowItem({
                     renameSupport,
                   )}
                 {!archived &&
-                  (session.control === "released"
-                    ? (
-                        <>
-                          <button
-                            className="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-8"
-                            onClick={() => {
-                              setError(null);
-                              setResumeCommand(session.terminalResumeCommand ?? null);
-                              setDialog("release");
-                              setMenuOpen(false);
-                            }}
-                            type="button"
-                          >
-                            <SquareTerminal aria-hidden="true" className="size-4" />
-                            Show terminal command
-                          </button>
-                          {menuItem(
-                            "reclaim",
-                            "Bring back to Omperator",
-                            <RotateCcw aria-hidden="true" className="size-4" />,
-                            reclaimSupport,
-                          )}
-                        </>
-                      )
-                    : menuItem(
-                        "release",
-                        "Continue in terminal",
-                        <SquareTerminal aria-hidden="true" className="size-4" />,
-                        releaseSupport,
-                      ))}
-                {!archived &&
                   menuItem(
                     "terminate",
                     "Terminate runtime",
@@ -672,81 +614,6 @@ export function SessionRowItem({
               {pending === "terminate" && <Spinner />}
               Terminate runtime
             </Button>
-          </DialogFooter>
-        </DialogPopup>
-      </Dialog>
-
-      <Dialog
-        onOpenChange={(open) => (open ? undefined : setDialog(null))}
-        open={dialog === "release"}
-      >
-        <DialogPopup
-          aria-label={`Continue ${session.title} in a terminal`}
-          className="max-w-md"
-          showCloseButton={false}
-        >
-          <DialogHeader>
-            <DialogTitle className="text-base">
-              Continue “{session.title}” in a terminal
-            </DialogTitle>
-            {resumeCommand === null ? (
-              <DialogDescription>
-                Omperator will stop its writer after confirming the session is idle. Run the
-                generated command in a terminal to resume the same session. Omperator follows it
-                read-only and automatically takes control again after that terminal exits.
-              </DialogDescription>
-            ) : (
-              <>
-                <DialogDescription>
-                  The session is released. Run this command on the host:
-                </DialogDescription>
-                <code className="select-all break-all rounded-md border border-border bg-muted px-3 py-2 font-mono text-sm">
-                  {resumeCommand}
-                </code>
-              </>
-            )}
-            {error !== null && (
-              <p className="text-destructive-foreground text-xs" role="alert">
-                {error}
-              </p>
-            )}
-          </DialogHeader>
-          <DialogFooter>
-            <DialogClose
-              render={
-                <Button
-                  className="min-h-11 sm:min-h-8"
-                  disabled={pending !== null}
-                  size="sm"
-                  variant="ghost"
-                />
-              }
-            >
-              {resumeCommand === null ? "Cancel" : "Done"}
-            </DialogClose>
-            {resumeCommand === null ? (
-              <Button
-                className="min-h-11 sm:min-h-8"
-                disabled={pending !== null}
-                onClick={() => void runAction("release")}
-                size="sm"
-              >
-                {pending === "release" && <Spinner />}
-                Release session
-              </Button>
-            ) : (
-              <Button
-                className="min-h-11 sm:min-h-8"
-                onClick={() => {
-                  void navigator.clipboard.writeText(resumeCommand).catch(() => {
-                    setError("Could not copy automatically. Select and copy the command above.");
-                  });
-                }}
-                size="sm"
-              >
-                Copy command
-              </Button>
-            )}
           </DialogFooter>
         </DialogPopup>
       </Dialog>

@@ -351,7 +351,7 @@ export async function collectDoctorReport(
             "omp",
             "OMP runtime",
             "fail",
-            "OMP is installed, but it does not provide the versioned authority bridge Omperator requires.",
+            "OMP is installed, but it does not provide the versioned authority bridge T4 Code requires.",
             `Install the verified OMP ${contract.ompVersion} integration (${contract.ompTag}): ${contract.ompUrl}`,
           )
         : check(
@@ -418,7 +418,7 @@ export async function collectDoctorReport(
             "T4 host",
             "warning",
             "The compatible OMP runtime was found, but the default T4 host is not running.",
-            "Open Omperator and start the default local profile.",
+            "Open T4 Code and start the default local profile.",
           ),
     );
   }
@@ -482,7 +482,7 @@ export async function collectDoctorReport(
 const STATUS_MARK: Record<DoctorStatus, string> = { pass: "PASS", warning: "WARN", fail: "FAIL" };
 
 export function formatDoctorReport(report: DoctorReport): string {
-  const lines = ["Omperator setup check", ""];
+  const lines = ["T4 Code setup check", ""];
   for (const item of report.checks) {
     lines.push(`[${STATUS_MARK[item.status]}] ${item.label}: ${item.detail}`);
     if (item.action !== undefined) lines.push(`       Next: ${item.action}`);

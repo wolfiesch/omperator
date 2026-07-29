@@ -68,6 +68,7 @@ import {
 export * from "./preview.ts";
 export * from "./projection.ts";
 export * from "./projection-cache.ts";
+export * from "./desktop-runtime.ts";
 
 type PendingResult = OmpResponse | OmpPairOk;
 type DurableEvent = OmpServerEventOf<"entry" | "event" | "session.delta">;

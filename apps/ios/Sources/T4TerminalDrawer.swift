@@ -17,20 +17,12 @@ import HostWire
 /// `terminalOutput[terminalId]`, which this view feeds to SwiftTerm.
 struct T4TerminalDrawer: View {
     let session: SessionRef
-    let store: T4SessionStore
-    @ObservedObject private var terminalModel: T4TerminalModel
+    @ObservedObject var store: T4SessionStore
     @EnvironmentObject var theme: ThemeStore
     let isOpen: Bool
     private var t: Theme { theme.t }
     /// Per-session terminal cap (matches the desktop drawer).
     private static let maxTerminals = 4
-
-    init(session: SessionRef, store: T4SessionStore, isOpen: Bool) {
-        self.session = session
-        self.store = store
-        self._terminalModel = ObservedObject(wrappedValue: store.terminalModel)
-        self.isOpen = isOpen
-    }
 
     var body: some View {
         Group {
@@ -59,15 +51,15 @@ struct T4TerminalDrawer: View {
     /// switches the active terminal instantly via `store.selectTerminal`.
     private var tabBar: some View {
         let sessionId = session.sessionId
-        let ids = terminalModel.openIdsBySession[sessionId] ?? []
-        let active = terminalModel.activeIdBySession[sessionId]
+        let ids = store.openTerminalIds[sessionId] ?? []
+        let active = store.activeTerminalId[sessionId]
         return HStack(spacing: 6) {
             ForEach(Array(ids.enumerated()), id: \.element) { idx, terminalId in
                 terminalTab(index: idx + 1, terminalId: terminalId, isActive: terminalId == active)
             }
             addButton(count: ids.count)
             Spacer(minLength: 4)
-            if let error = terminalModel.errors[sessionId], active == nil {
+            if let error = store.terminalErrors[sessionId], active == nil {
                 Text(error)
                     .font(.system(size: 11))
                     .foregroundStyle(t.diffDel)
@@ -82,7 +74,7 @@ struct T4TerminalDrawer: View {
     /// One tab: title (`Terminal N`, or `exit <code>` once the pty exits) with
     /// active accent tint, and a close `×` shown only on the active tab.
     private func terminalTab(index: Int, terminalId: String, isActive: Bool) -> some View {
-        let exited = terminalModel.exits[terminalId]
+        let exited = store.terminalExits[terminalId]
         let title = exited.map { "exit \($0)" } ?? "Terminal \(index)"
         return HStack(spacing: 5) {
             Text(title)
@@ -149,8 +141,8 @@ struct T4TerminalDrawer: View {
     /// by terminalId, so SwiftTerm state is preserved per terminal).
     @ViewBuilder private var terminalContent: some View {
         let sessionId = session.sessionId
-        let terminalId = terminalModel.activeIdBySession[sessionId]
-        let error = terminalModel.errors[sessionId]
+        let terminalId = store.activeTerminalId[sessionId]
+        let error = store.terminalErrors[sessionId]
         if let error, terminalId == nil {
             HStack {
                 Spacer()
@@ -169,8 +161,8 @@ struct T4TerminalDrawer: View {
         } else if let terminalId {
             T4TerminalSurface(
                 terminalId: terminalId,
-                output: terminalModel.output[terminalId] ?? "",
-                exited: terminalModel.exits[terminalId],
+                output: store.terminalOutput[terminalId] ?? "",
+                exited: store.terminalExits[terminalId],
                 theme: t,
                 onInput: { data in
                     Task { await store.sendTerminalInput(sessionId: session.sessionId, data: data) }
@@ -198,16 +190,24 @@ struct T4TerminalDrawer: View {
     /// drawer's first open triggers `openTerminal`; subsequent `+` taps add
     /// tabs. If an active terminal already exists, do nothing.
     private func ensureOpen() async {
-        guard terminalModel.activeIdBySession[session.sessionId] == nil,
-              terminalModel.errors[session.sessionId] == nil else { return }
+        guard store.activeTerminalId[session.sessionId] == nil,
+              store.terminalErrors[session.sessionId] == nil else { return }
         await store.openTerminal(sessionId: session.sessionId)
     }
 }
 
-/// SwiftUI bridge to SwiftTerm's UIKit `TerminalView`. Feeds buffered output
+/// SwiftUI bridge to SwiftTerm's `TerminalView`. Feeds buffered output
 /// (only the newly appended tail each update), forwards keystrokes via
 /// `onInput`, and reports pixel→cell resizes via `onResize`. The underlying
 /// `TerminalView` is created once and reused across updates.
+///
+/// Mouse forwarding is automatic: SwiftTerm's `TerminalView` defaults
+/// `allowMouseReporting` to true on both platforms and forwards taps/clicks,
+/// scrolls, and drags to the pty whenever a TUI app enables a mouse mode
+/// (X10 / vt200 / button-event / any-event, +SGR encoding) via DECSET — the
+/// `mouseModeChanged` delegate callback enables the iOS mouse-pan gesture
+/// on demand. Nothing to opt in to here; only `isUserInteractionEnabled`
+/// gates input after pty exit.
 struct T4TerminalSurface: View {
     let terminalId: String
     let output: String
@@ -342,7 +342,17 @@ struct AppKitTerminalSurface: NSViewRepresentable {
         tv.nativeBackgroundColor = NSColor(theme.bg2)
         context.coordinator.lastFedLength = 0
         feedTail(tv, output: output, coordinator: context.coordinator)
+        // Focus the pty when the drawer opens so typing goes straight to the
+        // shell — otherwise keystrokes stay with whatever was focused before
+        // (e.g. the rail search field).
+        DispatchQueue.main.async { tv.window?.makeFirstResponder(tv) }
         return tv
+    }
+
+    static func dismantleNSView(_ nsView: TerminalView, coordinator: T4TerminalCoordinator) {
+        // Resign on close — otherwise the hidden pty keeps swallowing
+        // keystrokes meant for the composer.
+        if nsView.window?.firstResponder === nsView { nsView.window?.makeFirstResponder(nil) }
     }
 
     func updateNSView(_ tv: TerminalView, context: Context) {

@@ -25,7 +25,7 @@ export function updateIsAvailable(phase: DesktopUpdatePhase): boolean {
 
 export function actionForUpdate(state: AppUpdateState): AppUpdateAction {
   if (state.delivery === "web") {
-    return { label: "Refresh Omperator", busy: false, kind: "refresh" };
+    return { label: "Refresh T4 Code", busy: false, kind: "refresh" };
   }
   if (state.delivery === "android" && state.handoff === "installer") {
     return { label: "Check again", busy: false, kind: "check" };
@@ -78,23 +78,23 @@ export function defaultUpdateMessage(state: AppUpdateState): string {
   }
   switch (state.phase) {
     case "idle":
-      return "Omperator checks release metadata quietly. It never downloads, installs, or restarts without your action.";
+      return "T4 Code checks release metadata quietly. It never downloads, installs, or restarts without your action.";
     case "checking":
-      return "Comparing this build with the latest published Omperator release.";
+      return "Comparing this build with the latest published T4 Code release.";
     case "current":
-      return "This installation matches the latest published Omperator release.";
+      return "This installation matches the latest published T4 Code release.";
     case "available":
       return "A newer release is ready to download. You choose when to install it.";
     case "manual":
       return state.delivery === "android"
-        ? "A newer APK is ready. Omperator will download and verify the exact release before Android asks you to confirm installation."
-        : "A newer release is ready. Omperator will open the correct package for this installation.";
+        ? "A newer APK is ready. T4 Code will download and verify the exact release before Android asks you to confirm installation."
+        : "A newer release is ready. T4 Code will open the correct package for this installation.";
     case "downloading":
-      return "Omperator is downloading the published release for verification in the background.";
+      return "T4 Code is downloading the published release for verification in the background.";
     case "ready":
       return "The verified update is ready. Restart when it is convenient.";
     case "error":
-      return "Omperator could not check the published release. Your current installation is unchanged.";
+      return "T4 Code could not check the published release. Your current installation is unchanged.";
   }
 }
 

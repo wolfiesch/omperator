@@ -101,8 +101,8 @@ test("live Linux updater verification downloads the exact bounded public files",
         line.includes("\t-o\t"),
     );
   for (const [name, size] of [
-    ["Omperator-1.2.3-linux-amd64.deb", mockDebSize],
-    ["Omperator-1.2.3-linux-x86_64.AppImage", mockAssetSize],
+    ["T4-Code-1.2.3-linux-amd64.deb", mockDebSize],
+    ["T4-Code-1.2.3-linux-x86_64.AppImage", mockAssetSize],
   ]) {
     const line = downloads.find((candidate) => candidate.includes(`/${name}\t`));
     assert.ok(line, downloads.join("\n"));
@@ -226,7 +226,7 @@ test("nonexistent child roots behind /tmp symlink parents fail closed before out
   assert.doesNotMatch(calls, /^local-deploy\t/mu);
 });
 
-test("exact OMP CI and eight-asset release failures block local deployment", async (t) => {
+test("exact OMP CI and five-asset release failures block local deployment", async (t) => {
   const cases = [
     ["missing CI", { ompWorkflowMissing: true }],
     ["failed CI", { ompWorkflowFailed: true }],

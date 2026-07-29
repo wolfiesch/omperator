@@ -5,7 +5,7 @@ const runtimeExternalDependencies = [
 ];
 const signedMacBuild = process.env.T4_MACOS_SIGNED_BUILD === "1";
 
-export const desktopUpdatePublish = {
+export const linuxUpdatePublish = {
   provider: "github",
   owner: "wolfiesch",
   repo: "omperator",
@@ -15,10 +15,10 @@ export const desktopUpdatePublish = {
 /** @type {import("electron-builder").Configuration} */
 const config = {
   appId: "net.t4code.app",
-  productName: "Omperator",
+  productName: "T4 Code",
   executableName: "t4-code",
   electronVersion: "41.5.0",
-  artifactName: "Omperator-${version}-${os}-${arch}.${ext}",
+  artifactName: "T4-Code-${version}-${os}-${arch}.${ext}",
   directories: {
     app: "apps/desktop",
     output: "release",
@@ -35,11 +35,11 @@ const config = {
     { from: "packages/host-daemon/dist/t4-host", to: "runtime/t4-host" },
     { from: "LICENSE", to: "LICENSE" },
   ],
-  protocols: [{ name: "Omperator", schemes: ["t4-code"] }],
+  protocols: [{ name: "T4 Code", schemes: ["t4-code"] }],
   linux: {
     category: "Development",
     icon: "apps/desktop/build/icons",
-    publish: [desktopUpdatePublish],
+    publish: [linuxUpdatePublish],
     target: [
       { target: "AppImage", arch: ["x64"] },
       { target: "deb", arch: ["x64"] },
@@ -57,7 +57,10 @@ const config = {
       : undefined,
     sign: signedMacBuild ? "scripts/sign-macos.mjs" : undefined,
     notarize: signedMacBuild,
-    publish: [desktopUpdatePublish],
+    // The first signed release remains an explicit GitHub download. Keep the
+    // updater feed disabled until signed-to-signed update migration has its
+    // own release proof.
+    publish: [],
     extraResources: [
       { from: ".artifacts/omp-runtime", to: "runtime" },
       { from: "scripts/tailnet-gateway.mjs", to: "gateway/tailnet-gateway.mjs" },

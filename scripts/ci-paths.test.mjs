@@ -120,7 +120,6 @@ test("selection and release-authority sources can only be proven by a full run",
     "scripts/ci-baseline.test.mjs",
     "scripts/check-release-consistency.mjs",
     "scripts/check-release-consistency.test.mjs",
-    "scripts/release-consistency/metadata-validator.mjs",
     "scripts/read-bounded-response.mjs",
     "scripts/wait-for-exact-ci.mjs",
     "scripts/wait-for-exact-ci.test.mjs",
@@ -225,14 +224,5 @@ test("iOS sources select their own leg instead of the whole matrix", () => {
     "apps/ios/UITests/T4CodeUITests.swift",
   ]) {
     assert.deepEqual(classifyCiPaths([path]), { ...none, ios: true }, path);
-  }
-});
-
-test("iOS CI scripts select tooling and the Xcode leg", () => {
-  for (const path of [
-    "scripts/prepare-ios-ci-cache.mjs",
-    "scripts/verify-ios.mjs",
-  ]) {
-    assert.deepEqual(classifyCiPaths([path]), { ...none, tooling: true, ios: true }, path);
   }
 });

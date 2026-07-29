@@ -6,7 +6,7 @@ product
 
 ## Users
 
-Omperator is for expert developers and maintainers who run OMP across Linux and macOS workstations. They move between projects, long-lived sessions, subagent trees, terminals, files, and code reviews while work is actively streaming. They need fast situational awareness, exact runtime state, and safe control without losing session context.
+T4 Code is for expert developers and maintainers who run OMP across Linux and macOS workstations. They move between projects, long-lived sessions, subagent trees, terminals, files, and code reviews while work is actively streaming. They need fast situational awareness, exact runtime state, and safe control without losing session context.
 
 ## Product Purpose
 
@@ -14,13 +14,13 @@ Provide one desktop observability and control surface for OMP sessions, subagent
 
 ## Flagship Workflow: Agent Operations Center
 
-Agent View is Omperator's primary operational workspace for concurrent OMP work. It provides one global, hierarchy-preserving view across loaded sessions, with compact health summaries, attention triage, search, bounded pagination, and direct navigation into the selected agent's session detail. Session-local panes remain the place for focused transcript and control work; Agent View is where an operator finds the right work and decides where to intervene.
+Agent View is T4 Code's primary operational workspace for concurrent OMP work. It provides one global, hierarchy-preserving view across loaded sessions, with compact health summaries, attention triage, search, bounded pagination, and direct navigation into the selected agent's session detail. Session-local panes remain the place for focused transcript and control work; Agent View is where an operator finds the right work and decides where to intervene.
 
 The control center must remain useful from a few agents through large agent fleets. Rendering stays bounded, parent context remains visible around filtered descendants, every action resolves against current runtime authority, and phone-sized layouts retain the same search, triage, inspect, and control affordances.
 
 ## Brand Personality
 
-Precise, capable, calm — with a wink in the name. Omperator is the product; Oh My Pi is the runtime it fronts, and the interface says so plainly where hierarchy helps (onboarding, about, empty welcome). It should carry the confidence and interaction quality of a mature developer tool: dense when the work demands it, quiet when it does not, and unmistakably OMP through the exact pi/plugin mark and restrained Pi Pink identity details. The T4 name is a deliberate nod to its T3 interaction reference; the UI never fakes T3 branding.
+Precise, capable, calm — with a wink in the name. T4 Code is the product; Oh My Pi is the runtime it fronts, and the interface says so plainly where hierarchy helps (onboarding, about, empty welcome). It should carry the confidence and interaction quality of a mature developer tool: dense when the work demands it, quiet when it does not, and unmistakably OMP through the exact pi/plugin mark and restrained Pi Pink identity details. The T4 name is a deliberate nod to its T3 interaction reference; the UI never fakes T3 branding.
 
 ## Anti-references
 

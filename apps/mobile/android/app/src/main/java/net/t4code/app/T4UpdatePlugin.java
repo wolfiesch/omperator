@@ -149,7 +149,7 @@ public final class T4UpdatePlugin extends Plugin {
                 validatedRelease = null;
                 statusMessage = null;
                 errorMessage = boundedError(
-                    "Omperator could not verify the latest Android release. Check your connection and try again."
+                    "T4 Code could not verify the latest Android release. Check your connection and try again."
                 );
                 resultState = statePayload();
             }
@@ -323,14 +323,14 @@ public final class T4UpdatePlugin extends Plugin {
         PackageManager manager = getContext().getPackageManager();
         PackageInfo candidate = archivePackageInfo(manager, packageFile);
         if (candidate == null || !EXPECTED_PACKAGE_ID.equals(candidate.packageName)) {
-            throw new IllegalStateException("update package identity does not match Omperator");
+            throw new IllegalStateException("update package identity does not match T4 Code");
         }
         if (!expectedVersion.equals(candidate.versionName)) {
             throw new IllegalStateException("update package version does not match its manifest");
         }
         PackageInfo installed = installedPackageInfo(manager);
         if (!EXPECTED_PACKAGE_ID.equals(installed.packageName)) {
-            throw new IllegalStateException("installed package identity does not match Omperator");
+            throw new IllegalStateException("installed package identity does not match T4 Code");
         }
         boolean trustedSigner;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -426,7 +426,7 @@ public final class T4UpdatePlugin extends Plugin {
             );
             Intent intent = new Intent(Intent.ACTION_VIEW);
             intent.setDataAndType(contentUri, APK_MIME_TYPE);
-            intent.setClipData(ClipData.newRawUri("Omperator update", contentUri));
+            intent.setClipData(ClipData.newRawUri("T4 Code update", contentUri));
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             getActivity().startActivity(intent);
         } catch (Exception ignored) {
@@ -494,7 +494,7 @@ public final class T4UpdatePlugin extends Plugin {
             validatedRelease = null;
             statusMessage = null;
             errorMessage = boundedError(
-                "Omperator could not verify and open the Android update. Your current installation is unchanged."
+                "T4 Code could not verify and open the Android update. Your current installation is unchanged."
             );
             state = statePayload();
         }

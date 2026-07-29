@@ -86,7 +86,7 @@ function androidReleaseFixture(overrides = {}) {
 
 test("builder config keeps release contract", () => {
   assert.equal(config.appId, "net.t4code.app");
-  assert.equal(config.productName, "Omperator");
+  assert.equal(config.productName, "T4 Code");
   assert.equal(config.asar, true);
   assert.deepEqual(config.protocols[0].schemes, ["t4-code"]);
   assert.equal(config.linux.category, "Development");
@@ -94,13 +94,11 @@ test("builder config keeps release contract", () => {
     { provider: "github", owner: "wolfiesch", repo: "omperator", channel: "latest" },
   ]);
   assert.equal(config.mac.category, "public.app-category.developer-tools");
-  assert.deepEqual(config.mac.publish, [
-    { provider: "github", owner: "wolfiesch", repo: "omperator", channel: "latest" },
-  ]);
+  assert.deepEqual(config.mac.publish, []);
   assert.equal(config.mac.identity, null);
   assert.equal(config.mac.hardenedRuntime, false);
   assert.equal(config.mac.notarize, false);
-  assert.equal(config.artifactName, "Omperator-${version}-${os}-${arch}.${ext}");
+  assert.equal(config.artifactName, "T4-Code-${version}-${os}-${arch}.${ext}");
   assert.ok(config.extraResources.some((entry) => entry.to === "runtime/t4-host"));
 });
 
@@ -117,9 +115,7 @@ test("signed macOS packaging is explicit, credentialed, and release-gated", asyn
     assert.equal(signedConfig.mac.entitlements, "apps/desktop/build/entitlements.mac.plist");
     assert.equal(signedConfig.mac.entitlementsInherit, "apps/desktop/build/entitlements.mac.plist");
     assert.equal(signedConfig.mac.sign, "scripts/sign-macos.mjs");
-    assert.deepEqual(signedConfig.mac.publish, [
-      { provider: "github", owner: "wolfiesch", repo: "omperator", channel: "latest" },
-    ]);
+    assert.deepEqual(signedConfig.mac.publish, []);
   } finally {
     if (previousSignedBuild === undefined) delete process.env.T4_MACOS_SIGNED_BUILD;
     else process.env.T4_MACOS_SIGNED_BUILD = previousSignedBuild;
@@ -143,14 +139,14 @@ test("signed macOS packaging is explicit, credentialed, and release-gated", asyn
 });
 
 test("signed macOS packaging relaxes library validation only for the bundled OMP runtime", () => {
-  const appPath = "/tmp/Omperator.app";
+  const appPath = "/tmp/T4 Code.app";
   const inherited = () => ({
     entitlements: "apps/desktop/build/entitlements.mac.plist",
     hardenedRuntime: true,
   });
   const optionsForFile = createT4MacOptionsForFile(inherited);
   const runtimePath = `${appPath}/Contents/Resources/runtime/omp`;
-  const helperPath = `${appPath}/Contents/Frameworks/Omperator Helper.app`;
+  const helperPath = `${appPath}/Contents/Frameworks/T4 Code Helper.app`;
 
   assert.equal(isBundledOmpRuntime(runtimePath), true);
   assert.equal(isBundledOmpRuntime(`${runtimePath}.backup`), false);
@@ -475,7 +471,7 @@ test("artifact inspector reads unpacked package metadata", () => {
   const unpacked = resolve(repoRoot, "release/linux-unpacked");
   if (!existsSync(unpacked)) return;
   const result = inspectPackage(unpacked);
-  assert.equal(result.manifest.productName, "Omperator");
+  assert.equal(result.manifest.productName, "T4 Code");
   assert.ok(result.asarEntries > 0);
 });
 

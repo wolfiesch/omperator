@@ -44,9 +44,9 @@ OMP_TARGET=${T4_LOCAL_OMP_TARGET:-$HOME/bin/omp}
 OMP_SERVICE=${T4_LOCAL_OMP_SERVICE:-dev.oh-my-pi.appserver.service}
 OMP_SOCKET=${T4_LOCAL_OMP_SOCKET:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/omp/appserver.sock}
 T4_PACKAGE=${T4_LOCAL_T4_PACKAGE:-t4-code}
-T4_EXECUTABLE=${T4_LOCAL_T4_EXECUTABLE:-/opt/Omperator/t4-code}
-T4_INSTALLED_WEB_ROOT=${T4_LOCAL_T4_WEB_ROOT:-/opt/Omperator/resources/web}
-T4_APP_ASAR=${T4_LOCAL_T4_APP_ASAR:-/opt/Omperator/resources/app.asar}
+T4_EXECUTABLE=${T4_LOCAL_T4_EXECUTABLE:-/opt/T4 Code/t4-code}
+T4_INSTALLED_WEB_ROOT=${T4_LOCAL_T4_WEB_ROOT:-/opt/T4 Code/resources/web}
+T4_APP_ASAR=${T4_LOCAL_T4_APP_ASAR:-/opt/T4 Code/resources/app.asar}
 GATEWAY_SERVICE=${T4_LOCAL_GATEWAY_SERVICE:-net.t4code.app.tailnet-gateway.service}
 GATEWAY_CONFIG=${T4_LOCAL_GATEWAY_CONFIG:-$HOME/.config/t4-code/tailnet-gateway.json}
 GATEWAY_UNIT=${T4_LOCAL_GATEWAY_UNIT:-$HOME/.config/systemd/user/$GATEWAY_SERVICE}
@@ -456,7 +456,7 @@ verify_fork_publication_base() {
 
 download_verified_deb() {
   local version=$1 destination_dir=$2 name sums deb
-  name="Omperator-${version}-linux-amd64.deb"
+  name="T4-Code-${version}-linux-amd64.deb"
   sums="$destination_dir/SHA256SUMS-${version}.txt"
   deb="$destination_dir/$name"
   download_release_asset "v$version" SHA256SUMS.txt "$sums"
@@ -602,7 +602,7 @@ validate_operator_overlay() {
 overlay_app_asar_sha() {
   local package=$1
   "$DPKG_DEB" --fsys-tarfile "$package" \
-    | tar -xOf - './opt/Omperator/resources/app.asar' 2>/dev/null \
+    | tar -xOf - './opt/T4 Code/resources/app.asar' 2>/dev/null \
     | $SHA256SUM | awk '{print $1}'
 }
 wait_for_appserver() {
@@ -688,7 +688,7 @@ prove_installed_drain_contract() {
 
 require_t4_desktop_closed() {
   if pgrep -x t4-code >/dev/null 2>&1 || pgrep -f '(^|/)t4-code( |$)' >/dev/null 2>&1; then
-    fail "Omperator desktop is open; retaining the pending publication for a later idle retry"
+    fail "T4 Code desktop is open; retaining the pending publication for a later idle retry"
   fi
 }
 
@@ -1177,14 +1177,14 @@ require_t4_desktop_closed
 require_appserver_sessionless
 deployment_checkpoint before-desktop-install
 
-log "Installing verified Omperator $T4_VERSION package."
+log "Installing verified T4 Code $T4_VERSION package."
 T4_MUTATED=true
 $SUDO -n "$APT_GET" install -y --reinstall --allow-downgrades "$TARGET_DEB"
 deployment_checkpoint after-desktop-install
 installed_state=$($DPKG_QUERY -W -f='${Status}\t${Version}\n' "$T4_PACKAGE")
 IFS=$'\t' read -r installed_status INSTALLED_T4_VERSION <<<"$installed_state"
 [[ $installed_status == "install ok installed" && $INSTALLED_T4_VERSION == "$T4_VERSION" ]] || fail "installed T4 package does not match the target release"
-dpkg_verification=$($DPKG -V "$T4_PACKAGE") || fail "dpkg verification failed for Omperator"
+dpkg_verification=$($DPKG -V "$T4_PACKAGE") || fail "dpkg verification failed for T4 Code"
 [[ -z $dpkg_verification ]] || fail "installed T4 package files failed verification"
 require_regular_file "$T4_EXECUTABLE" "installed T4 executable"
 [[ -x $T4_EXECUTABLE ]] || fail "installed T4 executable is not executable"

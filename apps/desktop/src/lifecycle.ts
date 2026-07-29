@@ -305,11 +305,7 @@ export class DesktopLifecycle {
     const ingest = (value: string): void => {
       const parsed = parsePairDeepLink(value);
       if (parsed === null) return;
-      const pending: PendingPair = {
-        hostHint: parsed.hostHint,
-        code: parsed.code,
-        issuedAt: parsed.issuedAt,
-      };
+      const pending: PendingPair = parsed;
       if (this.rendererLoaded && this.mainWindow !== undefined && !this.mainWindow.isDestroyed())
         this.ipc?.emitPairLink(pending);
       else this.pendingPairs.push(pending);
@@ -588,7 +584,7 @@ export class DesktopLifecycle {
       const issue: ServiceAvailabilityIssue = {
         code: "service_unavailable",
         message:
-          "The T4 host executable was not found. Repair or reinstall Omperator, then choose Check again.",
+          "The T4 host executable was not found. Repair or reinstall T4 Code, then choose Check again.",
       };
       if (profileId === "default") this.serviceAvailabilityIssue = issue;
       else this.serviceAvailabilityIssues.set(profileId, issue);

@@ -11,24 +11,11 @@ import HostWire
 struct T4AgentsPane: View {
     let session: SessionRef
     @ObservedObject var store: T4SessionStore
-    @ObservedObject private var agentModel: T4AgentInventoryModel
     @EnvironmentObject var theme: ThemeStore
     @Binding var isPresented: Bool
 
-    init(session: SessionRef, store: T4SessionStore, isPresented: Binding<Bool>) {
-        self.session = session
-        self.store = store
-        self._agentModel = ObservedObject(wrappedValue: store.agentModel)
-        self._isPresented = isPresented
-    }
-
     private var t: Theme { theme.t }
-    private var agents: [T4SessionStore.AgentState] {
-        if store.connected {
-            return agentModel.agentsBySession[session.sessionId] ?? []
-        }
-        return store.agents(for: session.sessionId)
-    }
+    private var agents: [T4SessionStore.AgentState] { store.agents(for: session.sessionId) }
 
     var body: some View {
         NavigationStack {

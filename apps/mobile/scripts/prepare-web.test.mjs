@@ -146,7 +146,7 @@ test("Android updates use a registered native bridge with no renderer-supplied U
   assert.match(plugin, /getSigningCertificateHistory\(\)/);
   assert.match(plugin, /T4UpdateVerifier\.isTrustedSignerTransition\(/);
   assert.match(plugin, /T4UpdateVerifier\.sameSignerSet\(legacySigners\(installed\), legacySigners\(candidate\)\)/);
-  assert.match(fileStore, /File\.createTempFile\("Omperator-" \+ version/);
+  assert.match(fileStore, /File\.createTempFile\("T4-Code-" \+ version/);
   assert.match(fileStore, /verified\.setReadOnly\(\)/);
   assert.match(fileStore, /ACTIVE_OWNERS\.put\(ownershipKey, ownerToken\)/);
   assert.match(fileStore, /requireOwnership\(\)/);

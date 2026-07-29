@@ -509,7 +509,7 @@ export function createTargetsStore(
           const profile = await profilesPort.update(profileId, { autoStart });
           upsertProfile(profile);
           set({
-            announcement: `${profile.label} will ${autoStart ? "start" : "stay stopped"} when Omperator opens.`,
+            announcement: `${profile.label} will ${autoStart ? "start" : "stay stopped"} when T4 Code opens.`,
           });
         } catch (error) {
           setProfileError(profileId, sanitizedError(error, "Could not change automatic startup."));
@@ -562,7 +562,7 @@ export function createTargetsStore(
           set({
             profiles: get().profiles.filter((profile) => profile.profileId !== profileId),
             removingProfile: null,
-            announcement: `Removed ${label} from Omperator. Its OMP profile data was left in place.`,
+            announcement: `Removed ${label} from T4 Code. Its OMP profile data was left in place.`,
           });
         } catch (error) {
           set({ removingProfile: null });

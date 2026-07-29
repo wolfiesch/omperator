@@ -93,17 +93,17 @@ write_state() {
 
 linux_update_metadata() {
   local version=$1
-  local deb_name="Omperator-$version-linux-amd64.deb"
-  local appimage_name="Omperator-$version-linux-x86_64.AppImage"
+  local deb_name="T4-Code-$version-linux-amd64.deb"
+  local appimage_name="T4-Code-$version-linux-x86_64.AppImage"
   local deb_size=${mockDebSize}
   local appimage_size=${mockAssetSize}
   local deb_sha512=${mockDebSha512}
   local appimage_sha512=${mockAssetSha512}
   case \${MOCK_LINUX_UPDATE_MODE:-valid} in
-    deb-name) deb_name="Omperator-$version-linux-renamed.deb" ;;
+    deb-name) deb_name="T4-Code-$version-linux-renamed.deb" ;;
     deb-size) deb_size=$((deb_size - 1)) ;;
     deb-sha512) deb_sha512=${mockDriftSha512} ;;
-    appimage-name) appimage_name="Omperator-$version-linux-renamed.AppImage" ;;
+    appimage-name) appimage_name="T4-Code-$version-linux-renamed.AppImage" ;;
     appimage-size) appimage_size=$((appimage_size - 1)) ;;
     appimage-sha512) appimage_sha512=${mockDriftSha512} ;;
     compatibility-sha512) ;;
@@ -378,15 +378,13 @@ JSON
         digest="sha256:$omp_digest"
         [[ \${MOCK_OMP_ASSET_DIGESTLESS:-0} != 1 ]] || digest='null'
         [[ $digest == null ]] || digest='"'"$digest"'"'
-        native_assets=',{"name":"pi_natives.linux-x64-baseline.node","state":"uploaded","size":11,"digest":"sha256:'"$omp_digest"'","browser_download_url":"'"$omp_asset_prefix"'pi_natives.linux-x64-baseline.node"},{"name":"pi_natives.linux-x64-modern.node","state":"uploaded","size":11,"digest":"sha256:'"$omp_digest"'","browser_download_url":"'"$omp_asset_prefix"'pi_natives.linux-x64-modern.node"},{"name":"omp-native-addons.json","state":"uploaded","size":11,"digest":"sha256:'"$omp_digest"'","browser_download_url":"'"$omp_asset_prefix"'omp-native-addons.json"}'
-        [[ \${MOCK_OMP_LEGACY_RELEASE:-0} != 1 ]] || native_assets=''
         cat <<JSON
 {"tag_name":"t4code-1.2.3-appserver-1","html_url":"https://github.com/wolfiesch/oh-my-pi/releases/tag/t4code-1.2.3-appserver-1","draft":false,"prerelease":false,"assets":[
   $missing
   {"name":"omp-linux-arm64","state":"uploaded","size":$size,"digest":$digest,"browser_download_url":"\${omp_asset_prefix}omp-linux-arm64"},
   {"name":"omp-darwin-x64","state":"uploaded","size":11,"digest":"sha256:$omp_digest","browser_download_url":"\${omp_asset_prefix}omp-darwin-x64"},
   {"name":"omp-darwin-arm64","state":"uploaded","size":11,"digest":"sha256:$omp_digest","browser_download_url":"\${omp_asset_prefix}omp-darwin-arm64"},
-  {"name":"omp-windows-x64.exe","state":"uploaded","size":11,"digest":"sha256:$omp_digest","browser_download_url":"\${omp_asset_prefix}omp-windows-x64.exe"}$native_assets$extra
+  {"name":"omp-windows-x64.exe","state":"uploaded","size":11,"digest":"sha256:$omp_digest","browser_download_url":"\${omp_asset_prefix}omp-windows-x64.exe"}$extra
 ]}
 JSON
         ;;
@@ -399,7 +397,7 @@ JSON
         metadata=$(linux_update_metadata "$release_version")
         metadata_digest=$(printf '%s\n' "$metadata" | sha256sum | awk '{print $1}')
         metadata_size=$(printf '%s\n' "$metadata" | wc -c)
-        manifest=$(printf '%s  Omperator-%s-android.apk\n%s  Omperator-%s-linux-amd64.deb\n%s  Omperator-%s-linux-x86_64.AppImage\n%s  Omperator-%s-mac-arm64.dmg\n%s  Omperator-%s-mac-arm64.zip\n%s  latest-linux.yml\n' \
+        manifest=$(printf '%s  T4-Code-%s-android.apk\n%s  T4-Code-%s-linux-amd64.deb\n%s  T4-Code-%s-linux-x86_64.AppImage\n%s  T4-Code-%s-mac-arm64.dmg\n%s  T4-Code-%s-mac-arm64.zip\n%s  latest-linux.yml\n' \
           "$asset_digest" "$release_version" "$deb_digest" "$release_version" "$asset_digest" "$release_version" \
           "$asset_digest" "$release_version" "$asset_digest" "$release_version" "$metadata_digest")
         manifest_digest=$(printf '%s\n' "$manifest" | sha256sum | awk '{print $1}')
@@ -407,11 +405,11 @@ JSON
         cat <<JSON
 {"tag_name":"$release_tag","html_url":"https://github.com/wolfiesch/omperator/releases/tag/$release_tag","published_at":"2026-07-15T00:00:00Z","draft":false,"prerelease":false,"assets":[
   {"name":"SHA256SUMS.txt","state":"uploaded","size":$manifest_size,"digest":"sha256:$manifest_digest","browser_download_url":"$release_prefix/SHA256SUMS.txt"},
-  {"name":"Omperator-$release_version-android.apk","state":"uploaded","size":${mockAssetSize},"digest":"sha256:$asset_digest","browser_download_url":"$release_prefix/Omperator-$release_version-android.apk"},
-  {"name":"Omperator-$release_version-linux-amd64.deb","state":"uploaded","size":${mockDebSize},"digest":"sha256:$deb_digest","browser_download_url":"$release_prefix/Omperator-$release_version-linux-amd64.deb"},
-  {"name":"Omperator-$release_version-linux-x86_64.AppImage","state":"uploaded","size":${mockAssetSize},"digest":"sha256:$asset_digest","browser_download_url":"$release_prefix/Omperator-$release_version-linux-x86_64.AppImage"},
-  {"name":"Omperator-$release_version-mac-arm64.dmg","state":"uploaded","size":${mockAssetSize},"digest":"sha256:$asset_digest","browser_download_url":"$release_prefix/Omperator-$release_version-mac-arm64.dmg"},
-  {"name":"Omperator-$release_version-mac-arm64.zip","state":"uploaded","size":${mockAssetSize},"digest":"sha256:$asset_digest","browser_download_url":"$release_prefix/Omperator-$release_version-mac-arm64.zip"},
+  {"name":"T4-Code-$release_version-android.apk","state":"uploaded","size":${mockAssetSize},"digest":"sha256:$asset_digest","browser_download_url":"$release_prefix/T4-Code-$release_version-android.apk"},
+  {"name":"T4-Code-$release_version-linux-amd64.deb","state":"uploaded","size":${mockDebSize},"digest":"sha256:$deb_digest","browser_download_url":"$release_prefix/T4-Code-$release_version-linux-amd64.deb"},
+  {"name":"T4-Code-$release_version-linux-x86_64.AppImage","state":"uploaded","size":${mockAssetSize},"digest":"sha256:$asset_digest","browser_download_url":"$release_prefix/T4-Code-$release_version-linux-x86_64.AppImage"},
+  {"name":"T4-Code-$release_version-mac-arm64.dmg","state":"uploaded","size":${mockAssetSize},"digest":"sha256:$asset_digest","browser_download_url":"$release_prefix/T4-Code-$release_version-mac-arm64.dmg"},
+  {"name":"T4-Code-$release_version-mac-arm64.zip","state":"uploaded","size":${mockAssetSize},"digest":"sha256:$asset_digest","browser_download_url":"$release_prefix/T4-Code-$release_version-mac-arm64.zip"},
   {"name":"latest-linux.yml","state":"uploaded","size":$metadata_size,"digest":"sha256:$metadata_digest","browser_download_url":"$release_prefix/latest-linux.yml"}
 ]}
 JSON
@@ -444,7 +442,7 @@ JSON
         deb_digest=$(printf 'mock-deb\n' | sha256sum | awk '{print $1}')
         asset_digest=$(printf 'mock-asset\n' | sha256sum | awk '{print $1}')
         apk_digest=$asset_digest
-        apk_url="$release_prefix/Omperator-$version-android.apk"
+        apk_url="$release_prefix/T4-Code-$version-android.apk"
         extra=''
         case \${MOCK_SITE_MANIFEST_MODE:-valid} in
           schema) schema=2 ;;
@@ -458,11 +456,11 @@ JSON
         esac
         cat >"$output" <<JSON
 {"schemaVersion":$schema,"channel":"stable","version":"$manifest_version","tag":"$manifest_tag","publishedAt":"$published_at","releaseUrl":"$release_url","assets":[
-  {"platform":"android","kind":"apk","arch":"universal","name":"Omperator-$version-android.apk","url":"$apk_url","size":${mockAssetSize},"sha256":"$apk_digest"},
-  {"platform":"linux","kind":"deb","arch":"x86_64","name":"Omperator-$version-linux-amd64.deb","url":"$release_prefix/Omperator-$version-linux-amd64.deb","size":$deb_size,"sha256":"$deb_digest"},
-  {"platform":"linux","kind":"appimage","arch":"x86_64","name":"Omperator-$version-linux-x86_64.AppImage","url":"$release_prefix/Omperator-$version-linux-x86_64.AppImage","size":${mockAssetSize},"sha256":"$asset_digest"},
-  {"platform":"mac","kind":"dmg","arch":"arm64","name":"Omperator-$version-mac-arm64.dmg","url":"$release_prefix/Omperator-$version-mac-arm64.dmg","size":${mockAssetSize},"sha256":"$asset_digest"},
-  {"platform":"mac","kind":"zip","arch":"arm64","name":"Omperator-$version-mac-arm64.zip","url":"$release_prefix/Omperator-$version-mac-arm64.zip","size":${mockAssetSize},"sha256":"$asset_digest"}$extra
+  {"platform":"android","kind":"apk","arch":"universal","name":"T4-Code-$version-android.apk","url":"$apk_url","size":${mockAssetSize},"sha256":"$apk_digest"},
+  {"platform":"linux","kind":"deb","arch":"x86_64","name":"T4-Code-$version-linux-amd64.deb","url":"$release_prefix/T4-Code-$version-linux-amd64.deb","size":$deb_size,"sha256":"$deb_digest"},
+  {"platform":"linux","kind":"appimage","arch":"x86_64","name":"T4-Code-$version-linux-x86_64.AppImage","url":"$release_prefix/T4-Code-$version-linux-x86_64.AppImage","size":${mockAssetSize},"sha256":"$asset_digest"},
+  {"platform":"mac","kind":"dmg","arch":"arm64","name":"T4-Code-$version-mac-arm64.dmg","url":"$release_prefix/T4-Code-$version-mac-arm64.dmg","size":${mockAssetSize},"sha256":"$asset_digest"},
+  {"platform":"mac","kind":"zip","arch":"arm64","name":"T4-Code-$version-mac-arm64.zip","url":"$release_prefix/T4-Code-$version-mac-arm64.zip","size":${mockAssetSize},"sha256":"$asset_digest"}$extra
 ]}
 JSON
       elif [[ $url == *SHA256SUMS* ]]; then
@@ -472,7 +470,7 @@ JSON
         asset_digest=$(printf 'mock-asset\n' | sha256sum | awk '{print $1}')
         metadata=$(linux_update_metadata "$version")
         metadata_digest=$(printf '%s\n' "$metadata" | sha256sum | awk '{print $1}')
-        printf '%s  Omperator-%s-android.apk\n%s  Omperator-%s-linux-amd64.deb\n%s  Omperator-%s-linux-x86_64.AppImage\n%s  Omperator-%s-mac-arm64.dmg\n%s  Omperator-%s-mac-arm64.zip\n%s  latest-linux.yml\n' \
+        printf '%s  T4-Code-%s-android.apk\n%s  T4-Code-%s-linux-amd64.deb\n%s  T4-Code-%s-linux-x86_64.AppImage\n%s  T4-Code-%s-mac-arm64.dmg\n%s  T4-Code-%s-mac-arm64.zip\n%s  latest-linux.yml\n' \
           "$asset_digest" "$version" "$deb_digest" "$version" "$asset_digest" "$version" \
           "$asset_digest" "$version" "$asset_digest" "$version" "$metadata_digest" >"$output"
       elif [[ $url == *latest-linux.yml ]]; then
@@ -504,7 +502,7 @@ JSON
         exit 0
       fi
       if [[ $url == https://t4code.net/*assets/* ]]; then
-        printf 'v1.2.3 t4code-1.2.3-appserver-1 Omperator-1.2.3-android.apk Omperator-1.2.3-linux-amd64.deb Omperator-1.2.3-linux-x86_64.AppImage Omperator-1.2.3-mac-arm64.dmg Omperator-1.2.3-mac-arm64.zip\n'
+        printf 'v1.2.3 t4code-1.2.3-appserver-1 T4-Code-1.2.3-android.apk T4-Code-1.2.3-linux-amd64.deb T4-Code-1.2.3-linux-x86_64.AppImage T4-Code-1.2.3-mac-arm64.dmg T4-Code-1.2.3-mac-arm64.zip\n'
         exit 0
       fi
       if [[ $url == https://t4code.net/* ]]; then
@@ -883,7 +881,7 @@ SH
     if [[ \${MOCK_ROLLBACK_APT_FAIL:-0} == 1 && $count -gt 1 ]]; then exit 70; fi
     deb=\${!#}
     version=1.2.3
-    [[ $deb =~ Omperator-([0-9]+\.[0-9]+\.[0-9]+)-linux-amd64\.deb$ ]] && version=\${BASH_REMATCH[1]}
+    [[ $deb =~ T4-Code-([0-9]+\.[0-9]+\.[0-9]+)-linux-amd64\.deb$ ]] && version=\${BASH_REMATCH[1]}
     write_state package-version "$version"
     if [[ \${MOCK_MUTATE_OVERLAY_AFTER_APT:-0} == 1 && $count -eq 1 ]]; then
       printf 'mutated-overlay\n' >"$MOCK_OVERLAY_PACKAGE"
@@ -909,9 +907,9 @@ SH
   dpkg-deb)
     if [[ \${1:-} == --fsys-tarfile ]]; then
       tar_root=$(mktemp -d)
-      mkdir -p "$tar_root/opt/Omperator/resources"
-      printf 'mock-app-asar\n' >"$tar_root/opt/Omperator/resources/app.asar"
-      tar -cf - -C "$tar_root" './opt/Omperator/resources/app.asar'
+      mkdir -p "$tar_root/opt/T4 Code/resources"
+      printf 'mock-app-asar\n' >"$tar_root/opt/T4 Code/resources/app.asar"
+      tar -cf - -C "$tar_root" './opt/T4 Code/resources/app.asar'
       rm -rf -- "$tar_root"
       exit 0
     fi
@@ -921,7 +919,7 @@ SH
     else
       deb=\${*: -2:1}
       version=1.2.3
-      [[ $deb =~ Omperator-([0-9]+\.[0-9]+\.[0-9]+)-linux-amd64\.deb$ ]] && version=\${BASH_REMATCH[1]}
+      [[ $deb =~ T4-Code-([0-9]+\.[0-9]+\.[0-9]+)-linux-amd64\.deb$ ]] && version=\${BASH_REMATCH[1]}
       printf '%s\n' "$version"
     fi
     ;;
@@ -1112,9 +1110,6 @@ export function forgedOmpPublicProof() {
       "omp-darwin-x64",
       "omp-darwin-arm64",
       "omp-windows-x64.exe",
-      "pi_natives.linux-x64-baseline.node",
-      "pi_natives.linux-x64-modern.node",
-      "omp-native-addons.json",
     ]
       .sort()
       .map((name) => ({
@@ -1175,9 +1170,9 @@ export async function createDeployFixture(options = {}) {
   const gatewayService = "mock-gateway.service";
   const ompService = "mock-omp.service";
   const gatewayUnit = join(home, ".config", "systemd", "user", gatewayService);
-  const t4Executable = join(root, "opt", "Omperator", "t4-code");
-  const t4AppAsar = join(root, "opt", "Omperator", "resources", "app.asar");
-  const t4WebRoot = join(root, "opt", "Omperator", "resources", "web");
+  const t4Executable = join(root, "opt", "T4 Code", "t4-code");
+  const t4AppAsar = join(root, "opt", "T4 Code", "resources", "app.asar");
+  const t4WebRoot = join(root, "opt", "T4 Code", "resources", "web");
   const previousRuntime = join(root, "previous-runtime");
   const overlayPackage = join(root, "operator-overlay.deb");
   const overlayReceipt = join(maintainerRoot, "state", "operator-overlay.json");
@@ -1802,7 +1797,6 @@ export async function createRunnerFixture(options = {}) {
     ...(options.t4WorkflowWrongPath ? { MOCK_T4_WORKFLOW_WRONG_PATH: "1" } : {}),
     ...(options.ompWorkflowMissing ? { MOCK_OMP_WORKFLOW_MISSING: "1" } : {}),
     ...(options.ompWorkflowFailed ? { MOCK_OMP_WORKFLOW_FAILED: "1" } : {}),
-    ...(options.legacyAtomicReceipt ? { MOCK_OMP_LEGACY_RELEASE: "1" } : {}),
     ...(options.ompWorkflowWrongPath ? { MOCK_OMP_WORKFLOW_WRONG_PATH: "1" } : {}),
     ...(options.ompAssetMissing ? { MOCK_OMP_ASSET_MISSING: "1" } : {}),
     ...(options.ompAssetExtra ? { MOCK_OMP_ASSET_EXTRA: "1" } : {}),

@@ -56,7 +56,7 @@ const macZip = assetOfKind("mac", "zip");
 const install: DocTopic = {
   id: "install",
   title: "Install",
-  lede: "Omperator ships for Android, Linux (x86_64), and macOS (Apple Silicon). iOS TestFlight is coming soon.",
+  lede: "T4 Code ships for Android, Linux (x86_64), and macOS (Apple Silicon). iOS TestFlight is coming soon.",
   blocks: [
     {
       kind: "p",
@@ -69,7 +69,7 @@ const install: DocTopic = {
     },
     {
       kind: "p",
-      text: "The Android app is a thin client. It connects to the Omperator host that runs your OMP sessions; it does not run OMP or an app server on your phone.",
+      text: "The Android app is a thin client. It connects to the T4 Code host that runs your OMP sessions; it does not run OMP or an app server on your phone.",
     },
     { kind: "h2", id: "install-ios", text: "iPhone and iPad" },
     {
@@ -94,14 +94,14 @@ const install: DocTopic = {
     { kind: "h2", id: "install-macos", text: "macOS (Apple Silicon)" },
     {
       kind: "p",
-      text: `Download the [.dmg](${macDmg.url}) (or the [.zip](${macZip.url})) and drag **Omperator.app** into your Applications folder.`,
+      text: `Download the [.dmg](${macDmg.url}) (or the [.zip](${macZip.url})) and drag **T4 Code.app** into your Applications folder.`,
     },
     {
       kind: "note",
       text: `The v${RELEASE_VERSION} macOS build is signed with the project's pinned Developer ID identity and notarized by Apple. The release workflow verifies both downloadable formats with Gatekeeper before publication.`,
     },
     { kind: "h3", id: "install-gatekeeper", text: "First launch on macOS" },
-    { kind: "p", text: "After copying the app into Applications, open Omperator normally." },
+    { kind: "p", text: "After copying the app into Applications, open T4 Code normally." },
     {
       kind: "note",
       text: "If macOS reports that this release is damaged or from an unidentified developer, do not bypass Gatekeeper. Delete that copy, download it again from the linked GitHub release, and verify its SHA-256 entry in `SHA256SUMS.txt`.",
@@ -109,15 +109,15 @@ const install: DocTopic = {
     { kind: "h2", id: "install-requirements", text: "Requirements" },
     {
       kind: "p",
-      text: `Omperator is a client for [Oh My Pi](${OMP_URL}). The installed Apple Silicon Mac app brings its matching OMP runtime. Source builds, Linux hosts, and remote hosts need the verified integration build listed below.`,
+      text: `T4 Code is a client for [Oh My Pi](${OMP_URL}). The installed Apple Silicon Mac app brings its matching OMP runtime. Source builds, Linux hosts, and remote hosts need the verified integration build listed below.`,
     },
     {
       kind: "p",
-      text: `Omperator v${RELEASE_VERSION} was verified with OMP ${OMP_RUNTIME_VERSION} integration tag [\`${OMP_RUNTIME_TAG}\`](${OMP_RUNTIME_URL}), commit \`${OMP_RUNTIME_COMMIT}\`. That public integration is based on the [official upstream v${OMP_RUNTIME_VERSION} tag](${OMP_UPSTREAM_URL}) at commit [\`${OMP_UPSTREAM_COMMIT.slice(0, 8)}\`](${OMP_URL}/commit/${OMP_UPSTREAM_COMMIT}). The build lets Omperator follow compatible terminal sessions, reconciles the complete transcript before any takeover, and hands sessions over with \`/continue-in-t4\`, on top of profile-scoped app servers, host-scoped \`usage.read\` and \`broker.status\` queries with redacted results, and each model's real thinking levels and fast support. Omperator vendors \`@oh-my-pi/app-wire\` ${APP_WIRE_VERSION}.`,
+      text: `T4 Code v${RELEASE_VERSION} was verified with OMP ${OMP_RUNTIME_VERSION} integration tag [\`${OMP_RUNTIME_TAG}\`](${OMP_RUNTIME_URL}), commit \`${OMP_RUNTIME_COMMIT}\`. That public integration is based on the [official upstream v${OMP_RUNTIME_VERSION} tag](${OMP_UPSTREAM_URL}) at commit [\`${OMP_UPSTREAM_COMMIT.slice(0, 8)}\`](${OMP_URL}/commit/${OMP_UPSTREAM_COMMIT}). The build lets T4 Code follow compatible terminal sessions, reconciles the complete transcript before any takeover, and hands sessions over with \`/continue-in-t4\`, on top of profile-scoped app servers, host-scoped \`usage.read\` and \`broker.status\` queries with redacted results, and each model's real thinking levels and fast support. T4 Code vendors \`@oh-my-pi/app-wire\` ${APP_WIRE_VERSION}.`,
     },
     {
       kind: "note",
-      text: `Official upstream OMP v${OMP_RUNTIME_VERSION} does not ship the \`appserver\` command, so it cannot host Omperator. Use the public integration tag above. It builds from that repository like any other OMP checkout; Omperator has no dependency on private home-directory files, an auth broker, or a custom Codex CLI fork.`,
+      text: `Official upstream OMP v${OMP_RUNTIME_VERSION} does not ship the \`appserver\` command, so it cannot host T4 Code. Use the public integration tag above. It builds from that repository like any other OMP checkout; T4 Code has no dependency on private home-directory files, an auth broker, or a custom Codex CLI fork.`,
     },
   ],
 };
@@ -129,16 +129,16 @@ const firstRun: DocTopic = {
   blocks: [
     {
       kind: "note",
-      text: "On an Apple Silicon Mac, Omperator installs its pinned backend inside its own Application Support folder. It does not replace the `omp` command you may already use in Terminal. To start compatible terminal sessions, open **Settings → Hosts** and choose **Install t4-omp**.",
+      text: "On an Apple Silicon Mac, T4 Code installs its pinned backend inside its own Application Support folder. It does not replace the `omp` command you may already use in Terminal. To start compatible terminal sessions, open **Settings → Hosts** and choose **Install t4-omp**.",
     },
     { kind: "h2", id: "first-run-discovery", text: "Terminal integration" },
-    { kind: "p", text: "The installed Mac app uses its bundled runtime. The optional `t4-omp` command points to that exact runtime while leaving your existing `omp` command untouched. Omperator installs it at `~/.local/bin/t4-omp`." },
+    { kind: "p", text: "The installed Mac app uses its bundled runtime. The optional `t4-omp` command points to that exact runtime while leaving your existing `omp` command untouched. T4 installs it at `~/.local/bin/t4-omp`." },
     {
       kind: "ul",
       items: [
-        "Use `t4-omp` for terminal or CMUX sessions you may want to move into Omperator.",
+        "Use `t4-omp` for terminal or CMUX sessions you may want to move into T4 Code.",
         "Run `/continue-in-t4` in that terminal session to hand it over safely.",
-        "Continue using your existing `omp` command when you specifically want the other installation; Omperator never overwrites it.",
+        "Continue using your existing `omp` command when you specifically want the other installation; T4 never overwrites it.",
       ],
     },
     {
@@ -148,32 +148,32 @@ const firstRun: DocTopic = {
     { kind: "h2", id: "first-run-phone", text: "Use your phone" },
     {
       kind: "p",
-      text: "Install and connect Tailscale on the Mac and phone. In Omperator, open **Settings → Hosts**, choose **Set up phone access**, then scan the QR code. Omperator installs the private loopback gateway and configures Tailscale Serve; it never enables public Tailscale Funnel.",
+      text: "Install and connect Tailscale on the Mac and phone. In T4 Code, open **Settings → Hosts**, choose **Set up phone access**, then scan the QR code. T4 Code installs the private loopback gateway and configures Tailscale Serve; it never enables public Tailscale Funnel.",
     },
     { kind: "h2", id: "first-run-service", text: "Who keeps the desktop app server running" },
     {
       kind: "p",
-      text: "Omperator registers the app server with your operating system so it stays up across restarts:",
+      text: "T4 Code registers the app server with your operating system so it stays up across restarts:",
     },
     {
       kind: "ul",
       items: [
         "**Linux**: a systemd user service. Logs: `~/.local/state/t4-code/appserver`.",
-        "**macOS**: a launch agent. Logs stay in the compatibility path `~/Library/Logs/T4 Code/appserver`.",
+        "**macOS**: a launch agent. Logs: `~/Library/Logs/T4 Code/appserver`.",
       ],
     },
     { kind: "h2", id: "first-run-profiles", text: "Named OMP profiles" },
     {
       kind: "p",
-      text: "OMP keeps named profiles under `~/.omp/profiles`, each with its own agent configuration. Desktop Omperator discovers them next to the default profile and lists each one as its own local host, with its own app server, socket, and service registration.",
+      text: "OMP keeps named profiles under `~/.omp/profiles`, each with its own agent configuration. Desktop T4 Code discovers them next to the default profile and lists each one as its own local host, with its own app server, socket, and service registration.",
     },
     {
       kind: "p",
-      text: "The Hosts screen (reachable from Settings) starts, stops, or restarts a profile and can mark it **Start with Omperator**. The default profile starts automatically; named profiles stay stopped until you start them or opt them in. Logs for a named profile land in a `profiles/<id>` folder under the log directories above.",
+      text: "The Hosts screen (reachable from Settings) starts, stops, or restarts a profile and can mark it **Start with T4**. The default profile starts automatically; named profiles stay stopped until you start them or opt them in. Logs for a named profile land in a `profiles/<id>` folder under the log directories above.",
     },
     {
       kind: "p",
-      text: "Oh My Pi stays the source of truth the whole time. Omperator shows you what the host reports; it never invents state of its own.",
+      text: "Oh My Pi stays the source of truth the whole time. T4 Code shows you what the host reports; it never invents state of its own.",
     },
   ],
 };
@@ -186,7 +186,7 @@ const localSessions: DocTopic = {
     { kind: "h2", id: "local-sessions-create", text: "Start a session" },
     {
       kind: "p",
-      text: "Pick a working folder and start a session, with an optional title. The session runs on the OMP host; Omperator streams everything it does into the transcript.",
+      text: "Pick a working folder and start a session, with an optional title. The session runs on the OMP host; T4 Code streams everything it does into the transcript.",
     },
     {
       kind: "p",
@@ -199,11 +199,11 @@ const localSessions: DocTopic = {
     { kind: "h2", id: "local-sessions-folders", text: "What a working folder means" },
     {
       kind: "p",
-      text: "A heading in the left rail is the working directory reported by the sessions beneath it. It is not a separate Omperator project record. When every session in a folder is archived, its empty shortcut can be removed from Working folders without touching the folder or any OMP session.",
+      text: "A heading in the left rail is the working directory reported by the sessions beneath it. It is not a separate T4 Code project record. When every session in a folder is archived, its empty shortcut can be removed from Working folders without touching the folder or any OMP session.",
     },
     {
       kind: "note",
-      text: "Removing, pinning, or manually ordering shortcuts is view state for that Omperator client, so desktop and phone can differ. Archived sessions remain visible, and their folder menu can restore a removed shortcut. A new or restored Current session always makes the folder visible. Omperator never moves, deletes, or renames the underlying folder.",
+      text: "Removing, pinning, or manually ordering shortcuts is view state for that T4 Code client, so desktop and phone can differ. Archived sessions remain visible, and their folder menu can restore a removed shortcut. A new or restored Current session always makes the folder visible. T4 Code never moves, deletes, or renames the underlying folder.",
     },
     { kind: "h2", id: "local-sessions-organize", text: "Organize a large session library" },
     {
@@ -212,7 +212,7 @@ const localSessions: DocTopic = {
     },
     {
       kind: "p",
-      text: "The rail search matches session titles, models, working folders, and host names. Quick filters narrow the list to Attention, Running, Unread, or Errors. Search and filters reset when Omperator restarts so an old filter never makes work look missing.",
+      text: "The rail search matches session titles, models, working folders, and host names. Quick filters narrow the list to Attention, Running, Unread, or Errors. Search and filters reset when T4 Code restarts so an old filter never makes work look missing.",
     },
     {
       kind: "p",
@@ -229,7 +229,7 @@ const localSessions: DocTopic = {
     },
     {
       kind: "p",
-      text: "Permanent delete removes the session transcript and its artifact directory. Omperator asks you to type the exact session title, and OMP refuses the operation if the session is busy or its revision changed during confirmation.",
+      text: "Permanent delete removes the session transcript and its artifact directory. T4 Code asks you to type the exact session title, and OMP refuses the operation if the session is busy or its revision changed during confirmation.",
     },
     {
       kind: "p",
@@ -238,28 +238,24 @@ const localSessions: DocTopic = {
     { kind: "h2", id: "local-sessions-switching", text: "Switching stays instant" },
     {
       kind: "p",
-      text: "Omperator keeps up to 8 recent sessions warm in the background. Their live output keeps applying while you are elsewhere, so switching back is instant. No reload, no replay, no duplicate output.",
+      text: "T4 Code keeps up to 8 recent sessions warm in the background. Their live output keeps applying while you are elsewhere, so switching back is instant. No reload, no replay, no duplicate output.",
     },
     {
       kind: "p",
       text: "Your draft message, scroll position, and open panels survive switching away and back.",
     },
-    { kind: "h2", id: "local-sessions-terminal", text: "Move sessions between Omperator and the terminal" },
+    { kind: "h2", id: "local-sessions-terminal", text: "Sessions started in the terminal" },
     {
       kind: "p",
-      text: "Choose **Continue in terminal** on an idle writable session and Omperator safely stops its writer, then shows the exact `t4-omp --resume <session>` command. While that terminal owns the session, Omperator follows the durable transcript and automatically takes control back after the terminal exits. Before the terminal starts, **Bring back to Omperator** cancels the release.",
+      text: "A session started with `t4-omp` appears in T4 Code marked **Active elsewhere** while its terminal owns it. T4 follows the durable transcript, and `/continue-in-t4` hands it over safely. A session started by an OMP build without the compatible handoff signal remains readable but is marked **Read-only · use t4-omp** instead of pretending a takeover is in progress.",
     },
     {
       kind: "p",
-      text: "A session started with `t4-omp` appears in Omperator marked **Active elsewhere** while its terminal owns it. `/continue-in-t4` hands it over safely in the other direction. A session started by an OMP build without the compatible handoff signal remains readable but is marked **Read-only · use t4-omp** instead of pretending a takeover is in progress.",
+      text: "The takeover is deliberate. The host must report the session lock gone — a live owner is never displaced — and T4 reconciles the complete transcript before the composer accepts input again. Nothing is typed into a session another app still owns.",
     },
     {
       kind: "p",
-      text: "The takeover is deliberate. The host must report the session lock gone — a live owner is never displaced — and Omperator reconciles the complete transcript before the composer accepts input again. Nothing is typed into a session another app still owns.",
-    },
-    {
-      kind: "p",
-      text: "Any session Omperator cannot write to offers **Continue in a copy**. That starts a new session holding the same history and leaves the original exactly where it is, so a conversation from months ago, or one open in a terminal right now, can be picked up without waiting for the other side to let go.",
+      text: "Any session T4 Code cannot write to offers **Continue in a copy**. That starts a new session holding the same history and leaves the original exactly where it is, so a conversation from months ago, or one open in a terminal right now, can be picked up without waiting for the other side to let go.",
     },
     {
       kind: "note",
@@ -268,7 +264,7 @@ const localSessions: DocTopic = {
     { kind: "h2", id: "local-sessions-disconnects", text: "Disconnects" },
     {
       kind: "p",
-      text: "If the connection drops, Omperator says so instead of pretending. Retryable failures keep reconnecting on their own for as long as it takes, and anything the host did not confirm is marked that way. You can keep reading what you already have the whole time.",
+      text: "If the connection drops, T4 Code says so instead of pretending. Retryable failures keep reconnecting on their own for as long as it takes, and anything the host did not confirm is marked that way. You can keep reading what you already have the whole time.",
     },
   ],
 };
@@ -276,7 +272,7 @@ const localSessions: DocTopic = {
 const remotePairing: DocTopic = {
   id: "remote-pairing",
   title: "Remote pairing",
-  lede: "Pair Omperator with an Oh My Pi host on another machine and work with its sessions like local ones.",
+  lede: "Pair T4 Code with an Oh My Pi host on another machine and work with its sessions like local ones.",
   blocks: [
     { kind: "h2", id: "remote-pairing-pair", text: "Pair with a host" },
     {
@@ -286,7 +282,7 @@ const remotePairing: DocTopic = {
     { kind: "code", code: "t4-code://pair/<host>/<code>" },
     {
       kind: "p",
-      text: "Opening the link hands the pairing code to Omperator. Once the host accepts, it appears in your host list and its projects and sessions load like local ones.",
+      text: "Opening the link hands the pairing code to T4 Code. Once the host accepts, it appears in your host list and its projects and sessions load like local ones.",
     },
     { kind: "h2", id: "remote-pairing-credentials", text: "Where credentials live" },
     {
@@ -296,12 +292,12 @@ const remotePairing: DocTopic = {
     { kind: "h2", id: "remote-pairing-reconnect", text: "Reconnecting" },
     {
       kind: "p",
-      text: "When a remote connection drops, Omperator retries on its own for as long as it takes: growing delays, capped at 10 seconds between tries. A network drop, a laptop sleep, or a host restart ends in a reconnected session. Settings you were editing stay staged locally until the host confirms them; nothing is sent blind during a drop.",
+      text: "When a remote connection drops, T4 Code retries on its own for as long as it takes: growing delays, capped at 10 seconds between tries. A network drop, a laptop sleep, or a host restart ends in a reconnected session. Settings you were editing stay staged locally until the host confirms them; nothing is sent blind during a drop.",
     },
     { kind: "h2", id: "remote-pairing-tailnet", text: "Phone access over a tailnet" },
     {
       kind: "p",
-      text: "A source checkout can serve Omperator to a phone through Tailscale Serve. This path has no Omperator app password: Tailscale identity plus the tailnet ACLs or grants decide who can reach it. Keep it on Serve, never Funnel, and remember that every permitted identity can operate the connected OMP appserver.",
+      text: "A source checkout can serve T4 Code to a phone through Tailscale Serve. This path has no T4 app password: Tailscale identity plus the tailnet ACLs or grants decide who can reach it. Keep it on Serve, never Funnel, and remember that every permitted identity can operate the connected OMP appserver.",
     },
     {
       kind: "p",
@@ -335,7 +331,7 @@ const sessionControls: DocTopic = {
     { kind: "h2", id: "session-controls-model", text: "Model" },
     {
       kind: "p",
-      text: "The primary picker follows the connected OMP profile's `Ctrl+P` cycle in exact order instead of exposing the full catalog. It shows the choices and labels reported by that host, so changing the OMP profile changes the picker without a Omperator rebuild. On narrow touch screens, the menu has a bounded vertical scroller.",
+      text: "The primary picker follows the connected OMP profile's `Ctrl+P` cycle in exact order instead of exposing the full catalog. It shows the choices and labels reported by that host, so changing the OMP profile changes the picker without a T4 Code rebuild. On narrow touch screens, the menu has a bounded vertical scroller.",
     },
     {
       kind: "p",
@@ -395,7 +391,7 @@ const agents: DocTopic = {
     { kind: "h2", id: "agents-limits", text: "What hosts do not support yet" },
     {
       kind: "p",
-      text: "Current hosts cannot take a note for a single agent or wake an agent from the pane. When a host cannot do something, Omperator shows the action disabled with the reason. It never fakes a control.",
+      text: "Current hosts cannot take a note for a single agent or wake an agent from the pane. When a host cannot do something, T4 Code shows the action disabled with the reason. It never fakes a control.",
     },
   ],
 };
@@ -408,12 +404,12 @@ const panes: DocTopic = {
     { kind: "h2", id: "panes-terminals", text: "Terminals" },
     {
       kind: "p",
-      text: "The terminals pane attaches to real terminal sessions on the host. Typing, resizing, and closing all go through the host. Omperator never scrapes terminal output and never types into a shell an agent owns.",
+      text: "The terminals pane attaches to real terminal sessions on the host. Typing, resizing, and closing all go through the host. T4 Code never scrapes terminal output and never types into a shell an agent owns.",
     },
     { kind: "h2", id: "panes-files", text: "Files" },
     {
       kind: "p",
-      text: "Browse folders and preview files when the host supports it. On hosts without file access, Omperator shows what the session has already streamed and says plainly when it cannot read more.",
+      text: "Browse folders and preview files when the host supports it. On hosts without file access, T4 Code shows what the session has already streamed and says plainly when it cannot read more.",
     },
     { kind: "h2", id: "panes-review", text: "Review" },
     {
@@ -426,7 +422,7 @@ const panes: DocTopic = {
 const settings: DocTopic = {
   id: "settings-model-roles",
   title: "Settings & model roles",
-  lede: "Oh My Pi owns its settings. Omperator gives you a safe editor: you stage changes, the host confirms them.",
+  lede: "Oh My Pi owns its settings. T4 Code gives you a safe editor: you stage changes, the host confirms them.",
   blocks: [
     { kind: "h2", id: "settings-ownership", text: "How saving works" },
     {
@@ -450,7 +446,7 @@ const settings: DocTopic = {
     },
     {
       kind: "p",
-      text: "Reports are fetched when you ask and marked with their age; anything older than five minutes is labeled stale rather than silently trusted. Omperator keeps the display-safe fields (provider, account label, limits, windows) and drops provider-specific metadata and the raw payload before anything reaches the screen.",
+      text: "Reports are fetched when you ask and marked with their age; anything older than five minutes is labeled stale rather than silently trusted. T4 Code keeps the display-safe fields (provider, account label, limits, windows) and drops provider-specific metadata and the raw payload before anything reaches the screen.",
     },
     { kind: "h2", id: "settings-roles", text: "Model roles" },
     {
@@ -460,12 +456,12 @@ const settings: DocTopic = {
     { kind: "h2", id: "settings-cycle", text: "Quick-switch cycle" },
     {
       kind: "p",
-      text: "The cycle order lists the roles you flip between with `Ctrl+P` in OMP. Omperator uses that same ordered list for the session model picker, so models outside the cycle stay in advanced settings instead of filling the high-frequency menu.",
+      text: "The cycle order lists the roles you flip between with `Ctrl+P` in OMP. T4 Code uses that same ordered list for the session model picker, so models outside the cycle stay in advanced settings instead of filling the high-frequency menu.",
     },
     { kind: "h2", id: "settings-task-agents", text: "Task agents" },
     {
       kind: "p",
-      text: "For each agent kind you can set an ordered fallback chain of models, or disable the agent entirely. Omperator warns you when an override points at an agent the host no longer reports.",
+      text: "For each agent kind you can set an ordered fallback chain of models, or disable the agent entirely. T4 Code warns you when an override points at an agent the host no longer reports.",
     },
   ],
 };
@@ -535,7 +531,7 @@ const troubleshooting: DocTopic = {
     { kind: "code", code: "omp appserver status --json" },
     {
       kind: "p",
-      text: "If that fails, look at the compatibility log paths: `~/.local/state/t4-code/appserver` on Linux, `~/Library/Logs/T4 Code/appserver` on macOS. If `omp` is installed somewhere unusual, point Omperator at it with the `OMP_EXECUTABLE` environment variable.",
+      text: "If that fails, look at the logs: `~/.local/state/t4-code/appserver` on Linux, `~/Library/Logs/T4 Code/appserver` on macOS. If `omp` is installed somewhere unusual, point T4 Code at it with the `OMP_EXECUTABLE` environment variable.",
     },
     {
       kind: "h2",
@@ -549,7 +545,7 @@ const troubleshooting: DocTopic = {
     { kind: "h2", id: "troubleshooting-large-session", text: "Session appears but never loads" },
     {
       kind: "p",
-      text: `First confirm that \`omp appserver status --json\` succeeds. Official upstream OMP v${OMP_RUNTIME_VERSION} cannot answer that command and cannot host Omperator. On older public appserver integration builds, a large, actively growing transcript can exceed the replay limit during attach. Omperator v${RELEASE_VERSION} stops the resulting reconnect loop, but the client cannot repair a snapshot the host never delivered. Use the [verified OMP integration tag](${OMP_RUNTIME_URL}) or a later public or upstream build that includes appserver support and the same bounded replay behavior.`,
+      text: `First confirm that \`omp appserver status --json\` succeeds. Official upstream OMP v${OMP_RUNTIME_VERSION} cannot answer that command and cannot host T4 Code. On older public appserver integration builds, a large, actively growing transcript can exceed the replay limit during attach. T4 Code v${RELEASE_VERSION} stops the resulting reconnect loop, but the client cannot repair a snapshot the host never delivered. Use the [verified OMP integration tag](${OMP_RUNTIME_URL}) or a later public or upstream build that includes appserver support and the same bounded replay behavior.`,
     },
     {
       kind: "h2",
@@ -558,7 +554,7 @@ const troubleshooting: DocTopic = {
     },
     {
       kind: "p",
-      text: "Omperator keeps the draft and shows the command code, host message, and redacted details. Follow that reason before sending again. If the host reports an unknown delivery outcome, check the transcript first; the prompt may already be there.",
+      text: "T4 Code keeps the draft and shows the command code, host message, and redacted details. Follow that reason before sending again. If the host reports an unknown delivery outcome, check the transcript first; the prompt may already be there.",
     },
     { kind: "h2", id: "troubleshooting-declined", text: "\u201cThe host declined…\u201d" },
     {
@@ -581,7 +577,7 @@ const troubleshooting: DocTopic = {
 const security: DocTopic = {
   id: "security",
   title: "Security",
-  lede: "Plain answers about what Omperator stores, sends, and never does.",
+  lede: "Plain answers about what T4 Code stores, sends, and never does.",
   blocks: [
     { kind: "h2", id: "security-unsigned", text: "Signed macOS releases" },
     {
@@ -596,7 +592,7 @@ const security: DocTopic = {
     { kind: "h2", id: "security-truth", text: "Runtime truth" },
     {
       kind: "p",
-      text: "Everything you see comes from the Oh My Pi host over a typed protocol. Omperator never fabricates state, never scrapes terminals, and marks unconfirmed actions as unconfirmed instead of guessing.",
+      text: "Everything you see comes from the Oh My Pi host over a typed protocol. T4 Code never fabricates state, never scrapes terminals, and marks unconfirmed actions as unconfirmed instead of guessing.",
     },
     { kind: "h2", id: "security-site", text: "This website" },
     {

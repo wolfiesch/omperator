@@ -62,7 +62,7 @@ export function UnavailableSettingsWorkspace({
                   <span aria-hidden="true" className="absolute inset-y-1.5 start-0 w-0.5 rounded-full bg-primary" />
                   <span className="min-w-0 flex-1 truncate">Updates</span>
                   {updateIsAvailable(update.phase) && (
-                    <span aria-label="Omperator update available" className="size-1.5 rounded-full bg-primary" />
+                    <span aria-label="T4 Code update available" className="size-1.5 rounded-full bg-primary" />
                   )}
                 </div>
               </li>

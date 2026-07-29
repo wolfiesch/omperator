@@ -3,12 +3,7 @@
 // behind Cmd/Ctrl+1..9.
 import { resolveHighestPriorityStatus, type SessionStatus } from "@t4-code/ui";
 
-import {
-  isSessionUnread,
-  type RailFilter,
-  type RailSort,
-} from "./rail-model.ts";
-export type { RailFilter, RailOrganization, RailSort } from "./rail-model.ts";
+import { isSessionUnread } from "../state/workspace-store.ts";
 import type {
   WorkspaceData,
   WorkspaceHost,
@@ -21,6 +16,10 @@ export interface SessionRow {
   readonly session: WorkspaceSession;
   readonly unread: boolean;
 }
+
+export type RailOrganization = "by-project" | "flat";
+export type RailSort = "priority" | "updated" | "manual";
+export type RailFilter = "all" | "attention" | "running" | "unread" | "errors";
 
 export interface RailViewOptions {
   readonly filter?: RailFilter;

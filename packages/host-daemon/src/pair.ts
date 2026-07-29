@@ -16,9 +16,6 @@ const PAIR_CAPABILITIES = ["sessions.read", "sessions.prompt", "sessions.control
 /** Default ticket lifetime (10 minutes), matching the admin endpoint maximum. */
 export const DEFAULT_PAIR_TTL_MS = 600_000;
 
-/** Port the iOS companion assumes when building ws://<hint>:8787/v1/ws. */
-export const PAIR_PORT = 8787;
-
 const TAILSCALE_TIMEOUT_MS = 5_000;
 const TAILSCALE_MAX_BUFFER = 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -27,10 +24,16 @@ const HOSTNAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 export interface PairTicket {
   readonly code: string;
   readonly expiresAt: number;
+  readonly transport: {
+    readonly scheme: "ws" | "wss";
+    readonly port: number;
+    readonly path: "/v1/ws";
+    readonly tlsFingerprint?: string;
+  };
 }
 
 export interface HostHintResult {
-  /** Bare hostname (no port, no scheme) for the t4-code://pair/<hint>/<code> link. */
+  /** Bare hostname combined with the host-reported listener descriptor. */
   readonly hint: string;
   /** Optional human-facing caveat shown when the hint is a fallback. */
   readonly note?: string;
@@ -143,12 +146,44 @@ export function postPairTicket(
           reject(new Error("pair-ticket returned invalid JSON"));
           return;
         }
-        const ticket = parsed as { code?: unknown; expiresAt?: unknown };
-        if (typeof ticket.code !== "string" || typeof ticket.expiresAt !== "number") {
+        const ticket = parsed as {
+          code?: unknown;
+          expiresAt?: unknown;
+          transport?: {
+            scheme?: unknown;
+            port?: unknown;
+            path?: unknown;
+            tlsFingerprint?: unknown;
+          };
+        };
+        if (
+          typeof ticket.code !== "string" ||
+          typeof ticket.expiresAt !== "number" ||
+          !ticket.transport ||
+          (ticket.transport.scheme !== "ws" && ticket.transport.scheme !== "wss") ||
+          !Number.isSafeInteger(ticket.transport.port) ||
+          Number(ticket.transport.port) < 1 ||
+          Number(ticket.transport.port) > 65535 ||
+          ticket.transport.path !== "/v1/ws" ||
+          (ticket.transport.tlsFingerprint !== undefined &&
+            (typeof ticket.transport.tlsFingerprint !== "string" ||
+              !/^[0-9a-f]{64}$/u.test(ticket.transport.tlsFingerprint)))
+        ) {
           reject(new Error("pair-ticket returned an unexpected payload"));
           return;
         }
-        resolve({ code: ticket.code, expiresAt: ticket.expiresAt });
+        resolve({
+          code: ticket.code,
+          expiresAt: ticket.expiresAt,
+          transport: {
+            scheme: ticket.transport.scheme,
+            port: Number(ticket.transport.port),
+            path: ticket.transport.path,
+            ...(ticket.transport.tlsFingerprint
+              ? { tlsFingerprint: ticket.transport.tlsFingerprint }
+              : {}),
+          },
+        });
       });
     },
   );
@@ -164,7 +199,7 @@ async function defaultRenderQr(text: string): Promise<string> {
 
 /**
  * Mint a one-time pairing ticket from the running local host and print the
- * 6-digit code, the t4-code://pair/<hostname>/<code> deep link, the expiry,
+ * 6-digit code, the encoded full-endpoint deep link, the expiry,
  * and a terminal QR of the deep link.
  */
 export async function runPairAction(
@@ -191,7 +226,17 @@ export async function runPairAction(
   }
 
   const { hint, note } = await resolveHostHint();
-  const deepLink = `t4-code://pair/${hint}/${ticket.code}`;
+  const endpoint = `${ticket.transport.scheme}://${hint}:${ticket.transport.port}${ticket.transport.path}`;
+  const payload = Buffer.from(JSON.stringify({
+    version: 1,
+    hostHint: hint,
+    endpoint,
+    code: ticket.code,
+    ...(ticket.transport.tlsFingerprint
+      ? { tlsFingerprint: ticket.transport.tlsFingerprint }
+      : {}),
+  }), "utf8").toString("base64url");
+  const deepLink = `t4-code://pair/${payload}`;
   const expiryMs = ticket.expiresAt - Date.now();
   const expiryMinutes = Math.max(0, Math.round(expiryMs / 60_000));
 

@@ -62,7 +62,7 @@ export function parseTailnetBackend(
 ): StoredMobileBackend {
   const trimmed = value.trim();
   if (trimmed.length === 0)
-    throw new Error("Enter the HTTPS address shown by Omperator on your computer.");
+    throw new Error("Enter the HTTPS address shown by T4 Code on your computer.");
   if (trimmed.length > MAX_URL_LENGTH) throw new Error("That address is too long.");
   const selectedProfile = normalizeMobileProfileId(profileId);
   if (clusterOperatorEnabled && selectedProfile !== DEFAULT_MOBILE_PROFILE_ID) {

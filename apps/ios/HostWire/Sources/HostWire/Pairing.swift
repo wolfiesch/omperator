@@ -197,6 +197,8 @@ public struct ConfirmationChallenge: Decodable, Equatable, Sendable {
 /// A parsed `t4-code://pair/<hostHint>/<6-digit code>` deep link.
 public struct PendingPair: Equatable, Sendable {
     public let hostHint: String
+    public let endpoint: String
+    public let tlsFingerprint: String?
     public let code: String
     /// Epoch milliseconds, matching the TS `issuedAt` (Date.now()).
     public let issuedAt: Double
@@ -212,7 +214,8 @@ public enum Pairing {
         return code
     }
 
-    /// Parse `t4-code://pair/<hostHint>/<code>` (pair-link.parsePairDeepLink).
+    /// Parse the base64url JSON pairing payload carried by
+    /// `t4-code://pair/<payload>`.
     /// Returns nil for any deviation: wrong scheme/host, extra components, or a
     /// malformed hint/code.
     public static func parseDeepLink(_ string: String, issuedAtMs: Double) -> PendingPair? {
@@ -223,12 +226,49 @@ public enum Pairing {
               comps.queryItems == nil, comps.fragment == nil
         else { return nil }
         let segments = comps.path.split(separator: "/").map(String.init).filter { !$0.isEmpty }
-        guard segments.count == 2 else { return nil }
-        let hint = segments[0]
-        let code = segments[1]
-        guard hint.wholeMatch(of: #/[A-Za-z0-9][A-Za-z0-9._-]{0,127}/#) != nil,
-              code.wholeMatch(of: #/\d{6}/#) != nil
+        guard segments.count == 1,
+              !segments[0].isEmpty,
+              segments[0].utf8.count <= 4096,
+              segments[0].wholeMatch(of: #/[A-Za-z0-9_-]+/#) != nil
         else { return nil }
-        return PendingPair(hostHint: hint, code: code, issuedAt: issuedAtMs)
+        var base64 = segments[0].replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        base64 += String(repeating: "=", count: (4 - base64.count % 4) % 4)
+        struct Payload: Decodable {
+            let version: Int
+            let hostHint: String
+            let endpoint: String
+            let tlsFingerprint: String?
+            let code: String
+        }
+        guard let data = Data(base64Encoded: base64),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              Set(object.keys).isSubset(of: Set(["version", "hostHint", "endpoint", "tlsFingerprint", "code"])),
+              Set(["version", "hostHint", "endpoint", "code"]).isSubset(of: Set(object.keys)),
+              let payload = try? JSONDecoder().decode(Payload.self, from: data),
+              payload.version == 1,
+              let endpoint = URL(string: payload.endpoint),
+              endpoint.host == payload.hostHint,
+              endpoint.path == "/v1/ws",
+              endpoint.user == nil,
+              endpoint.password == nil,
+              endpoint.query == nil,
+              endpoint.fragment == nil,
+              endpoint.scheme == "ws" || endpoint.scheme == "wss"
+        else { return nil }
+        let hint = payload.hostHint
+        let code = payload.code
+        guard hint.wholeMatch(of: #/[A-Za-z0-9][A-Za-z0-9._-]{0,127}/#) != nil,
+              code.wholeMatch(of: #/\d{6}/#) != nil,
+              payload.tlsFingerprint == nil || payload.tlsFingerprint?.wholeMatch(of: #/[0-9a-f]{64}/#) != nil,
+              endpoint.scheme == "wss" || payload.tlsFingerprint == nil
+        else { return nil }
+        return PendingPair(
+            hostHint: hint,
+            endpoint: payload.endpoint,
+            tlsFingerprint: payload.tlsFingerprint,
+            code: code,
+            issuedAt: issuedAtMs
+        )
     }
 }

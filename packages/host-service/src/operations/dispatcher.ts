@@ -188,8 +188,6 @@ export const COMMAND_FEATURE_BY_COMMAND: Readonly<Record<string, string>> = {
 	"workspace.recover": "workspace.lifecycle",
 	"host.watch": "host.watch",
 	"session.watch": "session.watch",
-	"session.release": "session.transfer",
-	"session.reclaim": "session.transfer",
 	"controller.lease.acquire": "controller.lease",
 	"controller.lease.renew": "controller.lease",
 	"controller.lease.release": "controller.lease",

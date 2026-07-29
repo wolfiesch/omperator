@@ -30,7 +30,7 @@ test("installs from the hosted-client titlebar without overflowing a phone", asy
   await page.setViewportSize({ width: 320, height: 568 });
   await page.goto(web.url, { waitUntil: "domcontentloaded" });
 
-  const install = page.getByRole("button", { name: "Install Omperator", exact: true });
+  const install = page.getByRole("button", { name: "Install T4 Code", exact: true });
   await expect(install).toBeVisible();
   await expect(install).toHaveCSS("width", "44px");
   const titlebarFits = await page.locator("header").evaluate((header) => {
@@ -74,8 +74,8 @@ test("installs from the hosted-client titlebar without overflowing a phone", asy
     .toBe(1);
 
   await page.evaluate(() => window.dispatchEvent(new Event("appinstalled")));
-  await expect(page.getByRole("button", { name: "Install Omperator", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Reload Omperator", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Install T4 Code", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Reload T4 Code", exact: true })).toHaveCount(0);
 });
 
 test("offers reload only from an installed standalone launch", async ({ page }) => {
@@ -97,8 +97,8 @@ test("offers reload only from an installed standalone launch", async ({ page }) 
   });
   await page.goto(web.url, { waitUntil: "domcontentloaded" });
 
-  await expect(page.getByRole("button", { name: "Reload Omperator", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Install Omperator", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Reload T4 Code", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Install T4 Code", exact: true })).toHaveCount(0);
 });
 
 test("serves a browser-readable standalone manifest", async ({ page }) => {
@@ -113,7 +113,7 @@ test("serves a browser-readable standalone manifest", async ({ page }) => {
   );
   expect(await response.json()).toMatchObject({
     id: "./",
-    name: "Omperator",
+    name: "T4 Code",
     start_url: "./",
     scope: "./",
     display: "standalone",

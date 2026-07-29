@@ -57,7 +57,7 @@ test("maintainer shell entrypoints remain syntactically valid", async () => {
   }
 });
 
-test("runner preflights the configured date helper before creating state", async () => {
+test("runner preflights the configured date helper before creating state", { skip: process.platform !== "linux" && "run.sh canonicalizes with GNU realpath -e" }, async () => {
   const scratch = await makeCanonicalTemporaryDirectory("t4-maintainer-date-");
   const stateRoot = join(scratch, "state");
   const missingDate = join(scratch, "missing-date");

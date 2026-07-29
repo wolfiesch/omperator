@@ -11,29 +11,40 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute } from "node:path";
 
-const REGISTRY_VERSION = 1;
+const REGISTRY_VERSION = 2;
 const MAX_REGISTRY_BYTES = 64 * 1024;
 const PS_TIMEOUT_MS = 2_000;
+const REGISTRATION_GRACE_MS = 250;
+const REGISTRATION_POLL_MS = 5;
+const TERMINATION_GRACE_MS = 2_000;
+const TERMINATION_POLL_MS = 50;
+const SYNC_WAIT_BUFFER = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
 
 export interface RpcChildIdentity {
 	readonly pid: number;
 	readonly pgid: number;
+	readonly bootId: string;
 	readonly startedAt: string;
 	readonly commandSha256: string;
 }
 
 export interface RpcChildRegistryDependencies {
 	readonly inspect?: (pid: number) => RpcChildIdentity | undefined;
-	readonly killGroup?: (pgid: number) => void;
+	readonly killGroup?: (pgid: number, signal: "SIGTERM" | "SIGKILL") => void;
+	readonly now?: () => number;
+	readonly waitSync?: (milliseconds: number) => void;
+	readonly wait?: (milliseconds: number) => Promise<void>;
 }
 
 interface RegistryFile {
-	readonly version: 1;
+	readonly version: 2;
+	readonly ownerNonce: string;
 	readonly owner: RpcChildIdentity;
 	readonly children: readonly RpcChildIdentity[];
 }
 
 interface RegistryState {
+	readonly ownerNonce: string;
 	readonly owner: RpcChildIdentity;
 	readonly children: readonly RpcChildIdentity[];
 }
@@ -56,7 +67,50 @@ function ps(pid: number, field: "pgid" | "lstart" | "command"): string | undefin
 	}
 }
 
+function bootIdentifier(): string | undefined {
+	try {
+		if (process.platform === "linux")
+			return readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+		if (process.platform === "darwin")
+			return execFileSync("/usr/sbin/sysctl", ["-n", "kern.boottime"], {
+				encoding: "utf8",
+				timeout: PS_TIMEOUT_MS,
+				maxBuffer: 1024,
+				stdio: ["ignore", "pipe", "ignore"],
+			}).trim();
+	} catch {}
+	return undefined;
+}
+
 function inspectProcess(pid: number): RpcChildIdentity | undefined {
+	const bootId = bootIdentifier();
+	if (bootId === undefined) return undefined;
+	if (process.platform === "linux") {
+		try {
+			const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+			const commandEnd = stat.lastIndexOf(")");
+			if (commandEnd < 0) return undefined;
+			const fields = stat.slice(commandEnd + 2).trim().split(/\s+/u);
+			const pgid = Number(fields[2]);
+			const startedAt = fields[19];
+			const command = readFileSync(`/proc/${pid}/cmdline`)
+				.toString("utf8")
+				.replaceAll("\0", " ")
+				.trim();
+			if (
+				!Number.isSafeInteger(pid) ||
+				pid <= 0 ||
+				!Number.isSafeInteger(pgid) ||
+				pgid <= 0 ||
+				!startedAt ||
+				!command
+			)
+				return undefined;
+			return { pid, pgid, bootId, startedAt, commandSha256: commandDigest(command) };
+		} catch {
+			return undefined;
+		}
+	}
 	const rawPgid = ps(pid, "pgid");
 	const startedAt = ps(pid, "lstart");
 	const command = ps(pid, "command");
@@ -70,7 +124,7 @@ function inspectProcess(pid: number): RpcChildIdentity | undefined {
 		command === undefined
 	)
 		return undefined;
-	return { pid, pgid, startedAt, commandSha256: commandDigest(command) };
+	return { pid, pgid, bootId, startedAt, commandSha256: commandDigest(command) };
 }
 
 function decodeIdentity(value: unknown): RpcChildIdentity {
@@ -78,13 +132,16 @@ function decodeIdentity(value: unknown): RpcChildIdentity {
 		throw new Error("rpc child registry is malformed");
 	const record = value as Record<string, unknown>;
 	if (
-		Object.keys(record).sort().join(",") !== "commandSha256,pgid,pid,startedAt" ||
+		Object.keys(record).sort().join(",") !== "bootId,commandSha256,pgid,pid,startedAt" ||
 		typeof record.pid !== "number" ||
 		!Number.isSafeInteger(record.pid) ||
 		record.pid <= 0 ||
 		typeof record.pgid !== "number" ||
 		!Number.isSafeInteger(record.pgid) ||
 		record.pgid <= 0 ||
+		typeof record.bootId !== "string" ||
+		record.bootId.length === 0 ||
+		record.bootId.length > 256 ||
 		typeof record.startedAt !== "string" ||
 		record.startedAt.length === 0 ||
 		record.startedAt.length > 128 ||
@@ -95,6 +152,7 @@ function decodeIdentity(value: unknown): RpcChildIdentity {
 	return {
 		pid: record.pid,
 		pgid: record.pgid,
+		bootId: record.bootId,
 		startedAt: record.startedAt,
 		commandSha256: record.commandSha256,
 	};
@@ -104,6 +162,7 @@ function sameIdentity(left: RpcChildIdentity, right: RpcChildIdentity): boolean 
 	return (
 		left.pid === right.pid &&
 		left.pgid === right.pgid &&
+		left.bootId === right.bootId &&
 		left.startedAt === right.startedAt &&
 		left.commandSha256 === right.commandSha256
 	);
@@ -116,8 +175,12 @@ function sameIdentity(left: RpcChildIdentity, right: RpcChildIdentity): boolean 
 export class RpcChildRegistry {
 	readonly #path: string;
 	readonly #inspect: (pid: number) => RpcChildIdentity | undefined;
-	readonly #killGroup: (pgid: number) => void;
+	readonly #killGroup: (pgid: number, signal: "SIGTERM" | "SIGKILL") => void;
+	readonly #now: () => number;
+	readonly #waitSync: (milliseconds: number) => void;
+	readonly #wait: (milliseconds: number) => Promise<void>;
 	readonly #owner: RpcChildIdentity;
+	readonly #ownerNonce = randomUUID();
 
 	constructor(path: string, dependencies: RpcChildRegistryDependencies = {}) {
 		if (!isAbsolute(path)) throw new Error("rpc child registry path must be absolute");
@@ -128,20 +191,39 @@ export class RpcChildRegistry {
 		this.#owner = owner;
 		this.#killGroup =
 			dependencies.killGroup ??
-			((pgid): void => {
-				process.kill(-pgid, "SIGKILL");
+			((pgid, signal): void => {
+				process.kill(-pgid, signal);
 			});
+		this.#now = dependencies.now ?? Date.now;
+		this.#waitSync =
+			dependencies.waitSync ??
+			(milliseconds => {
+				Atomics.wait(SYNC_WAIT_BUFFER, 0, 0, milliseconds);
+			});
+		this.#wait =
+			dependencies.wait ??
+			(milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)));
 	}
 
 	register(pid: number): RpcChildIdentity {
-		const identity = this.#inspect(pid);
+		const deadline = this.#now() + REGISTRATION_GRACE_MS;
+		let identity = this.#inspect(pid);
+		while (
+			(!identity || (identity.pid === pid && identity.pgid !== pid)) &&
+			this.#now() < deadline
+		) {
+			this.#waitSync(
+				Math.min(REGISTRATION_POLL_MS, Math.max(1, deadline - this.#now())),
+			);
+			identity = this.#inspect(pid);
+		}
 		if (!identity || identity.pid !== pid || identity.pgid !== pid)
 			throw new Error("rpc child did not start in a dedicated process group");
 		const state = this.#read();
 		if (state && !sameIdentity(state.owner, this.#owner) && state.children.length > 0)
 			throw new Error("rpc child registry belongs to another host process");
 		const children = state?.children ?? [];
-		this.#write(this.#owner, [...children.filter(child => child.pid !== pid), identity]);
+		this.#write(this.#ownerNonce, this.#owner, [...children.filter(child => child.pid !== pid), identity]);
 		return identity;
 	}
 
@@ -149,12 +231,13 @@ export class RpcChildRegistry {
 		const state = this.#read();
 		if (!state || !sameIdentity(state.owner, this.#owner)) return;
 		this.#write(
+			state.ownerNonce,
 			state.owner,
 			state.children.filter(child => !sameIdentity(child, identity)),
 		);
 	}
 
-	reap(): { readonly killed: readonly number[]; readonly skipped: readonly number[] } {
+	async reap(): Promise<{ readonly killed: readonly number[]; readonly skipped: readonly number[] }> {
 		const state = this.#read();
 		if (!state) return { killed: [], skipped: [] };
 		const liveOwner = this.#inspect(state.owner.pid);
@@ -172,16 +255,42 @@ export class RpcChildRegistry {
 				continue;
 			}
 			try {
-				this.#killGroup(current.pgid);
-				killed.push(current.pid);
+				this.#killGroup(current.pgid, "SIGTERM");
 			} catch (error) {
 				if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+					skipped.push(recorded.pid);
+					retained.push(recorded);
+					continue;
+				}
+				killed.push(recorded.pid);
+				continue;
+			}
+			const deadline = Date.now() + TERMINATION_GRACE_MS;
+			let afterTerm = this.#inspect(recorded.pid);
+			while (afterTerm && sameIdentity(recorded, afterTerm) && Date.now() < deadline) {
+				await this.#wait(Math.min(TERMINATION_POLL_MS, Math.max(1, deadline - Date.now())));
+				afterTerm = this.#inspect(recorded.pid);
+			}
+			if (!afterTerm) {
+				killed.push(recorded.pid);
+				continue;
+			}
+			if (!sameIdentity(recorded, afterTerm)) {
+				skipped.push(recorded.pid);
+				continue;
+			}
+			try {
+				this.#killGroup(afterTerm.pgid, "SIGKILL");
+				killed.push(recorded.pid);
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === "ESRCH") killed.push(recorded.pid);
+				else {
 					skipped.push(recorded.pid);
 					retained.push(recorded);
 				}
 			}
 		}
-		this.#write(state.owner, retained);
+		this.#write(state.ownerNonce, state.owner, retained);
 		return { killed, skipped };
 	}
 
@@ -207,20 +316,23 @@ export class RpcChildRegistry {
 			throw new Error("rpc child registry is malformed");
 		const record = parsed as Record<string, unknown>;
 		if (
-			Object.keys(record).sort().join(",") !== "children,owner,version" ||
+			Object.keys(record).sort().join(",") !== "children,owner,ownerNonce,version" ||
 			record.version !== REGISTRY_VERSION ||
+			typeof record.ownerNonce !== "string" ||
+			!/^[0-9a-f-]{36}$/u.test(record.ownerNonce) ||
 			record.owner === undefined ||
 			!Array.isArray(record.children) ||
 			record.children.length > 256
 		)
 			throw new Error("rpc child registry is malformed");
 		return {
+			ownerNonce: record.ownerNonce,
 			owner: decodeIdentity(record.owner),
 			children: record.children.map(decodeIdentity),
 		};
 	}
 
-	#write(owner: RpcChildIdentity, children: readonly RpcChildIdentity[]): void {
+	#write(ownerNonce: string, owner: RpcChildIdentity, children: readonly RpcChildIdentity[]): void {
 		if (children.length === 0) {
 			try {
 				unlinkSync(this.#path);
@@ -231,7 +343,7 @@ export class RpcChildRegistry {
 		}
 		mkdirSync(dirname(this.#path), { recursive: true, mode: 0o700 });
 		const temporary = `${this.#path}.tmp-${process.pid}-${randomUUID()}`;
-		const body: RegistryFile = { version: REGISTRY_VERSION, owner, children };
+		const body: RegistryFile = { version: REGISTRY_VERSION, ownerNonce, owner, children };
 		try {
 			writeFileSync(temporary, `${JSON.stringify(body)}\n`, { flag: "wx", mode: 0o600 });
 			renameSync(temporary, this.#path);

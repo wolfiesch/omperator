@@ -1,6 +1,5 @@
 import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { DEVICE_CAPABILITIES } from "@t4-code/host-wire";
 import { mkdtemp, stat, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +10,7 @@ import {
 	DefaultRedactor,
 	JsonlAuditSink,
 	LeaseRegistry,
+	LocalPairingTicketIssuer,
 	OutboundQueue,
 	SecureConfirmationStore,
 	SqliteDeviceRegistry,
@@ -101,6 +101,33 @@ describe("security core", () => {
 		);
 		expect(() => registry.authenticate(result.deviceId, "wrong", identity, "connection-a")).toThrow();
 		registry.close();
+	});
+
+	it("replays a lost pair.ok result idempotently without consuming enrollment twice", () => {
+		const registry = new FakeRegistry();
+		const pairing = new LocalPairingTicketIssuer(
+			registry,
+			new Uint8Array(32).fill(1),
+			clock,
+			{ bytes: length => new Uint8Array(length).fill(7) },
+		);
+		const ticket = pairing.issue(["sessions.read"]);
+		const first = pairing.consume(
+			ticket.code,
+			identity,
+			"installation-device-id",
+			{ label: "iPhone", platform: "ios" },
+			["sessions.read"],
+		);
+		const retry = pairing.consume(
+			ticket.code,
+			identity,
+			"installation-device-id",
+			{ label: "iPhone", platform: "ios" },
+			["sessions.read"],
+		);
+		expect(retry).toEqual(first);
+		expect(registry.records.size).toBe(1);
 	});
 
 	it("binds authorization to the authenticated capability intersection", () => {
@@ -484,33 +511,6 @@ it("device schema version is durable across close and reopen", async () => {
 	expect(database.query("PRAGMA user_version").get()).toEqual({ user_version: 1 });
 	database.close();
 	const second = new SqliteDeviceRegistry(path, clock);
-	second.close();
-});
-
-it("reopens devices whose capability JSON exceeds the ordinary row-field bound", async () => {
-	const root = await mkdtemp(join(tmpdir(), "omp-capabilities-"));
-	const path = join(root, "device.sqlite");
-	const token = "A".repeat(43);
-	const first = new SqliteDeviceRegistry(path, clock);
-	first.create(
-		{
-			deviceId: "full-capability-device",
-			identityKey: JSON.stringify([identity.nodeId, identity.login, identity.hostId, identity.tailnetIp]),
-			capabilities: DEVICE_CAPABILITIES,
-			metadata: { label: "local companion" },
-			createdAt: 1,
-			lastSeenAt: null,
-			tokenExpiresAt: clock.now() + 1_000,
-			revokedAt: null,
-			epoch: 0,
-		},
-		token,
-	);
-	first.close();
-	expect(JSON.stringify(DEVICE_CAPABILITIES).length).toBeGreaterThan(256);
-
-	const second = new SqliteDeviceRegistry(path, clock);
-	expect(second.get("full-capability-device")?.capabilities).toEqual(DEVICE_CAPABILITIES);
 	second.close();
 });
 

@@ -329,7 +329,7 @@ export function AgentViewScreen({
           <EmptyHeader>
             <EmptyTitle>Agent View requires the desktop runtime</EmptyTitle>
             <EmptyDescription>
-              Open Omperator on your desktop to monitor and control agents running on connected hosts.
+              Open T4 Code on your desktop to monitor and control agents running on connected hosts.
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>

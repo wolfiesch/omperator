@@ -25,7 +25,7 @@ const FEATURES: readonly Feature[] = [
   },
   {
     title: "One machine, many profiles",
-    body: "Omperator finds the named OMP profiles on your machine and runs a separate app server for each. Start, stop, or restart a profile from the app; each keeps its own sessions and logs.",
+    body: "T4 Code finds the named OMP profiles on your machine and runs a separate app server for each. Start, stop, or restart a profile from the app; each keeps its own sessions and logs.",
   },
   {
     title: "Agents, terminals, review",
@@ -41,7 +41,7 @@ const FEATURES: readonly Feature[] = [
   },
   {
     title: "OMP owns the truth",
-    body: "Oh My Pi is the runtime and settings authority. Settings, account usage, and broker status are read per host and shown redacted. Omperator renders what the host reports; it never guesses.",
+    body: "Oh My Pi is the runtime and settings authority. Settings, account usage, and broker status are read per host and shown redacted. T4 Code renders what the host reports; it never guesses.",
   },
 ];
 
@@ -85,7 +85,7 @@ export function Landing() {
         <div className="container topbar-inner">
           <a className="wordmark" href="/">
             <img src="/omp-mark.svg" alt="" width="26" height="20" />
-            Omperator
+            T4 Code
           </a>
           <nav className="topbar-nav" aria-label="Site">
             <a href="/docs/">Docs</a>
@@ -107,7 +107,7 @@ export function Landing() {
           </p>
           <h1>The open-source client for Oh My Pi</h1>
           <p className="sub">
-            Omperator puts your OMP sessions, agents, terminals, files, and reviews in one place, from
+            T4 Code puts your OMP sessions, agents, terminals, files, and reviews in one place, from
             your workstation or Android phone. Built for people who live in OMP all day.
           </p>
           <DownloadButtons platform={platform} />
@@ -121,11 +121,11 @@ export function Landing() {
           <figure className="shot">
             <img
               src="/screenshots/t4-code-main.png"
-              alt="Omperator main window: session rail on the left, a streaming session transcript in the center, and the composer at the bottom."
-              width="1280"
-              height="720"
+              alt="T4 Code main window: session rail on the left, a streaming session transcript in the center, and the composer at the bottom."
+              width="1600"
+              height="1000"
             />
-            <figcaption>A live session streaming in Omperator.</figcaption>
+            <figcaption>A live session streaming in T4 Code.</figcaption>
           </figure>
         </section>
 
@@ -134,7 +134,7 @@ export function Landing() {
             <h2 id="features-title">What it does</h2>
             <p className="section-lede">
               A desktop control surface and Android thin client for the OMP runtime. There is no
-              cloud service and no account. Omperator talks straight to your host over its typed
+              cloud service and no account. T4 Code talks straight to your host over its typed
               protocol.
             </p>
             <div className="feature-grid">
@@ -150,8 +150,8 @@ export function Landing() {
                 <img
                   src="/screenshots/t4-code-agents.png"
                   alt="The agents pane listing running subagents next to the session transcript."
-                  width="1280"
-                  height="720"
+                  width="1600"
+                  height="1000"
                   loading="lazy"
                 />
                 <figcaption>Agents, as the host reports them.</figcaption>
@@ -160,8 +160,8 @@ export function Landing() {
                 <img
                   src="/screenshots/t4-code-settings.png"
                   alt="The settings screen with model roles mapped to models from the host's catalog."
-                  width="1280"
-                  height="720"
+                  width="1600"
+                  height="1000"
                   loading="lazy"
                 />
                 <figcaption>Model roles, staged locally, confirmed by the host.</figcaption>
@@ -172,12 +172,24 @@ export function Landing() {
 
         <section className="section" aria-labelledby="handoff-title">
           <div className="container">
-            <h2 id="handoff-title">Move between Omperator and the terminal</h2>
+            <h2 id="handoff-title">Start in the terminal, continue in T4</h2>
             <p className="section-lede">
               {renderInline(
-                `Choose **Continue in terminal** to stop Omperator's writer safely and resume the same session with the shown \`t4-omp\` command. Omperator follows along while the terminal owns it and takes control back after that terminal exits. Sessions that start in \`t4-omp\` still move the other way with \`/continue-in-t4\`. Your existing \`omp\` command stays untouched; sessions without the compatible handoff signal remain safely read-only.`,
+                `A session started with the optional \`t4-omp\` terminal command shows up in T4 Code read-only while the terminal owns it, following along as complete transcript records land on disk. Run \`/continue-in-t4\` there (or just exit it) and T4 takes over. Your existing \`omp\` command stays untouched; sessions without the compatible handoff signal remain safely read-only.`,
               )}
             </p>
+            <figure className="shot">
+              <img
+                src="/screenshots/t4-code-tui-handoff.gif"
+                alt="An OMP TUI session followed in T4 Code: the transcript fills in read-only under an 'Active in another app' banner, /continue-in-t4 runs in the terminal, T4 takes over, and the composer accepts input again."
+                width="800"
+                height="567"
+                loading="lazy"
+              />
+              <figcaption>
+                Following a terminal session live, then taking over with /continue-in-t4.
+              </figcaption>
+            </figure>
           </div>
         </section>
 
@@ -186,7 +198,7 @@ export function Landing() {
             <h2 id="install-title">Install</h2>
             <p className="section-lede">
               {renderInline(
-                `Omperator needs an [Oh My Pi](${OMP_URL}) build with desktop appserver support on the machine that runs your sessions. The [docs](/docs/) cover first run, pairing, and troubleshooting.`,
+                `T4 Code needs an [Oh My Pi](${OMP_URL}) build with desktop appserver support on the machine that runs your sessions. The [docs](/docs/) cover first run, pairing, and troubleshooting.`,
               )}
             </p>
             <div className="mobile-install-grid">
@@ -194,7 +206,7 @@ export function Landing() {
                 <p className="platform-label">Available now</p>
                 <h3>Android APK</h3>
                 <p>
-                  Install Omperator directly on your phone, then connect to the OMP host you already
+                  Install T4 Code directly on your phone, then connect to the OMP host you already
                   run.
                 </p>
                 <a className="btn btn-primary" href={primaryAsset("android").url}>
@@ -224,21 +236,27 @@ export function Landing() {
               <div className="install-card">
                 <h3>macOS</h3>
                 <p className="arch">Apple Silicon · .dmg or .zip</p>
-                <p>Drag Omperator into Applications, then open it normally.</p>
+                <pre className="code">
+                  <code>xattr -dr com.apple.quarantine "/Applications/T4 Code.app"</code>
+                </pre>
+                <p>
+                  Drag the app to Applications first. The command clears Gatekeeper's quarantine
+                  flag; right-click → Open works too.
+                </p>
               </div>
             </div>
             <div className="notice notice-spaced" role="note">
-              <strong>Signed release:</strong> the v{RELEASE_VERSION} macOS build uses hardened
-              runtime, your project&apos;s pinned Developer ID identity, Apple notarization, and a
-              stapled ticket. The release workflow verifies Gatekeeper acceptance before
-              publication.
+              <strong>Heads up:</strong> the v{RELEASE_VERSION} macOS build is unsigned and not
+              notarized, so macOS warns before first launch. If you would rather not run an unsigned
+              binary, {renderInline(`[build it from source](/docs/#build-from-source)`)}. The whole
+              app is public.
             </div>
           </div>
         </section>
 
         <section className="band" id="download" aria-labelledby="download-title">
           <div className="container">
-            <h2 id="download-title">Get Omperator</h2>
+            <h2 id="download-title">Get T4 Code</h2>
             <p>Android and desktop builds are ready now. iOS TestFlight is coming soon.</p>
             <DownloadButtons platform={platform} />
             <ul className="asset-list">

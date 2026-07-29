@@ -105,7 +105,7 @@ export function TailnetAddressForm({
         })
           .catch((error: unknown) => {
             if (controller.signal.aborted) return;
-            setMessage(error instanceof Error ? error.message : "Omperator could not reach that host.");
+            setMessage(error instanceof Error ? error.message : "T4 Code could not reach that host.");
           })
           .finally(() => {
             cancelSignal?.removeEventListener("abort", cancel);
@@ -203,7 +203,7 @@ export function MobileConnectionScreen({ startupMessage }: { readonly startupMes
         </div>
         <h1 className="text-balance font-heading font-semibold text-2xl">Connect to your T4 host</h1>
         <p className="mt-2 max-w-[62ch] text-pretty text-muted-foreground text-sm leading-relaxed">
-          Omperator runs the interface on this phone. OMP and your projects stay on your computer.
+          T4 Code runs the interface on this phone. OMP and your projects stay on your computer.
         </p>
 
         <div className="mt-8">
@@ -223,7 +223,7 @@ export function MobileConnectionScreen({ startupMessage }: { readonly startupMes
           <div className="flex gap-3 py-3.5">
             <LockKeyhole aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
             <p className="text-sm leading-relaxed">
-              If the host asks to pair, Omperator will show the exact command and six-digit code flow.
+              If the host asks to pair, T4 Code will show the exact command and six-digit code flow.
             </p>
           </div>
         </div>

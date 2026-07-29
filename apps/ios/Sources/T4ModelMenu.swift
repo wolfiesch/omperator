@@ -28,34 +28,10 @@ private func groupByProvider(_ items: [CatalogItem]) -> [T4ProviderGroup] {
 struct T4ModelMenuButton<Content: View>: View {
     let session: SessionRef
     @ObservedObject var store: T4SessionStore
-    @ObservedObject private var connectionModel: T4ConnectionInventoryModel
-    @ObservedObject private var catalogModel: T4CatalogSettingsModel
-    @ObservedObject private var promptModel: T4PromptLeaseModel
     let theme: Theme
     @ViewBuilder let label: () -> Content
 
-    init(
-        session: SessionRef,
-        store: T4SessionStore,
-        theme: Theme,
-        @ViewBuilder label: @escaping () -> Content
-    ) {
-        self.session = session
-        self.store = store
-        self._connectionModel = ObservedObject(wrappedValue: store.connectionModel)
-        self._catalogModel = ObservedObject(wrappedValue: store.catalogSettingsModel)
-        self._promptModel = ObservedObject(wrappedValue: store.promptModel)
-        self.theme = theme
-        self.label = label
-    }
-
-    private var catalogModels: [CatalogItem] {
-        catalogModel.catalog
-            .filter { $0.kind == .model && $0.supported != false }
-            .sorted { $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending }
-    }
-
-    private var providers: [T4ProviderGroup] { groupByProvider(catalogModels) }
+    private var providers: [T4ProviderGroup] { groupByProvider(store.catalogModels) }
 
     var body: some View {
         Menu {
@@ -65,7 +41,7 @@ struct T4ModelMenuButton<Content: View>: View {
         } label: {
             label()
         }
-        .disabled(!connectionModel.connected || !session.t4IsWritable)
+        .disabled(!store.connected)
     }
 
     @ViewBuilder private var modelContent: some View {
@@ -83,7 +59,7 @@ struct T4ModelMenuButton<Content: View>: View {
                 Label(group.name, systemImage: "chevron.right")
             }
         }
-        if catalogModels.isEmpty {
+        if store.catalogModels.isEmpty {
             Text("No models in the host catalog")
         }
     }
@@ -103,7 +79,7 @@ struct T4ModelMenuButton<Content: View>: View {
             }
 
             Toggle(isOn: Binding(
-                get: { promptModel.fastBySession[session.sessionId] ?? false },
+                get: { store.fastBySession[session.sessionId] ?? false },
                 set: { enabled in Task { await store.setFast(sessionId: session.sessionId, enabled: enabled) } }
             )) {
                 Label("Fast mode", systemImage: "bolt")

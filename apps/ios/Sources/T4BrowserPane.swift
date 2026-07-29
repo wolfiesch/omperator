@@ -26,13 +26,23 @@ import WebKit
 /// @State URL string would either loop on re-render or swallow repeats.
 enum T4BrowserAction: Equatable { case back, forward, reload }
 
+/// One captured element tap from "design mode" annotation: a concise CSS
+/// selector, a short visible-text snippet, and the page URL the element
+/// lives on. Reported by the webview's injected one-shot click handler and
+/// shown in the note sheet before composing a prompt.
+struct DesignTapCapture: Identifiable {
+    let selector: String
+    let snippet: String
+    let url: String
+    var id: String { selector + snippet + url }
+}
+
 /// Browser sheet for one session. Presented from the session detail header's
 /// safari button. Owns the WKWebView via `T4BrowserWebView`; the URL field is
 /// seeded from `store.browserURL(for:)` and persisted on submit/navigation.
 struct T4BrowserPane: View {
     let session: SessionRef
     @ObservedObject var store: T4SessionStore
-    @ObservedObject private var previewModel: T4PreviewBrowserModel
     @EnvironmentObject var theme: ThemeStore
     @Binding var isPresented: Bool
 
@@ -50,6 +60,14 @@ struct T4BrowserPane: View {
     /// The latest decoded capture image (from `store.previewCapture`), shown
     /// full-fit in place of the webview while `showingCapture` is true.
     @State private var captureImage: PlatformImage?
+    /// "Design mode lite": when true, the next tap in the webview is
+    /// intercepted to capture an element selector + snippet. One-shot —
+    /// cleared after a single capture (or when toggled off).
+    @State private var annotating = false
+    /// The most recent captured tap, presented as the note sheet's `item`.
+    @State private var tapCapture: DesignTapCapture?
+    /// The user's note typed in the annotation sheet.
+    @State private var note = ""
     /// Whether the capture view is presented over the webview.
     @State private var showingCapture = false
     @FocusState private var urlFieldFocused: Bool
@@ -58,7 +76,6 @@ struct T4BrowserPane: View {
     init(session: SessionRef, store: T4SessionStore, isPresented: Binding<Bool>) {
         self.session = session
         self.store = store
-        self._previewModel = ObservedObject(wrappedValue: store.previewModel)
         self._isPresented = isPresented
         let initial = store.browserURL(for: session.sessionId)
         self._loadURL = State(initialValue: initial)
@@ -81,7 +98,9 @@ struct T4BrowserPane: View {
                     canGoBack: $canGoBack,
                     canGoForward: $canGoForward,
                     loading: $loading,
-                    onNavigated: { resolved in handleNavigated(resolved) }
+                    annotating: annotating,
+                    onNavigated: { resolved in handleNavigated(resolved) },
+                    onTapCapture: { capture in handleTapCapture(capture) }
                 )
                 .background(t.bg2)
             }
@@ -101,6 +120,10 @@ struct T4BrowserPane: View {
             // Opportunistic host preview launch — no-op when unsupported.
             await store.openPreview(sessionId: session.sessionId, url: loadURL)
         }
+        // Design-mode note sheet: selector + snippet + a note field. Send
+        // builds a structured prompt and prefills the session composer (via
+        // the store's pendingComposerText channel) without auto-sending.
+        .sheet(item: $tapCapture) { _ in annotationSheet }
     }
 
     /// Toolbar: back, forward, reload, editable monospaced URL field, share.
@@ -145,6 +168,7 @@ struct T4BrowserPane: View {
                 .focused($urlFieldFocused)
                 .onSubmit { submitURL() }
             captureButton
+            annotateButton
             shareButton
         }
         .padding(.horizontal, 10)
@@ -230,7 +254,7 @@ struct T4BrowserPane: View {
     /// Whether a host preview is tracked for this session (gates the Capture
     /// button). The pane still renders the URL directly when false.
     private var canCapture: Bool {
-        previewModel.previewIdBySession[session.sessionId] != nil
+        store.previewIdBySession[session.sessionId] != nil
     }
 
     /// Capture bar shown in place of the toolbar while the capture view is
@@ -263,6 +287,106 @@ struct T4BrowserPane: View {
         guard let image else { return }
         captureImage = image
         showingCapture = true
+    }
+
+    /// "Design mode lite" toggle. When active, the next webview tap is
+    /// intercepted to capture an element; the button stays highlighted until
+    /// that one-shot capture resolves (or the user toggles it off).
+    private var annotateButton: some View {
+        Button { annotating.toggle() } label: {
+            Image(systemName: "cursorarrow.rays")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(annotating ? t.accent : t.txt)
+                .frame(width: 28, height: 28)
+        }
+        .press()
+        .accessibilityLabel(annotating ? "Cancel annotation" : "Annotate an element")
+    }
+
+    /// A webview tap was captured — present the note sheet and end the
+    /// one-shot annotate mode so subsequent taps navigate normally.
+    private func handleTapCapture(_ capture: DesignTapCapture) {
+        annotating = false
+        note = ""
+        tapCapture = capture
+    }
+
+    /// Note sheet: shows the captured selector + snippet and asks what should
+    /// change. Send builds a structured prompt and prefills the composer.
+    private var annotationSheet: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Annotate element")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(t.txt)
+            if let capture = tapCapture {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(capture.url)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(t.txtLabel)
+                        .lineLimit(1).truncationMode(.middle)
+                    Text(capture.selector)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(t.txtBody)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if !capture.snippet.isEmpty {
+                        Text("\u{201C}\(capture.snippet)\u{201D}")
+                            .font(.bodyF(12))
+                            .foregroundStyle(t.txtMuted)
+                            .lineLimit(2)
+                    }
+                }
+                .padding(10)
+                .background(t.bg2, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+            TextField("What should change?", text: $note, axis: .vertical)
+                .font(.bodyF(14))
+                .foregroundStyle(t.txt)
+                .tint(t.interactiveAccent)
+                .lineLimit(1...4)
+                #if os(iOS)
+                .textInputAutocapitalization(.sentences)
+                #endif
+                .padding(.horizontal, 10).padding(.vertical, 8)
+                .background(t.bg2)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(t.line, lineWidth: 0.5))
+            HStack(spacing: 12) {
+                Spacer()
+                Button("Cancel") { tapCapture = nil; note = "" }
+                    .foregroundStyle(t.txtMuted)
+                Button {
+                    sendAnnotation()
+                } label: {
+                    Text("Send")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 16).padding(.vertical, 7)
+                        .background(t.accent, in: Capsule())
+                }
+                .disabled(note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: 420)
+        .background(t.bg)
+        #if os(iOS)
+        .presentationDetents([.medium])
+        #endif
+    }
+
+    /// Build the structured design prompt and prefill the session composer.
+    /// Does NOT auto-send — the user reviews and sends from the composer.
+    private func sendAnnotation() {
+        guard let capture = tapCapture else { return }
+        let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedNote.isEmpty else { return }
+        // Flatten so the prompt is a single readable line for the composer.
+        let selector = capture.selector.replacingOccurrences(of: "\n", with: " ")
+        let snippet = capture.snippet.replacingOccurrences(of: "\n", with: " ")
+        let prompt = "[design] \(capture.url) element `\(selector)` (\"\(snippet)\"): \(trimmedNote)"
+        store.pendingComposerText = prompt
+        tapCapture = nil
+        note = ""
     }
 }
 
@@ -318,7 +442,12 @@ struct T4BrowserWebView: View {
     @Binding var canGoBack: Bool
     @Binding var canGoForward: Bool
     @Binding var loading: Bool
+    /// When true, the coordinator installs a one-shot click handler in the
+    /// webview that captures the tapped element and reports it via
+    /// `onTapCapture`. Cleared (set false) by the pane after one capture.
+    let annotating: Bool
     let onNavigated: (String) -> Void
+    let onTapCapture: (DesignTapCapture) -> Void
 
     var body: some View {
         #if os(iOS)
@@ -329,7 +458,9 @@ struct T4BrowserWebView: View {
             canGoBack: $canGoBack,
             canGoForward: $canGoForward,
             loading: $loading,
-            onNavigated: onNavigated
+            annotating: annotating,
+            onNavigated: onNavigated,
+            onTapCapture: onTapCapture
         )
         #else
         AppKitBrowserWebView(
@@ -339,24 +470,31 @@ struct T4BrowserWebView: View {
             canGoBack: $canGoBack,
             canGoForward: $canGoForward,
             loading: $loading,
-            onNavigated: onNavigated
+            annotating: annotating,
+            onNavigated: onNavigated,
+            onTapCapture: onTapCapture
         )
         #endif
     }
 }
 
-/// Shared WKWebView holder + navigation delegate. Created once per
-/// representable, retained by SwiftUI across updates so page state survives
-/// re-renders.
-final class T4BrowserCoordinator: NSObject, WKNavigationDelegate {
+final class T4BrowserCoordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     let webView: WKWebView
 
     var canGoBack: Binding<Bool>
     var canGoForward: Binding<Bool>
     var loading: Binding<Bool>
     var onNavigated: (String) -> Void
+    /// Reports a captured element tap from the injected JS handler. Set by
+    /// the representable on each update.
+    var onTapCapture: ((DesignTapCapture) -> Void)?
     private var lastLoadedURL: String?
     private var lastActionToken: Int = -1
+    /// Mirrors the last `annotating` value applied so install/remove runs
+    /// only on transitions, not every updateUIView pass.
+    private var lastAnnotating = false
+    /// The message-handler name bridging the injected JS → coordinator.
+    static let tapMessageName = "designModeTap"
 
     init(canGoBack: Binding<Bool>,
          canGoForward: Binding<Bool>,
@@ -373,7 +511,16 @@ final class T4BrowserCoordinator: NSObject, WKNavigationDelegate {
         self.loading = loading
         self.onNavigated = onNavigated
         super.init()
+        // Register the design-mode tap bridge; the webview's configuration
+        // shares this userContentController, so postMessage calls land here.
+        webView.configuration.userContentController.add(self, name: Self.tapMessageName)
         webView.navigationDelegate = self
+    }
+
+    deinit {
+        // Drop the handler ref so a reused userContentController doesn't leak
+        // the coordinator (retain-cycle) once the pane is dismissed.
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: Self.tapMessageName)
     }
 
     /// Sync SwiftUI state from the webview. MUST be deferred: apply() runs
@@ -385,8 +532,9 @@ final class T4BrowserCoordinator: NSObject, WKNavigationDelegate {
 
     /// Apply the latest load URL + action token. A new token runs the named
     /// action once; a changed loadURL loads the page once. Re-renders with
-    /// unchanged inputs are no-ops.
-    func apply(loadURL: String, action: T4BrowserAction, actionToken: Int) {
+    /// unchanged inputs are no-ops. `annotating` installs/removes the one-shot
+    /// element-capture click handler on transitions only.
+    func apply(loadURL: String, action: T4BrowserAction, actionToken: Int, annotating: Bool) {
         if actionToken != lastActionToken {
             lastActionToken = actionToken
             switch action {
@@ -398,6 +546,10 @@ final class T4BrowserCoordinator: NSObject, WKNavigationDelegate {
         if loadURL != lastLoadedURL, let target = URL(string: loadURL) {
             lastLoadedURL = loadURL
             webView.load(URLRequest(url: target))
+        }
+        if annotating != lastAnnotating {
+            lastAnnotating = annotating
+            if annotating { installTapHandler() } else { removeTapHandler() }
         }
         syncStateDeferred()
     }
@@ -411,6 +563,73 @@ final class T4BrowserCoordinator: NSObject, WKNavigationDelegate {
         }
     }
 
+    // MARK: Design-mode tap capture
+
+    /// Inject a one-shot capture-phase click listener. On the next click it
+    /// prevents default, builds a concise CSS selector for the target (id →
+    /// tag.class chain with nth-of-type disambiguation), grabs a short text
+    /// snippet + the page URL, removes itself, and posts the payload back to
+    /// the coordinator via the registered message handler.
+    private func installTapHandler() {
+        let js = """
+        (function(){
+          if (window.__t4DesignTap) { document.removeEventListener('click', window.__t4DesignTap, true); }
+          function esc(s){ return (window.CSS && CSS.escape) ? CSS.escape(s) : String(s).replace(/[^a-zA-Z0-9_-]/g, '\\\\$&'); }
+          function buildSelector(el){
+            var parts = [];
+            var cur = el;
+            while (cur && cur.nodeType === 1 && cur !== document.documentElement) {
+              if (cur.id) { parts.unshift('#' + esc(cur.id)); break; }
+              var tag = cur.tagName.toLowerCase();
+              var part = tag;
+              var cls = (cur.className && typeof cur.className === 'string') ? cur.className.trim().split(/\\s+/).filter(Boolean) : [];
+              if (cls.length) { part += '.' + cls.map(esc).join('.'); }
+              var sibs = Array.from(cur.parentNode.children).filter(function(n){ return n.tagName === cur.tagName; });
+              if (sibs.length > 1) { part += ':nth-of-type(' + (sibs.indexOf(cur) + 1) + ')'; }
+              parts.unshift(part);
+              cur = cur.parentNode;
+            }
+            return parts.join(' > ');
+          }
+          function handler(e){
+            e.preventDefault(); e.stopPropagation();
+            document.removeEventListener('click', handler, true);
+            window.__t4DesignTap = null;
+            var el = e.target;
+            while (el && el.nodeType !== 1 && el.parentNode) { el = el.parentNode; }
+            if (!el || el.nodeType !== 1) { return; }
+            var selector = buildSelector(el);
+            if (selector.length > 120) { selector = selector.slice(0, 117) + '...'; }
+            var snippet = (el.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 80);
+            try { webkit.messageHandlers.designModeTap.postMessage({ selector: selector, snippet: snippet, url: location.href }); } catch(_) {}
+          }
+          window.__t4DesignTap = handler;
+          document.addEventListener('click', handler, true);
+        })();
+        """
+        webView.evaluateJavaScript(js)
+    }
+
+    /// Tear down the injected listener without firing it (user toggled off,
+    /// or the pane is resetting annotate mode after a capture).
+    private func removeTapHandler() {
+        webView.evaluateJavaScript(
+            "(function(){ if (window.__t4DesignTap) { document.removeEventListener('click', window.__t4DesignTap, true); window.__t4DesignTap = null; } })();"
+        )
+    }
+
+    // MARK: WKScriptMessageHandler
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == Self.tapMessageName,
+              let body = message.body as? [String: Any],
+              let selector = body["selector"] as? String,
+              let url = body["url"] as? String else { return }
+        let snippet = (body["snippet"] as? String) ?? ""
+        // Delivered on the main thread by WebKit — safe to invoke SwiftUI cb.
+        onTapCapture?(DesignTapCapture(selector: selector, snippet: snippet, url: url))
+    }
+
     // MARK: WKNavigationDelegate
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
@@ -419,6 +638,9 @@ final class T4BrowserCoordinator: NSObject, WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         syncState()
+        // A new document drops the injected handler — re-arm if annotate
+        // mode is still on so the user doesn't have to toggle again.
+        if lastAnnotating { installTapHandler() }
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
@@ -446,7 +668,9 @@ struct UIKitBrowserWebView: UIViewRepresentable {
     @Binding var canGoBack: Bool
     @Binding var canGoForward: Bool
     @Binding var loading: Bool
+    let annotating: Bool
     let onNavigated: (String) -> Void
+    let onTapCapture: (DesignTapCapture) -> Void
 
     func makeCoordinator() -> T4BrowserCoordinator {
         T4BrowserCoordinator(canGoBack: $canGoBack,
@@ -468,14 +692,15 @@ struct UIKitBrowserWebView: UIViewRepresentable {
         context.coordinator.canGoForward = $canGoForward
         context.coordinator.loading = $loading
         context.coordinator.onNavigated = onNavigated
-        context.coordinator.apply(loadURL: loadURL, action: action, actionToken: actionToken)
+        context.coordinator.onTapCapture = onTapCapture
+        context.coordinator.apply(loadURL: loadURL, action: action, actionToken: actionToken, annotating: annotating)
     }
 }
 #else
 import AppKit
-
 /// macOS WKWebView bridge. The webview fills the pane; the coordinator is
 /// created once and reused.
+
 struct AppKitBrowserWebView: NSViewRepresentable {
     let loadURL: String
     let action: T4BrowserAction
@@ -483,7 +708,9 @@ struct AppKitBrowserWebView: NSViewRepresentable {
     @Binding var canGoBack: Bool
     @Binding var canGoForward: Bool
     @Binding var loading: Bool
+    let annotating: Bool
     let onNavigated: (String) -> Void
+    let onTapCapture: (DesignTapCapture) -> Void
 
     func makeCoordinator() -> T4BrowserCoordinator {
         T4BrowserCoordinator(canGoBack: $canGoBack,
@@ -503,7 +730,8 @@ struct AppKitBrowserWebView: NSViewRepresentable {
         context.coordinator.canGoForward = $canGoForward
         context.coordinator.loading = $loading
         context.coordinator.onNavigated = onNavigated
-        context.coordinator.apply(loadURL: loadURL, action: action, actionToken: actionToken)
+        context.coordinator.onTapCapture = onTapCapture
+        context.coordinator.apply(loadURL: loadURL, action: action, actionToken: actionToken, annotating: annotating)
     }
 }
 #endif

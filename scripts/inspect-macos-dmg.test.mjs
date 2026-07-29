@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 
 import { findMountedApp, inspectMacosDmg } from "./inspect-macos-dmg.mjs";
 
-const dmgPath = "/tmp/Omperator-0.1.17-mac-arm64.dmg";
+const dmgPath = "/tmp/T4-Code-0.1.17-mac-arm64.dmg";
 const mountPoint = "/tmp/t4-code-dmg-test";
 
 function directory(name) {
@@ -18,7 +18,7 @@ function fixture(overrides = {}) {
     platform: "darwin",
     isFile: () => true,
     createMountPoint: () => mountPoint,
-    readMountedEntries: () => [directory("Omperator.app")],
+    readMountedEntries: () => [directory("T4 Code.app")],
     resolveAppRoot: (path) => `${path}/Contents`,
     inspectArtifact: (path) => {
       calls.push(["inspect", path]);
@@ -45,7 +45,7 @@ test("DMG inspection mounts read-only, inspects the app, detaches, then removes 
       mountPoint,
       dmgPath,
     ],
-    ["inspect", `${mountPoint}/Omperator.app/Contents`],
+    ["inspect", `${mountPoint}/T4 Code.app/Contents`],
     ["hdiutil", "detach", mountPoint],
     ["remove", mountPoint],
   ]);
@@ -93,8 +93,8 @@ test("DMG inspection fails closed and preserves the mount point when detach cann
 
 test("mounted DMGs must contain exactly one application bundle", () => {
   assert.equal(
-    findMountedApp(mountPoint, () => [directory("Omperator.app")]),
-    `${mountPoint}/Omperator.app`,
+    findMountedApp(mountPoint, () => [directory("T4 Code.app")]),
+    `${mountPoint}/T4 Code.app`,
   );
   assert.throws(() => findMountedApp(mountPoint, () => []), /found 0/);
   assert.throws(
@@ -106,7 +106,7 @@ test("mounted DMGs must contain exactly one application bundle", () => {
 test("release workflow inspects the DMG before staging it for publication", () => {
   const workflow = readFileSync(resolve(import.meta.dirname, "../.github/workflows/release.yml"), "utf8");
   const inspect = workflow.indexOf("pnpm inspect:dmg -- release/*.dmg");
-  const stage = workflow.indexOf("- name: Stage macOS artifacts");
+  const stage = workflow.indexOf("cp release/T4-Code-*.dmg");
   assert.ok(inspect >= 0, "release workflow must invoke the DMG inspector");
   assert.ok(stage > inspect, "DMG inspection must run before staging the artifact");
 });

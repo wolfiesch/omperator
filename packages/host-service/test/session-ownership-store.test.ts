@@ -25,37 +25,7 @@ describe("session ownership store", () => {
 			const reloaded = new SessionOwnershipStore(ledgerPath);
 			await reloaded.load();
 			expect(reloaded.owns(sid, transcriptPath)).toBe(false);
-			expect(JSON.parse(await readFile(ledgerPath, "utf8"))).toEqual({ version: 2, sessions: [] });
-		} finally {
-			await rm(root, { recursive: true, force: true });
-		}
-	});
-
-	test("persists terminal transfer state and clears it without losing ownership", async () => {
-		const root = await mkdtemp(join(tmpdir(), "t4-owned-session-transfer-"));
-		const ledgerPath = join(root, "profile", "owned-sessions.json");
-		const transcriptPath = join(root, "session.jsonl");
-		const sid = sessionId("transferred-session");
-		try {
-			const writer = new SessionOwnershipStore(ledgerPath);
-			await writer.add(sid, transcriptPath);
-			await writer.release(sid, transcriptPath);
-
-			const waiting = new SessionOwnershipStore(ledgerPath);
-			await waiting.load();
-			expect(waiting.owns(sid, transcriptPath)).toBe(true);
-			expect(waiting.transfer(sid, transcriptPath)).toBe("waiting");
-
-			await waiting.observeReleasedWriter(sid, transcriptPath);
-			const observed = new SessionOwnershipStore(ledgerPath);
-			await observed.load();
-			expect(observed.transfer(sid, transcriptPath)).toBe("observed");
-
-			await observed.clearTransfer(sid, transcriptPath);
-			const reclaimed = new SessionOwnershipStore(ledgerPath);
-			await reclaimed.load();
-			expect(reclaimed.owns(sid, transcriptPath)).toBe(true);
-			expect(reclaimed.transfer(sid, transcriptPath)).toBeUndefined();
+			expect(JSON.parse(await readFile(ledgerPath, "utf8"))).toEqual({ version: 1, sessions: [] });
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}

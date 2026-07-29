@@ -20,7 +20,6 @@ t4-host (T4 executable)
 
 - WebSocket framing, replay, capability negotiation, pairing, and remote policy
 - bounded session projections, attention, transcript search, and artifact reads
-- persistent release/reclaim state for transferring a writer between Omperator and `t4-omp`
 - backend-neutral ACP runtime adapters
 - Git repository and worktree lifecycle
 - deterministic host tests and release gates
@@ -48,16 +47,16 @@ There are no live users to migrate, so this is a replacement rather than a perio
 | Publish together       | Release the small OMP bridge build, pin its tag and hashes in T4, then ship T4 with both executables.                           | Packaging, signing, provenance, full CI, and release inspection pass.         |
 | Remove transition code | Delete code that exists only to run or preserve the old OMP-hosted appserver.                                                   | No public `omp appserver serve` or `ompd` launcher remains.                   |
 
-We intentionally skip dual-running hosts, mixed-version client support, and an in-process runtime rollback system. Session transfer stays in the generic host: it quiesces its OMP RPC worker, persists the released state, and uses OMP's existing lock and resume contracts to observe the terminal writer and take control back safely. Rollback remains a Git/release choice: install the previous known-good pair of T4 and OMP artifacts.
+We intentionally skip dual-running hosts, mixed-version client support, live-session transfer, and an in-process runtime rollback system. Rollback remains a Git/release choice: install the previous known-good pair of T4 and OMP artifacts.
 
 The simplified rollout does not weaken the hard boundaries. We retain strict protocol versioning, fail-closed lock behavior, secret redaction, process isolation, restart/reconnect tests, signed host packaging, exact artifact provenance, and protection for existing local development session files.
 
 ## Released product state
 
-Omperator v0.2.1 is paired with immutable OMP tag `t4code-17.0.5-appserver-19` at commit `d83b688817651d39bfab00676db6109a2d1ccec5`. Its published Apple Silicon binary size and SHA-256 are pinned in `compat/omp-app-matrix.json`.
+T4 v0.1.33 is paired with immutable OMP tag `t4code-17.0.5-appserver-15` at commit `ca2902bc095a0b17067f4b8b34ecf454390f85ff`. Its published Apple Silicon binary is 120,975,568 bytes with SHA-256 `a6be6316f2e8fc90c6512f21bdf90747592e0776a0ad383508ffd209dc702ffe`.
 
 The standalone OMP release carries an ad-hoc integrity signature because the fork release workflow does not have a Developer ID identity. The protected T4 product build remains the distribution-signing boundary: it must sign both the bundled OMP executable and `t4-host` with T4's Developer ID identity before shipping the macOS app.
 
-That bridge release moves the running network host into the standalone T4 executable, removes OMP's public legacy launchers, lets copied sessions target an existing working directory when the original directory is gone, and records a durable authority marker in new transcripts so a completed short terminal session can be reclaimed safely. The sparse bridge projects that marker to external hosts only after verifying the bounded transcript header on disk. The thin bridge and standalone host pass a compiled-binary end-to-end smoke test. The compatibility matrix records `appserver-19` as both the verified and published pairing for the T4 product build.
+That bridge release moves the running network host into the standalone T4 executable and removes OMP's public legacy launchers. The thin bridge and standalone host pass a compiled-binary end-to-end smoke test. The compatibility matrix records `appserver-15` as both the verified and published pairing for the T4 product build.
 
 This reduces the fork to the OMP-specific authority adapter and protocol glue, but does not remove the fork entirely. Active runtime tags, releases, and automation are pinned to `wolfiesch/oh-my-pi`. The earlier `lyc-aon/oh-my-pi` repository remains only as frozen provenance for the app-wire package and host-source migration recorded in `provenance/omp-host-migration.json`.

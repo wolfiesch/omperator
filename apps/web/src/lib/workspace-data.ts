@@ -67,9 +67,7 @@ export interface WorkspaceSession {
    * and on cached/offline rows where freshness copy wins. Values mirror
    * SessionControlDisplayKind in session-observer.ts.
    */
-  readonly control?: "observer" | "suspect" | "reconciling" | "unverified" | "released" | "unclear";
-  /** Host-generated command for a session deliberately released to a terminal. */
-  readonly terminalResumeCommand?: string;
+  readonly control?: "observer" | "suspect" | "reconciling" | "unverified" | "unclear";
   /** Cluster runtime and GUI truth, present only after local opt-in and host grant. */
   readonly cluster?: SessionClusterState;
   /** Strict CI correlation and progress from the authoritative session projection. */

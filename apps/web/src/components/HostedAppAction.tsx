@@ -104,7 +104,7 @@ export function HostedAppAction() {
   if (!browserHosted) return null;
   if (!standalone && installationCompleted) return null;
 
-  const label = standalone ? "Reload Omperator" : "Install Omperator";
+  const label = standalone ? "Reload T4 Code" : "Install T4 Code";
   const handleAction = async () => {
     if (standalone) {
       window.location.reload();
@@ -149,7 +149,7 @@ export function HostedAppAction() {
       <Popover.Portal>
         <Popover.Positioner align="end" className="z-50" side="bottom" sideOffset={6}>
           <Popover.Popup className="w-[min(17rem,calc(100vw-1rem))] rounded-lg bg-popover p-3 text-popover-foreground shadow-(--overlay-shadow) outline-none transition-[scale,opacity] duration-(--motion-duration-fast) data-ending-style:scale-98 data-starting-style:scale-98 data-ending-style:opacity-0 data-starting-style:opacity-0">
-            <Popover.Title className="font-medium text-sm">Install Omperator</Popover.Title>
+            <Popover.Title className="font-medium text-sm">Install T4 Code</Popover.Title>
             <Popover.Description className="pt-1 text-muted-foreground text-xs leading-5">
               {ios
                 ? "Tap Share in the browser, then Add to Home Screen."

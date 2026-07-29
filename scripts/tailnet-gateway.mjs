@@ -324,7 +324,7 @@ async function sendIndex(request, response, options) {
     response.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     replyText(response, 200, MIME_TYPES.get(".html"), body, request.method === "HEAD");
   } catch {
-    replyText(response, 503, "text/plain; charset=utf-8", "Omperator web build is unavailable");
+    replyText(response, 503, "text/plain; charset=utf-8", "T4 Code web build is unavailable");
   }
 }
 

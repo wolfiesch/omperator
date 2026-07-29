@@ -783,7 +783,7 @@ describe("desktop target manager boundaries", () => {
       requestId: pairRequest.requestId,
       pairingId: "pair-1",
       deviceId: "desktop",
-      deviceName: "Omperator Desktop",
+      deviceName: "T4 Code Desktop",
       platform: process.platform,
       requestedCapabilities: effectiveCapabilities,
       grantedCapabilities: effectiveCapabilities,

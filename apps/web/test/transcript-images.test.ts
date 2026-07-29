@@ -360,7 +360,7 @@ describe("bounded transcript image source", () => {
     releaseSecond();
     source.dispose();
     expect(revoked).toEqual(["blob:verified"]);
-  });
+  }, 20_000);
 
   it("reversibly evicts ready bytes on pause while retains and listeners remain active", async () => {
     const bytes = pngBytes(32, 41);

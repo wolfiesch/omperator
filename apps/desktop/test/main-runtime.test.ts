@@ -24,12 +24,6 @@ class MockElectronApp {
   quit(): void {}
 
   setPath(): void {}
-
-  getPath(): string {
-    return "/Users/alice/Library/Application Support";
-  }
-
-  setName(): void {}
 }
 
 const vitest = await import("vitest") as unknown as VitestMockApi;
@@ -40,11 +34,7 @@ vitest.vi.mock("../src/lifecycle.ts", () => ({
 }));
 
 // Main bootstraps at module evaluation, so load it only after mocking native Electron.
-const {
-  applyDevelopmentSandbox,
-  applyInstalledIdentityContinuity,
-  bootstrapDesktopMain,
-} = await import("../src/main.ts");
+const { applyDevelopmentSandbox, bootstrapDesktopMain } = await import("../src/main.ts");
 
 type ProcessEvent = "uncaughtException" | "unhandledRejection";
 type ProcessListener = (reason: unknown) => void;
@@ -196,50 +186,5 @@ describe("development sandbox startup", () => {
 
     expect(target.paths).toEqual([]);
     expect(target.switches).toEqual([]);
-  });
-});
-
-describe("installed identity continuity", () => {
-  function identityApp(): {
-    readonly names: string[];
-    readonly paths: [string, string][];
-    getPath(name: string): string;
-    setName(name: string): void;
-    setPath(name: string, path: string): void;
-    readonly commandLine: { appendSwitch(): void };
-  } {
-    const names: string[] = [];
-    const paths: [string, string][] = [];
-    return {
-      names,
-      paths,
-      getPath: () => "/Users/alice/Library/Application Support",
-      setName: (name) => { names.push(name); },
-      setPath: (name, path) => { paths.push([name, path]); },
-      commandLine: { appendSwitch: () => {} },
-    };
-  }
-
-  it("keeps the pre-rebrand safeStorage and userData identity", () => {
-    const target = identityApp();
-
-    applyInstalledIdentityContinuity(target, undefined);
-
-    expect(target.names).toEqual(["T4 Code"]);
-    expect(target.paths).toEqual([
-      ["userData", "/Users/alice/Library/Application Support/T4 Code"],
-    ]);
-  });
-
-  it("keeps the safeStorage identity but lets a development sandbox own userData", () => {
-    const target = identityApp();
-
-    applyInstalledIdentityContinuity(
-      target,
-      { electronUserData: "/tmp/sandbox/electron/user-data" },
-    );
-
-    expect(target.names).toEqual(["T4 Code"]);
-    expect(target.paths).toEqual([]);
   });
 });

@@ -123,11 +123,6 @@ export type SessionControlState =
 	| {
 			mode: "unverified";
 			transcript: SessionObserverTranscript;
-	  }
-	| {
-			mode: "released";
-			transcript: SessionObserverTranscript;
-			resumeCommand: string;
 	  };
 export interface SessionLiveState {
 	sessionControl?: SessionControlState;
@@ -194,14 +189,6 @@ function decodeSessionControl(value: unknown, path: string): SessionControlState
 			fail("INVALID_FRAME", "invalid unverified transcript state", `${path}.transcript`);
 		if (Object.keys(control).some(key => !["mode", "transcript"].includes(key)))
 			fail("INVALID_FRAME", "unknown unverified session control field", path);
-		return control as unknown as SessionControlState;
-	}
-	if (control.mode === "released") {
-		if (control.transcript !== "live" && control.transcript !== "snapshot")
-			fail("INVALID_FRAME", "invalid released transcript state", `${path}.transcript`);
-		controlFree(control.resumeCommand, `${path}.resumeCommand`, 1024);
-		if (Object.keys(control).some(key => !["mode", "transcript", "resumeCommand"].includes(key)))
-			fail("INVALID_FRAME", "unknown released session control field", path);
 		return control as unknown as SessionControlState;
 	}
 	fail("INVALID_FRAME", "invalid session control mode", `${path}.mode`);

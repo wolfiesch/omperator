@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import {
-	ARTIFACT_CHUNK_BASE64_BYTES,
 	type ClientFrame,
 	COMMAND_DESCRIPTORS,
 	type CommandFrame,
@@ -9,21 +8,19 @@ import {
 	type HelloFrame,
 	isSecretLikeKey,
 	MAX_ARRAY_ITEMS,
-	MAX_FILE_BYTES,
 	MAX_MAP_KEYS,
-	PREVIEW_CAPTURE_CHUNK_BASE64_BYTES,
 	type PairOkFrame,
 	type PairStartFrame,
 	pairingId,
 	REMOTE_DEFAULT_CAPABILITIES,
 	type ServerFrame,
-	TRANSCRIPT_IMAGE_CHUNK_BASE64_BYTES,
 	leaseId as wireLeaseId,
 } from "@t4-code/host-wire";
 import {
 	type AuthenticatedPrincipal,
 	type AuthorizationGuard,
 	type Capability,
+	canonicalDeviceIdentityKey,
 	type Clock,
 	type DeviceMetadata,
 	type DeviceRegistry,
@@ -94,6 +91,11 @@ function securityIdentity(peer: RemotePeerIdentity): SecurityPeerIdentity {
 		tailnetIp: address,
 	};
 }
+/** The exact device identity key registry.authenticate derives for this peer
+ * at hello time — used to mint the local autoconnect device record offline. */
+export function deviceIdentityKeyForPeer(peer: RemotePeerIdentity): string {
+	return canonicalDeviceIdentityKey(securityIdentity(peer));
+}
 function safeString(value: unknown, max = 256): value is string {
 	return typeof value === "string" && value.length > 0 && value.length <= max && ![...value].some(character => {
 		const code = character.codePointAt(0) ?? 0;
@@ -149,8 +151,6 @@ function mutation(command: string): boolean {
 		"session.fast.set",
 		"session.mode.set",
 		"session.close",
-		"session.release",
-		"session.reclaim",
 		"session.cancel",
 		"files.write",
 		"files.patch",
@@ -169,7 +169,6 @@ function commandFeature(command: string): string | undefined {
 	if (command === "files.diff") return "files.diff";
 	if (command === "transcript.search" || command === "transcript.context") return "transcript.search";
 	if (command === "transcript.page") return "transcript.page";
-	if (command === "session.release" || command === "session.reclaim") return "session.transfer";
 	if (command.startsWith("preview.")) return "preview.control";
 	return undefined;
 }
@@ -539,7 +538,13 @@ export class TailscaleRemotePolicy implements RemoteConnectionPolicy {
 					frame.expectedRevision,
 				);
 			} catch {
-				return false;
+				// A live lease for this session+kind (any device, 30s TTL) is a
+				// transient conflict, not a policy violation: answer with an error
+				// response like stale_revision instead of denying the frame, which
+				// would close the whole connection mid-conversation.
+				return cacheResponse(
+					leaseErrorResponse(frame, "lease_held", "another active lease holds this session; retry shortly"),
+				);
 			}
 		} else if (
 			frame.command === "controller.lease.renew" ||
@@ -724,22 +729,24 @@ export class TailscaleRemotePolicy implements RemoteConnectionPolicy {
 
 function sanitizeRemoteFrame(frame: ServerFrame): ServerFrame | undefined {
 	const seen = new WeakSet<object>();
-	const largeContentLimits: Readonly<Record<string, number>> = {
-		"files.read": Math.ceil(MAX_FILE_BYTES / 3) * 4,
-		"session.image.read": TRANSCRIPT_IMAGE_CHUNK_BASE64_BYTES,
-		"artifact.read": ARTIFACT_CHUNK_BASE64_BYTES,
-		"preview.capture.read": PREVIEW_CAPTURE_CHUNK_BASE64_BYTES,
+	// Read commands whose result carries one large bounded payload string. The
+	// 64 KiB generic string bound would silently drop their responses (a
+	// base64 chunk is ~1.33× the bytes); the protocol's own chunk sizes are
+	// the real cap, so these fields get their per-command bound instead.
+	const LARGE_CONTENT: Readonly<Record<string, number>> = {
+		"files.read": 786_432 * 2, // MAX_FILE_BYTES base64 ceiling, with slack
+		"session.image.read": 400_000,
+		"artifact.read": 400_000,
+		"preview.capture.read": 400_000,
 	};
-	const largeContentLimit =
-		frame.type === "response" && typeof frame.command === "string"
-			? largeContentLimits[frame.command]
-			: undefined;
+	const largeStringLimit =
+		frame.type === "response" && typeof frame.command === "string" ? LARGE_CONTENT[frame.command] : undefined;
 	const walk = (value: unknown, depth: number, settingsMap = false, largeContent = false): unknown => {
 		if (depth > 12) throw new Error("outbound depth exceeded");
 		if (typeof value === "string") {
-			if (value.length > (largeContent && largeContentLimit !== undefined ? largeContentLimit : 65_536))
+			if (value.length > (largeContent && largeStringLimit !== undefined ? largeStringLimit : 65_536))
 				throw new Error("outbound string exceeded");
-			if (largeContent) return value;
+			if (largeContent) return value; // bounded payload field: no secret/path redaction of base64
 			if (
 				/^(?:[A-Za-z]+\s+)?[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(value) ||
 				/^Bearer\s+/iu.test(value)
@@ -752,7 +759,7 @@ function sanitizeRemoteFrame(frame: ServerFrame): ServerFrame | undefined {
 		if (value === null || typeof value !== "object") return value;
 		if (seen.has(value)) throw new Error("outbound cycle");
 		seen.add(value);
-		if (Array.isArray(value)) {
+			if (Array.isArray(value)) {
 			if (value.length > MAX_ARRAY_ITEMS) throw new Error("outbound array exceeded");
 			const result = value.map(item => walk(item, depth + 1, false, false));
 			seen.delete(value);
@@ -776,9 +783,7 @@ function sanitizeRemoteFrame(frame: ServerFrame): ServerFrame | undefined {
 					child,
 					depth + 1,
 					childIsSettingsMap,
-					largeContentLimit !== undefined &&
-						depth === 1 &&
-						(childKey === "content" || childKey === "data"),
+					largeStringLimit !== undefined && (childKey === "content" || childKey === "data"),
 				);
 		}
 		seen.delete(value);

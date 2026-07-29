@@ -32,7 +32,7 @@ import type {
 	RemotePeerIdentity,
 } from "./remote/types.ts";
 import type { RuntimeAdapterRegistry } from "./runtime-adapter.ts";
-import type { RpcChildInvocation } from "./rpc-child-contract.ts";
+import type { RpcChildInvocation } from "./rpc-child.ts";
 import type { WorkspaceAuthority } from "./workspace-authority.ts";
 
 export interface ConnectionTransport {
@@ -114,8 +114,6 @@ export interface SessionRecord {
 	thinking?: string;
 	mode?: string;
 	runtime?: { readonly id: string; readonly workspaceInstanceId?: string };
-	/** Durable proof that the transcript came from the compatible owned OMP runtime. */
-	authorityProtocol?: "t4-omp-authority/1";
 	/** False when discovery intentionally deferred loading the transcript body. */
 	entriesLoaded?: boolean;
 	entries: DurableEntry[];
@@ -158,6 +156,7 @@ export interface SessionDiscovery {
 	page?(session: SessionRecord, args: TranscriptPageArguments): Promise<TranscriptPageResult>;
 }
 export interface ChildHandle {
+	pid?: number;
 	stdin: { write(data: string): Promise<void> | void };
 	stderr?: AsyncIterable<string | Uint8Array>;
 	stdout: AsyncIterable<string | Uint8Array>;
@@ -177,7 +176,16 @@ export interface AppserverAdminCallbacks {
 		capabilities: readonly string[],
 		ttlMs?: number,
 		expectedNodeId?: string,
-	): { readonly code: string; readonly expiresAt: number };
+	): {
+		readonly code: string;
+		readonly expiresAt: number;
+		readonly transport?: {
+			readonly scheme: "ws" | "wss";
+			readonly port: number;
+			readonly path: "/v1/ws";
+			readonly tlsFingerprint?: string;
+		};
+	};
 	listDevices(): readonly {
 		readonly deviceId: string;
 		readonly label: string;
@@ -299,8 +307,8 @@ export interface AppserverOptions {
 	rpcChildInvocation?: RpcChildInvocation;
 	/** Bounded profile environment applied only to per-session OMP children. */
 	rpcChildEnvironment?: Readonly<Record<string, string>>;
-	/** Private durable ledger used to reap only identity-verified orphan RPC groups. */
-	rpcChildRegistryPath?: string;
+	/** Identity ledger for safely reaping dedicated OMP process groups. */
+	rpcChildRegistry?: import("./rpc-child-registry.ts").RpcChildRegistry;
 	/** Exact child RPC command dialect; official OMP intentionally exposes a narrower command set. */
 	rpcDialect?: "fork" | "official-17.0.9";
 	appserverVersion?: string;
@@ -322,6 +330,11 @@ export interface AppserverOptions {
 	remoteEndpoint?: RemoteListenerConfig;
 	/** Optional second listener serving the same policy over TLS (wss); shares hooks and health with remoteEndpoint. */
 	remoteEndpointTls?: RemoteListenerConfig;
+	/** Optional loopback listener (127.0.0.1) for same-machine clients. Peers
+	 * are reported with config.selfIdentity (the host's own tailnet node), so
+	 * only device credentials bound to that node authenticate — pairing is
+	 * unchanged for everyone else. */
+	remoteEndpointLoopback?: RemoteListenerConfig;
 	remotePolicy?: RemoteConnectionPolicy;
 	remoteResolver?: { resolve(address: string): Promise<RemotePeerIdentity> };
 	/** Optional structured host logger for connection/pair/denied/supervisor/watchdog events. */

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { isIP } from "node:net";
 import type { chromium as ChromiumLauncher } from "playwright-core";
 import {
 	type Cursor,
@@ -16,7 +17,7 @@ import {
 	type Revision,
 	type SessionId,
 } from "@t4-code/host-wire";
-import { validatePreviewUrl } from "./url-policy.ts";
+import { resolvePreviewUrl, validatePreviewUrl } from "./url-policy.ts";
 
 let chromiumPromise: Promise<typeof ChromiumLauncher> | undefined;
 
@@ -41,7 +42,7 @@ function loadChromium(): Promise<typeof ChromiumLauncher> {
 	return chromiumPromise;
 }
 import type {
-	BrowserContext,
+	PreviewBrowserLauncher,
 	PreviewCaptureRecord,
 	PreviewChromiumResolver,
 	PreviewClock,
@@ -92,22 +93,6 @@ function toBase64(bytes: Uint8Array): string {
 	return Buffer.from(bytes).toString("base64");
 }
 
-/**
- * Enforce the preview destination policy for every browser request, including
- * redirects, frames, scripts, images, and fetches initiated after launch.
- */
-export async function installPreviewRequestPolicy(
-	context: Pick<BrowserContext, "route">,
-): Promise<void> {
-	await context.route("**/*", async route => {
-		try {
-			validatePreviewUrl(route.request().url());
-			await route.continue();
-		} catch {
-			await route.abort("blockedbyclient");
-		}
-	});
-}
 
 /**
  * Host-side preview service: runs a headless Chromium per session preview so
@@ -117,6 +102,7 @@ export async function installPreviewRequestPolicy(
  */
 export class PreviewService {
 	readonly #chromiumResolver: PreviewChromiumResolver;
+	readonly #browserLauncher?: PreviewBrowserLauncher;
 	readonly #clock: PreviewClock;
 	readonly #maxConcurrent: number;
 	readonly #idleTimeoutMs: number;
@@ -135,6 +121,7 @@ export class PreviewService {
 
 	constructor(options: PreviewServiceOptions) {
 		this.#chromiumResolver = options.chromiumResolver;
+		this.#browserLauncher = options.browserLauncher;
 		this.#clock = options.clock ?? defaultClock();
 		this.#maxConcurrent = options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
 		this.#idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
@@ -173,10 +160,31 @@ export class PreviewService {
 		for (const id of expired) await this.#closePreview(id, "idle");
 	}
 
-	#requirePreview(previewId: PreviewId): PreviewEntry {
+	#requirePreview(sessionId: SessionId, previewId: PreviewId): PreviewEntry {
 		const entry = this.#previews.get(previewId);
 		if (!entry) throw new PreviewServiceError("not_found", "preview was not found");
+		if (entry.sessionId !== sessionId)
+			throw new PreviewServiceError("not_found", "preview was not found");
 		return entry;
+	}
+
+	async #authorizeRequest(entry: PreviewEntry, raw: string): Promise<void> {
+		let normalized = raw;
+		try {
+			const parsed = new URL(raw);
+			if (parsed.protocol === "ws:") {
+				parsed.protocol = "http:";
+				normalized = parsed.href;
+			} else if (parsed.protocol === "wss:") {
+				parsed.protocol = "https:";
+				normalized = parsed.href;
+			}
+		} catch {}
+		await resolvePreviewUrl(normalized, {
+			origin: entry.allowedOrigin,
+			hostname: entry.hostname,
+			addresses: entry.pinnedAddresses,
+		});
 	}
 
 	#snapshot(entry: PreviewEntry): PreviewSnapshot {
@@ -237,7 +245,7 @@ export class PreviewService {
 		authorityId?: string;
 		authority?: PreviewAuthorityDescriptor;
 	}): Promise<PreviewSnapshot> {
-		validatePreviewUrl(params.url);
+		const authorized = await resolvePreviewUrl(params.url);
 		if (this.#stopped) throw new PreviewServiceError("stopped", "preview service is stopped");
 		const sessionPreviews = this.#bySession.get(params.sessionId) ?? new Set();
 		const activeCount = [...this.#previews.values()].filter(e => e.state !== "stopped").length;
@@ -245,21 +253,28 @@ export class PreviewService {
 			throw new PreviewServiceError("busy", "maximum concurrent previews reached");
 		const chromiumInfo = await this.#resolveChromium();
 		const previewId = makePreviewId();
-		const chromium = await loadChromium();
-		const browser = await chromium.launch({
+		const pinnedAddress = authorized.addresses[0]!;
+		const resolverAddress = pinnedAddress.includes(":") ? `[${pinnedAddress}]` : pinnedAddress;
+		const launchBrowser = this.#browserLauncher ?? (async options => (await loadChromium()).launch(options));
+		const launchArgs = [
+			"--disable-gpu",
+			"--disable-dev-shm-usage",
+			...(isIP(authorized.hostname) === 0
+				? [`--host-resolver-rules=MAP ${authorized.hostname} ${resolverAddress}`]
+				: []),
+		];
+		const browser = await launchBrowser({
 			executablePath: chromiumInfo.path,
 			headless: true,
-			args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"],
+			args: launchArgs,
 		});
 		let context, page;
 		try {
-			// Service-worker traffic bypasses Playwright routing, so previews
-			// disable it and keep every network destination on the route guard.
 			context = await browser.newContext({
 				viewport: this.#viewport,
+				acceptDownloads: false,
 				serviceWorkers: "block",
 			});
-			await installPreviewRequestPolicy(context);
 			page = await context.newPage();
 			page.setDefaultTimeout(this.#actionTimeoutMs);
 		} catch (error) {
@@ -269,6 +284,9 @@ export class PreviewService {
 		const entry: PreviewEntry = {
 			previewId,
 			sessionId: params.sessionId,
+			allowedOrigin: authorized.origin,
+			hostname: authorized.hostname,
+			pinnedAddresses: authorized.addresses,
 			authority: params.authority,
 			browser,
 			context,
@@ -287,6 +305,25 @@ export class PreviewService {
 		this.#bySession.set(params.sessionId, sessionPreviews);
 		this.#startIdleSweep();
 		try {
+			await context.route("**/*", async route => {
+				try {
+					await this.#authorizeRequest(entry, route.request().url());
+					await route.continue();
+				} catch {
+					await route.abort("blockedbyclient");
+				}
+			});
+			await context.routeWebSocket("**/*", async route => {
+				try {
+					await this.#authorizeRequest(entry, route.url());
+					route.connectToServer();
+				} catch {
+					route.close();
+				}
+			});
+			context.on("page", opened => {
+				if (opened !== page) void opened.close().catch(() => undefined);
+			});
 			entry.state = "running";
 			await page.goto(params.url, { waitUntil: "domcontentloaded", timeout: this.#actionTimeoutMs });
 			await this.#updateFromPage(entry);
@@ -304,7 +341,7 @@ export class PreviewService {
 
 	async state(params: { sessionId: SessionId; previewId?: PreviewId }): Promise<{ previews: PreviewSnapshot[] }> {
 		if (params.previewId) {
-			const entry = this.#requirePreview(params.previewId);
+			const entry = this.#requirePreview(params.sessionId, params.previewId);
 			return { previews: [this.#snapshot(entry)] };
 		}
 		const ids = this.#bySession.get(params.sessionId) ?? new Set();
@@ -322,8 +359,8 @@ export class PreviewService {
 		url: string;
 		leaseId?: LeaseId;
 	}): Promise<PreviewSnapshot> {
-		validatePreviewUrl(params.url);
-		const entry = this.#requirePreview(params.previewId);
+		const entry = this.#requirePreview(params.sessionId, params.previewId);
+		await this.#authorizeRequest(entry, params.url);
 		this.#checkLease(entry, params.leaseId);
 		await entry.page.goto(params.url, { waitUntil: "domcontentloaded", timeout: this.#actionTimeoutMs });
 		await this.#updateFromPage(entry);
@@ -331,7 +368,7 @@ export class PreviewService {
 	}
 
 	async back(params: { sessionId: SessionId; previewId: PreviewId; leaseId?: LeaseId }): Promise<PreviewSnapshot> {
-		const entry = this.#requirePreview(params.previewId);
+		const entry = this.#requirePreview(params.sessionId, params.previewId);
 		this.#checkLease(entry, params.leaseId);
 		await entry.page.goBack({ waitUntil: "domcontentloaded", timeout: this.#actionTimeoutMs }).catch(() => undefined);
 		await this.#updateFromPage(entry);
@@ -339,7 +376,7 @@ export class PreviewService {
 	}
 
 	async forward(params: { sessionId: SessionId; previewId: PreviewId; leaseId?: LeaseId }): Promise<PreviewSnapshot> {
-		const entry = this.#requirePreview(params.previewId);
+		const entry = this.#requirePreview(params.sessionId, params.previewId);
 		this.#checkLease(entry, params.leaseId);
 		await entry.page
 			.goForward({ waitUntil: "domcontentloaded", timeout: this.#actionTimeoutMs })
@@ -349,7 +386,7 @@ export class PreviewService {
 	}
 
 	async reload(params: { sessionId: SessionId; previewId: PreviewId; leaseId?: LeaseId }): Promise<PreviewSnapshot> {
-		const entry = this.#requirePreview(params.previewId);
+		const entry = this.#requirePreview(params.sessionId, params.previewId);
 		this.#checkLease(entry, params.leaseId);
 		await entry.page.reload({ waitUntil: "domcontentloaded", timeout: this.#actionTimeoutMs });
 		await this.#updateFromPage(entry);
@@ -357,7 +394,7 @@ export class PreviewService {
 	}
 
 	async activate(params: { sessionId: SessionId; previewId: PreviewId; leaseId?: LeaseId }): Promise<PreviewSnapshot> {
-		const entry = this.#requirePreview(params.previewId);
+		const entry = this.#requirePreview(params.sessionId, params.previewId);
 		this.#checkLease(entry, params.leaseId);
 		await entry.page.bringToFront().catch(() => undefined);
 		this.#touch(entry);
@@ -365,7 +402,7 @@ export class PreviewService {
 	}
 
 	async close(params: { sessionId: SessionId; previewId: PreviewId; leaseId?: LeaseId }): Promise<PreviewSnapshot> {
-		const entry = this.#requirePreview(params.previewId);
+		const entry = this.#requirePreview(params.sessionId, params.previewId);
 		this.#checkLease(entry, params.leaseId);
 		await this.#closePreview(params.previewId, "closed");
 		return this.#snapshot(entry);
@@ -387,7 +424,7 @@ export class PreviewService {
 		previewId: PreviewId;
 		leaseId?: LeaseId;
 	}): Promise<PreviewSnapshot> {
-		const entry = this.#requirePreview(params.previewId);
+		const entry = this.#requirePreview(params.sessionId, params.previewId);
 		this.#checkLease(entry, params.leaseId);
 		const buffer = await entry.page.screenshot({
 			type: "jpeg",
@@ -419,7 +456,7 @@ export class PreviewService {
 		captureId: PreviewCaptureId;
 		offset: number;
 	}): { previewId: PreviewId; captureId: PreviewCaptureId; size: number; offset: number; nextOffset: number; complete: boolean; content: string } {
-		const entry = this.#requirePreview(params.previewId);
+		const entry = this.#requirePreview(params.sessionId, params.previewId);
 		const record = entry.capture;
 		if (!record || record.captureId !== params.captureId)
 			throw new PreviewServiceError("not_found", "capture was not found");
@@ -452,7 +489,7 @@ export class PreviewService {
 		button?: "left" | "middle" | "right";
 		clickCount?: number;
 	}): Promise<PreviewSnapshot> {
-		const entry = this.#requirePreview(params.previewId);
+		const entry = this.#requirePreview(params.sessionId, params.previewId);
 		this.#checkLease(entry, params.leaseId);
 		if (params.selector !== undefined) {
 			await entry.page.click(params.selector, {
@@ -479,7 +516,7 @@ export class PreviewService {
 		selector: string;
 		text: string;
 	}): Promise<PreviewSnapshot> {
-		const entry = this.#requirePreview(params.previewId);
+		const entry = this.#requirePreview(params.sessionId, params.previewId);
 		this.#checkLease(entry, params.leaseId);
 		await entry.page.fill(params.selector, params.text, { timeout: this.#actionTimeoutMs });
 		await this.#updateFromPage(entry);
@@ -493,7 +530,7 @@ export class PreviewService {
 		selector?: string;
 		text: string;
 	}): Promise<PreviewSnapshot> {
-		const entry = this.#requirePreview(params.previewId);
+		const entry = this.#requirePreview(params.sessionId, params.previewId);
 		this.#checkLease(entry, params.leaseId);
 		if (params.selector) {
 			await entry.page.type(params.selector, params.text, { timeout: this.#actionTimeoutMs });
@@ -512,7 +549,7 @@ export class PreviewService {
 		deltaY: number;
 		selector?: string;
 	}): Promise<PreviewSnapshot> {
-		const entry = this.#requirePreview(params.previewId);
+		const entry = this.#requirePreview(params.sessionId, params.previewId);
 		this.#checkLease(entry, params.leaseId);
 		if (params.selector) {
 			await entry.page
@@ -532,7 +569,7 @@ export class PreviewService {
 		selector: string;
 		value: string;
 	}): Promise<PreviewSnapshot> {
-		const entry = this.#requirePreview(params.previewId);
+		const entry = this.#requirePreview(params.sessionId, params.previewId);
 		this.#checkLease(entry, params.leaseId);
 		await entry.page.selectOption(params.selector, params.value, { timeout: this.#actionTimeoutMs });
 		await this.#updateFromPage(entry);
@@ -545,7 +582,7 @@ export class PreviewService {
 		leaseId?: LeaseId;
 		key: string;
 	}): Promise<PreviewSnapshot> {
-		const entry = this.#requirePreview(params.previewId);
+		const entry = this.#requirePreview(params.sessionId, params.previewId);
 		this.#checkLease(entry, params.leaseId);
 		await entry.page.keyboard.press(params.key);
 		await this.#updateFromPage(entry);
@@ -584,7 +621,7 @@ export class PreviewService {
 		previewId: PreviewId;
 		ttlMs?: number;
 	}): { previewId: PreviewId; leaseId: LeaseId; expiresAt: number } {
-		const entry = this.#requirePreview(params.previewId);
+		const entry = this.#requirePreview(params.sessionId, params.previewId);
 		const now = this.#clock.now().getTime();
 		if (entry.lease && entry.lease.expiresAt > now)
 			throw new PreviewServiceError("lease_held", "preview already holds an active lease");
@@ -605,7 +642,7 @@ export class PreviewService {
 		leaseId: LeaseId;
 		ttlMs?: number;
 	}): { previewId: PreviewId; leaseId: LeaseId; expiresAt: number } {
-		const entry = this.#requirePreview(params.previewId);
+		const entry = this.#requirePreview(params.sessionId, params.previewId);
 		if (!entry.lease || entry.lease.leaseId !== params.leaseId)
 			throw new PreviewServiceError("not_found", "lease was not found");
 		const now = this.#clock.now().getTime();
@@ -623,7 +660,7 @@ export class PreviewService {
 		previewId: PreviewId;
 		leaseId: LeaseId;
 	}): { previewId: PreviewId; released: boolean } {
-		const entry = this.#requirePreview(params.previewId);
+		const entry = this.#requirePreview(params.sessionId, params.previewId);
 		if (!entry.lease || entry.lease.leaseId !== params.leaseId)
 			return { previewId: params.previewId, released: false };
 		entry.lease = undefined;
@@ -642,7 +679,7 @@ export class PreviewService {
 		text?: string;
 		timeoutMs?: number;
 	}): Promise<PreviewSnapshot> {
-		const entry = this.#requirePreview(params.previewId);
+		const entry = this.#requirePreview(params.sessionId, params.previewId);
 		this.#checkLease(entry, params.leaseId);
 		const mode = params.mode ?? "manual";
 		const timeout = params.timeoutMs ?? this.#actionTimeoutMs;

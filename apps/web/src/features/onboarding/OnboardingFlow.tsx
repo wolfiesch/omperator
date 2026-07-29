@@ -302,7 +302,7 @@ export function OnboardingFlow({
         <header className="flex flex-col gap-1">
           <div className="flex items-center gap-2.5">
             <OmpMark className="h-6 w-auto shrink-0" title={null} />
-            <h1 className="font-heading font-semibold text-xl">Set up Omperator</h1>
+            <h1 className="font-heading font-semibold text-xl">Set up T4 Code</h1>
           </div>
           <p className="text-muted-foreground text-sm">
             Powered by Oh My Pi. Three things and you are in a session. Everything here can change

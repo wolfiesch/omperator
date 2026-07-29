@@ -611,7 +611,7 @@ export function ProjectHeaderRow({
                         <span className="block text-muted-foreground text-xs leading-snug">
                           {inventoryTruncated
                             ? "This host is showing a partial session list, so this shortcut can't be removed safely."
-                            : "Only changes this Omperator client. The folder and OMP sessions stay unchanged."}
+                            : "Only changes this T4 Code client. The folder and OMP sessions stay unchanged."}
                         </span>
                       </span>
                     </button>
