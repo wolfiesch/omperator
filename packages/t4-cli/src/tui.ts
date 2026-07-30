@@ -11,7 +11,7 @@ import {
   type Frame,
 } from "./client.ts";
 import { Screen, wrap, clip, type Cell } from "./render.ts";
-import { FG, palette as p, statusColor, RESET } from "./theme.ts";
+import { palette as p, statusColor } from "./theme.ts";
 import { serverRelativeFilePath } from "./wire-helpers.ts";
 
 const RAIL_W = 28;
@@ -236,6 +236,9 @@ export class Tui implements HostEvents {
   private client!: T4Client;
   private reconnectDelay = 1;
   private connectLoopRunning = false;
+  private stopped = false;
+  private reconnectTimer: Timer | undefined;
+  private reconnectWaitResolve: (() => void) | undefined;
   private searchTimer: Timer | undefined;
   private termScreen = new TermScreen();
   /** Tail of an incomplete escape sequence held across stdin chunks. */
@@ -290,21 +293,28 @@ export class Tui implements HostEvents {
     this.client = client;
   }
 
+  private readonly handleResize = (): void => {
+    this.screen.resize();
+    if (this.state.pane === "term" && this.state.terminalId && this.currentId())
+      this.client.termResize(
+        this.currentId()!,
+        this.state.terminalId,
+        this.termCols(),
+        this.termRows(),
+      );
+    this.draw();
+  };
+
+  private readonly handleInput = (data: Buffer): void => {
+    this.feedInput(data.toString("utf8"));
+  };
+
   async run(): Promise<void> {
-    process.stdout.on("resize", () => {
-      this.screen.resize();
-      if (this.state.pane === "term" && this.state.terminalId && this.currentId())
-        this.client.termResize(
-          this.currentId()!,
-          this.state.terminalId,
-          this.termCols(),
-          this.termRows(),
-        );
-      this.draw();
-    });
+    this.stopped = false;
+    process.stdout.on("resize", this.handleResize);
     process.stdin.setRawMode(true);
     process.stdin.resume();
-    process.stdin.on("data", (d) => this.feedInput(d.toString("utf8")));
+    process.stdin.on("data", this.handleInput);
     this.screen.enter();
     // SGR mouse: button events + any-motion + SGR extended coords.
     process.stdout.write("\u001b[?1000h\u001b[?1002h\u001b[?1006h");
@@ -316,26 +326,48 @@ export class Tui implements HostEvents {
 
   private quit: () => void = () => {};
 
+  private cancelReconnectTimer(): void {
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = undefined;
+    const resolve = this.reconnectWaitResolve;
+    this.reconnectWaitResolve = undefined;
+    resolve?.();
+  }
+
+  private waitToReconnect(milliseconds: number): Promise<void> {
+    this.cancelReconnectTimer();
+    return new Promise((resolve) => {
+      this.reconnectWaitResolve = resolve;
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = undefined;
+        this.reconnectWaitResolve = undefined;
+        resolve();
+      }, milliseconds);
+    });
+  }
+
   private async connectLoop(): Promise<void> {
     // Reconnect storms burn a core: every failed attempt also emits close,
     // which used to schedule another parallel loop. One loop, ever.
-    if (this.connectLoopRunning) return;
+    if (this.stopped || this.connectLoopRunning) return;
     this.connectLoopRunning = true;
     try {
-      for (;;) {
+      while (!this.stopped) {
         try {
           this.state.connecting = true;
           this.draw();
           await this.client.connect();
+          if (this.stopped) return;
           this.reconnectDelay = 1;
           await this.refresh();
           if (this.state.pane === "term") await this.ensureTerminal();
           return; // connected; close() event re-enters the loop
         } catch (error) {
+          if (this.stopped) return;
           this.state.connecting = false;
           this.state.statusLine = `connect failed (${error instanceof Error ? error.message : error}) — retry in ${this.reconnectDelay}s`;
           this.draw();
-          await new Promise((r) => setTimeout(r, this.reconnectDelay * 1000));
+          await this.waitToReconnect(this.reconnectDelay * 1000);
           this.reconnectDelay = Math.min(15, this.reconnectDelay * 2);
         }
       }
@@ -353,6 +385,7 @@ export class Tui implements HostEvents {
     this.draw();
   }
   close(reason: string): void {
+    if (this.stopped) return;
     this.state.connected = false;
     // Force re-attach + terminal re-open after the reconnect lands.
     this.attachedId = undefined;
@@ -360,14 +393,39 @@ export class Tui implements HostEvents {
     this.state.termOpenedFor = undefined;
     this.state.statusLine = `disconnected (${reason}) — reconnecting…`;
     this.draw();
-    setTimeout(() => void this.connectLoop(), 1000);
+    this.cancelReconnectTimer();
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = undefined;
+      void this.connectLoop();
+    }, 1000);
   }
   error(message: string): void {
     this.state.statusLine = `error: ${message}`;
     this.draw();
   }
   sessions(sessions: SessionRef[]): void {
+    const selectedId = this.currentId();
+    const selectedIndex = this.state.selected;
     this.state.sessions = sessions;
+    this.state.unread = new Set(
+      [...this.state.unread].filter((id) => sessions.some((session) => session.sessionId === id)),
+    );
+
+    if (selectedId) {
+      const preservedIndex = sessions.findIndex((session) => session.sessionId === selectedId);
+      if (preservedIndex >= 0) {
+        this.state.selected = preservedIndex;
+      } else {
+        this.state.selected =
+          sessions.length === 0 ? 0 : Math.min(selectedIndex, sessions.length - 1);
+        this.resetAttachedView();
+        if (this.currentId() && this.state.connected) void this.attachCurrent();
+      }
+    } else {
+      this.state.selected =
+        sessions.length === 0 ? 0 : Math.min(selectedIndex, sessions.length - 1);
+      if (this.currentId() && this.state.connected) void this.attachCurrent();
+    }
     this.draw();
   }
   snapshot(sessionId: string, entries: TranscriptEntry[]): void {
@@ -448,21 +506,25 @@ export class Tui implements HostEvents {
 
   private async refresh(): Promise<void> {
     const { sessions } = await this.client.sessionList();
-    this.state.sessions = sessions;
-    this.draw();
+    this.sessions(sessions);
     await this.attachCurrent();
   }
-  private async attachCurrent(): Promise<void> {
-    const id = this.currentId();
-    if (!id || id === this.attachedId) return;
-    this.attachedId = id;
+  private resetAttachedView(): void {
+    this.attachedId = undefined;
     this.state.entries = [];
     this.state.scroll = 0;
-    this.state.unread.delete(id);
+    this.state.newBelow = 0;
     this.state.diffLoadedFor = undefined;
     this.state.fileView = undefined;
     this.state.terminalId = undefined;
     this.state.termOpenedFor = undefined;
+  }
+  private async attachCurrent(): Promise<void> {
+    const id = this.currentId();
+    if (!id || id === this.attachedId) return;
+    this.resetAttachedView();
+    this.attachedId = id;
+    this.state.unread.delete(id);
     this.draw();
     try {
       await this.client.attach(id);
@@ -1185,6 +1247,17 @@ export class Tui implements HostEvents {
   }
 
   private destroy(): void {
+    if (this.stopped) return;
+    this.stopped = true;
+    this.cancelReconnectTimer();
+    if (this.searchTimer) clearTimeout(this.searchTimer);
+    if (this.inputFlushTimer) clearTimeout(this.inputFlushTimer);
+    this.searchTimer = undefined;
+    this.inputFlushTimer = undefined;
+    process.stdout.off("resize", this.handleResize);
+    process.stdin.off("data", this.handleInput);
+    process.stdin.pause();
+    if (process.stdin.isTTY) process.stdin.setRawMode(false);
     process.stdout.write("\u001b[?1000l\u001b[?1002l\u001b[?1006l");
     this.screen.exit();
     this.client.close();
@@ -1209,6 +1282,7 @@ export class Tui implements HostEvents {
   }
 
   private draw(): void {
+    if (this.stopped) return;
     const s = this.state;
     if (s.scroll === 0) s.newBelow = 0;
     if (s.showHelp) return this.drawHelp();
@@ -1255,7 +1329,7 @@ export class Tui implements HostEvents {
     const s = this.state;
     const cells: Cell[] = [{ text: " " }];
     for (const name of PANES) {
-      if (s.pane === name) cells.push({ text: `${FG(p.accent)}\u001b[7m ${name} ${RESET}` });
+      if (s.pane === name) cells.push({ text: ` ${name} `, fg: p.accent, inverse: true });
       else cells.push({ text: ` ${name} `, fg: p.label });
       cells.push({ text: " " });
     }
@@ -1492,7 +1566,7 @@ export class Tui implements HostEvents {
           ? focused
             ? [
                 { text: before, fg: p.ink },
-                { text: `${FG(p.accent)}\u001b[7m${at}${RESET}` },
+                { text: at, fg: p.accent, inverse: true },
                 { text: after, fg: p.ink },
               ]
             : [{ text: clip(s.composer, this.screen.cols - 14), fg: p.ink }]

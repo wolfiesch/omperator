@@ -1,13 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import { decodeClientFrame, decodeServerFrame } from "@t4-code/protocol";
-import { T4Client, type Frame, type HostEvents } from "../src/client.ts";
+import {
+  T4Client,
+  type Frame,
+  type HostEvents,
+  type SessionRef,
+  type TranscriptEntry,
+} from "../src/client.ts";
 import {
   MAX_CREDENTIAL_FILE_BYTES,
   normalizeRemoteEndpoint,
   parseRemoteCredentials,
 } from "../src/remote-config.ts";
 import { terminalSafeText } from "../src/render.ts";
-import { TermScreen } from "../src/tui.ts";
+import { TermScreen, Tui } from "../src/tui.ts";
 import {
   negotiatedFeature,
   savedCursorFromFrame,
@@ -111,6 +117,48 @@ describe("t4 shared wire conformance", () => {
     expect(inventories.at(-1)?.[0]?.title).toBe("Live");
     route(remove);
     expect(inventories.at(-1)).toEqual([]);
+  });
+
+  test("preserves live TUI selection by session identity", () => {
+    const session = (sessionId: string): SessionRef => ({
+      sessionId,
+      title: sessionId,
+      status: "idle",
+      project: { projectId: "project-a" },
+    });
+    const tui = new Tui();
+    const harness = tui as unknown as {
+      state: {
+        sessions: SessionRef[];
+        selected: number;
+        entries: TranscriptEntry[];
+        unread: Set<string>;
+        connected: boolean;
+        scroll: number;
+        newBelow: number;
+        diffLoadedFor: string | undefined;
+        fileView: unknown;
+        terminalId: string | undefined;
+        termOpenedFor: string | undefined;
+      };
+      attachedId: string | undefined;
+      draw(): void;
+    };
+    harness.draw = () => undefined;
+    harness.state.sessions = [session("a"), session("b"), session("c")];
+    harness.state.selected = 1;
+    harness.attachedId = "b";
+    harness.state.entries = [{ id: "entry-b", kind: "message" }];
+
+    tui.sessions([session("b"), session("c")]);
+    expect(harness.state.selected).toBe(0);
+    expect(harness.attachedId).toBe("b");
+    expect(harness.state.entries).toHaveLength(1);
+
+    tui.sessions([session("c")]);
+    expect(harness.state.selected).toBe(0);
+    expect(harness.attachedId).toBeUndefined();
+    expect(harness.state.entries).toEqual([]);
   });
 
   test("uses projectId session creation and approve/deny confirmation values", () => {

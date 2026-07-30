@@ -8,6 +8,7 @@ export interface Cell {
   fg?: number;
   bold?: boolean;
   dim?: boolean;
+  inverse?: boolean;
 }
 
 /** Strip terminal control bytes from host-provided text before rendering it. */
@@ -44,7 +45,7 @@ export class Screen {
     for (const cell of cells) {
       if (x >= this.cols) break;
       const clipped = terminalSafeText(cell.text).slice(0, this.cols - x);
-      const style = `${cell.fg !== undefined ? FG(cell.fg) : ""}${cell.bold ? "\x1b[1m" : ""}${cell.dim ? "\x1b[2m" : ""}`;
+      const style = `${cell.fg !== undefined ? FG(cell.fg) : ""}${cell.bold ? "\x1b[1m" : ""}${cell.dim ? "\x1b[2m" : ""}${cell.inverse ? "\x1b[7m" : ""}`;
       buf += `${style}${clipped}${RESET}`;
       x += clipped.length;
     }
