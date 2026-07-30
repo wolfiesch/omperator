@@ -263,13 +263,18 @@ export class OfficialOmpProfileAuthority implements SessionAuthority, SessionDis
 	 */
 	async fork(source: SessionRecord, cwd?: string): Promise<SessionAuthoritySession> {
 		await this.#assertLease();
-		const body = await readFile(source.path, "utf8");
+		const sourcePath = await this.#assertOwnedSession(source);
+		const body = await readFile(sourcePath, "utf8");
+		// A session may still be appending while it is forked. Only copy the
+		// durable newline-terminated prefix so the fork never ends with a
+		// partially written JSONL record.
+		const durableBody = body.endsWith("\n") ? body : body.slice(0, body.lastIndexOf("\n") + 1);
 		const id = Bun.randomUUIDv7();
 		const timestamp = new Date().toISOString();
-		const canonicalCwd = cwd !== undefined ? await realpath(cwd) : source.cwd;
+		const canonicalCwd = await realpath(cwd ?? source.cwd);
 		if (!(await stat(canonicalCwd)).isDirectory()) throw new Error("official OMP session cwd is unavailable");
 		let headerSeen = false;
-		const lines = body.split("\n");
+		const lines = durableBody.split("\n");
 		for (let index = 0; index < lines.length; index += 1) {
 			const line = lines[index]!;
 			if (!line.startsWith('{"type":"session"')) continue;

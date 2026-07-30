@@ -1,6 +1,6 @@
 {
   "name": "@t4-code/desktop",
-  "version": "0.1.33",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.cjs",
@@ -34,6 +34,6 @@
     "name": "Wolfgang Schoenberger",
     "email": "221313372+wolfiesch@users.noreply.github.com"
   },
-  "desktopName": "t4-code",
-  "productName": "T4 Code"
+  "desktopName": "Omperator",
+  "productName": "Omperator"
 }

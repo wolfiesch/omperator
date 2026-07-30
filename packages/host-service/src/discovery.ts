@@ -29,6 +29,7 @@ import {
 	turnId,
 } from "@t4-code/host-wire";
 import { boundSnapshotEntries, uniqueEntryId } from "./snapshot-limits.ts";
+import { OMP_AUTHORITY_BRIDGE_PROTOCOL } from "./omp-authority-bridge-contract.ts";
 import { TranscriptPageReader } from "./transcript-page-reader.ts";
 import type { FileSystem, SessionDiscovery, SessionRecord } from "./types.ts";
 import { type XdevWriteCall, xdevExecutionMatches, xdevResultEnvelope, xdevWriteCall } from "./xdev-envelope.ts";
@@ -923,6 +924,10 @@ function parseTranscript(input: string | Uint8Array, path: string, host: HostId)
 		throw new Error("invalid transcript header");
 	const sid = sessionId(header.id);
 	const cwd = resolve(header.cwd);
+	const authorityProtocol =
+		header.authorityProtocol === OMP_AUTHORITY_BRIDGE_PROTOCOL
+			? OMP_AUTHORITY_BRIDGE_PROTOCOL
+			: undefined;
 	const values: Record<string, unknown>[] = [];
 	for (const line of lines.slice(headerIndex + 1)) {
 		try {
@@ -956,6 +961,7 @@ function parseTranscript(input: string | Uint8Array, path: string, host: HostId)
 		title: cleanText(title, 512, true) || "Untitled",
 		updatedAt: "",
 		status: "idle",
+		...(authorityProtocol === undefined ? {} : { authorityProtocol }),
 		...(normalized.model ? { model: normalized.model } : {}),
 		...(normalized.thinking ? { thinking: normalized.thinking } : {}),
 		entries: normalized.entries,
@@ -996,6 +1002,10 @@ export function parseSessionTranscriptMetadata(input: string | Uint8Array, path:
 	)
 		throw new Error("invalid transcript header");
 	const cwd = resolve(header.cwd);
+	const authorityProtocol =
+		header.authorityProtocol === OMP_AUTHORITY_BRIDGE_PROTOCOL
+			? OMP_AUTHORITY_BRIDGE_PROTOCOL
+			: undefined;
 	return {
 		sessionId: sessionId(header.id),
 		path,
@@ -1010,6 +1020,7 @@ export function parseSessionTranscriptMetadata(input: string | Uint8Array, path:
 			) || "Untitled",
 		updatedAt: "",
 		status: "idle",
+		...(authorityProtocol === undefined ? {} : { authorityProtocol }),
 		entries: [],
 	};
 }

@@ -218,7 +218,7 @@ function historySeeds(): EntrySeed[] {
         args: { url: "http://localhost:5173/#/sessions/sess-stream" },
         ok: true,
         result: {
-          title: "T4 Code",
+          title: "Omperator",
           note: "Reconnected 20 times under packet loss; zero duplicate rows.",
         },
         artifacts: [

@@ -13,14 +13,16 @@
 // worse than one that is absent, because the plan still claims the coverage.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const iosRoot = join(repoRoot, "apps", "ios");
 const SCHEME = "T4Code";
 const SIMULATOR_NAME = "t4-verify-ios";
+const startedAt = performance.now();
+const phasesMs = {};
 
 function fail(message) {
   process.stderr.write(`verify-ios: ${message}\n`);
@@ -31,6 +33,15 @@ function run(command, args, options = {}) {
   const result = spawnSync(command, args, { cwd: iosRoot, stdio: "inherit", ...options });
   if (result.error) fail(`${command} could not start: ${result.error.message}`);
   if (result.status !== 0) fail(`${command} ${args.join(" ")} exited ${result.status}`);
+}
+
+function timed(name, action) {
+  const phaseStartedAt = performance.now();
+  const value = action();
+  const duration = Math.round(performance.now() - phaseStartedAt);
+  phasesMs[name] = duration;
+  process.stderr.write(`verify-ios: phase ${name} ${(duration / 1000).toFixed(2)}s\n`);
+  return value;
 }
 
 function capture(command, args) {
@@ -125,52 +136,72 @@ function simulatorUdid(runtime, deviceType) {
   return created.trim();
 }
 
-if (process.platform !== "darwin") {
-  fail(`iOS verification needs macOS with Xcode; this host is ${process.platform}.`);
-}
-selectNewestXcode();
-requireTool("xcodebuild", "Install Xcode and select it with xcode-select.");
-requireTool("xcodegen", "Install it with: brew install xcodegen");
-assertSdkSupportsDeploymentTarget();
+const { runtime, deviceType } = timed("toolchain-and-simulator-discovery", () => {
+  if (process.platform !== "darwin") {
+    fail(`iOS verification needs macOS with Xcode; this host is ${process.platform}.`);
+  }
+  selectNewestXcode();
+  requireTool("xcodebuild", "Install Xcode and select it with xcode-select.");
+  requireTool("xcodegen", "Install it with: brew install xcodegen");
+  assertSdkSupportsDeploymentTarget();
 
-const runtimes = JSON.parse(capture("xcrun", ["simctl", "list", "runtimes", "--json"]) ?? "{}").runtimes ?? [];
-const runtime = newestIosRuntime(runtimes);
-if (!runtime) fail("no available iOS simulator runtime. Install one through Xcode.");
+  const runtimes =
+    JSON.parse(capture("xcrun", ["simctl", "list", "runtimes", "--json"]) ?? "{}").runtimes ?? [];
+  const newestRuntime = newestIosRuntime(runtimes);
+  if (!newestRuntime) fail("no available iOS simulator runtime. Install one through Xcode.");
 
-const deviceTypes = JSON.parse(capture("xcrun", ["simctl", "list", "devicetypes", "--json"]) ?? "{}").devicetypes ?? [];
-const deviceType = iphoneDeviceType(deviceTypes, runtime);
-if (!deviceType) fail(`no iPhone device type available for ${runtime.identifier}.`);
+  const deviceTypes =
+    JSON.parse(capture("xcrun", ["simctl", "list", "devicetypes", "--json"]) ?? "{}").devicetypes ?? [];
+  const newestDeviceType = iphoneDeviceType(deviceTypes, newestRuntime);
+  if (!newestDeviceType) {
+    fail(`no iPhone device type available for ${newestRuntime.identifier}.`);
+  }
+  return { runtime: newestRuntime, deviceType: newestDeviceType };
+});
 
 process.stderr.write(
   `verify-ios: Xcode at ${process.env.DEVELOPER_DIR ?? "the selected developer directory"}, ` +
     `${runtime.identifier} on ${deviceType.identifier}\n`,
 );
-const udid = simulatorUdid(runtime, deviceType);
+const udid = timed("simulator-prepare", () => simulatorUdid(runtime, deviceType));
 
-run("xcodegen", ["generate"]);
+timed("project-generation", () => run("xcodegen", ["generate"]));
 // build-for-testing then test-without-building keeps a compile failure
 // distinguishable from a test failure in the log. Both phases pin the same
 // derived-data path so the test phase reads the build this script just
 // produced, rather than depending on Xcode locating it in the default
 // DerivedData, which a fresh runner does not have.
-const derivedData = join(iosRoot, ".build", "derived-data");
-run("xcodebuild", [
+const configuredDerivedData = process.env.T4_IOS_DERIVED_DATA_PATH?.trim();
+if (configuredDerivedData && !isAbsolute(configuredDerivedData)) {
+  fail("T4_IOS_DERIVED_DATA_PATH must be absolute.");
+}
+const derivedData = configuredDerivedData || join(iosRoot, ".build", "derived-data");
+timed("build-for-testing", () => run("xcodebuild", [
   "build-for-testing",
   "-scheme", SCHEME,
   "-destination", "generic/platform=iOS Simulator",
   "-derivedDataPath", derivedData,
   "CODE_SIGNING_ALLOWED=NO",
   "-quiet",
-]);
-run("xcodebuild", [
+]));
+timed("test-without-building", () => run("xcodebuild", [
   "test-without-building",
   "-scheme", SCHEME,
   "-destination", `platform=iOS Simulator,id=${udid}`,
   "-derivedDataPath", derivedData,
-  // A fresh hosted simulator can wedge its first accessibility snapshot while
-  // XCTest finishes loading the runtime's accessibility bundles. Retry only
-  // the failed test once; a repeat failure still fails the verification leg.
-  "-retry-tests-on-failure",
-  "-test-iterations", "2",
   "CODE_SIGNING_ALLOWED=NO",
-]);
+]));
+
+phasesMs.total = Math.round(performance.now() - startedAt);
+const timingReport = {
+  schemaVersion: 1,
+  cacheMode: configuredDerivedData ? "persistent" : "workspace",
+  phasesMs,
+};
+process.stderr.write(`verify-ios: timings ${JSON.stringify(timingReport)}\n`);
+const timingPath = process.env.T4_IOS_TIMINGS_PATH?.trim();
+if (timingPath) {
+  if (!isAbsolute(timingPath)) fail("T4_IOS_TIMINGS_PATH must be absolute.");
+  mkdirSync(dirname(timingPath), { recursive: true });
+  writeFileSync(timingPath, `${JSON.stringify(timingReport, null, 2)}\n`);
+}

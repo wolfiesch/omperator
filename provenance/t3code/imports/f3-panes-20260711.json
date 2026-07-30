@@ -16,7 +16,7 @@
       "sourceBlobSha": "1641bb6b109b44f2c7b0f2576fcf0750a96da88f",
       "targetPath": "apps/web/src/features/terminal/terminal-store.ts",
       "classification": "adapted",
-      "checksum": "sha256:72f2ab3092ab4dc801aa436e7bad4da108482b2435822b2d5b1d734b40dfb263"
+      "checksum": "sha256:7b5031d01d2f96f7140939519055979229dbc0fdeb334af44b8d668605f9d8f0"
     },
     {
       "sourcePath": "apps/web/src/components/ThreadTerminalDrawer.tsx",

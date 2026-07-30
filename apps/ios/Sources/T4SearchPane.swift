@@ -66,14 +66,7 @@ struct T4SearchPane: View {
     private enum Mode: Hashable { case search, diff }
 
     @State private var mode: Mode = .search
-    /// UI-test seam: -T4SearchQuery=server pre-fills and runs a real search;
-    /// -T4SearchMode=diff opens on the diff tab.
-    @State private var query: String = {
-        guard let raw = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("-T4SearchQuery=") })
-        else { return "" }
-        return String(raw.dropFirst("-T4SearchQuery=".count))
-    }()
-    @State private var initialMode: Bool = ProcessInfo.processInfo.arguments.contains("-T4SearchMode=diff")
+    @State private var query = ""
     @State private var turnId = ""
     @State private var searchResults: FilesSearchResult?
     @State private var searching = false
@@ -121,25 +114,6 @@ struct T4SearchPane: View {
                     Button("Done") { isPresented = false }
                         .font(.system(size: 14, weight: .semibold))
                 }
-            }
-        }
-        .onAppear {
-            if initialMode {
-                initialMode = false
-                mode = .diff
-            } else if !query.isEmpty {
-                // -T4SearchQuery seam: run the pre-filled search immediately.
-                Task { await runSearch(query) }
-            }
-        }
-        .onChange(of: store.connected) { _, isConnected in
-            // Launch seams fire before restore() finishes; retry the pending
-            // mode's command once the host connection is actually up.
-            guard isConnected else { return }
-            if mode == .diff, patchText == nil, diffChanges.isEmpty {
-                Task { await runDiff(turnId) }
-            } else if mode == .search, searchResults == nil, !query.isEmpty {
-                Task { await runSearch(query) }
             }
         }
         .onChange(of: mode) { _, newMode in

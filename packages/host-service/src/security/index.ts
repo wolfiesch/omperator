@@ -78,9 +78,6 @@ const canonicalIdentity = (identity: RemotePeerIdentity): string => {
 		throw new Error("invalid tailscale identity");
 	return JSON.stringify([identity.nodeId, identity.login, identity.hostId, identity.tailnetIp]);
 };
-/** Exported so the host can mint a device record offline (local autoconnect)
- * with the exact identity key registry.authenticate will derive at hello. */
-export const canonicalDeviceIdentityKey = canonicalIdentity;
 const normalizeSourceIp = (value: string): string | null => {
 	const raw = safe(value, 128)?.trim();
 	if (!raw) return null;
@@ -181,7 +178,6 @@ export interface DeviceRegistry {
 	): AuthenticatedPrincipal;
 	get(deviceId: string): DeviceRecord | null;
 	create(record: DeviceRecord, token: string): void;
-	rotate?(record: DeviceRecord, token: string): void;
 	updateMetadata(deviceId: string, metadata: DeviceMetadata, capabilities: readonly Capability[]): void;
 	revoke(deviceId: string, now?: number): void;
 	list(): readonly DeviceRecord[];
@@ -352,51 +348,6 @@ export class SqliteDeviceRegistry implements DeviceRegistry {
 				salt,
 				hash(salt, token),
 			);
-	}
-	rotate(record: DeviceRecord, token: string): void {
-		const current = this.get(record.deviceId);
-		const rawNow = this.clock.now();
-		if (!current || !Number.isFinite(rawNow)) throw new Error("device rotation denied");
-		this.lastNow = Math.max(this.lastNow, rawNow);
-		const now = this.lastNow;
-		if (
-			!safe(token, 4096) ||
-			!/^[A-Za-z0-9_-]{43}$/u.test(token) ||
-			record.createdAt > now ||
-			record.tokenExpiresAt <= now ||
-			record.tokenExpiresAt > now + 90 * 24 * 60 * 60 * 1000
-		)
-			throw new Error("token invalid");
-		const salt = this.random.bytes(16);
-		this.database.run("BEGIN IMMEDIATE");
-		try {
-			this.database
-				.query(
-					"UPDATE devices SET identity_key=?,node_id=?,login=?,host_id=?,tailnet_ip=?,metadata=?,capabilities=?,created_at=?,last_seen_at=?,token_expires_at=?,revoked_at=NULL,epoch=epoch+1,revision=?,salt=?,token_digest=? WHERE device_id=?",
-				)
-				.run(
-					record.identityKey,
-					record.identityKey,
-					record.identityKey,
-					record.identityKey,
-					record.identityKey,
-					JSON.stringify(record.metadata),
-					JSON.stringify(record.capabilities),
-					record.createdAt,
-					record.lastSeenAt,
-					record.tokenExpiresAt,
-					record.revision ?? null,
-					salt,
-					hash(salt, token),
-					record.deviceId,
-				);
-			this.database.run("COMMIT");
-		} catch (error) {
-			this.database.run("ROLLBACK");
-			throw error;
-		}
-		for (const key of this.active.keys()) if (key.endsWith(`:${record.deviceId}`)) this.active.delete(key);
-		for (const listener of this.invalidationListeners) listener(record.deviceId);
 	}
 	updateMetadata(deviceId: string, metadata: DeviceMetadata, capabilities: readonly Capability[]): void {
 		const record = this.get(deviceId);
@@ -631,16 +582,6 @@ export class LocalPairingTicketIssuer {
 		{ digest: Buffer; expiresAt: number; nodeId?: string; allowed: readonly Capability[]; attempts: number }
 	>();
 	private readonly failures = new Map<string, { count: number; blockedUntil: number }>();
-	private readonly completed = new Map<
-		string,
-		{
-			readonly expiresAt: number;
-			readonly identityKey: string;
-			readonly deviceId: string;
-			readonly requested: readonly Capability[];
-			readonly result: LocalPairingResult;
-		}
-	>();
 	private lastNow = Number.NEGATIVE_INFINITY;
 	constructor(
 		private readonly registry: DeviceRegistry,
@@ -658,8 +599,6 @@ export class LocalPairingTicketIssuer {
 		return this.lastNow;
 	}
 	issue(allowedCapabilities: readonly Capability[], ttlMs = 120_000, nodeId?: string): LocalPairingTicket {
-		const now = this.now();
-		for (const [key, entry] of this.completed) if (entry.expiresAt <= now) this.completed.delete(key);
 		const allowed = caps(allowedCapabilities);
 		if (
 			allowed.length === 0 ||
@@ -669,6 +608,7 @@ export class LocalPairingTicketIssuer {
 			(nodeId !== undefined && !safe(nodeId))
 		)
 			throw new Error("local pairing ticket invalid");
+		const now = this.now();
 		const code = digits(this.random, 6);
 		const digest = createHmac("sha256", this.key).update("local-pair-code\0").update(code).digest();
 		this.pending.set(digest.toString("hex"), {
@@ -692,19 +632,6 @@ export class LocalPairingTicketIssuer {
 		const failure = this.failures.get(identity.nodeId);
 		if (failure && failure.blockedUntil > now) throw new Error("pairing denied");
 		const expected = createHmac("sha256", this.key).update("local-pair-code\0").update(code).digest();
-		const digestKey = expected.toString("hex");
-		const identityKey = JSON.stringify([identity.nodeId, identity.login, identity.hostId, identity.tailnetIp]);
-		const requested = caps(requestedCapabilities);
-		const completed = this.completed.get(digestKey);
-		if (
-			completed &&
-			completed.expiresAt > now &&
-			completed.identityKey === identityKey &&
-			completed.deviceId === deviceId &&
-			completed.requested.length === requested.length &&
-			completed.requested.every((value, index) => value === requested[index])
-		)
-			return completed.result;
 		const match = [...this.pending.values()].find(
 			entry => entry.digest.length === expected.length && timingSafeEqual(entry.digest, expected),
 		);
@@ -721,39 +648,30 @@ export class LocalPairingTicketIssuer {
 		)
 			return denied();
 		match.attempts += 1;
+		const requested = caps(requestedCapabilities);
 		const granted = requested.filter(capability => match.allowed.includes(capability));
 		if (granted.length === 0) return denied();
+		if (this.registry.get(deviceId)) return denied();
 		const token = b64(this.random.bytes(32));
 		const tokenExpiresAt = now + 90 * 24 * 60 * 60 * 1000;
-		const existing = this.registry.get(deviceId);
-		if (existing && existing.identityKey !== identityKey) return denied();
-		const record = {
-			deviceId,
-			identityKey,
-			capabilities: granted,
-			metadata,
-			createdAt: now,
-			lastSeenAt: now,
-			tokenExpiresAt,
-			revokedAt: null,
-			epoch: existing?.epoch ?? 0,
-		};
-		if (existing) {
-			if (!this.registry.rotate) return denied();
-			this.registry.rotate(record, token);
-		}
-		else this.registry.create(record, token);
+		const identityKey = JSON.stringify([identity.nodeId, identity.login, identity.hostId, identity.tailnetIp]);
+		this.registry.create(
+			{
+				deviceId,
+				identityKey,
+				capabilities: granted,
+				metadata,
+				createdAt: now,
+				lastSeenAt: now,
+				tokenExpiresAt,
+				revokedAt: null,
+				epoch: 0,
+			},
+			token,
+		);
 		this.pending.delete(match.digest.toString("hex"));
 		this.failures.delete(identity.nodeId);
-		const result = { deviceId, token, tokenExpiresAt, capabilities: granted };
-		this.completed.set(digestKey, {
-			expiresAt: match.expiresAt,
-			identityKey,
-			deviceId,
-			requested,
-			result,
-		});
-		return result;
+		return { deviceId, token, tokenExpiresAt, capabilities: granted };
 	}
 }
 

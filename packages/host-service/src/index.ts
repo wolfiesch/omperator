@@ -1,5 +1,3 @@
-export * from "./boot-reaper.ts";
-export * from "./rpc-child-registry.ts";
 export * from "./artifact-reader.ts";
 export * from "./acp-runtime-adapter.ts";
 export * from "./discovery.ts";
@@ -22,6 +20,7 @@ export * from "./remote/resolver.ts";
 export * from "./remote/runtime.ts";
 export * from "./remote/types.ts";
 export * from "./rpc-child.ts";
+export * from "./rpc-child-contract.ts";
 export * from "./runtime-adapter.ts";
 export * from "./runtime-adapter-presets.ts";
 export * from "./session-ownership-store.ts";
@@ -48,3 +47,4 @@ export * from "./transcript-page-reader.ts";
 export * from "./transcript-search-index.ts";
 export * from "./types.ts";
 export * from "./workspace-authority.ts";
+export * from "./rpc-child-registry.ts";

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { ClientFrame, CommandFrame, HelloFrame, Revision } from "@t4-code/host-wire";
+import type { ClientFrame, CommandFrame, HelloFrame, Revision, ServerFrame } from "@t4-code/host-wire";
 import { TailscaleRemotePolicy } from "../src/remote/policy.ts";
 import type { RemoteConnection } from "../src/remote/types.ts";
 import {
@@ -129,6 +129,54 @@ test("authenticated capability omission uses the explicit default, while empty i
 	policy.close();
 });
 
+test("remote read responses preserve protocol-bounded large payload fields", () => {
+	const registry = new Registry();
+	const policy = new TailscaleRemotePolicy({ registry });
+	const remote = connection("large-reads", { count: 0 });
+	policy.authenticate(remote, hello(remote.connectionId));
+	const content = `/9j/${"A".repeat(70_000)}`;
+
+	for (const commandName of [
+		"files.read",
+		"session.image.read",
+		"artifact.read",
+		"preview.capture.read",
+	]) {
+		const frame = {
+			v: "omp-app/1",
+			type: "response",
+			requestId: `request-${commandName}`,
+			commandId: `command-${commandName}`,
+			command: commandName,
+			ok: true,
+			result: { content },
+		} as unknown as ServerFrame;
+		expect(policy.transformOutbound(remote, frame)).toMatchObject({ result: { content } });
+	}
+
+	const ordinary = {
+		v: "omp-app/1",
+		type: "response",
+		requestId: "ordinary-request",
+		commandId: "ordinary-command",
+		command: "session.list",
+		ok: true,
+		result: { content },
+	} as unknown as ServerFrame;
+	expect(policy.transformOutbound(remote, ordinary)).toBeUndefined();
+	const nested = {
+		v: "omp-app/1",
+		type: "response",
+		requestId: "nested-request",
+		commandId: "nested-command",
+		command: "files.read",
+		ok: true,
+		result: { metadata: { content } },
+	} as unknown as ServerFrame;
+	expect(policy.transformOutbound(remote, nested)).toBeUndefined();
+	policy.close();
+});
+
 test("heartbeat ping stays authorized while pairing and after authentication", () => {
 	const registry = new Registry();
 	const policy = new TailscaleRemotePolicy({ registry });
@@ -228,34 +276,6 @@ test("stale lease acquire is typed and does not allocate before a fresh acquire"
 		ok: true,
 		result: { leaseId: expect.any(String) },
 	});
-	policy.close();
-});
-
-test("held lease acquire is a soft error, never a connection-level denial", () => {
-	const registry = new Registry();
-	const policy = new TailscaleRemotePolicy({ registry, supportedFeatures: ["controller.lease"] });
-	const calls = { count: 0 };
-	const connectionValue = connection("held-acquire", calls);
-	policy.authenticate(connectionValue, hello("held-acquire", ["sessions.control"], ["controller.lease"]));
-	const context = {
-		connectionId: connectionValue.connectionId,
-		peer: connectionValue.peer,
-		sessionRevision: "fresh" as Revision,
-	};
-	const first = { ...command("first", "controller.lease.acquire"), expectedRevision: "fresh" } as CommandFrame;
-	expect(policy.authorize(connectionValue, first, context)).toBe(true);
-	expect(policy.handleCommand(connectionValue, first)).toMatchObject({ type: "response", ok: true });
-	// A second acquire while the first lease is live must answer with a typed
-	// error response — returning false here would close the connection (1008)
-	// mid-conversation and drop the user's message.
-	const second = { ...command("second", "controller.lease.acquire"), expectedRevision: "fresh" } as CommandFrame;
-	expect(policy.authorize(connectionValue, second, context)).toBe(true);
-	expect(policy.handleCommand(connectionValue, second)).toMatchObject({
-		type: "response",
-		ok: false,
-		error: { code: "lease_held" },
-	});
-	expect(calls.count).toBe(0);
 	policy.close();
 });
 

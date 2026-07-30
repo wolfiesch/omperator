@@ -12,6 +12,7 @@ import {
 } from "@t4-code/host-wire";
 import {
 	DesktopOperationDispatcher,
+	commandFeature,
 	type DesktopOperationsAuthority,
 	type OperationContext,
 	operationCapabilities,
@@ -219,6 +220,10 @@ describe("desktop operation dispatcher", () => {
 		expect(operationCapabilities(stateOnly)).toEqual(new Set(["preview.read"]));
 		expect(operationFeatures(stateOnly)).toEqual(new Set(["preview.control"]));
 		expect(operationFeatures(undefined)).toEqual(new Set());
+	});
+	test("gates both session-transfer commands on the negotiated transfer feature", () => {
+		expect(commandFeature("session.release")).toBe("session.transfer");
+		expect(commandFeature("session.reclaim")).toBe("session.transfer");
 	});
 	test("rejects wrong host/scope, stale revision, abort, missing capability, and redacts authority errors", async () => {
 		const dispatcher = new DesktopOperationDispatcher(

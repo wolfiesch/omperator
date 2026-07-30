@@ -82,24 +82,9 @@ struct HostWireFixtureTests {
 
     @Test("Deep links parse and reject")
     func deepLinks() {
-        let payload: [String: Any] = [
-            "version": 1,
-            "hostHint": "studio-mac",
-            "endpoint": "wss://studio-mac:9443/v1/ws",
-            "tlsFingerprint": String(repeating: "a", count: 64),
-            "code": "123456",
-        ]
-        let data = try! JSONSerialization.data(withJSONObject: payload)
-        let encoded = data.base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
-        let link = "t4-code://pair/\(encoded)"
-        let parsed = Pairing.parseDeepLink(link, issuedAtMs: 1)
-        #expect(parsed?.code == "123456")
-        #expect(parsed?.hostHint == "studio-mac")
-        #expect(parsed?.endpoint == "wss://studio-mac:9443/v1/ws")
-        // wrong scheme, legacy incomplete payload, and extra query
+        #expect(Pairing.parseDeepLink("t4-code://pair/studio-mac/123456", issuedAtMs: 1)?.code == "123456")
+        #expect(Pairing.parseDeepLink("t4-code://pair/studio-mac/123456", issuedAtMs: 1)?.hostHint == "studio-mac")
+        // wrong scheme, extra query, bad code length, bad hint char
         #expect(Pairing.parseDeepLink("https://pair/studio-mac/123456", issuedAtMs: 1) == nil)
         #expect(Pairing.parseDeepLink("t4-code://pair/studio-mac/123456?x=1", issuedAtMs: 1) == nil)
         #expect(Pairing.parseDeepLink("t4-code://pair/studio-mac/12345", issuedAtMs: 1) == nil)
@@ -146,9 +131,25 @@ struct HostWireFixtureTests {
         #expect(throws: T4WireError.self) {
             _ = try CommandFrame(requestId: "r", commandId: "c", hostId: "h", command: "session.rename", sessionId: "s")
         }
-        #expect(Commands.descriptor(for: "session.delete")?.confirmation == .challenge)
-        #expect(Commands.descriptor(for: "term.open")?.confirmation == .challenge)
-        #expect(Commands.descriptor(for: "preview.launch")?.confirmation == .challenge)
+        #expect(throws: Never.self) {
+            _ = try CommandFrame(
+                requestId: "r", commandId: "c", hostId: "h",
+                command: "session.reclaim", sessionId: "s",
+                expectedRevision: "rev"
+            )
+        }
+        #expect(throws: Never.self) {
+            _ = try CommandFrame(
+                requestId: "r", commandId: "c", hostId: "h",
+                command: "files.search", sessionId: "s"
+            )
+        }
+        #expect(throws: Never.self) {
+            _ = try CommandFrame(
+                requestId: "r", commandId: "c", hostId: "h",
+                command: "files.diff", sessionId: "s"
+            )
+        }
     }
 
     @Test("Unknown session ownership shapes stay read-only")
@@ -162,7 +163,6 @@ struct HostWireFixtureTests {
         #expect(session.sessionControl == .unknown)
         #expect(session.sessionControl != nil)
     }
-
     @Test("Snapshot, entry, and gap frames decode; durable entry decodes standalone")
     func transcriptFrames() throws {
         // Snapshot, durable-entry, and gap server frames.

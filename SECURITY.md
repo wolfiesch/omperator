@@ -24,7 +24,7 @@ We read every report and will reply to tell you what happens next. This is a sma
 
 ## Scope notes
 
-- Omperator is currently distributed through the existing T4 Code application identifiers while the product rebrand is completed. The OMP runtime is a separate project; runtime vulnerabilities belong at <https://github.com/can1357/oh-my-pi>.
+- Omperator is currently distributed through the existing Omperator application identifiers while the product rebrand is completed. The OMP runtime is a separate project; runtime vulnerabilities belong at <https://github.com/can1357/oh-my-pi>.
 - Pairing credentials are encrypted with the OS keychain via Electron `safeStorage`. Reports about credential handling, the pairing flow, or the `t4-code://` deep-link handler are especially welcome.
 - Published macOS builds are signed with Apple Developer ID and notarized by Apple. Reports of certificate, Team ID, hardened-runtime, timestamp, Gatekeeper, or stapled-ticket drift are security-relevant.
 - Starting with v0.1.33, the independently owned release workflow requires the pinned Developer ID identity, hardened runtime, Apple notarization, a stapled ticket, and a successful Gatekeeper assessment before publishing macOS artifacts.

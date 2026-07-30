@@ -14,7 +14,7 @@ const identity = JSON.parse(
 );
 
 const displayFixture = `
-Executable=/Applications/T4 Code.app/Contents/MacOS/t4-code
+Executable=/Applications/Omperator.app/Contents/MacOS/t4-code
 Identifier=net.t4code.app
 Format=app bundle with Mach-O thin (arm64)
 CodeDirectory v=20500 size=640 flags=0x10000(runtime) hashes=10+7 location=embedded
@@ -42,7 +42,7 @@ test("library validation is relaxed for the bundled runtime but not the app", ()
   assert.doesNotThrow(() => validateMacosLibraryValidationBoundary(hardened, relaxed));
   assert.throws(
     () => validateMacosLibraryValidationBoundary(relaxed, relaxed),
-    /top-level T4 Code app must keep library validation enabled/u,
+    /top-level Omperator app must keep library validation enabled/u,
   );
   assert.throws(
     () => validateMacosLibraryValidationBoundary(hardened, hardened),

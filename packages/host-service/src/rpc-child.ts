@@ -10,8 +10,10 @@ import {
 import type { RpcResponse, RpcSessionEntryFrame } from "./omp-rpc-contract.ts";
 import type { ManagedRpcImageRef } from "./image-upload-store.ts";
 import { OfficialOmpCapabilityAdapter } from "./official-omp-capabilities.ts";
-import type { RpcChildIdentity, RpcChildRegistry } from "./rpc-child-registry.ts";
 import type { ChildHandle, RpcChildFactory, SessionRecord } from "./types.ts";
+import type { RpcChildRegistry } from "./rpc-child-registry.ts";
+import type { RpcChildInvocation, RpcChildInvocationOverrides } from "./rpc-child-contract.ts";
+export type { RpcChildInvocation, RpcChildInvocationOverrides } from "./rpc-child-contract.ts";
 
 const MAX_LINE_BYTES = 1024 * 1024;
 const MAX_RPC_REASSEMBLED_BYTES = 64 * 1024 * 1024;
@@ -370,17 +372,6 @@ export interface RpcLoadedTranscriptWatermark {
 	readonly entryCount: number;
 }
 
-export interface RpcChildInvocation {
-	executable: string;
-	prefixArgv: readonly string[];
-}
-
-export interface RpcChildInvocationOverrides {
-	compiled?: boolean;
-	executable?: string;
-	main?: string;
-}
-
 export function resolveRpcChildInvocation(overrides: RpcChildInvocationOverrides = {}): RpcChildInvocation {
 	const executable = overrides.executable ?? process.execPath;
 	if (typeof executable !== "string" || executable.trim().length === 0)
@@ -427,6 +418,9 @@ export class BunRpcChildFactory implements RpcChildFactory {
 	spawn(spec: { session: SessionRecord; argv: string[]; cwd: string }): ChildHandle {
 		const child = Bun.spawn(spec.argv, {
 			cwd: spec.cwd,
+			// Each RPC runtime owns a dedicated process group. Its durable
+			// registry entry can therefore reap the whole orphaned group.
+			detached: true,
 			env: {
 				...process.env,
 				...this.#environment,
@@ -438,15 +432,25 @@ export class BunRpcChildFactory implements RpcChildFactory {
 			stdin: "pipe",
 			stdout: "pipe",
 			stderr: "pipe",
-			detached: process.platform !== "win32",
 		});
-		let identity: RpcChildIdentity | undefined;
-		if (this.#registry && child.pid) identity = this.#registry.register(child.pid);
+		let identity;
+		try {
+			identity = this.#registry?.register(child.pid);
+		} catch (error) {
+			child.kill("SIGKILL");
+			throw error;
+		}
 		const exited = child.exited.finally(() => {
-			if (identity) this.#registry?.unregister(identity);
+			if (identity) {
+				try {
+					this.#registry?.unregister(identity);
+				} catch {
+					// A stale entry is safer than turning a child exit into a
+					// rejected lifecycle promise; the next boot revalidates it.
+				}
+			}
 		});
 		return {
-			pid: child.pid,
 			stdin: { write: data => Promise.resolve(child.stdin.write(data)).then(() => undefined) },
 			stdout: child.stdout as unknown as AsyncIterable<Uint8Array>,
 			stderr: child.stderr as unknown as AsyncIterable<Uint8Array>,

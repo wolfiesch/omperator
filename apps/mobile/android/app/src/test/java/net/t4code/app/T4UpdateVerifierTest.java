@@ -197,7 +197,7 @@ public final class T4UpdateVerifierTest {
         assertThrows(IllegalArgumentException.class, () -> T4UpdateVerifier.compareVersions("01.2.3", "1.2.3"));
         assertThrows(IllegalArgumentException.class, () -> T4UpdateVerifier.compareVersions("1.2.3-beta", "1.2.3"));
         assertEquals(
-            "T4-Code-1.2.3-android.apk",
+            "Omperator-1.2.3-android.apk",
             T4UpdateVerifier.expectedAssetName("1.2.3", "android", "apk", "universal")
         );
         assertThrows(
@@ -206,7 +206,7 @@ public final class T4UpdateVerifierTest {
         );
 
         T4UpdateVerifier.requireAllowedAssetUrl(
-            new URL("https://github.com/wolfiesch/omperator/releases/download/v1.2.3/T4-Code-1.2.3-android.apk"),
+            new URL("https://github.com/wolfiesch/omperator/releases/download/v1.2.3/Omperator-1.2.3-android.apk"),
             true
         );
         T4UpdateVerifier.requireAllowedAssetUrl(
@@ -261,11 +261,11 @@ public final class T4UpdateVerifierTest {
         );
 
         String[][] assets = new String[][] {
-            { "android", "apk", "universal", "T4-Code-1.2.3-android.apk" },
-            { "linux", "deb", "x86_64", "T4-Code-1.2.3-linux-amd64.deb" },
-            { "linux", "appimage", "x86_64", "T4-Code-1.2.3-linux-x86_64.AppImage" },
-            { "mac", "dmg", "arm64", "T4-Code-1.2.3-mac-arm64.dmg" },
-            { "mac", "zip", "arm64", "T4-Code-1.2.3-mac-arm64.zip" },
+            { "android", "apk", "universal", "Omperator-1.2.3-android.apk" },
+            { "linux", "deb", "x86_64", "Omperator-1.2.3-linux-amd64.deb" },
+            { "linux", "appimage", "x86_64", "Omperator-1.2.3-linux-x86_64.AppImage" },
+            { "mac", "dmg", "arm64", "Omperator-1.2.3-mac-arm64.dmg" },
+            { "mac", "zip", "arm64", "Omperator-1.2.3-mac-arm64.zip" },
         };
         for (String[] asset : assets) {
             assertEquals(
@@ -309,8 +309,8 @@ public final class T4UpdateVerifierTest {
                 "android",
                 "apk",
                 "universal",
-                "T4-Code-1.2.3-android.apk",
-                "https://example.com/T4-Code-1.2.3-android.apk",
+                "Omperator-1.2.3-android.apk",
+                "https://example.com/Omperator-1.2.3-android.apk",
                 1024,
                 digest,
                 2048
@@ -323,8 +323,8 @@ public final class T4UpdateVerifierTest {
                 "android",
                 "apk",
                 "universal",
-                "T4-Code-1.2.3-android.apk",
-                "https://github.com/wolfiesch/omperator/releases/download/v1.2.3/T4-Code-1.2.3-android.apk",
+                "Omperator-1.2.3-android.apk",
+                "https://github.com/wolfiesch/omperator/releases/download/v1.2.3/Omperator-1.2.3-android.apk",
                 2049,
                 digest,
                 2048
@@ -337,8 +337,8 @@ public final class T4UpdateVerifierTest {
                 "android",
                 "apk",
                 "universal",
-                "T4-Code-1.2.3-android.apk",
-                "https://github.com/wolfiesch/omperator/releases/download/v1.2.3/T4-Code-1.2.3-android.apk",
+                "Omperator-1.2.3-android.apk",
+                "https://github.com/wolfiesch/omperator/releases/download/v1.2.3/Omperator-1.2.3-android.apk",
                 1024,
                 digest.toUpperCase(java.util.Locale.ROOT),
                 2048

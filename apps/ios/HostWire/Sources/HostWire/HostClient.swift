@@ -22,17 +22,14 @@ public actor HostClient {
         public var commandTimeout: TimeInterval = 30
         public var reconnectBase: TimeInterval = 0.5
         public var reconnectMax: TimeInterval = 30
-        public var frameBufferBytes: Int = 4 * 1024 * 1024
         public init(
             identity: ClientIdentity,
             authentication: DeviceAuthentication? = nil,
             requestedFeatures: [String] = ["resume", "prompt.lease", "controller.lease", "prompt.images", "transcript.page", "session.delta", "files.list", "terminal.io"],
             capabilities: Capabilities? = Capabilities(client: [
                 "sessions.read", "sessions.prompt", "sessions.control", "sessions.manage",
-                "catalog.read", "files.list", "files.read", "files.diff",
+                "catalog.read", "files.list", "files.read",
                 "term.open", "term.input", "term.resize",
-                "preview.control", "preview.read", "usage.read",
-                "agents.control", "audit.read", "config.read", "config.write",
             ])
         ) {
             self.identity = identity
@@ -50,14 +47,13 @@ public actor HostClient {
 
     /// Projections subscribe here for host→client frames the app renders
     /// (sessions inventory, snapshots, events, agents, confirmation challenges).
-    public let frames: BoundedFrameStream
-    private let frameBuffer: BoundedFrameBuffer
+    public let frames: AsyncStream<ServerFrame>
+    private let frameContinuation: AsyncStream<ServerFrame>.Continuation
 
     /// Pending command requests awaiting their response, keyed by requestId.
     private var pending: [RequestId: CheckedContinuation<ResultFrame, any Error>] = [:]
     private var welcomeCont: CheckedContinuation<WelcomeFrame, any Error>?
     private var pairCont: CheckedContinuation<PairOkFrame, any Error>?
-    private var pairRequestId: RequestId?
 
     private var cursorJournal: [SessionKey: Cursor] = [:]
     private var heartbeatNonce: String?
@@ -71,9 +67,9 @@ public actor HostClient {
     public init(transport: HostWireTransport, config: Config) {
         self.transport = transport
         self.config = config
-        let buffer = BoundedFrameBuffer(maxBytes: config.frameBufferBytes)
-        self.frameBuffer = buffer
-        self.frames = BoundedFrameStream(buffer: buffer)
+        var cont: AsyncStream<ServerFrame>.Continuation!
+        self.frames = AsyncStream { cont = $0 }
+        self.frameContinuation = cont
     }
 
     // MARK: - Connect / handshake
@@ -93,21 +89,17 @@ public actor HostClient {
         state = .connecting
         try await transport.open()
         state = .handshaking
-        let payload = try encodeFrame(makeHello())
-        let awaited = try await awaitWelcome(afterRegistering: payload, timeout: config.handshakeTimeout)
+        try await sendPayload(try encodeFrame(makeHello()))
+        startReceiveLoop()
+        startHeartbeat()
+        let awaited = try await awaitWelcome(timeout: config.handshakeTimeout)
         welcome = awaited
         state = awaited.authentication == .pairingRequired ? .pairing : .ready
     }
 
-    private func awaitWelcome(afterRegistering payload: Data, timeout: TimeInterval) async throws -> WelcomeFrame {
+    private func awaitWelcome(timeout: TimeInterval) async throws -> WelcomeFrame {
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<WelcomeFrame, any Error>) in
             welcomeCont = cont
-            startReceiveLoop()
-            startHeartbeat()
-            Task { [weak self] in
-                do { try await self?.sendPayload(payload) }
-                catch { await self?.resumeWelcome(with: .failure(error)) }
-            }
             Task { [weak self] in
                 try? await Task.sleep(for: .seconds(timeout))
                 await self?.resumeWelcome(with: .failure(HostClientError.timeout("handshake")))
@@ -126,14 +118,10 @@ public actor HostClient {
             deviceName: intent.deviceName, platform: intent.platform,
             requestedCapabilities: intent.requestedCapabilities
         )
+        try await sendPayload(try encodeFrame(frame))
         return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<PairOkFrame, any Error>) in
             pairCont = cont
-            pairRequestId = frame.requestId
             let pairTimeout = max(config.handshakeTimeout, 30)
-            Task { [weak self] in
-                do { try await self?.sendPayload(try encodeFrame(frame)) }
-                catch { await self?.resumePair(with: .failure(error)) }
-            }
             Task { [weak self] in
                 try? await Task.sleep(for: .seconds(pairTimeout))
                 await self?.resumePair(with: .failure(HostClientError.timeout("pairing")))
@@ -192,7 +180,7 @@ public actor HostClient {
 
     // MARK: - Close / reconnect
 
-    public func close() async {
+    public func close() {
         closedByUser = true
         state = .closing
         heartbeatTask?.cancel(); heartbeatTask = nil
@@ -203,7 +191,7 @@ public actor HostClient {
         failAllPending(HostClientError.closed)
         resumeWelcome(with: .failure(HostClientError.closed))
         resumePair(with: .failure(HostClientError.closed))
-        await frameBuffer.finish()
+        frameContinuation.finish()
         state = .closed
     }
 
@@ -252,12 +240,10 @@ public actor HostClient {
 
     private func receiveNext() async throws -> Data { try await transport.receive() }
     private func sendPayload(_ data: Data) async throws {
-        t4wireLog.debug("out \(Self.envelope(data), privacy: .public)")
         try await transport.send(data)
     }
 
-    private func ingest(_ data: Data) async throws {
-        t4wireLog.debug("in \(Self.envelope(data), privacy: .public)")
+    private func ingest(_ data: Data) throws {
         let frame = try ServerFrame.decode(data)
         switch frame {
         case .welcome(let w):
@@ -282,53 +268,51 @@ public actor HostClient {
                 heartbeatTimeoutTask = nil
             }
         case .bye(let b):
-            try await frameBuffer.enqueue(frame, byteCount: data.count)
+            frameContinuation.yield(frame)
             handleDisconnect("bye: \(b.code)")
         case .error(let e):
-            try await frameBuffer.enqueue(frame, byteCount: data.count)
+            frameContinuation.yield(frame)
             if e.code.lowercased() == "fatal" {
                 state = .fatal
                 lastFatal = .protocol(e.message)
                 failAllPending(HostClientError.protocol(e.message))
             }
         case .pairOk(let ok):
-            guard ok.requestId == pairRequestId else { return }
             resumePair(with: .success(ok))
             config.authentication = DeviceAuthentication(deviceId: ok.deviceId, deviceToken: ok.deviceToken)
         case .pairError(let err):
-            guard err.requestId == nil || err.requestId == pairRequestId else { return }
             resumePair(with: .failure(HostClientError.protocol(err.message)))
         case .event(let ev):
             cursorJournal[SessionKey(hostId: ev.hostId, sessionId: ev.sessionId)] = ev.cursor
-            try await frameBuffer.enqueue(frame, byteCount: data.count)
+            frameContinuation.yield(frame)
         case .entry(let f):
             cursorJournal[SessionKey(hostId: f.hostId, sessionId: f.sessionId)] = f.cursor
-            try await frameBuffer.enqueue(frame, byteCount: data.count)
+            frameContinuation.yield(frame)
         case .snapshot(let f):
             cursorJournal[SessionKey(hostId: f.hostId, sessionId: f.sessionId)] = f.cursor
-            try await frameBuffer.enqueue(frame, byteCount: data.count)
+            frameContinuation.yield(frame)
         case .gap(let f):
             cursorJournal[SessionKey(hostId: f.hostId, sessionId: f.sessionId)] = f.to
-            try await frameBuffer.enqueue(frame, byteCount: data.count)
+            frameContinuation.yield(frame)
         case .agentState(let f):
             cursorJournal[SessionKey(hostId: f.hostId, sessionId: f.sessionId)] = f.cursor
-            try await frameBuffer.enqueue(frame, byteCount: data.count)
+            frameContinuation.yield(frame)
         case .agentLifecycle(let f):
             cursorJournal[SessionKey(hostId: f.hostId, sessionId: f.sessionId)] = f.cursor
-            try await frameBuffer.enqueue(frame, byteCount: data.count)
+            frameContinuation.yield(frame)
         case .agentProgress(let f):
             cursorJournal[SessionKey(hostId: f.hostId, sessionId: f.sessionId)] = f.cursor
-            try await frameBuffer.enqueue(frame, byteCount: data.count)
+            frameContinuation.yield(frame)
         case .agentEvent(let f):
             cursorJournal[SessionKey(hostId: f.hostId, sessionId: f.sessionId)] = f.cursor
-            try await frameBuffer.enqueue(frame, byteCount: data.count)
+            frameContinuation.yield(frame)
         case .agentTranscript(let f):
             cursorJournal[SessionKey(hostId: f.hostId, sessionId: f.sessionId)] = f.cursor
-            try await frameBuffer.enqueue(frame, byteCount: data.count)
+            frameContinuation.yield(frame)
         case .agent:
-            try await frameBuffer.enqueue(frame, byteCount: data.count)
+            frameContinuation.yield(frame)
         case .sessions, .confirmation, .terminalOutput, .terminalExit, .filesList, .filesRead, .filesWrite, .filesPatch, .filesDiff, .auditTail, .auditEvent, .catalog, .settings, .hostWatch, .sessionWatch, .sessionState, .sessionDelta, .lease, .promptLease, .previewLaunch, .previewState, .previewNavigation, .previewCapture, .previewError, .legacyTerminal, .audit, .files, .review:
-            try await frameBuffer.enqueue(frame, byteCount: data.count)
+            frameContinuation.yield(frame)
         }
     }
 
@@ -386,16 +370,6 @@ public actor HostClient {
 
     private static func id() -> String { UUID().uuidString }
 
-    private static func envelope(_ data: Data) -> String {
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return "frame bytes=\(data.count)"
-        }
-        let type = object["type"] as? String ?? "unknown"
-        let command = object["command"] as? String
-        return command.map { "type=\(type) command=\($0) bytes=\(data.count)" }
-            ?? "type=\(type) bytes=\(data.count)"
-    }
-
     private func resumeWelcome(with result: Result<WelcomeFrame, any Error>) {
         guard let cont = welcomeCont else { return }
         welcomeCont = nil
@@ -408,7 +382,6 @@ public actor HostClient {
     private func resumePair(with result: Result<PairOkFrame, any Error>) {
         guard let cont = pairCont else { return }
         pairCont = nil
-        pairRequestId = nil
         switch result {
         case .success(let ok): cont.resume(returning: ok)
         case .failure(let e): cont.resume(throwing: e)

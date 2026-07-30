@@ -13,6 +13,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import type { PtyError, PtyExit, PtyNotice } from "../src/features/terminal/pty.ts";
+import { createTerminalStore } from "../src/features/terminal/terminal-store.ts";
 import {
   buildTerminalClose,
   buildTerminalInput,
@@ -433,5 +434,40 @@ describe("wire PTY bridge", () => {
       cols: WIRE_MAX_COLS,
       rows: 1,
     });
+  });
+
+  it("composes paste guarding and ordered drain through the production wire bridge", async () => {
+    const transport = fakeTransport();
+    const bridge = createWirePtyBridge(transport);
+    const store = createTerminalStore({
+      sessionId: "session-1",
+      bridge,
+      cwd: ".",
+      storage: null,
+    });
+    const localTerminalId = store.getState().openTerminal();
+    transport.resolveOpen("term-srv-1");
+    await settle();
+
+    store.getState().requestPaste(localTerminalId, "echo one\necho two\n");
+    expect(store.getState().pendingPaste?.assessment.multiline).toBe(true);
+    expect(transport.sent.filter((frame) => frame.type === "terminal.input")).toEqual([]);
+    store.getState().confirmPaste();
+
+    transport.accepting = false;
+    store.getState().sendInput(localTerminalId, "held-one");
+    store.getState().sendInput(localTerminalId, "-held-two");
+    expect(store.getState().tabs[0]?.queuedInput).toBe("held-one-held-two");
+    transport.accepting = true;
+    transport.drain();
+
+    expect(
+      transport.sent
+        .filter((frame): frame is Extract<TerminalClientFrame, { type: "terminal.input" }> =>
+          frame.type === "terminal.input",
+        )
+        .map((frame) => frame.data),
+    ).toEqual(["echo one\recho two\r", "held-one-held-two"]);
+    expect(store.getState().tabs[0]?.queuedInput).toBe("");
   });
 });

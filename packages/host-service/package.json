@@ -1,6 +1,6 @@
 {
   "name": "@t4-code/host-service",
-  "version": "0.1.33",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "description": "T4-owned host service with runtime adapters over Unix WebSocket",
@@ -28,6 +28,7 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "1.2.1",
     "@t4-code/host-wire": "workspace:*",
+    "chromium-bidi": "12.0.0",
     "playwright-core": "1.61.1",
     "yaml": "^2.9.0"
   },

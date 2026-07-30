@@ -87,8 +87,8 @@ export function parseLinuxUpdateMetadata(text) {
 export function expectedLinuxUpdateNames(version) {
   if (!VERSION_PATTERN.test(version)) throw new Error("version must be x.y.z");
   return [
-    `T4-Code-${version}-linux-amd64.deb`,
-    `T4-Code-${version}-linux-x86_64.AppImage`,
+    `Omperator-${version}-linux-amd64.deb`,
+    `Omperator-${version}-linux-x86_64.AppImage`,
   ];
 }
 

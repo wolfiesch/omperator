@@ -40,11 +40,7 @@ struct T4SessionsView: View {
             }
             if !store.pinnedSessions.isEmpty {
                 Section {
-                    sessionRows(
-                        store.pinnedSessions,
-                        groupId: "__pinned__",
-                        pageSize: groupedPageSize
-                    )
+                    sessionRows(store.pinnedSessions, groupId: "__pinned__", pageSize: groupedPageSize)
                 } header: {
                     Label("Pinned", systemImage: "pin.fill")
                         .font(.system(size: 12, weight: .semibold))
@@ -58,9 +54,7 @@ struct T4SessionsView: View {
                         sessionRows(
                             group.sessions,
                             groupId: group.projectId,
-                            pageSize: store.railOrganization == .flat
-                                ? flatPageSize
-                                : groupedPageSize
+                            pageSize: store.railOrganization == .flat ? flatPageSize : groupedPageSize
                         )
                     }
                 } header: {
@@ -142,9 +136,7 @@ struct T4SessionsView: View {
                         .background(t.bg2, in: RoundedRectangle(cornerRadius: 9))
                 }
                 .accessibilityLabel("Organize sessions")
-                .accessibilityHint(
-                    "\(store.railOrganization.label), sorted by \(store.railSort.label)"
-                )
+                .accessibilityHint("\(store.railOrganization.label), sorted by \(store.railSort.label)")
             }
         }
         .padding(.vertical, 4)
@@ -167,11 +159,7 @@ struct T4SessionsView: View {
     }
 
     @ViewBuilder
-    private func sessionRows(
-        _ sessions: [SessionRef],
-        groupId: String,
-        pageSize: Int
-    ) -> some View {
+    private func sessionRows(_ sessions: [SessionRef], groupId: String, pageSize: Int) -> some View {
         let limit = visibleLimitByGroupId[groupId] ?? pageSize
         let visible = Array(sessions.prefix(limit))
         ForEach(visible, id: \.sessionId) { session in
@@ -199,11 +187,7 @@ struct T4SessionsView: View {
     private func sessionRow(_ session: SessionRef) -> some View {
         Button { onSelect(session) } label: {
             HStack(spacing: 8) {
-                T4SessionRow(
-                    session: session,
-                    theme: t,
-                    unread: store.unreadSessions.contains(session.sessionId)
-                )
+                T4SessionRow(session: session, theme: t)
                 if store.pinnedSessionIds.contains(session.sessionId) {
                     Image(systemName: "pin.fill")
                         .font(.system(size: 10))
@@ -226,9 +210,7 @@ struct T4SessionsView: View {
             } label: {
                 Label(
                     store.pinnedSessionIds.contains(session.sessionId) ? "Unpin" : "Pin",
-                    systemImage: store.pinnedSessionIds.contains(session.sessionId)
-                        ? "pin.slash"
-                        : "pin"
+                    systemImage: store.pinnedSessionIds.contains(session.sessionId) ? "pin.slash" : "pin"
                 )
             }
             .tint(t.accent)
@@ -265,13 +247,9 @@ struct T4SessionsView: View {
         } label: {
             HStack(spacing: 6) {
                 if store.railOrganization == .byProject {
-                    Image(
-                        systemName: collapsedProjectIds.contains(group.projectId)
-                            ? "chevron.right"
-                            : "chevron.down"
-                    )
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(t.txtLabel)
+                    Image(systemName: collapsedProjectIds.contains(group.projectId) ? "chevron.right" : "chevron.down")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(t.txtLabel)
                 }
                 Image(systemName: store.railOrganization == .byProject ? "folder" : "tray.full")
                     .font(.system(size: 10))
@@ -326,9 +304,7 @@ struct T4SessionsView: View {
         } label: {
             Label(
                 store.pinnedSessionIds.contains(session.sessionId) ? "Unpin" : "Pin",
-                systemImage: store.pinnedSessionIds.contains(session.sessionId)
-                    ? "pin.slash"
-                    : "pin"
+                systemImage: store.pinnedSessionIds.contains(session.sessionId) ? "pin.slash" : "pin"
             )
         }
         if store.railSort == .manual {
@@ -370,49 +346,51 @@ struct T4SessionsView: View {
                     Label("Bring Back to App", systemImage: "arrow.uturn.backward")
                 }
             }
-        } else if session.archivedAt == nil {
-            Button {
-                renameText = session.title
-                renaming = session
-            } label: {
-                Label("Rename", systemImage: "pencil")
-            }
-            Button {
-                Task { await store.archiveSession(sessionId: session.sessionId) }
-            } label: {
-                Label("Archive", systemImage: "archivebox")
-            }
-            .disabled(!store.connected)
-            Divider()
-            Button {
-                Task { await store.compactSession(sessionId: session.sessionId) }
-            } label: {
-                Label("Compact", systemImage: "rectangle.compress.vertical")
-            }
-            Button {
-                Task { await store.retrySession(sessionId: session.sessionId) }
-            } label: {
-                Label("Retry", systemImage: "arrow.clockwise")
-            }
-            Button {
-                Task { await store.closeSession(sessionId: session.sessionId) }
-            } label: {
-                Label("Close", systemImage: "xmark.circle")
-            }
-            .disabled(session.status == "closed")
         } else {
-            Button {
-                Task { await store.restoreSession(sessionId: session.sessionId) }
-            } label: {
-                Label("Restore", systemImage: "arrow.uturn.backward")
+            if session.archivedAt == nil {
+                Button {
+                    renameText = session.title
+                    renaming = session
+                } label: {
+                    Label("Rename", systemImage: "pencil")
+                }
+                Button {
+                    Task { await store.archiveSession(sessionId: session.sessionId) }
+                } label: {
+                    Label("Archive", systemImage: "archivebox")
+                }
+                .disabled(!store.connected)
+                Divider()
+                Button {
+                    Task { await store.compactSession(sessionId: session.sessionId) }
+                } label: {
+                    Label("Compact", systemImage: "rectangle.compress.vertical")
+                }
+                Button {
+                    Task { await store.retrySession(sessionId: session.sessionId) }
+                } label: {
+                    Label("Retry", systemImage: "arrow.clockwise")
+                }
+                Button {
+                    Task { await store.closeSession(sessionId: session.sessionId) }
+                } label: {
+                    Label("Close", systemImage: "xmark.circle")
+                }
+                .disabled(session.status == "closed")
+            } else {
+                Button {
+                    Task { await store.restoreSession(sessionId: session.sessionId) }
+                } label: {
+                    Label("Restore", systemImage: "arrow.uturn.backward")
+                }
+                .disabled(!store.connected)
             }
-            .disabled(!store.connected)
-        }
-        Divider()
-        Button(role: .destructive) {
-            Task { await store.deleteSession(sessionId: session.sessionId) }
-        } label: {
-            Label("Delete", systemImage: "trash")
+            Divider()
+            Button(role: .destructive) {
+                Task { await store.deleteSession(sessionId: session.sessionId) }
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
         }
     }
 
@@ -428,55 +406,44 @@ struct T4SessionsView: View {
 struct T4SessionRow: View {
     let session: SessionRef
     let theme: Theme
-    /// True when durable entries arrived since this session was last selected
-    /// — renders a leading accent dot. Driven by `store.unreadSessions`.
-    var unread: Bool = false
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            if unread {
-                Circle()
-                    .fill(theme.accent)
-                    .frame(width: 8, height: 8)
-                    .padding(.top, 7)
-            }
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(session.title)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(theme.txt)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(session.title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(theme.txt)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                if let control = session.sessionControl {
+                    Text(control.t4Presentation.railLabel)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(theme.cAdvisor)
                         .lineLimit(1)
-                    Spacer(minLength: 8)
-                    if let control = session.sessionControl {
-                        Text(control.t4Presentation.railLabel)
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(theme.cAdvisor)
-                            .lineLimit(1)
-                    } else {
-                        StatusPill(status: session.status, theme: theme)
-                    }
+                } else {
+                    StatusPill(status: session.status, theme: theme)
                 }
-                HStack(spacing: 10) {
-                    if let model = session.model {
-                        T4ModelLabel(selector: model, theme: theme)
-                            .lineLimit(1)
-                    }
-                    if let usage = session.contextUsage {
-                        ContextMeter(used: usage.used, limit: usage.limit, theme: theme)
-                    }
-                    Spacer(minLength: 0)
-                }
-                .lineLimit(1)
-                .truncationMode(.tail)
-                HStack(spacing: 6) {
-                    if session.pendingApproval == true { Tag(text: "approval", color: theme.diffAdd, theme: theme) }
-                    if session.pendingUserInput == true { Tag(text: "input", color: theme.cTask, theme: theme) }
-                    Text(session.updatedAt).font(.system(size: 10)).foregroundStyle(theme.txtLabel)
+            }
+            HStack(spacing: 10) {
+                if let model = session.model {
+                    T4ModelLabel(selector: model, theme: theme)
                         .lineLimit(1)
                 }
-                .lineLimit(1)
-                .truncationMode(.tail)
+                if let usage = session.contextUsage {
+                    ContextMeter(used: usage.used, limit: usage.limit, theme: theme)
+                }
+                Spacer(minLength: 0)
             }
+            .lineLimit(1)
+            .truncationMode(.tail)
+            HStack(spacing: 6) {
+                if session.pendingApproval == true { Tag(text: "approval", color: theme.diffAdd, theme: theme) }
+                if session.pendingUserInput == true { Tag(text: "input", color: theme.cTask, theme: theme) }
+                Text(session.updatedAt).font(.system(size: 10)).foregroundStyle(theme.txtLabel)
+                    .lineLimit(1)
+            }
+            .lineLimit(1)
+            .truncationMode(.tail)
         }
         .padding(.vertical, 3)
     }

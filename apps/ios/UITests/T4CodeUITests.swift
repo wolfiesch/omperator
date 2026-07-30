@@ -14,13 +14,12 @@ final class T4CodeUITests: XCTestCase {
     @MainActor
     private func launch(arguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
-        // Fresh state every run: no Keychain access, restored connection,
-        // persisted rail state, or system permission prompts.
+        // Fresh state every run: no Keychain access, restored connection, or
+        // persisted rail presentation state.
         app.launchArguments = [
             "-T4NoRestore",
             "-T4Demo",
             "-T4ResetRailPreferences",
-            "-T4NoNotifications",
         ] + arguments
         app.launch()
         return app
@@ -56,8 +55,8 @@ final class T4CodeUITests: XCTestCase {
         XCTAssertTrue(search.waitForExistence(timeout: 5))
         search.tap()
         search.typeText("agent")
-        XCTAssertTrue(app.buttons["session-row-s3"].waitForExistence(timeout: 3))
-        XCTAssertFalse(app.buttons["session-row-s4"].exists)
+        XCTAssertTrue(app.staticTexts["Agent view"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.staticTexts["Hosts & usage"].exists)
     }
 
     @MainActor
@@ -82,12 +81,10 @@ final class T4CodeUITests: XCTestCase {
 
         app.buttons["session-filter-attention"].tap()
 
-        // s1 was already visible before the tap, so it cannot prove the
-        // asynchronous filter update has reached the accessibility tree.
-        XCTAssertTrue(app.buttons["session-row-s2"].waitForNonExistence(timeout: 3))
-        XCTAssertTrue(app.buttons["session-row-s3"].waitForNonExistence(timeout: 3))
-        XCTAssertTrue(app.buttons["session-row-s1"].exists)
+        XCTAssertTrue(app.buttons["session-row-s1"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.buttons["session-row-s4"].exists)
+        XCTAssertFalse(app.buttons["session-row-s2"].exists)
+        XCTAssertFalse(app.buttons["session-row-s3"].exists)
     }
 
     // MARK: - Model menu
@@ -140,6 +137,7 @@ final class T4CodeUITests: XCTestCase {
 
         while Date() < deadline {
             if thinking.exists { thinkingFrames.insert(thinking.label) }
+
             if write.exists { writeFrames.insert(write.label) }
             if thinkingFrames.count >= 3 && writeFrames.count >= 3 { break }
             Thread.sleep(forTimeInterval: 0.05)

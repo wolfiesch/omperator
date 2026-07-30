@@ -744,11 +744,11 @@ describe("honest unsupported controls", () => {
     const { shell, runtime } = await startedRuntime({
       items: [...CONTROL_COMMANDS, commandItem("session.mode.set")],
     });
-    // Before the host reports a mode, the control is supported but hidden
-    // (mode is null) — the host has not spoken yet.
+    // Existing session refs may omit the default mode. OMP still starts in
+    // build mode, so the control must remain visible.
     let controls = runtime.getSnapshot().controls;
     expect(controls.modeSupported).toBe(true);
-    expect(controls.mode).toBeNull();
+    expect(controls.mode).toBe("build");
 
     shell.emitFrame({
       targetId: "local",
@@ -758,12 +758,12 @@ describe("honest unsupported controls", () => {
     expect(controls.modeSupported).toBe(true);
     expect(controls.mode).toBe("plan");
 
-    // A malformed mode on the wire is ignored, not echoed.
+    // A malformed mode on the wire is ignored in favor of OMP's default.
     shell.emitFrame({
       targetId: "local",
       frame: sessionsUpsert(3, { mode: "bogus" }),
     });
-    expect(runtime.getSnapshot().controls.mode).toBeNull();
+    expect(runtime.getSnapshot().controls.mode).toBe("build");
   });
 
   it("a refused session.mode.set item disables mode with the host's reason", async () => {

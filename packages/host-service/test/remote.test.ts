@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import * as http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,17 +16,14 @@ import {
 } from "@t4-code/host-wire";
 import {
 	createListenerPlan,
-	createLoopbackListenerPlan,
 	createServeProxyPlan,
 	directPeer,
-	isLoopbackAddress,
 	isTailnetAddress,
 	originAllowed,
 	resolveServePeer,
 } from "../src/remote/listener.ts";
 import { TailscaleRemotePolicy } from "../src/remote/policy.ts";
 import { TailscaleWhoisResolver } from "../src/remote/resolver.ts";
-import { publishLocalDevice } from "../src/remote/runtime.ts";
 import { LocalPairingTicketIssuer, SqliteDeviceRegistry } from "../src/security/index.ts";
 import { createAppserver } from "../src/server.ts";
 
@@ -58,87 +55,6 @@ describe("remote address policy", () => {
 		).toBeUndefined();
 		expect(directPeer("100.64.0.2", "node").source).toBe("direct");
 		expect(() => directPeer("127.0.0.1", "node")).toThrow();
-	});
-	test("loopback listener binds only loopback and requires a self identity", () => {
-		const selfIdentity = {
-			nodeId: "n1",
-			hostname: "mac",
-			user: "u@example",
-			addresses: ["100.64.0.9"],
-			source: "tailscale" as const,
-		};
-		expect(isLoopbackAddress("::ffff:127.0.0.1")).toBe(true);
-		expect(isLoopbackAddress("100.64.0.9")).toBe(false);
-		expect(createLoopbackListenerPlan({ address: "127.0.0.1", port: 8787, selfIdentity }).mode).toBe("loopback");
-		expect(() => createLoopbackListenerPlan({ address: "100.64.0.9", port: 8787, selfIdentity })).toThrow();
-		expect(() => createLoopbackListenerPlan({ address: "127.0.0.1", port: 8787 })).toThrow();
-	});
-});
-describe("local autoconnect device", () => {
-	test("minted credential authenticates as the host's own node over loopback", async () => {
-		const dir = await mkdtemp(join(tmpdir(), "t4-localdevice-"));
-		try {
-			const registry = new SqliteDeviceRegistry(join(dir, "devices.sqlite"));
-			const policy = new TailscaleRemotePolicy({
-				registry,
-				supportedCapabilities: ["sessions.read", "sessions.prompt"],
-				supportedFeatures: [],
-			});
-			const selfIdentity = {
-				nodeId: "n1",
-				hostname: "mac",
-				user: "u@example",
-				addresses: ["100.64.0.9"],
-				source: "tailscale" as const,
-			};
-			const file = join(dir, "appserver.sock.localdevice");
-			await publishLocalDevice(registry, file, "ws://127.0.0.1:8787/v1/ws", selfIdentity, [
-				"sessions.read",
-				"sessions.prompt",
-			]);
-			const published = JSON.parse(await readFile(file, "utf8")) as {
-				endpoint: string;
-				deviceId: string;
-				deviceToken: string;
-			};
-			expect(published.endpoint).toBe("ws://127.0.0.1:8787/v1/ws");
-			// The loopback listener reports every peer with the host's own node
-			// identity; the file credential must pass the standard device path.
-			const peer = { address: "127.0.0.1", source: "direct" as const, identity: selfIdentity };
-			const socket = { connectionId: "c1", peer, send: () => true, close: () => undefined };
-			const hello = {
-				v: "omp-app/1",
-				type: "hello",
-				protocol: { min: "omp-app/1", max: "omp-app/1" },
-				client: { name: "test", version: "1", build: "test", platform: "macos" },
-				requestedFeatures: [],
-				savedCursors: [],
-				authentication: { deviceId: published.deviceId, deviceToken: published.deviceToken },
-			} as HelloFrame;
-			const decision = policy.authenticate({ connectionId: "c1", peer, socket }, hello);
-			expect(decision.authenticated).toBe(true);
-			expect(decision.authentication).toBe("paired");
-			expect(decision.grantedCapabilities).toEqual(["sessions.read", "sessions.prompt"]);
-			// Rotation revokes the previous token.
-			await publishLocalDevice(registry, file, "ws://127.0.0.1:8787/v1/ws", selfIdentity, [
-				"sessions.read",
-				"sessions.prompt",
-			]);
-			const rotated = JSON.parse(await readFile(file, "utf8")) as { deviceId: string; deviceToken: string };
-			const stale = policy.authenticate(
-				{ connectionId: "c2", peer, socket: { ...socket, connectionId: "c2" } },
-				{ ...hello, authentication: { deviceId: published.deviceId, deviceToken: published.deviceToken } } as HelloFrame,
-			);
-			expect(stale.authenticated).toBe(false);
-			const fresh = policy.authenticate(
-				{ connectionId: "c3", peer, socket: { ...socket, connectionId: "c3" } },
-				{ ...hello, authentication: { deviceId: rotated.deviceId, deviceToken: rotated.deviceToken } } as HelloFrame,
-			);
-			expect(fresh.authenticated).toBe(true);
-			policy.close();
-		} finally {
-			await rm(dir, { recursive: true, force: true });
-		}
 	});
 });
 test("origin policy is exact allowlist and denies browser wildcard", () => {

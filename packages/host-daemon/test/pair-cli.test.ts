@@ -30,26 +30,12 @@ function startPairServer(
         return;
       }
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({
-        ...response,
-        transport: {
-          scheme: "wss",
-          port: 9443,
-          path: "/v1/ws",
-          tlsFingerprint: "a".repeat(64),
-        },
-      }));
+      res.end(JSON.stringify(response));
     });
   });
   server.on("error", reject);
   server.listen(socketPath, () => resolve(server));
   return promise;
-}
-
-function pairingPayload(output: string): Record<string, unknown> {
-  const link = /t4-code:\/\/pair\/([A-Za-z0-9_-]+)/u.exec(output)?.[1];
-  if (!link) throw new Error("pairing deep link missing");
-  return JSON.parse(Buffer.from(link, "base64url").toString("utf8"));
 }
 
 describe("t4-host pair", () => {
@@ -98,16 +84,33 @@ describe("t4-host pair", () => {
     }
     const output = captured.join("");
     expect(output).toContain("654321");
-    expect(output).toContain("t4-code://pair/");
-    expect(pairingPayload(output)).toEqual({
-      version: 1,
-      hostHint: "macbookpro.example.ts.net",
-      endpoint: "wss://macbookpro.example.ts.net:9443/v1/ws",
-      code: "654321",
-      tlsFingerprint: "a".repeat(64),
-    });
+    expect(output).toContain("t4-code://pair/macbookpro.example.ts.net/654321");
     expect(output).toContain("[qr-stub]");
     expect(output).toContain("Expires in");
+  });
+
+  test("requests the full capability set used by the paired native client", async () => {
+    let capabilities: readonly string[] = [];
+    await runPairAction(
+      { socketPath: "/unused", ttlMs: 60_000 },
+      {
+        postTicket: async (_socketPath, requested) => {
+          capabilities = requested;
+          return { code: "123456", expiresAt: Date.now() + 60_000 };
+        },
+        resolveHostHint: async () => ({ hint: "localhost" }),
+        renderQr: async () => "",
+        out: () => undefined,
+      },
+    );
+    expect(capabilities).toContain("preview.read");
+    expect(capabilities).toContain("preview.control");
+    expect(capabilities).toContain("files.diff");
+    expect(capabilities).toContain("usage.read");
+    expect(capabilities).toContain("agents.control");
+    expect(capabilities).toContain("audit.read");
+    expect(capabilities).toContain("config.read");
+    expect(capabilities).toContain("config.write");
   });
 
   test("postPairTicket sends capabilities and ttlMs to the admin endpoint", async () => {
@@ -121,11 +124,7 @@ describe("t4-host pair", () => {
       req.on("end", () => {
         capturedBody = JSON.parse(Buffer.concat(chunks).toString("utf8"));
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({
-          code: "112233",
-          expiresAt: Date.now() + 60_000,
-          transport: { scheme: "ws", port: 8787, path: "/v1/ws" },
-        }));
+        res.end(JSON.stringify({ code: "112233", expiresAt: Date.now() + 60_000 }));
       });
     });
     server.on("error", reject);
@@ -210,11 +209,7 @@ describe("t4-host pair", () => {
       await rm(dir, { recursive: true, force: true });
     }
     const output = captured.join("");
-    expect(pairingPayload(output)).toMatchObject({
-      hostHint: "localhost",
-      endpoint: "wss://localhost:9443/v1/ws",
-      code: "999888",
-    });
+    expect(output).toContain("t4-code://pair/localhost/999888");
     expect(output).toContain("tailscale not available");
   });
 });

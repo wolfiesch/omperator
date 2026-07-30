@@ -388,21 +388,30 @@ jobs:
           ref: ${{ steps.current-authority.outputs.sha }}
           path: .current-continuity/omp
 
-      - name: Restore the current OMP native addon
+      - name: Install current OMP authority dependencies
+        working-directory: .current-continuity/omp
+        run: bun install --frozen-lockfile
+
+      - name: Restore the release-proven native addon
+        id: release-native
+        run: |
+          node scripts/fetch-omp-release-native.mjs \
+            --matrix compat/omp-app-matrix.json \
+            --source-dir .current-continuity/omp
+
+      - name: Restore the current OMP native addon cache
+        if: ${{ steps.release-native.outputs.restored != 'true' }}
         id: current-native-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .current-continuity/omp/packages/natives/native
           key: omp-native-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.current-authority.outputs.sha }}
 
-      - name: Install current OMP authority dependencies
-        working-directory: .current-continuity/omp
-        run: bun install --frozen-lockfile
-
       # A pinned commit and a fixed runner platform produce a byte-identical
-      # addon, so a hit skips a ~7 minute cold Rust build (fat-LTO workspace).
+      # addon. Older OMP releases lack the public provenance manifest, so retain
+      # the exact-commit Actions cache as their migration fallback.
       - name: Build current OMP native addon
-        if: ${{ steps.current-native-cache.outputs.cache-hit != 'true' }}
+        if: ${{ steps.release-native.outputs.restored != 'true' && steps.current-native-cache.outputs.cache-hit != 'true' }}
         working-directory: .current-continuity/omp
         run: bun run build:native
 
@@ -419,7 +428,7 @@ jobs:
       # already satisfied the bridge contract this job exists to prove. Bump the
       # key salt to force a rebuild.
       - name: Save the proven current OMP native addon
-        if: ${{ steps.current-native-cache.outputs.cache-hit != 'true' }}
+        if: ${{ steps.release-native.outputs.restored != 'true' && steps.current-native-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .current-continuity/omp/packages/natives/native
@@ -660,73 +669,99 @@ jobs:
       - name: Verify unsigned Android debug application
         run: pnpm --filter @t4-code/mobile check:android:debug
 
-  hostwire-swift:
+  # A same-repository pull request can use the provisioned M1 when its circuit
+  # breaker is enabled. Forks, pushes, merge groups, and disabled-M1 runs stay
+  # on an ephemeral hosted runner. GitHub does not reassign a queued
+  # self-hosted job automatically, so disable M1_CI_ENABLED and rerun if the
+  # machine is offline.
+  ios:
     needs: changes
     if: ${{ needs.changes.outputs.ios == 'true' }}
-    runs-on: macos-26
-    timeout-minutes: 15
-    steps:
-      - name: Check out source
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - name: Test the Swift wire package
-        run: swift test --package-path apps/ios/HostWire
-
-  ios-build:
-    needs: changes
-    if: ${{ needs.changes.outputs.ios == 'true' }}
-    runs-on: macos-26
-    timeout-minutes: 20
-    steps:
-      - name: Check out source
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - name: Install XcodeGen
-        run: brew install xcodegen
-      - name: Generate the Xcode project
-        working-directory: apps/ios
-        run: xcodegen generate
-      - name: Build the iOS application
-        working-directory: apps/ios
-        run: xcodebuild build -scheme T4Code -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO -quiet
-
-  macos-build:
-    needs: changes
-    if: ${{ needs.changes.outputs.ios == 'true' }}
-    runs-on: macos-26
-    timeout-minutes: 20
-    steps:
-      - name: Check out source
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - name: Install XcodeGen
-        run: brew install xcodegen
-      - name: Generate the Xcode project
-        working-directory: apps/ios
-        run: xcodegen generate
-      - name: Build the macOS application
-        working-directory: apps/ios
-        run: xcodebuild build -scheme T4CodeMac -destination 'generic/platform=macOS' CODE_SIGNING_ALLOWED=NO -quiet
-
-  ios-ui-tests:
-    needs: changes
-    if: ${{ needs.changes.outputs.ios == 'true' }}
-    runs-on: macos-26
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.M1_CI_ENABLED == 'true' && '["self-hosted","macOS","ARM64","wolfie-m1","trusted"]' || '"macos-26"') }}
     timeout-minutes: 30
     steps:
       - name: Check out source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
       - name: Install Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24.13.1
+
+      - name: Validate the provisioned Apple toolchain
+        if: ${{ runner.name == 'wolfie-m1-omperator' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x /opt/homebrew/bin/xcodegen
+          developer_dir="$(xcode-select -p)"
+          test -d "$developer_dir"
+          xcode_version="$(DEVELOPER_DIR="$developer_dir" xcodebuild -version | awk 'NR == 1 { print $2 }')"
+          test -n "$xcode_version"
+          echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
+          {
+            echo "DEVELOPER_DIR=$developer_dir"
+            echo "ARCHS=arm64"
+            echo "ONLY_ACTIVE_ARCH=YES"
+            echo "T4_IOS_DERIVED_DATA_PATH=$HOME/Library/Caches/omperator-ci/ios/xcode-$xcode_version/derived-data"
+          } >> "$GITHUB_ENV"
+          T4_IOS_CACHE_MIN_FREE_GIB=11 \
+            T4_IOS_CACHE_ROOT="$HOME/Library/Caches/omperator-ci/ios/xcode-$xcode_version" \
+            node scripts/prepare-ios-ci-cache.mjs
+          DEVELOPER_DIR="$developer_dir" xcodebuild -version
+          /opt/homebrew/bin/xcodegen --version
+          DEVELOPER_DIR="$developer_dir" xcodebuild -showComponent MetalToolchain -json
+          DEVELOPER_DIR="$developer_dir" xcrun simctl list runtimes available | grep -F "iOS "
+
       - name: Install XcodeGen
+        if: ${{ runner.name != 'wolfie-m1-omperator' }}
         run: brew install xcodegen
-      - name: Run the iOS UI-test bundle
+
+      - name: Report the toolchain under test
+        run: |
+          xcodebuild -version
+          xcrun simctl list runtimes available
+
+      - name: Build the application and run its XCUITest bundle
+        env:
+          T4_IOS_TIMINGS_PATH: ${{ runner.temp }}/omperator-ios-timings.json
         run: node scripts/verify-ios.mjs
 
-  # Branch protection includes every selected native build and test surface.
+      - name: Report iOS phase timings
+        if: ${{ always() }}
+        shell: bash
+        env:
+          T4_IOS_TIMINGS_PATH: ${{ runner.temp }}/omperator-ios-timings.json
+        run: |
+          if [[ ! -f "$T4_IOS_TIMINGS_PATH" ]]; then
+            echo "No completed iOS timing report was produced."
+            exit 0
+          fi
+          cat "$T4_IOS_TIMINGS_PATH"
+          {
+            echo "### iOS phase timings"
+            echo '```json'
+            cat "$T4_IOS_TIMINGS_PATH"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Enforce iOS cache bounds
+        if: ${{ always() && runner.name == 'wolfie-m1-omperator' }}
+        run: |
+          xcode_version="$(DEVELOPER_DIR="$DEVELOPER_DIR" xcodebuild -version | awk 'NR == 1 { print $2 }')"
+          T4_IOS_CACHE_MIN_FREE_GIB=11 \
+            T4_IOS_CACHE_ROOT="$HOME/Library/Caches/omperator-ci/ios/xcode-$xcode_version" \
+            node scripts/prepare-ios-ci-cache.mjs
+
+  # The branch-protection gate. It waits only on legs that run on ubuntu-24.04
+  # for a pull request, so a merge run's macOS and arm64 matrix cannot hold the
+  # required check behind a queued runner. The deferred release gates are
+  # aggregated separately below and still decide the workflow run conclusion,
+  # which is what `scripts/wait-for-exact-ci.mjs` requires before a release.
   verify:
     name: verify
     if: ${{ always() }}
-    needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug, hostwire-swift, ios-build, macos-build, ios-ui-tests]
+    needs: [changes, t4-api-generation, check, unit-tests, build-e2e, current-bridge-continuity, cluster, tooling, maintainer, android-debug]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -743,10 +778,6 @@ jobs:
           TOOLING_RESULT: ${{ needs.tooling.result }}
           MAINTAINER_RESULT: ${{ needs.maintainer.result }}
           ANDROID_RESULT: ${{ needs.android-debug.result }}
-          HOSTWIRE_SWIFT_RESULT: ${{ needs.hostwire-swift.result }}
-          IOS_BUILD_RESULT: ${{ needs.ios-build.result }}
-          MACOS_BUILD_RESULT: ${{ needs.macos-build.result }}
-          IOS_UI_TESTS_RESULT: ${{ needs.ios-ui-tests.result }}
         run: |
           set -euo pipefail
           test "$CHANGES_RESULT" = success
@@ -759,11 +790,7 @@ jobs:
             "$CLUSTER_RESULT" \
             "$TOOLING_RESULT" \
             "$MAINTAINER_RESULT" \
-            "$ANDROID_RESULT" \
-            "$HOSTWIRE_SWIFT_RESULT" \
-            "$IOS_BUILD_RESULT" \
-            "$MACOS_BUILD_RESULT" \
-            "$IOS_UI_TESTS_RESULT"
+            "$ANDROID_RESULT"
           do
             case "$result" in
               success|skipped) ;;
@@ -771,11 +798,15 @@ jobs:
             esac
           done
 
-  # Deferred release-only legs.
+  # The deferred release-time legs, plus the macOS iOS build. The release gates
+  # are skipped on pull requests; the iOS leg is not, so this job can fail a
+  # pull request run without ever blocking the required `verify` check. A
+  # failure here fails the run that `scripts/wait-for-exact-ci.mjs` demands be
+  # green before publishing.
   release-gates:
     name: release-gates
     if: ${{ always() }}
-    needs: [changes, legacy-bridge-continuity, official-omp-gate0]
+    needs: [changes, legacy-bridge-continuity, official-omp-gate0, ios]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -785,12 +816,14 @@ jobs:
           CHANGES_RESULT: ${{ needs.changes.result }}
           CONTINUITY_RESULT: ${{ needs.legacy-bridge-continuity.result }}
           OFFICIAL_OMP_GATE0_RESULT: ${{ needs.official-omp-gate0.result }}
+          IOS_RESULT: ${{ needs.ios.result }}
         run: |
           set -euo pipefail
           test "$CHANGES_RESULT" = success
           for result in \
             "$CONTINUITY_RESULT" \
-            "$OFFICIAL_OMP_GATE0_RESULT"
+            "$OFFICIAL_OMP_GATE0_RESULT" \
+            "$IOS_RESULT"
           do
             case "$result" in
               success|skipped) ;;

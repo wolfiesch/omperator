@@ -153,11 +153,7 @@ public struct SessionRef: Decodable, Equatable, Sendable {
                   let transcript = transcript(),
                   case .string(let resumeCommand) = control["resumeCommand"] ?? .null,
                   !resumeCommand.isEmpty,
-                  (try? Bounded.controlFree(
-                    resumeCommand,
-                    path: "liveState.sessionControl.resumeCommand",
-                    maxBytes: 1024
-                  )) != nil
+                  (try? Bounded.controlFree(resumeCommand, path: "liveState.sessionControl.resumeCommand", maxBytes: 1024)) != nil
             else { return .unknown }
             return .released(transcript: transcript, resumeCommand: resumeCommand)
         default:

@@ -86,24 +86,29 @@ struct T4WorkspaceView: View {
             }
             #endif
             .task {
-                // UI-test seam: launch with -T4PairCode <code> [-T4PairHost <host[:port]>]
-                // to run the pair handshake on first boot. Default host is the
-                // tailnet IP (the sim has no MagicDNS resolver).
+                // UI-test seam: launch with
+                // -T4PairCode <code> -T4PairEndpoint <ws-or-wss-url>
+                // to run the pair handshake on first boot. The endpoint is
+                // always explicit so test builds never embed a private host.
                 let args = ProcessInfo.processInfo.arguments
-                if let index = args.firstIndex(of: "-T4PairCode"), args.indices.contains(index + 1) {
-                    var host = "100.98.34.4"
-                    if let hIndex = args.firstIndex(of: "-T4PairHost"), args.indices.contains(hIndex + 1) {
-                        host = args[hIndex + 1]
-                    }
-                    if let endpoint = URL(string: "ws://\(host):8787/v1/ws") {
-                        await store.pairAndConnect(endpoint: endpoint, code: args[index + 1], deviceName: "sim-ui-test")
-                    }
+                if let codeIndex = args.firstIndex(of: "-T4PairCode"),
+                   args.indices.contains(codeIndex + 1),
+                   let endpointIndex = args.firstIndex(of: "-T4PairEndpoint"),
+                   args.indices.contains(endpointIndex + 1),
+                   let endpoint = URL(string: args[endpointIndex + 1]),
+                   endpoint.scheme == "ws" || endpoint.scheme == "wss" {
+                    await store.pairAndConnect(
+                        endpoint: endpoint,
+                        code: args[codeIndex + 1],
+                        deviceName: platformDeviceName()
+                    )
                 }
             }
             .task {
-                // UI-test seam: launch with -T4Send <message> to send one prompt
-                // from the app's own send path once connected (proves the Swift
-                // lease flow end-to-end without touch injection).
+                // UI-test seam: launch with -T4Send <message> and optionally
+                // -T4SendSession <id> to send one prompt from the app's own
+                // path once connected (proves the Swift lease flow end-to-end
+                // without touch injection).
                 let args = ProcessInfo.processInfo.arguments
                 guard let index = args.firstIndex(of: "-T4Send"), args.indices.contains(index + 1) else { return }
                 let text = args[index + 1]
@@ -114,7 +119,16 @@ struct T4WorkspaceView: View {
                 for _ in 0..<40 where !store.sessions.contains(where: { $0.hostId != "studio-mac" }) {
                     try? await Task.sleep(for: .milliseconds(500))
                 }
-                guard store.connected, let session = store.selectedSession ?? store.sessions.first else { return }
+                let requestedSessionId = args.firstIndex(of: "-T4SendSession")
+                    .flatMap { args.indices.contains($0 + 1) ? args[$0 + 1] : nil }
+                let session = requestedSessionId
+                    .flatMap { id in store.sessions.first(where: { $0.sessionId == id }) }
+                    ?? store.selectedSession.flatMap { selected in
+                        store.sessions.first(where: { $0.sessionId == selected.sessionId })
+                    }
+                    ?? store.sessions.first(where: { $0.hostId != "studio-mac" })
+                guard store.connected, let session else { return }
+                store.select(session)
                 // The socket can be mid-reconnect when we get here; retry a few
                 // times before giving up (errors surface via store.lastError).
                 for attempt in 0..<3 {
@@ -373,8 +387,8 @@ struct T4WorkspaceView: View {
 
     // MARK: - Deep links
 
-    /// Open the connect sheet from an encoded full-endpoint pairing link.
-    /// Ignored when already connected — the user is paired already.
+    /// Open the connect sheet prefilled from a `t4-code://pair/<host>/<code>`
+    /// link. Ignored when already connected — the user is paired already.
     private func handleDeepLink(_ url: URL) {
         guard !store.connected else { return }
         guard let pair = Pairing.parseDeepLink(

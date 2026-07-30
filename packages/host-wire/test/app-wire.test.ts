@@ -706,6 +706,22 @@ describe("app-wire authority", () => {
 			confirmation: "challenge",
 			desktopCatalog: true,
 		});
+		expect(COMMAND_DESCRIPTORS["session.release"]).toEqual({
+			capability: "sessions.manage",
+			scope: "session",
+			revision: "required",
+			revisionOwner: "session",
+			confirmation: "challenge",
+			desktopCatalog: true,
+		});
+		expect(COMMAND_DESCRIPTORS["session.reclaim"]).toEqual({
+			capability: "sessions.manage",
+			scope: "session",
+			revision: "required",
+			revisionOwner: "session",
+			confirmation: "none",
+			desktopCatalog: true,
+		});
 		for (const name of ["session.archive", "session.restore", "session.delete"] as const) {
 			expect(decodeCommandArguments(name, {})).toEqual({});
 			expect(() => decodeCommandArguments(name, { leaseId: "lease" })).toThrow(AppWireError);
@@ -713,10 +729,20 @@ describe("app-wire authority", () => {
 		expect(decodeCommandArguments("session.close", {})).toEqual({});
 		expect(decodeCommandArguments("session.close", { leaseId: "lease" })).toEqual({ leaseId: "lease" });
 		expect(() => decodeCommandArguments("session.close", { extra: true })).toThrow(AppWireError);
+		expect(decodeCommandArguments("session.release", {})).toEqual({});
+		expect(decodeCommandArguments("session.release", { leaseId: "lease" })).toEqual({ leaseId: "lease" });
+		expect(decodeCommandArguments("session.reclaim", {})).toEqual({});
 		expect(decodeCommandResult("session.archive", { archived: true })).toEqual({ archived: true });
 		expect(decodeCommandResult("session.restore", { restored: true })).toEqual({ restored: true });
 		expect(decodeCommandResult("session.delete", { deleted: true })).toEqual({ deleted: true });
 		expect(decodeCommandResult("session.close", { closed: true })).toEqual({ closed: true });
+		expect(
+			decodeCommandResult("session.release", {
+				released: true,
+				resumeCommand: "t4-omp --resume session-id",
+			}),
+		).toEqual({ released: true, resumeCommand: "t4-omp --resume session-id" });
+		expect(decodeCommandResult("session.reclaim", { reclaimed: true })).toEqual({ reclaimed: true });
 		expect(() => decodeCommandResult("session.delete", { deleted: true, sessionId: "s" })).toThrow(AppWireError);
 		const base = {
 			v: "omp-app/1",
@@ -759,7 +785,7 @@ describe("app-wire authority", () => {
 	test("exports the bridge schema version independently from the T4 package release", async () => {
 		const metadata = (await Bun.file(new URL("../package.json", import.meta.url)).json()) as { version: string };
 		expect(APP_WIRE_VERSION).toBe("0.7.0");
-		expect(metadata.version).toBe("0.1.33");
+		expect(metadata.version).toBe("0.2.1");
 	});
 	test("session project wire data is opaque and live state is secret-free", () => {
 		const providerTransport = {
@@ -828,6 +854,8 @@ describe("app-wire authority", () => {
 		expect(PROTOCOL_FEATURES).toContain("session.observer");
 		expect(ADDITIVE_FEATURES).toContain("session.unverified");
 		expect(PROTOCOL_FEATURES).toContain("session.unverified");
+		expect(ADDITIVE_FEATURES).toContain("session.transfer");
+		expect(PROTOCOL_FEATURES).toContain("session.transfer");
 		const session = {
 			hostId: "h",
 			sessionId: "s",
@@ -847,6 +875,15 @@ describe("app-wire authority", () => {
 			expect(() => decodeServerFrame(frame({ mode: "observer", lockStatus, transcript: "live" }))).not.toThrow();
 		expect(() => decodeServerFrame(frame({ mode: "reconciling", transcript: "snapshot" }))).not.toThrow();
 		expect(() => decodeServerFrame(frame({ mode: "unverified", transcript: "live" }))).not.toThrow();
+		expect(() =>
+			decodeServerFrame(
+				frame({
+					mode: "released",
+					transcript: "snapshot",
+					resumeCommand: "t4-omp --resume session-id",
+				}),
+			),
+		).not.toThrow();
 		for (const invalid of [
 			null,
 			{ mode: "observer", transcript: "live" },
@@ -856,6 +893,9 @@ describe("app-wire authority", () => {
 			{ mode: "reconciling", transcript: "live", path: "/secret" },
 			{ mode: "unverified", transcript: "future" },
 			{ mode: "unverified", transcript: "live", owner: "secret" },
+			{ mode: "released", transcript: "live" },
+			{ mode: "released", transcript: "live", resumeCommand: "" },
+			{ mode: "released", transcript: "live", resumeCommand: "t4-omp --resume session-id", path: "/secret" },
 		])
 			expect(() => decodeServerFrame(frame(invalid))).toThrow(AppWireError);
 	});
@@ -1247,6 +1287,8 @@ describe("app-wire authority", () => {
 			"session.create": "none",
 			"session.fork": "none",
 			"session.attach": "none",
+			"session.release": "session",
+			"session.reclaim": "session",
 			"audit.read": "none",
 			"audit.tail": "none",
 			"settings.read": "none",
@@ -1273,6 +1315,8 @@ describe("app-wire authority", () => {
 			"session.restore",
 			"session.delete",
 			"session.close",
+			"session.release",
+			"session.reclaim",
 			"session.model.set",
 			"session.thinking.set",
 			"session.fast.set",
@@ -1350,6 +1394,9 @@ describe("app-wire authority", () => {
 			AppWireError,
 		);
 		expect(() => decodeCommandArguments("preview.launch", { url: "javascript:alert(1)" })).toThrow(AppWireError);
+		expect(decodeCommandArguments("files.diff", {})).toEqual({});
+		expect(decodeCommandArguments("files.diff", { path: "src/app.ts" })).toEqual({ path: "src/app.ts" });
+		expect(() => decodeCommandArguments("files.diff", { path: "../outside" })).toThrow(AppWireError);
 		expect(
 			decodeCommandArguments("session.model.set", { selector: "openai/gpt-5.5", persistence: "session" }),
 		).toMatchObject({ selector: "openai/gpt-5.5", persistence: "session" });

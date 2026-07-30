@@ -1,0 +1,68 @@
+import { descriptor, type CommandDescriptorGroup } from "./types.js";
+
+export const SESSION_COMMAND_DESCRIPTORS: CommandDescriptorGroup = {
+  "session.create": descriptor("sessions.manage", "host", "none", "none", "none", true),
+  // A fork names a source session but writes a new transcript, so it needs
+  // neither the source controller lease nor its revision.
+  "session.fork": descriptor("sessions.manage", "session", "none", "none", "none"),
+  "session.attach": descriptor("sessions.read", "session", "none", "none", "none"),
+  "session.state.get": descriptor("sessions.read", "session", "none", "none", "none"),
+  "session.rename": descriptor("sessions.manage", "session", "required", "session", "none", true),
+  "session.retry": descriptor("sessions.control", "session", "required", "session", "none"),
+  "session.compact": descriptor("sessions.control", "session", "required", "session", "none"),
+  "session.pause": descriptor("sessions.control", "session", "required", "session", "none"),
+  "session.resume": descriptor("sessions.control", "session", "required", "session", "none"),
+  "session.archive": descriptor("sessions.manage", "session", "required", "session", "none", true),
+  "session.restore": descriptor("sessions.manage", "session", "required", "session", "none", true),
+  "session.delete": descriptor(
+    "sessions.manage",
+    "session",
+    "required",
+    "session",
+    "challenge",
+    true,
+  ),
+  "session.model.set": descriptor(
+    "sessions.manage",
+    "session",
+    "required",
+    "session",
+    "none",
+    true,
+  ),
+  "session.thinking.set": descriptor(
+    "sessions.manage",
+    "session",
+    "required",
+    "session",
+    "none",
+    true,
+  ),
+  "session.fast.set": descriptor("sessions.manage", "session", "required", "session", "none", true),
+  "session.mode.set": descriptor("sessions.manage", "session", "optional", "session", "none", true),
+  "session.cancel": descriptor(
+    "sessions.control",
+    "session",
+    "optional",
+    "session",
+    "challenge",
+    true,
+  ),
+  "session.close": descriptor(
+    "sessions.manage",
+    "session",
+    "required",
+    "session",
+    "challenge",
+    true,
+  ),
+  "session.release": descriptor(
+    "sessions.manage",
+    "session",
+    "required",
+    "session",
+    "challenge",
+    true,
+  ),
+  "session.reclaim": descriptor("sessions.manage", "session", "required", "session", "none", true),
+};

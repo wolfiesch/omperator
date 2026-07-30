@@ -122,6 +122,7 @@ test("catalog.get merges normalized official OMP operation capabilities", async 
     socketPath,
     ompVersion: "17.0.9",
     discovery: { list: async () => [] },
+    sessionOwnershipPath: join(root, "owned-sessions.json"),
     operationsAuthority: {
       catalogGet: async () => ({
         revision: "authority-revision",
@@ -191,6 +192,14 @@ test("catalog.get merges normalized official OMP operation capabilities", async 
       capabilities: ["term.open"],
     });
     expect(result.items.find((item) => item.name === "term.open")?.metadata).toBeUndefined();
+    expect(result.items.find((item) => item.name === "session.release")).toMatchObject({
+      capabilities: ["sessions.manage"],
+      supported: true,
+    });
+    expect(result.items.find((item) => item.name === "session.reclaim")).toMatchObject({
+      capabilities: ["sessions.manage"],
+      supported: true,
+    });
     expect(result.operations.find((item) => item.operationId === "session.prompt")).toMatchObject({
       execution: "typed",
       supported: true,

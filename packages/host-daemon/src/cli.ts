@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { chmod, mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import {
   createAppserver,
   createHostLogger,
@@ -27,13 +27,18 @@ import {
 import { COMMAND_DESCRIPTORS, type ProjectId, type SessionId } from "@t4-code/protocol";
 import { parsePairArgs, runPairAction } from "./pair.ts";
 
-export const T4_HOST_VERSION = "0.1.33";
+export const T4_HOST_VERSION = "0.2.1";
 export const OFFICIAL_OMP_VERSION = "17.0.9";
 export const OFFICIAL_OMP_BUILD = "639bac596d94b5993349f3f6696176cb2bf9b5d3";
 const PROFILE = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
 const ORIGIN_LIMIT = 32;
 const VERSION_OUTPUT_BYTES = 4 * 1024;
 const VERSION_TIMEOUT_MS = 5_000;
+
+export function officialOmpRootFromSessionsRoot(sessionsRoot: string): string {
+  const parent = dirname(sessionsRoot);
+  return basename(parent) === "agent" ? dirname(parent) : parent;
+}
 const OFFICIAL_CATALOG_COMMANDS = Object.freeze([
   "session.create",
   "session.rename",
@@ -44,6 +49,8 @@ const OFFICIAL_CATALOG_COMMANDS = Object.freeze([
   "session.thinking.set",
   "session.cancel",
   "session.close",
+  "session.release",
+  "session.reclaim",
   "term.open",
 ]);
 
@@ -354,16 +361,16 @@ export async function runHostDaemon(
 ): Promise<void> {
   const paths = hostDaemonPaths(config);
   await mkdir(paths.profileStateRoot, { recursive: true, mode: 0o700 });
-  // One structured logger backs both boot reaping and the appserver's
+  // One structured logger backs boot reaping and the appserver's
   // connection/pair/denied/supervisor/watchdog event log. It writes NDJSON to
   // <profileStateRoot>/logs/host-<date>.ndjson with size-based rotation.
   const hostLogger = dependencies.loggerHost ?? createHostLogger({ stateRoot: paths.profileStateRoot });
-  const rpcChildRegistry = new RpcChildRegistry(join(paths.profileStateRoot, "rpc-children.json"));
-  const reapedChildren = await rpcChildRegistry.reap();
-  for (const pid of reapedChildren.killed)
-    hostLogger.log("supervisor.killed", { pid, reason: "verified orphan process group reaped at boot" });
-  for (const pid of reapedChildren.skipped)
-    hostLogger.log("reap.signal.skipped", { pid, reason: "persisted child identity no longer matches", level: "warn" });
+  const rpcChildRegistryPath = join(paths.profileStateRoot, "rpc-children.json");
+  const reaped = new RpcChildRegistry(rpcChildRegistryPath).reap();
+  for (const pid of reaped.killed)
+    hostLogger.log("supervisor.killed", { pid, reason: "identity-verified orphan reaped at boot" });
+  for (const pid of reaped.skipped)
+    hostLogger.log("reap.skip", { pid, reason: "rpc child was not safe to reap", level: "warn" });
   let bridge: OmpAuthorityBridgeClient | undefined;
   let terminals: PtyTerminalAuthority | undefined;
   let officialAuthority: OfficialOmpProfileAuthority | undefined;
@@ -400,7 +407,9 @@ export async function runHostDaemon(
         items: officialCatalogItems(),
       }),
       ...terminals.operations(),
-      ...new OmpSettingsAuthority().operations(),
+      ...new OmpSettingsAuthority({
+        ompRoot: officialOmpRootFromSessionsRoot(config.ompSessionsRoot!),
+      }).operations(),
     };
     projectRootForProject = projectId => official.projectRootForProject(projectId);
     projectRootForSession = sessionId => official.projectRootForSession(sessionId);
@@ -482,7 +491,7 @@ export async function runHostDaemon(
       ...(transcriptImageRoot ? { transcriptImageRoot } : {}),
       rpcChildInvocation: { executable: config.ompExecutable, prefixArgv: [] },
       rpcChildEnvironment: { OMP_PROFILE: config.profileId },
-      rpcChildRegistry,
+      rpcChildRegistryPath,
       ...(config.authorityMode === "official" ? { rpcDialect: "official-17.0.9" as const } : {}),
       ...(process.platform === "darwin"
         ? {
@@ -523,20 +532,6 @@ export async function runHostDaemon(
                     tls: { cert: tlsMaterial.cert, key: tlsMaterial.key },
                     tlsFingerprint: tlsMaterial.fingerprint,
                   },
-                }
-              : {}),
-            // Local autoconnect: same-machine apps read the 0600 credential
-            // file and connect over loopback — no pairing UI. Direct mode
-            // only; serve mode already binds loopback for the Tailscale proxy.
-            ...(config.remote.mode === "direct"
-              ? {
-                  remoteEndpointLoopback: {
-                    address: "127.0.0.1",
-                    port: config.remote.port,
-                    originAllowlist: config.remote.origins,
-                  },
-                  localDevicePath: `${paths.socketPath}.localdevice`,
-                  log: (event: string, data?: Record<string, unknown>) => hostLogger.log(event, data),
                 }
               : {}),
             appserver: options,

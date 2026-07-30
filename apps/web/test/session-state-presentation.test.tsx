@@ -8,7 +8,16 @@ import {
   SessionConnectionBadge,
   SessionStateBadge,
 } from "../src/features/transcript/SessionMain.tsx";
-import { presentSessionState } from "../src/features/session-runtime/session-state.ts";
+import {
+  presentSessionWriteReason,
+  presentSessionState,
+  RECONNECTING_WRITE_REASON,
+  SYNCING_WRITE_REASON,
+} from "../src/features/session-runtime/session-state.ts";
+import {
+  CACHED_WRITE_REASON,
+  OFFLINE_WRITE_REASON,
+} from "../src/features/session-runtime/session-observer.ts";
 import type { WorkspaceSession } from "../src/lib/workspace-data.ts";
 
 const BASE_SESSION: WorkspaceSession = {
@@ -109,6 +118,20 @@ describe("truthful session state presentation", () => {
     expect(presentSessionState({ ...BASE_SESSION, status: "connecting" }).label).toBe(
       "Status unknown",
     );
+  });
+
+  it("distinguishes reconnect and inventory sync from a genuinely unreachable host", () => {
+    expect(presentSessionWriteReason("offline", "connecting")).toBe(
+      RECONNECTING_WRITE_REASON,
+    );
+    expect(RECONNECTING_WRITE_REASON).not.toContain("unreachable");
+
+    expect(presentSessionWriteReason("cached", "connected")).toBe(SYNCING_WRITE_REASON);
+    expect(SYNCING_WRITE_REASON).not.toContain("unreachable");
+
+    expect(presentSessionWriteReason("cached", "disconnected")).toBe(CACHED_WRITE_REASON);
+    expect(presentSessionWriteReason("offline", "disconnected")).toBe(OFFLINE_WRITE_REASON);
+    expect(presentSessionWriteReason("live", "connected")).toBeNull();
   });
 
   it("keeps state priority truthful through takeover and reconnect transitions", () => {

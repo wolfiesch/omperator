@@ -192,7 +192,7 @@ describe("phone touch targets", () => {
     expect(rail).toContain("The OMP profile you choose will own this session.");
     expect(rail).toContain("aria-label={`New session in ${group.displayName}`}");
     expect(rail).toContain("Actions for ${group.displayName}");
-    expect(rail).toContain("Only changes this T4 Code client.");
+    expect(rail).toContain("Only changes this Omperator client.");
     expect(rail).toContain("flex size-11 shrink-0 cursor-pointer");
     expect(css).toContain('[data-slot="sheet-popup"]');
     expect(css).toContain('input:not([type="checkbox"]):not([type="radio"])');

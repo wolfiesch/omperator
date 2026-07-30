@@ -17,8 +17,8 @@ describe("phone setup", () => {
         calls.push(spec);
         const isStatus = spec.command === "/tailscale" && spec.args?.[0] === "status";
         const isServeStatus = spec.command === "/tailscale" && spec.args?.join(" ") === "serve status --json";
-        const isGatewayInspect = spec.command === "/Applications/T4 Code.app/Contents/MacOS/T4 Code" && spec.args?.[1] === "status";
-        const isGatewayInstall = spec.command === "/Applications/T4 Code.app/Contents/MacOS/T4 Code" && spec.args?.[1] === "install";
+        const isGatewayInspect = spec.command === "/Applications/Omperator.app/Contents/MacOS/Omperator" && spec.args?.[1] === "status";
+        const isGatewayInstall = spec.command === "/Applications/Omperator.app/Contents/MacOS/Omperator" && spec.args?.[1] === "install";
         if (isGatewayInstall) gatewayInstalled = true;
         return {
           kill: () => {},
@@ -38,7 +38,7 @@ describe("phone setup", () => {
       platform: "darwin",
       arch: "arm64",
       resourcesPath,
-      electronExecutable: "/Applications/T4 Code.app/Contents/MacOS/T4 Code",
+      electronExecutable: "/Applications/Omperator.app/Contents/MacOS/Omperator",
       runner,
       discoverTailscale: async () => "/tailscale",
     });
@@ -59,7 +59,7 @@ describe("phone setup", () => {
     );
     expect(serve?.args).toEqual(["serve", "--bg", "--https=8445", "http://127.0.0.1:4194"]);
     expect(JSON.stringify(calls)).not.toContain("funnel");
-    const install = calls.find((call) => call.command.includes("T4 Code") && call.args?.includes("install"));
+    const install = calls.find((call) => call.command.includes("Omperator") && call.args?.includes("install"));
     expect(install?.env).toEqual({ PATH: "/usr/bin:/bin:/usr/sbin:/sbin", ELECTRON_RUN_AS_NODE: "1" });
     expect(install?.args).toContain("--electron-run-as-node");
     const installCount = calls.filter((call) => call.args?.[1] === "install").length;
@@ -85,7 +85,7 @@ describe("phone setup", () => {
       platform: "darwin",
       arch: "arm64",
       resourcesPath,
-      electronExecutable: "/Applications/T4 Code.app/Contents/MacOS/T4 Code",
+      electronExecutable: "/Applications/Omperator.app/Contents/MacOS/Omperator",
       runner,
       discoverTailscale: async () => "/tailscale",
     });
@@ -104,8 +104,8 @@ describe("phone setup", () => {
         calls.push(spec);
         const isStatus = spec.command === "/tailscale" && spec.args?.[0] === "status";
         const isServeStatus = spec.command === "/tailscale" && spec.args?.join(" ") === "serve status --json";
-        const isGatewayStatus = spec.command.includes("T4 Code") && spec.args?.[1] === "status";
-        const isGatewayInstall = spec.command.includes("T4 Code") && spec.args?.[1] === "install";
+        const isGatewayStatus = spec.command.includes("Omperator") && spec.args?.[1] === "status";
+        const isGatewayInstall = spec.command.includes("Omperator") && spec.args?.[1] === "install";
         if (isGatewayInstall) gatewayInstalled = true;
         return {
           kill: () => {},
@@ -123,7 +123,7 @@ describe("phone setup", () => {
       platform: "darwin",
       arch: "arm64",
       resourcesPath,
-      electronExecutable: "/Applications/T4 Code.app/Contents/MacOS/T4 Code",
+      electronExecutable: "/Applications/Omperator.app/Contents/MacOS/Omperator",
       runner,
       discoverTailscale: async () => "/tailscale",
     });
@@ -143,8 +143,8 @@ describe("phone setup", () => {
     const runner: ProcessRunner = {
       spawn: async (spec) => {
         calls.push(spec);
-        const isGatewayStatus = spec.command.includes("T4 Code") && spec.args?.[1] === "status";
-        const isGatewayInstall = spec.command.includes("T4 Code") && spec.args?.[1] === "install";
+        const isGatewayStatus = spec.command.includes("Omperator") && spec.args?.[1] === "status";
+        const isGatewayInstall = spec.command.includes("Omperator") && spec.args?.[1] === "install";
         return {
           kill: () => {},
           result: Promise.resolve(isGatewayStatus
@@ -177,7 +177,7 @@ describe("phone setup", () => {
       platform: "darwin",
       arch: "arm64",
       resourcesPath,
-      electronExecutable: "/Applications/T4 Code.app/Contents/MacOS/T4 Code",
+      electronExecutable: "/Applications/Omperator.app/Contents/MacOS/Omperator",
       runner,
       discoverTailscale: async () => { throw new Error("Tailscale is offline."); },
     });
@@ -209,7 +209,7 @@ describe("phone setup", () => {
       platform: "darwin",
       arch: "arm64",
       resourcesPath,
-      electronExecutable: "/Applications/T4 Code.app/Contents/MacOS/T4 Code",
+      electronExecutable: "/Applications/Omperator.app/Contents/MacOS/Omperator",
       runner,
       discoverTailscale: async () => "/tailscale",
     });

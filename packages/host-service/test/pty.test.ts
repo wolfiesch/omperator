@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -111,30 +110,25 @@ async function waitForLines(
 
 describe("spawnPty", () => {
 	test("gives the child a controlling terminal with job control", async () => {
-		// Assert the contract EXTERNALLY (child is a session leader attached to
-		// a real tty) instead of round-tripping a command through the shell —
-		// interactive bash startup is unboundedly slow under full-suite load,
-		// which made the read-back probe flaky on loaded machines.
 		const root = await mkdtemp(join(tmpdir(), "t4-pty-ctty-"));
 		const child = spawnPty({
-			argv: ["/bin/bash", "-c", "sleep 30"],
+			argv: ["/bin/bash"],
 			cwd: root,
 			env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: root, TERM: "xterm-256color", PS1: "" },
 			rows: 24,
 			cols: 80,
 		});
 		try {
-			// Give the spawn a moment to exec, then ask the kernel about it.
-			await settle(200);
-			const stat = execFileSync("ps", ["-o", "tty=,stat=", "-p", String(child.pid)]).toString().trim();
-			const [tty, state] = stat.split(/\s+/u);
-			expect(tty).not.toBe("??"); // has a controlling tty
-			expect(state).toMatch(/^S.*s/u); // S: sleeping, s: session leader
+			child.write("ps -o tty,stat -p $$\n");
+			const output = await drainUntil(() => child.drain(), /\bSs\b/u);
+			// A session leader (Ss) attached to a real tty, not "??".
+			expect(output).toMatch(/\bSs\b/u);
+			expect(output).not.toContain("no job control");
 			expect(child.slavePath).toMatch(/^\/dev\//u);
 		} finally {
 			child.close();
 		}
-	}, 15_000);
+	});
 
 	test("round-trips the window size and signals the child", async () => {
 		const root = await mkdtemp(join(tmpdir(), "t4-pty-winsize-"));

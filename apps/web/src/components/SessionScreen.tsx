@@ -479,6 +479,7 @@ export function SessionScreen({
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="min-h-0 flex-1 overflow-hidden">
             <SessionMain
+              connectionState={connectionState}
               key={sessionId}
               exportRowsRef={exportRowsRef}
               nowMs={nowMs}

@@ -310,7 +310,7 @@ function PhoneSetupCard({ api }: { readonly api: PhoneSetupApi }) {
     <section aria-labelledby="phone-setup-heading" className="rounded-lg border border-border bg-card p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="font-heading font-semibold text-sm" id="phone-setup-heading">Use T4 Code on your phone</h2>
+          <h2 className="font-heading font-semibold text-sm" id="phone-setup-heading">Use Omperator on your phone</h2>
           <p className="mt-1 text-muted-foreground text-xs">
             {state?.message ?? "Checking private phone access…"}
           </p>
@@ -323,7 +323,7 @@ function PhoneSetupCard({ api }: { readonly api: PhoneSetupApi }) {
       {ready ? (
         <div className="mt-4 grid items-center gap-4 sm:grid-cols-[auto_1fr]">
           <div className="w-fit rounded-xl p-3 shadow-sm">
-            <QRCodeSVG aria-label="QR code for private T4 Code phone access" level="M" size={164} value={state.url!} />
+            <QRCodeSVG aria-label="QR code for private Omperator phone access" level="M" size={164} value={state.url!} />
           </div>
           <div className="flex min-w-0 flex-col gap-3">
             <ol className="list-decimal space-y-1 pl-4 text-sm">
@@ -471,7 +471,7 @@ function ProfileCard({
                 }
                 type="checkbox"
               />
-              Start with T4
+              Start with Omperator
             </label>
             <Button
               disabled={busy}
@@ -548,7 +548,7 @@ function AddProfileForm({ api }: { readonly api: TargetsStoreApi }) {
             onChange={(event) => setDraft({ autoStart: event.target.checked })}
             type="checkbox"
           />
-          Start with T4
+          Start with Omperator
         </label>
         <Button disabled={adding} size="sm" type="submit">
           {adding && <Spinner />}
@@ -557,7 +557,7 @@ function AddProfileForm({ api }: { readonly api: TargetsStoreApi }) {
       </div>
       <p className="text-muted-foreground text-xs sm:col-span-3">
         Native OMP profiles are discovered automatically. Add one here only when you previously hid
-        it from T4 Code or want to register a new named profile.
+        it from Omperator or want to register a new named profile.
       </p>
     </form>
   );
@@ -1026,9 +1026,9 @@ function RemoveProfileDialog({ api }: { readonly api: TargetsStoreApi }) {
     >
       <DialogPopup showCloseButton={false}>
         <DialogHeader>
-          <DialogTitle>Remove {label} from T4 Code?</DialogTitle>
+          <DialogTitle>Remove {label} from Omperator?</DialogTitle>
           <DialogDescription>
-            T4 Code will stop and unregister this profile's background service. Any turns currently
+            Omperator will stop and unregister this profile's background service. Any turns currently
             running in this profile will end. Its OMP profile, configuration, authentication
             references, and sessions stay on disk.
           </DialogDescription>
@@ -1044,7 +1044,7 @@ function RemoveProfileDialog({ api }: { readonly api: TargetsStoreApi }) {
             variant="destructive"
           >
             {busy && <Spinner />}
-            Remove from T4 Code
+            Remove from Omperator
           </Button>
         </DialogFooter>
       </DialogPopup>
