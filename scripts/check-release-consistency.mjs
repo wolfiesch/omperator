@@ -13,7 +13,7 @@ import {
   validateReleaseMetadata,
 } from "./release-consistency/validators.mjs";
 
-const PORTABLE_OMP_COMMIT = "107c7ca3054dbd7f4b2247598580a63a06d72bc4";
+const PORTABLE_OMP_COMMIT = "b86f6116e6223ebb2d747748dc1dc14ddcb35428";
 const PORTABLE_OMP_CONTRACT_COMMIT = "d16c6168c86f40fc44f25118c2fd06fe160fcb93";
 const OMP_RUNTIME_REPOSITORY = "https://github.com/wolfiesch/oh-my-pi";
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;

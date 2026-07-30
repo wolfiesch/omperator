@@ -149,7 +149,7 @@ RUN printf '%s\n' \
     && chown root:root /usr/local/bin/omp /usr/local/bin/t4-session-shell /usr/local/lib/t4/terminal-attach-client.js /usr/local/lib/t4/session-runtime-supervisor.js /usr/local/lib/t4/session-credential-broker.js /usr/local/lib/t4/session-runtime-readiness.js
 ENV T4_WORKSPACE_ROOT=/workspace \
     T4_HOST_PORT=8787 \
-    T4_OMP_BUILD=107c7ca3054dbd7f4b2247598580a63a06d72bc4 \
+    T4_OMP_BUILD=b86f6116e6223ebb2d747748dc1dc14ddcb35428 \
     DISPLAY=:99 \
     HOME=/run/t4 \
     XDG_RUNTIME_DIR=/run/t4
@@ -166,8 +166,8 @@ LABEL org.opencontainers.image.source="${SOURCE_REPOSITORY}" \
       io.t4.cmux.provenance="/usr/share/t4/provenance/cmux-runtime-v1.json" \
       io.t4.cmux.binary-manifest="/usr/share/t4/provenance/cmux-tui.manifest.json" \
       io.t4.cmux.license="MIT" \
-      io.t4.omp.version="17.1.7" \
-      io.t4.omp.revision="107c7ca3054dbd7f4b2247598580a63a06d72bc4" \
+      io.t4.omp.version="17.1.2" \
+      io.t4.omp.revision="b86f6116e6223ebb2d747748dc1dc14ddcb35428" \
       io.t4.omp.contract-revision="d16c6168c86f40fc44f25118c2fd06fe160fcb93" \
       io.t4.omp.provenance="/usr/share/t4/provenance/omp-runtime-v1.json" \
       io.t4.omp.authority="t4-omp-authority/1" \

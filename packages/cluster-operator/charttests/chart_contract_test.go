@@ -920,7 +920,7 @@ func TestImageContractsArePinnedAndAuthorityCompatible(t *testing.T) {
 		}
 	}
 	assertContains(t, session,
-		"107c7ca3054dbd7f4b2247598580a63a06d72bc4",
+		"b86f6116e6223ebb2d747748dc1dc14ddcb35428",
 		"provenance/omp-runtime-v1.json",
 		"t4-omp-authority/1",
 		"session-entrypoint.sh",

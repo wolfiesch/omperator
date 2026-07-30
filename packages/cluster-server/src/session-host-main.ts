@@ -18,8 +18,8 @@ import { createBrowserPreviewOperations, mergeBrowserPreviewOperations, type Bro
 import { SessionCredentialClient } from "./session-credential-client.ts";
 import { startSessionAuthorityHealth, type SessionAuthorityHealthHandle } from "./session-authority-health.ts";
 
-const OMP_VERSION = "17.1.7";
-const OMP_COMMIT = "107c7ca3054dbd7f4b2247598580a63a06d72bc4";
+const OMP_VERSION = "17.1.2";
+const OMP_COMMIT = "b86f6116e6223ebb2d747748dc1dc14ddcb35428";
 
 async function durableSyncTree(path: string): Promise<void> {
 	const stat = await lstat(path);
