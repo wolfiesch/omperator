@@ -1,0 +1,17 @@
+# Packaging exclusions for `helm package deploy/charts/t4-cluster`.
+# capabilities.yaml is deliberately NOT excluded: it is the chart's advertised
+# capability inventory and must travel with the packaged artifact.
+.DS_Store
+.git/
+.gitignore
+.idea/
+.vscode/
+*.swp
+*.bak
+*.tmp
+*.orig
+*~
+.project
+.settings/
+# Local packaging output must never be re-packaged into a chart.
+*.tgz

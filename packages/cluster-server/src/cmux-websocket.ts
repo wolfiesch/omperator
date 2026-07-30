@@ -29,7 +29,8 @@ export function isValidCmuxWebSocketTemplate(value: string | undefined): value i
 	if (value === undefined || value.split("{runtimeId}").length !== 2) return false;
 	try {
 		const url = new URL(value.replace("{runtimeId}", "runtime-template"));
-		return url.protocol === "wss:" && !url.username && !url.password && !url.search && !url.hash
+		const localPlaintext = url.protocol === "ws:" && (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]");
+		return (url.protocol === "wss:" || localPlaintext) && !url.username && !url.password && !url.search && !url.hash
 			&& url.pathname === "/v1/cmux/runtime-template";
 	} catch {
 		return false;

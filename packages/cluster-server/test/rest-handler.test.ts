@@ -124,6 +124,7 @@ describe("cluster read-only REST gateway", () => {
 			restBaseUrl: config.restBaseUrl,
 			ompAppWebSocketUrl: config.ompAppWebSocketUrl,
 			protocols: { machineProvider: ["machine-provider-v1"], cmux: [10], application: ["omp-app/1"] },
+			deployment: { mode: "kubernetes", highAvailability: { gateway: false, runtime: false }, writableOmpAuthoritiesPerRuntime: 1 },
 		});
 		for (const path of ["/v1/version", "/v1/capabilities", "/v1/not-supported"]) {
 			const response = await handle(get(path));
@@ -141,6 +142,7 @@ describe("cluster read-only REST gateway", () => {
 		const { handle } = fixture();
 		const capabilities = await body(handle(get("/v1/capabilities"), OWNER));
 		expect(capabilities).toMatchObject({
+			deployment: { mode: "kubernetes", highAvailability: { gateway: false, runtime: false }, writableOmpAuthoritiesPerRuntime: 1 },
 			features: { restLifecycle: false, sshProvider: false, directCmuxWebSocket: false, browser: false, scaleToZero: false },
 			limits: { maxPageSize: 200, idempotencyRetentionSeconds: 86_400, eventRetentionSeconds: 60 },
 		});

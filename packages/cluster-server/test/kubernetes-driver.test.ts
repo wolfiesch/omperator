@@ -1,6 +1,15 @@
-import { describe, expect, test } from "vite-plus/test";
+import { describe, expect, test, vi } from "vite-plus/test";
 import { createHash } from "node:crypto";
+import { hostId, projectId, revision, sessionId } from "@t4-code/host-wire";
 import type { InfrastructureEvent, SharedIssuedIdentifier } from "@t4-code/portable-control-store";
+import {
+	runCrossDriverConformance,
+	type PortableSessionConformanceAdapter,
+	type ResourceDriver,
+} from "@t4-code/portable-driver";
+import type { Runtime } from "@t4-code/portable-core";
+import { createActualLocalDriverFixture } from "./fixtures/local-driver-conformance.ts";
+import { createLocalAndSingleHostProfiles, portableRestApiConfig } from "../src/portable-front-door.ts";
 import {
 	KubernetesApiError,
 	type KubernetesResourceApi,
@@ -211,6 +220,7 @@ class FakeKubernetesApi implements KubernetesResourceApi {
 	conflictNextDelete = false;
 	createCount = 0;
 
+	deferRuntimeTransitions = false;
 	constructor(projection: ClusterInfrastructureProjection) { this.#projection = projection; }
 	async list(resource: string, _limit: number): Promise<{ items: KubernetesResource[]; resourceVersion: string }> {
 		return { items: [...(this.#resources[resource]?.values() ?? [])].map(value => structuredClone(value)), resourceVersion: String(this.#version) };
@@ -257,10 +267,13 @@ class FakeKubernetesApi implements KubernetesResourceApi {
 			throw new KubernetesApiError(409, "conflict");
 		}
 		const changed = JSON.stringify(input.spec) !== JSON.stringify(current.spec);
-		const updated = this.#reconcile({
+		const candidate = {
 			...input,
 			metadata: { ...input.metadata, resourceVersion: String(++this.#version), generation: (current.metadata.generation ?? 1) + (changed ? 1 : 0) },
-		});
+		};
+		const updated = this.deferRuntimeTransitions && resource === "t4sessions"
+			? { ...candidate, status: structuredClone(current.status) }
+			: this.#reconcile(candidate);
 		this.#resources[resource]!.set(name, updated);
 		this.#projection.applyWatch({ type: "MODIFIED", object: updated });
 		return structuredClone(updated);
@@ -279,6 +292,9 @@ class FakeKubernetesApi implements KubernetesResourceApi {
 		this.#resources[resource]!.delete(name);
 		this.#projection.applyWatch({ type: "DELETED", object: current });
 		return {};
+	}
+	resourceCardinality(): Readonly<{ workspaces: number; runtimes: number }> {
+		return { workspaces: this.#resources.t4workspaces.size, runtimes: this.#resources.t4sessions.size };
 	}
 	replaceRuntime(publicId: string, change: (resource: KubernetesResource) => KubernetesResource): void {
 		const selected = [...this.#resources.t4sessions.values()].find(value => object(value.spec).publicId === publicId);
@@ -422,7 +438,62 @@ describe("KubernetesDriver", () => {
 		expect(runtimeOutcomes.map(value => value.outcome).sort()).toEqual(["alreadyIssued", "created"]);
 		await Promise.all([first.close(), second.close()]);
 	});
+	test("survives gateway rolling replacement without duplicate resources and resumes the retained stream", async () => {
+		const { api, driver: first, events, projection } = setup();
+		const sleeping = await createRuntime(first, "Sleeping");
+		const retainedCursor = await events.eventHeadCursor(SCOPE);
+		const originalGeneration = sleeping.generation;
+		const originalCreateCount = api.createCount;
+		await first.close();
 
+		const replacement = new KubernetesDriver({
+			api, projection, controlStore: events, initialEventCursors: { [SCOPE]: await events.eventHeadCursor(SCOPE) }, hostRef: HOST,
+			scopes: [{ id: SCOPE, principal: PRINCIPAL, displayName: "Personal", kind: "Personal" }],
+			capabilities, admissionPolicy, now: () => NOW, random: bytes => new Uint8Array(bytes).fill(9), watchPollMilliseconds: 1,
+			projectionTimeoutMilliseconds: 500,
+		});
+		const located = replacement.getRuntime(sleeping.id);
+		expect(located).toMatchObject({ outcome: "found", resource: { id: sleeping.id, desiredState: "Sleeping", generation: originalGeneration } });
+		if (located.outcome !== "found") return;
+		const woke = await replacement.setRuntimeDesiredState(located.resource.id, "Running", located.resource.revision);
+		expect(woke).toMatchObject({ outcome: "updated", resource: { id: sleeping.id, desiredState: "Running" } });
+		if (woke.outcome !== "updated") return;
+		expect(woke.resource.generation).not.toBe(originalGeneration);
+		expect(api.resourceCardinality()).toEqual({ workspaces: 1, runtimes: 1 });
+		expect(api.createCount).toBe(originalCreateCount);
+		expect([...events.identifiers.keys()].sort()).toEqual(["runtime\u0000rt_public", "workspace\u0000ws_public"]);
+
+		const replay = await replacement.listInfrastructureEvents(SCOPE, retainedCursor, 20);
+		expect(replay).toMatchObject({
+			outcome: "events",
+			events: expect.arrayContaining([expect.objectContaining({ resourceKind: "runtime", resourceId: sleeping.id })]),
+		});
+		await replacement.close();
+	});
+
+
+	test("bounds zero-pod wake when the controller does not publish a terminal observation", async () => {
+		const { api, driver: creator, events, projection } = setup();
+		const sleeping = await createRuntime(creator, "Sleeping");
+		await creator.close();
+		api.deferRuntimeTransitions = true;
+		const replacement = new KubernetesDriver({
+			api, projection, controlStore: events, initialEventCursors: { [SCOPE]: await events.eventHeadCursor(SCOPE) }, hostRef: HOST,
+			scopes: [{ id: SCOPE, principal: PRINCIPAL, displayName: "Personal", kind: "Personal" }],
+			capabilities, admissionPolicy, now: () => NOW, random: bytes => new Uint8Array(bytes).fill(10), watchPollMilliseconds: 1,
+			projectionTimeoutMilliseconds: 100,
+		});
+		vi.useFakeTimers();
+		try {
+			const waking = replacement.setRuntimeDesiredState(sleeping.id, "Running", sleeping.revision);
+			await vi.advanceTimersByTimeAsync(100);
+			expect(await waking).toEqual({ outcome: "invalidState", reason: "KubernetesProjectionRejectedRuntime" });
+			expect(api.resourceCardinality()).toEqual({ workspaces: 1, runtimes: 1 });
+		} finally {
+			vi.useRealTimers();
+			await replacement.close();
+		}
+	});
 
 	test("returns the current opaque workspace revision after a Kubernetes resourceVersion conflict", async () => {
 		const { api, driver } = setup();
@@ -559,4 +630,114 @@ describe("KubernetesDriver", () => {
 		expect(() => driver.watchInfrastructureEvents(SCOPE, replay.cursor)).toThrow("closed");
 		expect(await driver.close()).toBeUndefined();
 	});
+
+	test("runs one implementation-backed semantic harness for local, single-host, and Kubernetes", async () => {
+		const local = createActualLocalDriverFixture(SCOPE);
+		const singleHost = createActualLocalDriverFixture(SCOPE);
+		const kubernetesFixture = setup();
+		await kubernetesFixture.driver.close();
+		const kubernetes = new KubernetesDriver({
+			api: kubernetesFixture.api,
+			projection: kubernetesFixture.projection,
+			controlStore: kubernetesFixture.events,
+			initialEventCursors: { [SCOPE]: cursor(SCOPE, 0) },
+			hostRef: HOST,
+			scopes: [{ id: SCOPE, principal: PRINCIPAL, displayName: "Personal", kind: "Personal" }],
+			capabilities,
+			admissionPolicy: { ...admissionPolicy, browserEnabled: true },
+			now: () => NOW,
+			random: bytes => new Uint8Array(bytes).fill(11),
+			watchPollMilliseconds: 1,
+		});
+		const profiles = createLocalAndSingleHostProfiles({
+			localPrincipalId: PRINCIPAL,
+			remotePrincipalId: PRINCIPAL,
+			localEndpoints: {
+				restBaseUrl: "http://127.0.0.1:8787/v1",
+				providerWebSocketUrl: "ws://127.0.0.1:8787/v1/provider/control",
+				cmuxWebSocketTemplate: "ws://127.0.0.1:8787/v1/cmux/{runtimeId}",
+				ompAppWebSocketUrl: "ws://127.0.0.1:8787/v1/ws",
+			},
+			singleHostEndpoints: {
+				restBaseUrl: "https://single.example.test/v1",
+				providerWebSocketUrl: "wss://single.example.test/v1/provider/control",
+				cmuxWebSocketTemplate: "wss://single.example.test/v1/cmux/{runtimeId}",
+				ompAppWebSocketUrl: "wss://single.example.test/v1/ws",
+			},
+		});
+		const build = { version: "0.2.1", revision: "conformance", builtAt: new Date(NOW).toISOString() };
+		expect(portableRestApiConfig(profiles.local, build).deployment?.mode).toBe("local");
+		expect(portableRestApiConfig(profiles.singleHost, build).deployment?.mode).toBe("single-host");
+
+		const operations = new Map<string, string[]>();
+		const sessions = (deployment: "local" | "single-host" | "kubernetes", driver: ResourceDriver): PortableSessionConformanceAdapter => {
+			const record = (operation: string): void => {
+				const values = operations.get(deployment) ?? [];
+				values.push(operation);
+				operations.set(deployment, values);
+			};
+			const route = (runtime: Runtime, kind: "cmux-v10" | "omp-app-v1") => {
+				const resolved = driver.resolveRuntimeRoute(runtime.id, kind, runtime.generation);
+				if (resolved.outcome !== "resolved") throw new Error(`${deployment} ${kind} route unavailable`);
+				return resolved;
+			};
+			return {
+				prompt: async runtime => {
+					record("prompt");
+					route(runtime, "omp-app-v1");
+					return { runtimeId: runtime.id, generation: runtime.generation, authorityCount: 1 };
+				},
+				openBrowser: async runtime => {
+					record("browser");
+					route(runtime, "omp-app-v1");
+					return { runtimeId: runtime.id, generation: runtime.generation, externallyReachableCdp: false };
+				},
+				disconnect: async runtime => {
+					record("disconnect");
+					route(runtime, "cmux-v10");
+				},
+				reconnect: async runtime => {
+					record("reconnect");
+					route(runtime, "cmux-v10");
+					route(runtime, "omp-app-v1");
+					return { runtimeId: runtime.id, generation: runtime.generation };
+				},
+			};
+		};
+		const attachKubernetesAuthority = (runtimeId: string): void => {
+			let clusterSessionId: string | undefined;
+			kubernetesFixture.api.replaceRuntime(runtimeId, resource => {
+				clusterSessionId = resource.metadata.name;
+				return resource;
+			});
+			if (clusterSessionId === undefined || !kubernetesFixture.projection.setSessionAuthority(clusterSessionId, {
+				hostId: hostId("conformance-host"),
+				sessionId: sessionId(`authority-${runtimeId}`),
+				project: { projectId: projectId("conformance-project"), name: "Conformance" },
+				revision: revision(`authority-${runtimeId}`),
+				title: "Conformance authority",
+				status: "idle",
+				updatedAt: new Date(NOW).toISOString(),
+			})) throw new Error(`failed to attach Kubernetes authority for ${runtimeId}`);
+		};
+		const awaitRuntime = (driver: ResourceDriver, prepare?: (runtimeId: string) => void) => async (runtimeId: string, desiredState: Runtime["desiredState"], phase: Runtime["phase"]): Promise<Runtime> => {
+			if (desiredState === "Running" && phase === "Ready") prepare?.(runtimeId);
+			const found = driver.getRuntime(runtimeId);
+			if (found.outcome === "found" && found.resource.desiredState === desiredState && found.resource.phase === phase) return found.resource;
+			throw new Error(`runtime ${runtimeId} did not converge to ${desiredState}/${phase}`);
+		};
+		try {
+			const results = await runCrossDriverConformance({
+				local: { deployment: "local", driver: local.driver, scopeId: SCOPE, sessions: sessions("local", local.driver), awaitRuntime: awaitRuntime(local.driver) },
+				singleHost: { deployment: "single-host", driver: singleHost.driver, scopeId: SCOPE, sessions: sessions("single-host", singleHost.driver), awaitRuntime: awaitRuntime(singleHost.driver) },
+				kubernetes: { deployment: "kubernetes", driver: kubernetes, scopeId: SCOPE, sessions: sessions("kubernetes", kubernetes), awaitRuntime: awaitRuntime(kubernetes, attachKubernetesAuthority) },
+			});
+			expect(results.map(result => result.deployment)).toEqual(["local", "single-host", "kubernetes"]);
+			for (const deployment of ["local", "single-host", "kubernetes"]) {
+				expect(operations.get(deployment)).toEqual(["prompt", "browser", "disconnect", "reconnect"]);
+			}
+		} finally {
+			await Promise.allSettled([local.close(), singleHost.close(), kubernetes.close()]);
+		}
+	}, 15_000);
 });

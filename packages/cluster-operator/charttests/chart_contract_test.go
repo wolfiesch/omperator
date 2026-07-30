@@ -68,7 +68,7 @@ func TestEnabledChartRendersHARestrictedWorkloads(t *testing.T) {
 		"name: T4_PUBLIC_OMP_APP_WEBSOCKET_URL",
 		"value: \"wss://omp.example.test/v1/ws\"",
 		"name: T4_BUILD_REVISION",
-		"value: \"0123456789abcdef\"",
+		"value: \"fixture-revision\"",
 		"name: T4_ADMISSION_MAX_ACTIVE_RUNTIMES",
 		"value: \"10\"",
 		"name: T4_ADMISSION_BROWSER_ENABLED",
@@ -317,16 +317,16 @@ func TestValuesSchemaRejectsUnsafeNamesProfilesCIDRsAndHalfSelectors(t *testing.
 		"Woodpecker ConfigMap name":          {"--set-string", "woodpecker.existingSecret=woodpecker-token", "--set-string", "woodpecker.configMap=Bad_Name"},
 		"Woodpecker key":                     {"--set-string", "woodpecker.existingSecret=woodpecker-token", "--set-string", "woodpecker.configMap=woodpecker-config", "--set-string", "woodpecker.tokenKey=bad/key"},
 		"Woodpecker audience":                {"--set-string", "woodpecker.serviceAccountAudience=/bad", "--set-string", "woodpecker.configMap=woodpecker-config"},
-		"provider URL uppercase host":         {"--set-string", "sshGateway.providerInternalWebSocketURL=wss://Provider.Example/internal/provider"},
+		"provider URL uppercase host":        {"--set-string", "sshGateway.providerInternalWebSocketURL=wss://Provider.Example/internal/provider"},
 		"provider URL explicit default port": {"--set-string", "sshGateway.providerInternalWebSocketURL=wss://provider.example:443/internal/provider"},
 		"IPv4 default route":                 {"--set-string", "server.trustedProxyCIDRs[0]=0.0.0.0/0"},
 		"IPv6 default route":                 {"--set-string", "server.trustedProxyCIDRs[0]=::/0"},
 		"build version leading whitespace":   {"--set-string", "server.publicApi.build.version= 0.1.33"},
 		"build revision trailing whitespace": {"--set-string", "server.publicApi.build.revision=fixture-revision "},
-		"negative active runtime quota":       {"--set", "server.admission.maxActiveRuntimes=-1"},
-		"unsafe workspace capacity":           {"--set", "server.admission.maxWorkspaceCapacityBytes=9007199254740992"},
-		"zero creation burst":                 {"--set", "server.admission.creationRate.burst=0"},
-		"unbounded retry after":               {"--set", "server.admission.creationRate.maximumRetryAfterSeconds=301"},
+		"negative active runtime quota":      {"--set", "server.admission.maxActiveRuntimes=-1"},
+		"unsafe workspace capacity":          {"--set", "server.admission.maxWorkspaceCapacityBytes=9007199254740992"},
+		"zero creation burst":                {"--set", "server.admission.creationRate.burst=0"},
+		"unbounded retry after":              {"--set", "server.admission.creationRate.maximumRetryAfterSeconds=301"},
 		"gateway half selector":              {"--set-string", "networkPolicy.gatewayIngress.namespaceSelector.matchLabels.scope=gateway"},
 		"observability half selector":        {"--set-string", "networkPolicy.observability.podSelector.matchLabels.scope=metrics"},
 		"OMP ConfigMap name":                 {"--set-string", "session.omp.configMap=Bad_Name"},
@@ -1066,6 +1066,8 @@ func TestResilienceMatrixAndOptionalRuntimePrePull(t *testing.T) {
 	output := helmTemplate(t, enabledValues()...)
 	controllerPDB := documentContainingKind(t, output, "PodDisruptionBudget", "name: \"release-name-t4-cluster-controller\"")
 	assertContains(t, controllerPDB, "maxUnavailable: 0", "app.kubernetes.io/component: controller")
+	controllerDeployment := documentContainingKind(t, output, "Deployment", "name: \"release-name-t4-cluster-controller\"")
+	assertContains(t, controllerDeployment, "replicas: 2", "maxUnavailable: 0", "maxSurge: 1", "minReadySeconds: 10", "topologySpreadConstraints:", "podAntiAffinity:")
 	serverPDB := documentContainingKind(t, output, "PodDisruptionBudget", "name: \"release-name-t4-cluster-server\"")
 	assertContains(t, serverPDB, "minAvailable: 2")
 	serverHPA := documentContainingKind(t, output, "HorizontalPodAutoscaler", "name: \"release-name-t4-cluster-server\"")

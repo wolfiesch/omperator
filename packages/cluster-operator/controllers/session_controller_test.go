@@ -2,8 +2,8 @@ package controllers
 
 import (
 	"context"
-	"regexp"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -24,6 +24,7 @@ import (
 )
 
 var runtimeGenerationPattern = regexp.MustCompile(`^gen_[A-Za-z0-9_-]{24}$`)
+
 func TestPerSessionWriterAccessCannotReachSiblingLease(t *testing.T) {
 	scheme := runtime.NewScheme()
 	for _, add := range []func(*runtime.Scheme) error{corev1.AddToScheme, rbacv1.AddToScheme, clusterv1alpha1.AddToScheme} {
@@ -75,7 +76,6 @@ func TestPerSessionWriterAccessCannotReachSiblingLease(t *testing.T) {
 		}
 	}
 }
-
 
 func TestSessionRequestsForHostOnlyEnqueuesAffectedSessions(t *testing.T) {
 	scheme := runtime.NewScheme()
@@ -268,6 +268,48 @@ func TestFenceUncertainAttachmentNeverAdvancesGeneration(t *testing.T) {
 	if condition := meta.FindStatusCondition(stored.Status.Conditions, "Fenced"); condition == nil ||
 		condition.Status != metav1.ConditionFalse || condition.Reason != "FenceUncertain" {
 		t.Fatalf("missing fail-closed Fenced condition: %#v", stored.Status.Conditions)
+	}
+}
+func TestPositiveNodeLossFenceAllocatesOneFreshGeneration(t *testing.T) {
+	scheme := fenceTestScheme(t)
+	pvName := "runtime-pv"
+	session := &clusterv1alpha1.T4Session{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "team", UID: types.UID("session-uid"), Generation: 4},
+		Status: clusterv1alpha1.T4SessionStatus{
+			RuntimeGeneration: "gen_old-generation", FenceState: clusterv1alpha1.RuntimeFenceVerifying,
+			FencingGeneration: "gen_old-generation", FencingPodUID: "pod-on-lost-node",
+			RuntimeStatePVCName: "runtime-pvc", RuntimeStateVolumeIdentity: volumeIdentity(pvName),
+			FencingVolumeIdentity: volumeIdentity(pvName),
+		},
+	}
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "runtime-pvc", Namespace: session.Namespace},
+		Spec:       corev1.PersistentVolumeClaimSpec{VolumeName: pvName},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&clusterv1alpha1.T4Session{}).WithObjects(session, pvc).Build()
+	r := &SessionReconciler{Client: c, APIReader: c, Scheme: scheme}
+	var stored clusterv1alpha1.T4Session
+	if err := c.Get(t.Context(), client.ObjectKeyFromObject(session), &stored); err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := r.prepareRunningGeneration(t.Context(), &stored, pvc)
+	if err != nil || !prepared {
+		t.Fatalf("positive fence did not prepare replacement: prepared=%t err=%v", prepared, err)
+	}
+	if err := c.Get(t.Context(), client.ObjectKeyFromObject(session), &stored); err != nil {
+		t.Fatal(err)
+	}
+	freshGeneration := stored.Status.RuntimeGeneration
+	if freshGeneration == "gen_old-generation" || stored.Status.FenceState != clusterv1alpha1.RuntimeFenceProven ||
+		stored.Status.FencingGeneration != "" || stored.Status.FencingPodUID != "" || stored.Status.FencingVolumeIdentity != "" {
+		t.Fatalf("positive fence did not commit one fresh generation: %#v", stored.Status)
+	}
+	prepared, err = r.prepareRunningGeneration(t.Context(), &stored, pvc)
+	if err != nil || !prepared {
+		t.Fatalf("committed replacement generation was not stable: prepared=%t err=%v", prepared, err)
+	}
+	if stored.Status.RuntimeGeneration != freshGeneration {
+		t.Fatalf("replacement generation advanced twice: %q -> %q", freshGeneration, stored.Status.RuntimeGeneration)
 	}
 }
 
@@ -584,9 +626,15 @@ func TestSessionPodUsesSeparateCompositeExecProbes(t *testing.T) {
 	}
 	for _, name := range []string{"T4_WRITER_LEASE_NAME", "POD_UID", "T4_GENERATION_AUTH_PATH", "T4_KUBERNETES_TOKEN_PATH"} {
 		authorityHas, shellHas, credentialHas := false, false, false
-		for _, variable := range pod.Spec.Containers[0].Env { authorityHas = authorityHas || variable.Name == name }
-		for _, variable := range pod.Spec.Containers[1].Env { shellHas = shellHas || variable.Name == name }
-		for _, variable := range pod.Spec.Containers[2].Env { credentialHas = credentialHas || variable.Name == name }
+		for _, variable := range pod.Spec.Containers[0].Env {
+			authorityHas = authorityHas || variable.Name == name
+		}
+		for _, variable := range pod.Spec.Containers[1].Env {
+			shellHas = shellHas || variable.Name == name
+		}
+		for _, variable := range pod.Spec.Containers[2].Env {
+			credentialHas = credentialHas || variable.Name == name
+		}
 		if authorityHas || shellHas || !credentialHas {
 			t.Fatalf("%s projection authority=%t shell=%t credential=%t, want credential-only", name, authorityHas, shellHas, credentialHas)
 		}

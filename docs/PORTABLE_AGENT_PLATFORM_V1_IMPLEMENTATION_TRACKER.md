@@ -213,9 +213,11 @@ P2, P3, and P6 may run concurrently only after P0/P1 freeze their shared interfa
 | P5-05 | Add bounded metrics, structured logs, traces, and alerts | P2 through P4 | No user IDs/content/paths or unbounded labels; each alert has an actionable runbook target |
 | P5-06 | Add storage capability/remount probe and node-loss fencing scenario | P2-04 | Advertised HA storage writes, remounts elsewhere, and reads successfully; uncertain attachment refuses replacement |
 | P5-07 | Implement quiesced backup/restore and explicitly labeled crash-consistent snapshots | P3-07, P5-02, P5-06 | Restore creates a new fenced generation and cannot attach one snapshot to two live runtimes |
-| P5-08 | **PENDING:** Build startup/failover measurement harness without publishing unmeasured claims | P4-10, P5-04, P5-06 | Artifacts record source/image hashes, mode, environment, scenario, iterations, timeout, and raw results |
+| P5-08 | Build startup/failover measurement harness without publishing unmeasured claims | P4-10, P5-04, P5-06 | Artifacts record source/image hashes, mode, environment, scenario, iterations, timeout, and raw results |
 
 **P5-03 evidence:** `portable-core` defines exact bounded per-scope runtime, workspace-capacity, CPU, memory, GPU, browser, and creation-rate policy contracts. `SharedControlStore` and the SQLite shared-ledger storage use CAS-backed reservations across replicas, saturating capacity arithmetic, bounded retry-after, deterministic rollback, and committed ambiguous-outcome reconciliation. Local and Kubernetes drivers admit before backend resource creation; REST preserves owner/actor separation and returns typed Problem Details, while provider control returns bounded retryable failures without advertising a queue. Helm values/schema wire fail-closed browser/GPU defaults and every bounded policy field. Focused core, shared-store two-replica concurrency, local/Kubernetes no-create, REST, provider, configuration, and chart contract tests cover the admission boundary.
+
+**P5-08 evidence:** `scripts/cluster-ci/measure-slo.sh` and `measure-slo-driver.mjs` implement all six startup/failover scenarios with exact REST, CRD, Lease, Pod, storage, and `omp-app/1` boundaries. The driver requires signed digest-bound image provenance, exact source/build/live-environment identity, exhaustive per-node cache inspection, zero warmups, bounded operation/iteration/cleanup/run deadlines, healthy pre-fault and restored post-fault baselines, and all-generation writer checks. `slo-run-contract.mjs`, `summarize-slo-run.mjs`, and `slo-evidence.mjs` make typed boundary/proof/cleanup events authoritative, bind every raw artifact and provenance snapshot into a closed run manifest, and recompute every future observation. The committed ledger remains explicitly unmeasured and carries no performance claim.
 
 ### P6 — Local and remote single-host service
 
@@ -226,6 +228,8 @@ P2, P3, and P6 may run concurrently only after P0/P1 freeze their shared interfa
 | P6-03 | Add copy-on-import for existing local OMP and cmux state | P0-03, P6-01 | Originals are never rewritten in place; failed import is resumable or safely discarded |
 | P6-04 | Document and expose truthful non-HA capability/status for single-host mode | P6-02 | Single-host mode never advertises gateway/runtime HA |
 | P6-05 | Run common lifecycle, prompt, browser, sleep/wake, reconnect, and deletion scenarios | P6-02 through P6-04 | Common protocol/resource semantics match LocalDriver and KubernetesDriver |
+
+**P6 evidence:** `portable-driver` owns the shared deployment, conformance, state-import, and resource contracts. `service-manager` packages the same LocalDriver behind launchd, systemd, and foreground single-host services with credential-free profiles and partial-install rollback. Copy-on-import stages OMP/cmux state without opening originals for write and resumes or discards partial imports deterministically. Local and single-host profiles expose the same REST, provider, cmux, and `omp-app/1` resource semantics while truthfully advertising no runtime or gateway HA.
 
 ### P7 — Cross-driver conformance and security
 
@@ -244,6 +248,8 @@ P2, P3, and P6 may run concurrently only after P0/P1 freeze their shared interfa
 
 Every scenario uses real implementations where the contract requires them. Fixture replay alone cannot satisfy OMP, cmux, browser, fencing, or failover acceptance.
 
+**P7 evidence:** `runCrossDriverConformance` executes one implementation-backed lifecycle/prompt/reconnect/sleep/wake/stop/delete harness against LocalDriver, the packaged single-host front door, and KubernetesDriver, preserving one authority and varying only endpoint/environment identity. Client-family capability conformance covers REST, SSE, provider, SSH, direct cmux, `omp-app/1`, and browser-preview authority. Focused controller, gateway, storage, fencing, ticket, lifecycle, browser, security-boundary, and real pinned-client suites cover the remaining driver-specific scenarios; Appendix B remains the release evidence checklist rather than a fixture-only substitute.
+
 ### P8 — Distribution and release
 
 | ID | Deliverable | Depends on | Acceptance | Default executor |
@@ -252,9 +258,11 @@ Every scenario uses real implementations where the contract requires them. Fixtu
 | P8-02 | Add Terraform Helm/Kubernetes and Flux/Argo examples | P8-01 | No cloud/storage/identity/network provider becomes mandatory; CRDs remain separately ordered |
 | P8-03 | Publish compatibility matrix and upstream patch ledger | P7, P8-01 | Exact revisions, protocols, skew, rollback image set, and patch removal conditions are explicit |
 | P8-04 | Complete install, upgrade, rollback, backup/restore, fencing, identity rotation, and uninstall runbooks | P5, P7 | Destructive steps name exact targets, revisions, and retention effects |
-| P8-05 | Attach measured startup/failover evidence | P5-08, P7 | Targets are distinguished from observations and evidence metadata is complete |
+| P8-05 | **LIVE EVIDENCE GATE:** Attach measured startup/failover evidence | P5-08, P7 | Targets are distinguished from observations and evidence metadata is complete |
 | P8-06 | Prove fresh install, upgrade, rollback, retained-state reinstall, and clean uninstall | P8-01 through P8-05 | Every advertised capability has an end-to-end scenario and rollback artifact |
-| P8-07 | Publish release artifacts | P8-06 | Requires explicit point-of-risk approval immediately before public publication |
+| P8-07 | **PUBLICATION GATE:** Publish release artifacts | P8-06 | Requires explicit point-of-risk approval immediately before public publication |
+
+**P8 local evidence:** `deploy/charts/t4-cluster` is a default-off, provider-neutral Helm package with separately ordered CRDs and a closed capability inventory. Terraform, Flux, Argo CD, and values-only examples keep every adapter optional. `portable-distribution-v1.json` binds chart/API identity, compatibility, upstream deltas, runbooks, and proof harnesses; strict validators reject missing digests, undeclared adapters, drift, or false publication. `release-lifecycle.sh` covers fresh install, additive upgrade, rollback, adapter removal, retained-state reinstall, and clean uninstall, while `package-chart.sh` emits a local content-addressed archive and refuses publication. Ten operational runbooks cover the destructive and recovery paths. Live SLO observations, immutable release digest sets, signatures, registry publication, and public release artifacts remain explicit external gates and are not claimed by local completion.
 
 ## Goal-loop procedure
 

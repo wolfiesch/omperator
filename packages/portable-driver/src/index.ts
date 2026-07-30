@@ -1284,3 +1284,7 @@ export class LocalDriver implements ResourceDriver {
 }
 
 function statExists(path: string): boolean { try { statSync(path); return true; } catch (cause) { if ((cause as NodeJS.ErrnoException).code === "ENOENT") return false; throw cause; } }
+
+export * from "./conformance.ts";
+export * from "./deployment.ts";
+export * from "./state-import.ts";

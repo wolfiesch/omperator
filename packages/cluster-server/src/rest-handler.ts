@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { portableDeploymentStatus, type PortableDeploymentStatus } from "@t4-code/portable-driver";
 import type {
 	ClusterInfrastructureProjection,
 	RestRuntimeProjection,
@@ -40,12 +41,14 @@ const PROBLEM_HEADERS = Object.freeze({ "cache-control": "no-store", "content-ty
 export interface ClusterRestApiConfig {
 	readonly restBaseUrl: string;
 	readonly ompAppWebSocketUrl: string;
+	readonly providerWebSocketUrl?: string;
 	readonly cmuxWebSocketTemplate?: string;
 	readonly build: {
 		readonly version: string;
 		readonly revision: string;
 		readonly builtAt: string;
 	};
+	readonly deployment?: PortableDeploymentStatus;
 }
 export interface ClusterRestHandlerOptions {
 	readonly projection: ClusterInfrastructureProjection;
@@ -546,8 +549,10 @@ export function createClusterRestHandler(options: ClusterRestHandlerOptions): (r
 				apiVersion: "v1",
 				restBaseUrl: options.config.restBaseUrl,
 				ompAppWebSocketUrl: options.config.ompAppWebSocketUrl,
+				...(options.config.providerWebSocketUrl === undefined ? {} : { providerWebSocketUrl: options.config.providerWebSocketUrl }),
 				...(directCmuxWebSocket ? { cmuxWebSocketTemplate: options.config.cmuxWebSocketTemplate } : {}),
 				protocols: PROTOCOLS,
+				deployment: options.config.deployment ?? portableDeploymentStatus("kubernetes"),
 			});
 		}
 		if (path.startsWith("/v1/") && !principal) return problem(path, 401, "authentication_required", "An authenticated request identity is required.");
@@ -588,6 +593,7 @@ export function createClusterRestHandler(options: ClusterRestHandlerOptions): (r
 			);
 			return json({
 				apiVersion: "v1",
+				deployment: options.config.deployment ?? portableDeploymentStatus("kubernetes"),
 				protocols: {
 					machineProvider: { versions: [1], capabilities: [] },
 					cmux: { versions: [10] },

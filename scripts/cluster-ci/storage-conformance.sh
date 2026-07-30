@@ -15,8 +15,8 @@ Prerequisites:
 Scenarios:
   A. Provision workspace RWX and separate fenced runtime-state PVCs; verify selected access modes and online expansion.
   B. Write shared workspace data plus SQLite WAL, cmux state, browser state, and OMP generation state.
-  C. Attempt a second runtime-state writer, replace the writer onto a different node, and prove single-writer reattach plus durable reads.
-  D. Quiesce SQLite/OMP/cmux/browser for the exact generation, stop the writer, and create separately labeled workspace and runtime-state snapshots.
+  C. Refuse a cross-node contender while the old attachment remains; require authoritative VolumeAttachment absence before one replacement writer remounts elsewhere and reads durable state.
+  D. Assert exact one-writer/PVC cardinality, quiesce SQLite/OMP/cmux/browser for the exact generation, stop the writer, and create separately labeled workspace and runtime-state snapshots.
   E. Restore both ReadyToUse snapshots into new PVCs, start a fresh generation, and prove workspace/runtime-state data and generation separation.
   F. Record bounded conformance annotations only after every proof passes; namespace cleanup remains explicit.
 Run prerequisites are validated before mutation. Live results are not implied by --plan.
@@ -36,7 +36,7 @@ usage: storage-conformance.sh --plan
   T4_RUNTIME_ACCESS_MODE        ReadWriteOncePod or ReadWriteOnce
   T4_VOLUME_SNAPSHOT_CLASS      compatible VolumeSnapshotClass
   T4_STORAGE_FIXTURE_IMAGE      digest-pinned image with sh and sqlite3
-Optional: KUBECTL (default kubectl), T4_STORAGE_TIMEOUT (default 180s)
+Optional: KUBECTL (default kubectl), T4_STORAGE_TIMEOUT (default 180s), T4_STORAGE_FENCE_ATTEMPTS (default 60)
 EOF
   exit 64
 }
@@ -64,6 +64,8 @@ runtime_mode=${T4_RUNTIME_ACCESS_MODE:-}
 snapshot_class=${T4_VOLUME_SNAPSHOT_CLASS:-}
 fixture_image=${T4_STORAGE_FIXTURE_IMAGE:-}
 timeout=${T4_STORAGE_TIMEOUT:-180s}
+fence_attempts=${T4_STORAGE_FENCE_ATTEMPTS:-60}
+case "$fence_attempts" in ''|*[!0-9]*|0) echo "T4_STORAGE_FENCE_ATTEMPTS must be a positive integer" >&2; exit 64 ;; esac
 [ -n "$workspace_class" ] || { echo "T4_WORKSPACE_STORAGE_CLASS is required" >&2; exit 64; }
 [ -n "$runtime_class" ] || { echo "T4_RUNTIME_STORAGE_CLASS is required" >&2; exit 64; }
 case "$runtime_mode" in ReadWriteOncePod|ReadWriteOnce) ;; *) echo "T4_RUNTIME_ACCESS_MODE must be ReadWriteOncePod or ReadWriteOnce" >&2; exit 64 ;; esac
@@ -119,6 +121,8 @@ spec:
   resources: {requests: {storage: 1Gi}}
 EOF
 "$kubectl" -n "$namespace" wait pvc/workspace pvc/runtime-state --for=jsonpath='{.status.phase}'=Bound --timeout="$timeout"
+runtime_pv=$("$kubectl" -n "$namespace" get pvc runtime-state -o 'jsonpath={.spec.volumeName}')
+[ -n "$runtime_pv" ] || { echo "runtime-state PVC did not publish a bound volume identity" >&2; exit 65; }
 
 cat <<EOF | "$kubectl" apply -f -
 apiVersion: v1
@@ -191,6 +195,17 @@ fi
 # Force the first writer away, then require the same fenced volume to remount on
 # a different node and preserve workspace plus runtime authority state.
 "$kubectl" -n "$namespace" delete pod writer-g1 --wait=true
+attempt=0
+while [ "$attempt" -lt "$fence_attempts" ]; do
+  attachments=$("$kubectl" get volumeattachments.storage.k8s.io -o "jsonpath={.items[?(@.spec.source.persistentVolumeName==\"$runtime_pv\")].metadata.name}")
+  [ -z "$attachments" ] && break
+  attempt=$((attempt + 1))
+  sleep 2
+done
+if [ -n "$attachments" ]; then
+  echo "old runtime-state VolumeAttachment remained; refusing replacement writer" >&2
+  exit 1
+fi
 cat <<EOF | "$kubectl" apply -f -
 apiVersion: v1
 kind: Pod
@@ -224,6 +239,10 @@ EOF
 "$kubectl" -n "$namespace" wait pod/writer-g1-remount --for=condition=Ready --timeout="$timeout"
 new_node=$("$kubectl" -n "$namespace" get pod writer-g1-remount -o 'jsonpath={.spec.nodeName}')
 [ "$new_node" != "$old_node" ] || { echo "runtime-state did not remount on a different node" >&2; exit 1; }
+writer_count=$("$kubectl" -n "$namespace" get pods -l 'cluster.t4.dev/runtime-generation=gen_conformance_1' -o 'jsonpath={.items[*].metadata.name}' | awk '{print NF}')
+[ "$writer_count" -eq 1 ] || { echo "expected exactly one generation 1 writer after fenced remount; found $writer_count" >&2; exit 1; }
+pvc_count=$("$kubectl" -n "$namespace" get pvc -o 'jsonpath={.items[*].metadata.name}' | awk '{print NF}')
+[ "$pvc_count" -eq 2 ] || { echo "expected exactly workspace and runtime-state PVCs before snapshot; found $pvc_count" >&2; exit 1; }
 
 # Quiesce the exact generation and stop all writers before snapshot creation.
 "$kubectl" -n "$namespace" exec writer-g1-remount -- sh -ceu 'sqlite3 /runtime/cmux.db "PRAGMA wal_checkpoint(TRUNCATE);"; sync; echo gen_conformance_1 > /runtime/omp/checkpoint.ack; echo gen_conformance_1 > /runtime/cmux/checkpoint.ack; echo gen_conformance_1 > /runtime/browser/checkpoint.ack'

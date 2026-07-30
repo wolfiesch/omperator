@@ -1,0 +1,68 @@
+# Narrow Argo CD project for the t4-cluster control plane.
+#
+# The project is the authorization boundary. It permits exactly the cluster and
+# namespaced kinds this chart renders plus the three CRDs, and nothing else.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: t4-cluster
+  namespace: argocd
+spec:
+  description: Portable T4 cluster control plane
+  sourceRepos:
+    - https://git.example.test/t4-code.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: t4-system
+  clusterResourceWhitelist:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: Service
+    - group: ""
+      kind: ServiceAccount
+    - group: apps
+      kind: Deployment
+    - group: apps
+      kind: DaemonSet
+    - group: autoscaling
+      kind: HorizontalPodAutoscaler
+    - group: policy
+      kind: PodDisruptionBudget
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+    - group: networking.k8s.io
+      kind: Ingress
+    - group: rbac.authorization.k8s.io
+      kind: Role
+    - group: rbac.authorization.k8s.io
+      kind: RoleBinding
+    - group: monitoring.coreos.com
+      kind: ServiceMonitor
+    - group: monitoring.coreos.com
+      kind: PrometheusRule
+    - group: cluster.t4.dev
+      kind: T4ClusterHost
+  # Secrets are administrator-owned. Neither the chart nor Argo CD may create,
+  # read back, or reconcile them, and no PersistentVolumeClaim is chart managed.
+  namespaceResourceBlacklist:
+    - group: ""
+      kind: Secret
+    - group: ""
+      kind: ConfigMap
+    - group: ""
+      kind: PersistentVolumeClaim
+    - group: cluster.t4.dev
+      kind: T4Workspace
+    - group: cluster.t4.dev
+      kind: T4Session
+  orphanedResources:
+    # Retained workspaces and their PVCs are expected to outlive a release.
+    # Reporting them as orphans would invite an operator to delete durable state.
+    warn: false

@@ -28,8 +28,8 @@ Prerequisites:
 Scenarios:
   A. Provision workspace RWX and separate fenced runtime-state PVCs; verify selected access modes and online expansion.
   B. Write shared workspace data plus SQLite WAL, cmux state, browser state, and OMP generation state.
-  C. Attempt a second runtime-state writer, replace the writer onto a different node, and prove single-writer reattach plus durable reads.
-  D. Quiesce SQLite/OMP/cmux/browser for the exact generation, stop the writer, and create separately labeled workspace and runtime-state snapshots.
+  C. Refuse a cross-node contender while the old attachment remains; require authoritative VolumeAttachment absence before one replacement writer remounts elsewhere and reads durable state.
+  D. Assert exact one-writer/PVC cardinality, quiesce SQLite/OMP/cmux/browser for the exact generation, stop the writer, and create separately labeled workspace and runtime-state snapshots.
   E. Restore both ReadyToUse snapshots into new PVCs, start a fresh generation, and prove workspace/runtime-state data and generation separation.
   F. Record bounded conformance annotations only after every proof passes; namespace cleanup remains explicit.
 Run prerequisites are validated before mutation. Live results are not implied by --plan.
@@ -49,6 +49,10 @@ test("run contract is fail-closed, credential-free, and storage-separated", asyn
     "allowVolumeExpansion",
     "selected StorageClasses must both allow online expansion",
     "status.capacity.storage",
+    "volumeattachments.storage.k8s.io",
+    "old runtime-state VolumeAttachment remained; refusing replacement writer",
+    "expected exactly one generation 1 writer after fenced remount",
+    "expected exactly workspace and runtime-state PVCs before snapshot",
     "PRAGMA wal_checkpoint(TRUNCATE)",
     "checkpoint.ack",
     "snapshot-consistency: Quiesced",

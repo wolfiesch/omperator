@@ -77,6 +77,10 @@ describe("Kubernetes shared portable control store", () => {
 		expect([left, right].filter(Boolean)).toHaveLength(1);
 		expect(api.conflicts).toBeGreaterThan(0);
 		expect(await first.consumeTicket({ ...binding, ticket: minted.ticket })).toBe(false);
+		const replacement = replica(api, 161, () => now);
+		const acrossRollingLoss = await first.mintTicket({ ...binding, ttlSeconds: 60 });
+		expect(await replacement.consumeTicket({ ...binding, ticket: acrossRollingLoss.ticket })).toBe(true);
+		expect(await second.consumeTicket({ ...binding, ticket: acrossRollingLoss.ticket })).toBe(false);
 
 
 		const exact = await first.mintTicket({ ...binding, ttlSeconds: 60 });

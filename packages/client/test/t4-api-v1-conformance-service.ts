@@ -1,4 +1,4 @@
-import type { components } from "../../t4-api-client/src/index.ts";
+import type { components, T4Fetch } from "../../t4-api-client/src/index.ts";
 
 type Scope = components["schemas"]["Scope"];
 type Workspace = components["schemas"]["Workspace"];
@@ -14,6 +14,14 @@ const NOW = "2026-07-28T12:00:00.000Z";
 const OPAQUE_ID = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/u;
 
 export interface T4ApiV1ConformanceOptions {
+  readonly origin?: string;
+  readonly features?: Partial<{
+    readonly browser: boolean;
+    readonly directCmuxWebSocket: boolean;
+    readonly restLifecycle: boolean;
+    readonly scaleToZero: boolean;
+    readonly sshProvider: boolean;
+  }>;
   readonly invalidPayload?: "discovery" | "workspace" | "runtime" | "runtime-bounds" | "capabilities" | "page" | "connections" | "problem";
   readonly eventStream?: "normal" | "bytewise" | "malformed" | "oversized" | "reconnect";
   readonly responseOverride?: (request: Request, response: Response) => Response;
@@ -83,7 +91,7 @@ function validRuntimeCreate(body: Record<string, unknown> | undefined): body is 
 }
 
 export class T4ApiV1ConformanceService {
-  readonly origin = "https://t4-api.conformance.test";
+  readonly origin: string;
   readonly calls: Array<{ readonly method: string; readonly path: string; readonly authorization: string | null; readonly headers: Headers }> = [];
   readonly watchCursors: Array<{ readonly scopeId: string | null; readonly lastEventId: string | null }> = [];
   readonly abortedWatches: string[] = [];
@@ -102,10 +110,31 @@ export class T4ApiV1ConformanceService {
   #revisionSequence = 0;
   #eventSequence = 0;
   #streamSequence = 0;
+  readonly #features: {
+    readonly browser: boolean;
+    readonly directCmuxWebSocket: boolean;
+    readonly restLifecycle: boolean;
+    readonly scaleToZero: boolean;
+    readonly sshProvider: boolean;
+  };
 
-  constructor(readonly options: T4ApiV1ConformanceOptions = {}) {}
+  constructor(readonly options: T4ApiV1ConformanceOptions = {}) {
+    const origin = new URL(options.origin ?? "https://t4-api.conformance.test");
+    if (origin.protocol !== "https:" || origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash) {
+      throw new TypeError("conformance origin must be an HTTPS origin");
+    }
+    this.origin = origin.origin;
+    this.#features = Object.freeze({
+      browser: true,
+      directCmuxWebSocket: true,
+      restLifecycle: true,
+      scaleToZero: true,
+      sshProvider: true,
+      ...options.features,
+    });
+  }
 
-  readonly fetch: typeof globalThis.fetch = async (input, init) => {
+  readonly fetch: T4Fetch = async (input, init) => {
     const request = new Request(input, init);
     const url = new URL(request.url);
     const headers = new Headers(request.headers);
@@ -119,13 +148,14 @@ export class T4ApiV1ConformanceService {
     if (url.origin !== this.origin || url.protocol !== "https:") return problem(400, "invalid_origin", "The API origin is fixed", url.pathname);
     if (request.method === "GET" && url.pathname === "/.well-known/omperator") {
       if (request.headers.has("Authorization")) return problem(400, "credential_disclosure", "Discovery must not receive credentials", url.pathname);
+      const authority = new URL(this.origin);
       const payload = {
         service: "omperator",
         apiVersion: "v1",
         restBaseUrl: `${this.origin}/v1`,
-        ompAppWebSocketUrl: "wss://t4-api.conformance.test/v1/ws",
-        cmuxWebSocketTemplate: "wss://t4-api.conformance.test/v1/cmux/{runtimeId}",
-        ssh: { host: "ssh.t4-api.conformance.test", port: 22 },
+        ompAppWebSocketUrl: `wss://${authority.host}/v1/ws`,
+        ...(this.#features.directCmuxWebSocket ? { cmuxWebSocketTemplate: `wss://${authority.host}/v1/cmux/{runtimeId}` } : {}),
+        ...(this.#features.sshProvider ? { ssh: { host: `ssh.${authority.hostname}`, port: 22 } } : {}),
         protocols: { application: ["omp-app/1"], cmux: [10], machineProvider: ["machine-provider-v1"] },
       };
       return json(200, this.options.invalidPayload === "discovery" ? { ...payload, service: "other" } : payload, { "Cache-Control": "no-store" });
@@ -145,9 +175,13 @@ export class T4ApiV1ConformanceService {
     if (request.method === "GET" && url.pathname === "/v1/capabilities") {
       const payload = {
         apiVersion: "v1",
-        features: { browser: true, directCmuxWebSocket: true, restLifecycle: true, scaleToZero: true, sshProvider: true },
+        features: this.#features,
         limits: { eventRetentionSeconds: 3600, idempotencyRetentionSeconds: 86_400, maxActiveRuntimes: 8, maxPageSize: 100, maxRetainedRuntimes: 64 },
-        protocols: { machineProvider: { versions: [1], capabilities: ["machine-lifecycle-v1"] }, ompApp: { versions: [1] }, cmux: { versions: [10] } },
+        protocols: {
+          machineProvider: { versions: [1], capabilities: ["machine-lifecycle-v1"] },
+          ompApp: { versions: [1] },
+          cmux: { versions: [10] },
+        },
       };
       return json(200, this.options.invalidPayload === "capabilities" ? { ...payload, limits: { ...payload.limits, maxPageSize: 201 } } : payload);
     }
@@ -174,14 +208,15 @@ export class T4ApiV1ConformanceService {
       const runtime = visible(this.#runtimes.get(this.#resourceKey(principal, id)), principal);
       if (runtime === undefined) return this.#problem(404, "not_found", "Runtime not found", url.pathname);
       if (runtime.phase !== "Ready") return this.#problem(409, "runtime_not_ready", "Runtime has no active routes", url.pathname, { currentRevision: runtime.revision });
+      const authority = new URL(this.origin);
       const descriptor = {
         runtimeId: id,
         generation: runtime.generation,
         expiresAt: "2026-07-28T12:05:00.000Z",
         routes: [
-          { kind: "machine-provider-ssh", providerVersion: 1, host: "runtime.t4-api.conformance.test", port: 22, user: "agent" },
-          { kind: "omp-app-websocket", protocol: "omp-app/1", url: "wss://t4-api.conformance.test/v1/ws" },
-          { kind: "cmux-websocket", protocol: 10, url: `wss://t4-api.conformance.test/v1/cmux/${id}` },
+          ...(this.#features.sshProvider ? [{ kind: "machine-provider-ssh" as const, providerVersion: 1 as const, host: `runtime.${authority.hostname}`, port: 22, user: "agent" }] : []),
+          { kind: "omp-app-websocket" as const, protocol: "omp-app/1" as const, url: `wss://${authority.host}/v1/ws` },
+          ...(this.#features.directCmuxWebSocket ? [{ kind: "cmux-websocket" as const, protocol: 10 as const, url: `wss://${authority.host}/v1/cmux/${id}` }] : []),
         ],
       };
       return json(200, this.options.invalidPayload === "connections" ? { ...descriptor, routes: [{ kind: "secret", token: "bad" }] } : descriptor, { ETag: etag(runtime.revision), "Cache-Control": "no-store" });
@@ -256,7 +291,9 @@ export class T4ApiV1ConformanceService {
       const phase = body.desiredState === "Sleeping" ? "Sleeping" : body.desiredState === "Stopped" ? "Stopped" : "Ready";
       const value: Runtime = {
         id, scopeId: body.scopeId, workspaceId: body.workspaceId, displayName: body.displayName, hostProfileId: body.hostProfileId,
-        desiredState: body.desiredState, phase, generation: "gen-1", revision: this.#nextRevision(), capabilities: ["terminal", "browser"], conditions: [], createdAt: NOW, updatedAt: NOW,
+        desiredState: body.desiredState, phase, generation: "gen-1", revision: this.#nextRevision(),
+        capabilities: this.#features.browser ? ["terminal", "browser"] : ["terminal"],
+        conditions: [], createdAt: NOW, updatedAt: NOW,
       };
       this.#runtimes.set(this.#resourceKey(principal, id), { principal, value, createIdentity: identity });
       this.#append("runtime", id, value.scopeId, value.revision, value.phase);

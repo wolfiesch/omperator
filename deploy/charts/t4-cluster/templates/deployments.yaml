@@ -16,6 +16,7 @@ spec:
     rollingUpdate:
       maxUnavailable: 0
       maxSurge: 1
+  minReadySeconds: 10
   selector:
     matchLabels:
       {{- include "t4-cluster.selectorLabels" . | nindent 6 }}

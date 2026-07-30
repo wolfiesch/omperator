@@ -33,10 +33,12 @@ const SSH_USER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const ETAG = /^"[A-Za-z0-9][A-Za-z0-9:._~-]{0,127}"$/u;
 const RESOURCE_KINDS = ["scope", "workspace", "runtime"] as const;
 
+export type T4Fetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
 export interface T4ApiClientOptions {
   readonly baseUrl: string;
   readonly credential: string;
-  readonly fetch?: typeof globalThis.fetch;
+  readonly fetch?: T4Fetch;
 }
 
 export interface WatchEventsOptions {
@@ -489,8 +491,8 @@ async function retryDelay(milliseconds: number, signal: AbortSignal): Promise<bo
   });
 }
 
-async function readWithDeadline(reader: ReadableStreamDefaultReader<Uint8Array>, timeoutMs: number, signal: AbortSignal): Promise<ReadableStreamReadResult<Uint8Array>> {
-  return await new Promise((resolve, reject) => {
+async function readWithDeadline(reader: ReadableStreamDefaultReader<Uint8Array>, timeoutMs: number, signal: AbortSignal) {
+  return await new Promise<Awaited<ReturnType<typeof reader.read>>>((resolve, reject) => {
     let settled = false;
     const finish = (callback: () => void): void => {
       if (settled) return;
@@ -506,7 +508,7 @@ async function readWithDeadline(reader: ReadableStreamDefaultReader<Uint8Array>,
   });
 }
 
-async function* watchEvents(baseUrl: string, credential: string, fetchImpl: typeof globalThis.fetch, options: WatchEventsOptions): AsyncGenerator<LifecycleEvent, void, undefined> {
+async function* watchEvents(baseUrl: string, credential: string, fetchImpl: T4Fetch, options: WatchEventsOptions): AsyncGenerator<LifecycleEvent, void, undefined> {
   const maxEvents = boundedInteger(options.maxEvents, 100, 1, 10_000, "maxEvents");
   const maxReconnectAttempts = boundedInteger(options.maxReconnectAttempts, 3, 0, 10, "maxReconnectAttempts");
   const retryBackoffMs = boundedInteger(options.retryBackoffMs, 250, 0, 30_000, "retryBackoffMs");
@@ -584,7 +586,7 @@ export function createT4ApiClient(options: T4ApiClientOptions): T4ApiClient {
   const baseUrl = normalizedBaseUrl(options.baseUrl);
   const credential = requiredCredential(options.credential);
   const fetchImpl = options.fetch ?? globalThis.fetch;
-  const protectedFetch: typeof globalThis.fetch = async (input, init) => {
+  const protectedFetch: T4Fetch = async (input, init) => {
     const candidate = new Request(input, init);
     const path = relativeApiPath(candidate, baseUrl);
     const contract = path === undefined ? undefined : responseContract(candidate.method, path);

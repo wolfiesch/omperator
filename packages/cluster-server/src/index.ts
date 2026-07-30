@@ -14,6 +14,7 @@ export * from "./kubernetes-runner.ts";
 export * from "./observability.ts";
 export * from "./pod-host-router.ts";
 export * from "./rest-handler.ts";
+export * from "./portable-front-door.ts";
 export * from "./server.ts";
 export * from "./session-host-policy.ts";
 export * from "./scope-admission.ts";
