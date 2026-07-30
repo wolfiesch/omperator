@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { chmod, mkdtemp, writeFile } from "node:fs/promises";
+import { afterEach, describe, expect, test } from "bun:test";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -11,6 +11,12 @@ import {
   runHostDaemon,
   verifyOfficialRuntime,
 } from "../src/cli.ts";
+
+const temporaryRoots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(temporaryRoots.splice(0).map(root => rm(root, { recursive: true, force: true })));
+});
 
 describe("T4 host daemon CLI", () => {
   test("parses a local direct-replacement service without ambient executable lookup", () => {
@@ -242,6 +248,78 @@ describe("T4 host daemon CLI", () => {
     ).rejects.toThrow("appserver construction failed");
     expect(searchCloses).toBe(1);
     expect(bridgeStops).toBe(1);
+  });
+
+  test("serves working-tree diffs locally and reserves the bridge for turn snapshots", async () => {
+    const root = await mkdtemp(join(tmpdir(), "t4-host-files-diff-"));
+    temporaryRoots.push(root);
+    await writeFile(join(root, "tracked.txt"), "base\n");
+    for (const args of [
+      ["init"],
+      ["add", "."],
+      ["-c", "user.name=T4 Test", "-c", "user.email=t4@example.invalid", "commit", "-m", "base"],
+    ]) {
+      const child = Bun.spawn(["git", "-C", root, ...args], { stdout: "ignore", stderr: "pipe" });
+      if ((await child.exited) !== 0) throw new Error(await new Response(child.stderr).text());
+    }
+    let bridgeDiffCalls = 0;
+    let captured: Record<string, unknown> | undefined;
+    const bridge = {
+      start: async () => {},
+      createAuthorities: () => ({
+        hostInfo: async () => ({ transcriptImageRoot: "/tmp/images" }),
+        sessionAuthority: {},
+        discovery: {},
+        operationsAuthority: {
+          filesDiff: async () => {
+            bridgeDiffCalls += 1;
+            return { diff: "bridge turn snapshot" };
+          },
+        },
+        projectRootForProject: async () => root,
+        projectRootForSession: async () => root,
+        lockCheck: async () => {},
+        lockStatus: async () => "missing",
+      }),
+      identity: { ompVersion: "17.0.5", ompBuild: "test" },
+      stop: async () => {},
+    };
+    await expect(
+      runHostDaemon(
+        { ompExecutable: "/opt/omp", profileId: "test", stateRoot: "/tmp/t4-host-test" },
+        {
+          createBridge: () => bridge as never,
+          createTranscriptSearch: () => ({ close: async () => {} }) as never,
+          createLocal: options => {
+            captured = options as unknown as Record<string, unknown>;
+            throw new Error("captured operations");
+          },
+        },
+      ),
+    ).rejects.toThrow("captured operations");
+    const filesDiff = (
+      captured?.operationsAuthority as {
+        filesDiff?: (
+          args: Record<string, unknown>,
+          context: Record<string, unknown>,
+        ) => Promise<Record<string, unknown>>;
+      }
+    )?.filesDiff;
+    if (!filesDiff) throw new Error("files.diff operation missing");
+    const context = {
+      hostId: "host-test",
+      sessionId: "session-test",
+      deviceId: "device-test",
+      connectionId: "connection-test",
+      capabilities: new Set(["files.diff"]),
+      abortSignal: new AbortController().signal,
+    };
+    expect(await filesDiff({}, context)).toEqual({ diff: "" });
+    expect(bridgeDiffCalls).toBe(0);
+    expect(await filesDiff({ turnId: "turn-test" }, context)).toEqual({
+      diff: "bridge turn snapshot",
+    });
+    expect(bridgeDiffCalls).toBe(1);
   });
 
   test("pins and reports the exact official OMP runtime before exposing official authority", async () => {
