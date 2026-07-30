@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "artifact": "cmux-tui-headless",
+  "source": {
+    "repository": "https://github.com/manaflow-ai/cmux",
+    "commit": "192e44428c16b98210c951ec4bd5a86bc7139014",
+    "rootGitTree": "8e8fd0f70452987a00773f21e96b6c2f14825332",
+    "cmuxTuiGitTree": "e0b39f571435fcee7557394988bf04e43bc3d4f6",
+    "cargoLockGitBlob": "3ff8b876623f0ed47577c45b2a05122e2f54064c",
+    "ghosttyCommit": "8f31fb57cde291e7b8fecb46203bc398c44459f4"
+  },
+  "build": {
+    "rustToolchain": "1.95.0",
+    "zigToolchain": "0.15.2",
+    "cargoPackage": "cmux-tui",
+    "cargoBinary": "cmux-tui",
+    "profile": "release",
+    "locked": true,
+    "sourceCommitEnvironment": "CMUX_TUI_BUILD_COMMIT",
+    "ghosttyCommitEnvironment": "CMUX_TUI_GHOSTTY_COMMIT"
+  },
+  "runtime": {
+    "muxProtocol": 10,
+    "mode": "headless",
+    "socket": "private-generation-scoped-unix",
+    "state": "durable-single-writer"
+  },
+  "license": {
+    "workspaceDeclared": "MIT",
+    "workspaceManifest": "cmux-tui/Cargo.toml",
+    "mitAttribution": "licenses/CMUX-TUI-MIT-NOTICE.txt",
+    "upstreamRepositoryNotice": "licenses/CMUX-UPSTREAM-LICENSE.txt",
+    "existingImportManifest": "provenance/cmux-machine-provider-v1.json"
+  }
+}

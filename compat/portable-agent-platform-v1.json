@@ -26,6 +26,8 @@
   "implementationStart": {
     "omperatorCommit": "48b1ba7b94f468154ed0e0998118d01f7dbffbd0",
     "packagedOmpAuthority": {
+      "historical": true,
+      "portableRuntimeEligible": false,
       "repository": "https://github.com/wolfiesch/oh-my-pi",
       "tag": "t4code-17.0.5-appserver-15",
       "commit": "ca2902bc095a0b17067f4b8b34ecf454390f85ff",
@@ -421,6 +423,8 @@
         "session.ui.respond",
         "session.cancel",
         "session.close",
+        "session.release",
+        "session.reclaim",
         "files.read",
         "files.write",
         "files.patch",
@@ -477,6 +481,7 @@
         "session.delete",
         "session.cancel",
         "session.close",
+        "session.release",
         "files.write",
         "files.patch",
         "review.apply",
@@ -595,9 +600,30 @@
       },
       "disabledOptionalCommand": "deny-and-unadvertised",
       "directCommandArgv": [
-        ["omperatorctl", "provider", "--", "control"],
-        ["omperatorctl", "provider", "--", "stream"]
+        ["omperatorctl", "provider", "--endpoint", "<https-url>", "--profile", "<name>", "control"],
+        ["omperatorctl", "provider", "--endpoint", "<https-url>", "--profile", "<name>", "stream"]
       ],
+      "cmuxCommandPrefix": ["omperatorctl", "provider", "--endpoint", "<https-url>", "--profile", "<name>", "--"],
+      "directCommandAdapterEvidence": {
+        "package": "packages/provider-adapter",
+        "parserAndRelaySource": "packages/provider-adapter/src/index.ts",
+        "stdioBinSource": "packages/provider-adapter/src/bin.ts",
+        "contractTests": "packages/provider-adapter/test/provider-adapter.test.ts",
+        "connectorInjection": "OMPERATORCTL_CONNECTOR_MODULE:createOmperatorctlConnector",
+        "realGatewayConnector": "deferred-to-P4-no-fallback"
+      },
+      "localP107ScenarioEvidence": {
+        "package": "packages/p1-07-scenario",
+        "connectorModule": "packages/p1-07-scenario/src/connector.ts",
+        "scenarioDriver": "packages/p1-07-scenario/src/scenario.ts",
+        "runtimeHost": "packages/p1-07-scenario/src/runtime-host.ts",
+        "client": "unmodified-pinned-cmux-under-real-pty",
+        "providerPath": "ProviderControlSession-and-runProviderStream-direct-no-semantic-translation",
+        "hashes": ["adapter-ingress-egress", "provider-engine-ingress-egress", "provider-relay", "runtime-ingress-egress"],
+        "lifecycle": ["list", "create", "open", "close", "sleep", "wake", "stream-loss-reconnect", "control-generation-reconnect"],
+        "artifact": ".artifacts/p1-07/p1-07-evidence.json",
+        "verification": "pending-main-real-scenario-run"
+      },
       "providerControl": {
         "authorizeEveryRequest": true,
         "methodCanonicalActions": {
@@ -753,10 +779,43 @@
   "portableLifecycleContracts": {
     "decision": "fail-closed-writer-fence-state-machines",
     "documentation": "docs/adr/023-portable-lifecycle-state-machines.md",
-    "documentationSha256": "7dd48e64ae618e9cc31ec52fa2285195e79f9af79499f0a01176451c7a181944",
-    "contractOnly": true,
-    "runtimeImplementationIncluded": false,
-    "publicSchemaChangesIncluded": false,
+    "documentationSha256": "83a06e408edc521cc00e28479141c8d34d8139c2466b764b875ff059376f6cba",
+    "contractOnly": false,
+    "runtimeImplementationIncluded": true,
+    "publicSchemaChangesIncluded": true,
+    "kubernetesV1Alpha1": {
+      "apiVersion": "cluster.t4.dev/v1alpha1",
+      "evolution": "additive-only-structural-openapi",
+      "publicFields": {
+        "T4ClusterHost.spec": ["storageClassName", "runtimeStateStorageProfile", "runtimeProfiles", "ciProvider", "allowedOrigins"],
+        "T4ClusterHost.status": ["observedGeneration", "conditions"],
+        "T4Workspace.spec": ["publicId", "hostRef", "displayName", "owner", "repository", "size", "storageClassName", "restoreSnapshotRef", "retentionPolicy"],
+        "T4Workspace.status": ["observedGeneration", "pvcName", "pvcPhase", "capacity", "selectedStorageClassName", "filesystemRoot", "attachmentCount", "snapshotRef", "phase", "conditions"],
+        "T4Session.spec": ["publicId", "publicHostProfileId", "hostRef", "workspaceRef", "title", "runtimeProfile", "desiredState", "browserPolicy", "idlePolicy", "cmuxSessionName", "runtimeStateRestoreSnapshotRef", "initialPromptSecretRef", "guiEnabled", "ci"],
+        "T4Session.status": ["observedGeneration", "runtimeGeneration", "generationSecretEpoch", "generationSecretName", "fenceState", "fencingPodUid", "fencingGeneration", "fencingVolumeIdentity", "cmuxSessionName", "runtimeStatePVCName", "runtimeStateVolumeIdentity", "runtimeStateStorageClassName", "runtimeStateCapacity", "runtimeStateFilesystemRoot", "podUid", "runtimeStateSnapshotRef", "podName", "serviceName", "phase", "conditions"]
+      },
+      "trustBoundaries": {
+        "specAuthority": "authorized-cluster-server-or-administrator",
+        "statusAuthority": "cluster-controller-only",
+        "runtimeWriterLeaseAuthority": "per-session-service-account-resource-name-bound",
+        "tokenReviewAuthority": "per-session-runtime-authority-container-only",
+        "runtimeShellKubernetesCredentials": false,
+        "controlStoreAuthority": "cluster-server-namespaced-configmap-cas",
+        "publicIdentity": "immutable-once-populated",
+        "runtimeGeneration": "controller-owned-opaque-status"
+      },
+      "guardedLifecycle": {
+        "storedVersions": ["v1alpha1"],
+        "servedVersion": "v1alpha1",
+        "storageVersion": "v1alpha1",
+        "conversion": "None",
+        "liveObjectValidationBeforeMutation": true,
+        "resourceVersionAndUidGuardedMutation": true,
+        "servedOpenApiConvergenceRequired": true,
+        "serverDryRunBeforeWorkloadMutation": true,
+        "helmManagesCrds": false
+      }
+    },
     "authorities": {
       "desiredStateSource": "authoritative-resource-input",
       "workloadMayRewriteDesiredState": false,
@@ -1010,7 +1069,7 @@
   "portableThreatModel": {
     "decision": "transport-provider-backend-neutral-fail-closed-threat-controls",
     "documentation": "docs/adr/024-portable-threat-model.md",
-    "documentationSha256": "02bb964d1c4599543f7897ac4f1b1a49c75e195c90f57700d85a061617f280af",
+    "documentationSha256": "6ed95d461a780f9430585033bdac25a61c679bbb183279613c672cd0722cfb46",
     "specificationSection": "Appendix B.10",
     "contractOnly": true,
     "runtimeImplementationIncluded": false,
@@ -1258,8 +1317,8 @@
   },
   "runtimeTopology": {
     "decision": "host-owned-single-rpc-authority",
-    "documentation": "docs/adr/020-portable-runtime-single-authority.md",
-    "documentationSha256": "da84f4b15fb7c68770ed77baacf5802da84e7fda496b5df20435f209c4e874d3",
+    "documentation": "docs/adr/025-portable-runtime-single-authority.md",
+    "documentationSha256": "264fe8dd8d5b7196a1e8fc726c827a5940fb4221770ab17de0f4335556a8eeee",
     "schedulingUnit": "top-level-runtime",
     "cmuxMachinesPerRuntime": 1,
     "writableOmpAuthoritiesPerSession": 1,
@@ -1275,11 +1334,60 @@
     "requiredWorkPackage": "P3-04"
   },
   "ompPinResolution": {
+    "repository": "https://github.com/wolfiesch/oh-my-pi",
+    "sourceCommit": "107c7ca3054dbd7f4b2247598580a63a06d72bc4",
     "contractCommit": "d16c6168c86f40fc44f25118c2fd06fe160fcb93",
-    "currentPackagedCommit": "ca2902bc095a0b17067f4b8b34ecf454390f85ff",
-    "strategy": "replace-before-portable-runtime",
-    "portableRuntimeAdmission": "requires-descendant-integration-proof",
-    "reason": "The packaged authority bridge is based on OMP v17.0.5, while the portable contract was reviewed against a newer official OMP commit. Portable runtime behavior must use a new fork integration commit descended from the contract commit and must pass the pinned OMP RPC and authority-bridge gates before packaging."
+    "contractAncestry": "descendant",
+    "provenance": "provenance/omp-runtime-v1.json",
+    "bridge": {
+      "protocol": "t4-omp-authority/1",
+      "methods": [
+        "host.info",
+        "authority.flush",
+        "authority.quiesce",
+        "session.create",
+        "session.fork",
+        "session.list",
+        "session.archive",
+        "session.restore",
+        "session.delete",
+        "discovery.load",
+        "discovery.page",
+        "project.rootForProject",
+        "project.rootForSession",
+        "lock.check",
+        "lock.status",
+        "operation.filesRead",
+        "operation.filesList",
+        "operation.filesDiff",
+        "operation.filesWrite",
+        "operation.filesPatch",
+        "operation.reviewRead",
+        "operation.reviewApply",
+        "operation.bashRun",
+        "operation.termOpen",
+        "operation.catalogGet",
+        "operation.settingsRead",
+        "operation.brokerStatus",
+        "operation.settingsWrite",
+        "operation.configWrite",
+        "terminal.input",
+        "terminal.resize",
+        "terminal.close",
+        "usage.read"
+      ],
+      "evidence": {
+        "sourceTests": [
+          "packages/coding-agent/test/appserver-bridge.test.ts",
+          "packages/coding-agent/test/appserver-bridge-smoke.test.ts"
+        ],
+        "hostGate": "pnpm verify:current-omp-bridge"
+      },
+      "compatibilityStatus": "admitted"
+    },
+    "strategy": "immutable-source-authority",
+    "portableRuntimeAdmission": "admitted",
+    "reason": "The owned OMP fork commit is descended from the reviewed d16c616 contract, exposes the complete t4-omp-authority/1 method set, and passed the source bridge plus real host lifecycle gates."
   },
   "compatibilitySetPolicy": {
     "rollTogether": ["omperator-host", "omp-runtime", "cmux-runtime"],

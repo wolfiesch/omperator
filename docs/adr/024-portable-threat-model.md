@@ -6,7 +6,7 @@
 
 ## Context
 
-ADRs 020 through 023 already assign authority and define the portable control, authorization, and lifecycle contracts. This ADR threat-models those contracts without changing them: ADR-020 retains one host-owned OMP RPC authority over stdio; ADR-021 retains backend-neutral shared-store tickets, routes, revisions, and tombstones; ADR-022 retains provider-neutral, server-derived, explicit-allow authorization; and ADR-023 retains positive writer fencing and the fail-closed `FenceUncertain` terminal outcome.
+ADRs 021 through 023 and ADR-025 already assign authority and define the portable control, authorization, lifecycle, and runtime-topology contracts. This ADR threat-models those contracts without changing them: ADR-025 retains one host-owned OMP RPC authority over stdio; ADR-021 retains backend-neutral shared-store tickets, routes, revisions, and tombstones; ADR-022 retains provider-neutral, server-derived, explicit-allow authorization; and ADR-023 retains positive writer fencing and the fail-closed `FenceUncertain` terminal outcome.
 
 The source specification requires executable security-boundary checks in Appendix B.10. P0-08 additionally names ticket replay, sender identity, shell/path injection, credential exposure, cross-scope access, and duplicate writers. Appendix B.10 also requires audit-leakage and runtime-isolation coverage. This ADR makes each class an independently mutable machine-checker contract. It does not implement the later conformance scenarios.
 
@@ -72,9 +72,9 @@ The checker also verifies these cross-contract relationships:
 1. ticket bindings include every ADR-021 record/consume binding plus current audience, principal, and scope; TTL, digest storage, atomic compare-and-delete, single use, replica safety, and invalidation remain at least as strict as ADR-021;
 2. sender and cross-scope controls retain ADR-022 server-derived authorities, `ResourceScopeResolver`, explicit-allow/deny-overrides decisions, workload/delegated separation, concealment, and principal/scope-qualified idempotency;
 3. ticket audience/purpose/generation binding is compatible with ADR-022 delegated internal-route authority and ADR-023 route/ticket invalidation;
-4. duplicate-writer controls equal ADR-020 writer cardinality and retain ADR-023 positive fencing, readiness, and every `FenceUncertain` block;
+4. duplicate-writer controls equal ADR-025 writer cardinality and retain ADR-023 positive fencing, readiness, and every `FenceUncertain` block;
 5. credential and audit exclusions include the complete ADR-022 decision-log exclusion set, preserve its byte bounds and logging-failure behavior, and apply to every Appendix B.10 observability surface;
-6. runtime isolation retains ADR-020 raw-RPC network prohibition and ADR-023 exclusive runtime-state storage; and
+6. runtime isolation retains ADR-025 raw-RPC network prohibition and ADR-023 exclusive runtime-state storage; and
 7. browser isolation retains ADR-023 fresh fenced restore generation, single-live-runtime snapshot attachment, and browser readiness in the full readiness conjunction.
 
 No negative check invents a protocol message, public field, CRD value, deployment object, backend, provider, or runtime behavior. Later work packages implement and exercise these contracts against applicable local, single-host, and Kubernetes drivers.
@@ -96,7 +96,7 @@ No negative check invents a protocol message, public field, CRD value, deploymen
 
 This ADR completes only the P0-08 contract and checker mutation coverage. Product-neutral enforcement belongs to P1; local process, path, ticket, and runtime-isolation proof belongs to P1/P6; Kubernetes identity, fencing, NetworkPolicy, storage, and workload proof belongs to P2/P5; REST/WSS/SSH enforcement belongs to P4; runtime/browser/credential-plane integration belongs to P3/P5; and executable cross-driver Appendix B.10 scenarios belong to P7.
 
-No implementation, deployment, schema, runtime, or conformance claim follows from accepting this ADR. ADRs 020 through 023 remain authoritative where this threat model references their invariants.
+No implementation, deployment, schema, runtime, or conformance claim follows from accepting this ADR. ADRs 021 through 023 and ADR-025 remain authoritative where this threat model references their invariants.
 
 ## Consequences
 

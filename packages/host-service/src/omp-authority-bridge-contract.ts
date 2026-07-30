@@ -3,6 +3,8 @@ export const OMP_AUTHORITY_BRIDGE_MAX_LINE_BYTES = 1024 * 1024;
 
 export const OMP_AUTHORITY_BRIDGE_METHODS = [
 	"host.info",
+	"authority.flush",
+	"authority.quiesce",
 	"session.create",
 	"session.fork",
 	"session.list",

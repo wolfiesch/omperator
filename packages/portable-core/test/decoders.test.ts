@@ -14,6 +14,7 @@ import {
   decodeRuntimeCreate,
   decodeRuntimePage,
   decodeRuntimePatch,
+  decodeScopeAdmissionPolicy,
   decodeScopePage,
   decodeTimestamp,
   decodeWorkspace,
@@ -99,6 +100,22 @@ describe("additive response decoding", () => {
     ((capabilities.limits as Record<string, unknown>)).futureLimit = 3;
     ((capabilities.features as Record<string, unknown>)).futureFeature = false;
     expect(decodeCapabilities(capabilities)).toBe(capabilities);
+  });
+
+  it("validates bounded storage capability observations when surfaced", () => {
+    const capabilities = schemaExample("Capabilities");
+    capabilities.storage = {
+      workspaceReadWriteMany: { state: "Supported", reason: "RWXRemountConformancePassed" },
+      runtimeStateAccessModes: ["ReadWriteOncePod"],
+      runtimeStateReattach: { state: "Supported" },
+      onlineExpansion: { state: "Unsupported" },
+      volumeSnapshots: { state: "Supported" },
+      snapshotDataSource: { state: "Supported" },
+      observedAt: "2026-07-30T00:00:00Z",
+    };
+    expect(decodeCapabilities(capabilities).storage?.volumeSnapshots.state).toBe("Supported");
+    (capabilities.storage as Record<string, unknown>).runtimeStateAccessModes = ["ReadWriteMany"];
+    rejectsAt(decodeCapabilities, capabilities, ["storage", "runtimeStateAccessModes", 0]);
   });
 
   it("rejects an invalid known field even when extensions are present", () => {
@@ -231,6 +248,26 @@ describe("schema bounds", () => {
     rejectsAt(decodeTimestamp, "2026-04-31T12:00:00Z", []);
     rejectsAt(decodeTimestamp, "2026-01-01T24:00:00Z", []);
     rejectsAt(decodeTimestamp, "2026-01-01", []);
+  });
+});
+
+describe("scope admission policy", () => {
+  it("decodes bounded fail-closed limits and rejects unknown or unsafe values", () => {
+    const policy = {
+      maxActiveRuntimes: 4,
+      maxRetainedRuntimes: 20,
+      maxWorkspaceCapacityBytes: 1_099_511_627_776,
+      maxCpuMillis: 8_000,
+      maxMemoryBytes: 17_179_869_184,
+      maxGpuUnits: 0,
+      browserEnabled: false,
+      runtimeResources: { cpuMillis: 1_000, memoryBytes: 2_147_483_648, gpuUnits: 0 },
+      creationRate: { windowSeconds: 60, burst: 5, maximumRetryAfterSeconds: 30 },
+    };
+    expect(decodeScopeAdmissionPolicy(policy)).toBe(policy);
+    rejectsAt(decodeScopeAdmissionPolicy, { ...policy, maxWorkspaceCapacityBytes: Number.MAX_SAFE_INTEGER + 1 }, ["maxWorkspaceCapacityBytes"]);
+    rejectsAt(decodeScopeAdmissionPolicy, { ...policy, browserEnabled: "yes" }, ["browserEnabled"]);
+    rejectsAt(decodeScopeAdmissionPolicy, { ...policy, queueDepth: 10 }, ["queueDepth"]);
   });
 });
 

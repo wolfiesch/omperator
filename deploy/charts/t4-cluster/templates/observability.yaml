@@ -56,24 +56,86 @@ metadata:
     {{- end }}
 spec:
   groups:
-    - name: t4-cluster-ha
+    - name: omperator-ha
       rules:
-        - alert: T4ClusterServerBelowQuorum
+        - alert: OmperatorServerBelowQuorum
           expr: kube_deployment_status_replicas_available{namespace={{ .Release.Namespace | quote }},deployment={{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server") | quote }}} < 2
           for: 5m
           labels: {severity: critical}
-          annotations:
-            summary: T4 cluster server has fewer than two available replicas
-        - alert: T4ClusterReconcileErrors
-          expr: increase(controller_runtime_reconcile_errors_total{namespace={{ .Release.Namespace | quote }},controller=~"t4clusterhost|t4workspace|t4session"}[10m]) > 0
+          annotations: {summary: "Omperator gateway has fewer than two available replicas", runbook_id: P5-05-RB-001}
+        - alert: OmperatorControllerLeaderAbsent
+          expr: (max(leader_election_master_status{name="t4-cluster-operator.cluster.t4.dev"}) or vector(0)) < 1
+          for: 2m
+          labels: {severity: critical}
+          annotations: {summary: "No Omperator controller replica holds the leader lease", runbook_id: P5-05-RB-002}
+        - alert: OmperatorReconcileErrors
+          expr: sum(increase(omperator_reconcile_errors_total[10m])) > 5
           for: 10m
           labels: {severity: warning}
-          annotations:
-            summary: T4 cluster operator reconciliation is failing
-        - alert: T4WorkspaceStoragePending
-          expr: max by (namespace, persistentvolumeclaim) (kube_persistentvolumeclaim_status_phase{namespace={{ .Release.Namespace | quote }},phase=~"Pending|Lost"}) == 1
-          for: 15m
+          annotations: {summary: "Controller reconciliation errors exceed the operating budget", runbook_id: P5-05-RB-003}
+        - alert: OmperatorRuntimeStartFailures
+          expr: sum(increase(omperator_runtime_start_duration_seconds_count{result=~"error|timeout"}[10m])) > 0
+          for: 5m
           labels: {severity: warning}
-          annotations:
-            summary: A PVC in the T4 namespace is pending or lost
+          annotations: {summary: "Runtime starts are failing or timing out", runbook_id: P5-05-RB-004}
+        - alert: OmperatorRuntimeFenceFailures
+          expr: sum(increase(omperator_runtime_fence_duration_seconds_count{result=~"error|fenced|timeout"}[10m])) > 0
+          for: 1m
+          labels: {severity: critical}
+          annotations: {summary: "Positive runtime fencing is failing or uncertain", runbook_id: P5-05-RB-005}
+        - alert: OmperatorStorageOperationFailures
+          expr: sum(increase(omperator_storage_operation_duration_seconds_count{result=~"error|timeout"}[10m])) > 0
+          for: 10m
+          labels: {severity: critical}
+          annotations: {summary: "Runtime or workspace storage operations are failing", runbook_id: P5-05-RB-006}
+        - alert: OmperatorProviderTicketFailures
+          expr: sum(increase(omperator_provider_ticket_total{result=~"error|fenced|timeout"}[10m])) > 0
+          for: 5m
+          labels: {severity: warning}
+          annotations: {summary: "Generation-bound provider ticket operations are failing", runbook_id: P5-05-RB-007}
+        - alert: OmperatorProviderSnapshotFailures
+          expr: sum(increase(omperator_provider_snapshot_duration_seconds_count{result=~"error|timeout"}[10m])) > 0
+          for: 5m
+          labels: {severity: warning}
+          annotations: {summary: "Provider snapshots are failing or timing out", runbook_id: P5-05-RB-008}
+        - alert: OmperatorWakeTimeouts
+          expr: sum(increase(omperator_wake_total{result="timeout"}[10m])) > 0
+          for: 1m
+          labels: {severity: warning}
+          annotations: {summary: "Provider runtime wakes are timing out", runbook_id: P5-05-RB-015}
+        - alert: OmperatorDrainFailures
+          expr: sum(increase(omperator_drain_total{result=~"error|timeout"}[10m])) > 0
+          for: 1m
+          labels: {severity: critical}
+          annotations: {summary: "Runtime or gateway drains are failing", runbook_id: P5-05-RB-016}
+        - alert: OmperatorGatewayErrorRate
+          expr: sum(rate(omperator_gateway_requests_total{result="error"}[10m])) / clamp_min(sum(rate(omperator_gateway_requests_total[10m])), 0.001) > 0.05
+          for: 10m
+          labels: {severity: warning}
+          annotations: {summary: "More than five percent of gateway requests are failing", runbook_id: P5-05-RB-009}
+        - alert: OmperatorGatewayNotReady
+          expr: (max(max_over_time(omperator_gateway_ready[5m])) or vector(0)) < 1
+          for: 5m
+          labels: {severity: critical}
+          annotations: {summary: "No observed gateway replica is ready", runbook_id: P5-05-RB-010}
+        - alert: OmperatorRuntimeNotReady
+          expr: max_over_time(omperator_runtime_ready[10m]) < 1
+          for: 10m
+          labels: {severity: warning}
+          annotations: {summary: "No managed runtime has remained ready", runbook_id: P5-05-RB-011}
+        - alert: OmperatorCmuxProtocolMismatch
+          expr: sum(increase(omperator_cmux_protocol_mismatch_total[10m])) > 0
+          for: 1m
+          labels: {severity: warning}
+          annotations: {summary: "cmux protocol compatibility mismatches are being rejected", runbook_id: P5-05-RB-012}
+        - alert: OmperatorOmpBridgeMismatch
+          expr: sum(increase(omperator_omp_bridge_mismatch_total[10m])) > 0
+          for: 1m
+          labels: {severity: warning}
+          annotations: {summary: "OMP bridge compatibility mismatches are being rejected", runbook_id: P5-05-RB-013}
+        - alert: OmperatorBrowserStreamDroppedFrames
+          expr: sum(increase(omperator_browser_stream_dropped_frames_total[10m])) > 0
+          for: 5m
+          labels: {severity: warning}
+          annotations: {summary: "Browser streams are dropping frames under backpressure", runbook_id: P5-05-RB-014}
 {{- end }}

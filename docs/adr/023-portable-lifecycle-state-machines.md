@@ -6,7 +6,7 @@
 
 ## Context
 
-ADR-020 assigns infrastructure desired state and runtime-generation authority to the driver/control plane while preserving one OMP authority and at most one writer-capable runtime process group. ADR-021 makes resource revision, runtime generation, and event cursor distinct; binds routes and tickets to runtime generation; and requires a durable tombstone before backend deletion. This ADR preserves those authority boundaries and defines the lifecycle transitions that use them.
+ADR-025 assigns infrastructure desired state and runtime-generation authority to the driver/control plane while preserving one OMP authority and at most one writer-capable runtime process group. ADR-021 makes resource revision, runtime generation, and event cursor distinct; binds routes and tickets to runtime generation; and requires a durable tombstone before backend deletion. This ADR preserves those authority boundaries and defines the lifecycle transitions that use them.
 
 The existing OpenAPI contract supplies the complete public desired-state vocabulary `Running`, `Sleeping`, and `Stopped`, and the complete public phase vocabulary `Pending`, `Provisioning`, `Starting`, `Ready`, `Sleeping`, `Stopped`, `Deleting`, `Unavailable`, `Degraded`, and `Failed`. The lifecycle contract consumes those registries; it does not add a public schema value. Internal drain and fence states are control-plane facts and are projected through public phase and condition fields.
 

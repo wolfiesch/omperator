@@ -7,6 +7,11 @@ metadata:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 spec:
   storageClassName: {{ .Values.storage.adminRWXStorageClass | quote }}
+  runtimeStateStorageProfile:
+    storageClassName: {{ .Values.storage.runtimeStateStorageClass | quote }}
+    size: {{ .Values.storage.runtimeStateSize | quote }}
+    accessMode: {{ .Values.storage.runtimeStateAccessMode | quote }}
+    volumeSnapshotClassName: {{ .Values.storage.volumeSnapshotClass | quote }}
   runtimeProfiles:
     {{- toYaml .Values.clusterHost.runtimeProfiles | nindent 4 }}
   allowedOrigins:

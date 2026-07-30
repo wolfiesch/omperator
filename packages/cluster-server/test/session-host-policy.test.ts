@@ -45,6 +45,24 @@ function policy(reviewer: ClusterIdentityReviewer): ClusterInternalRemotePolicy 
 		supportedFeatures: ["resume", "session.state"],
 	});
 }
+const validHostEnv: Record<string, string> = {
+	T4_CREDENTIAL_BROKER_SOCKET: "/run/t4-credential/broker.sock",
+	T4_RUNTIME_ID: "runtime-a1b2c3d4",
+	T4_RUNTIME_UID: "31dbbb5e-5293-4b86-a1eb-1551a33a5d4e",
+	T4_RUNTIME_GENERATION: "gen_123456789012345678901234",
+	T4_SESSION_NAME: "session-one",
+	T4_OMP_EXECUTABLE: "/opt/t4/libexec/omp-authority",
+	T4_SESSION_STATE_ROOT: "/runtime-state/runtime-a1b2c3d4",
+	T4_HOST_RUNTIME_DIR: "/run/t4/runtime-a1b2c3d4",
+	T4_PRIVATE_RUNTIME_DIR: "/runtime-state/runtime-a1b2c3d4/private",
+	T4_BROWSER_STATE_DIR: "/runtime-state/runtime-a1b2c3d4/browser",
+	T4_GUI_ENABLED: "false",
+	T4_SESSION_HOST_READY_PATH: "/run/t4/runtime-a1b2c3d4/host.ready",
+	T4_WORKSPACE_ROOT: "/workspace",
+	T4_SESSION_HOST_PORT: "8787",
+	T4_IDLE_POLICY: "allow-idle-sleep",
+	T4_RUNTIME_KEEPALIVE: "false",
+};
 
 describe("one-session pod host authority", () => {
 	it("preserves the existing hello field while admitting a bounded projected bearer only on the internal policy", () => {
@@ -88,29 +106,33 @@ describe("one-session pod host authority", () => {
 		}, { connectionId: "connection-one", peer: connection.peer })).toBe(false);
 	});
 
-	it("parses fixed Kubernetes reviewer and isolated session paths", () => {
-		expect(sessionHostConfigFromEnv({
-			KUBERNETES_SERVICE_HOST: "10.96.0.1",
-			KUBERNETES_SERVICE_PORT_HTTPS: "443",
-			T4_KUBERNETES_API_AUDIENCE: "kubernetes.custom.example",
-			T4_CLUSTER_SERVER_SERVICE_ACCOUNT: "release-t4-cluster-server",
-			T4_SESSION_NAME: "session-one",
-			T4_OMP_EXECUTABLE: "/opt/t4/bin/omp",
-			T4_SESSION_STATE_ROOT: "/workspace/.t4/sessions/a1b2c3d4",
-			T4_SESSION_HOST_PORT: "8787",
-		})).toEqual({
-			kubernetesBaseUrl: "https://10.96.0.1:443",
-			kubernetesTokenPath: "/var/run/secrets/kubernetes.io/serviceaccount/token",
-			kubernetesCaPath: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
-			kubernetesNamespacePath: "/var/run/secrets/kubernetes.io/serviceaccount/namespace",
-			kubernetesApiAudience: "kubernetes.custom.example",
-			serverServiceAccountName: "release-t4-cluster-server",
+	it("parses a credential-free isolated host configuration", () => {
+		expect(sessionHostConfigFromEnv(validHostEnv)).toEqual({
+			credentialBrokerSocket: "/run/t4-credential/broker.sock",
+			runtimeId: "runtime-a1b2c3d4",
+			runtimeUid: "31dbbb5e-5293-4b86-a1eb-1551a33a5d4e",
+			generation: "gen_123456789012345678901234",
 			sessionName: "session-one",
-			ompExecutable: "/opt/t4/bin/omp",
-			stateRoot: "/workspace/.t4/sessions/a1b2c3d4",
+			ompExecutable: "/opt/t4/libexec/omp-authority",
+			stateRoot: "/runtime-state/runtime-a1b2c3d4",
+			runtimeRoot: "/run/t4/runtime-a1b2c3d4",
+			privateRuntimeRoot: "/runtime-state/runtime-a1b2c3d4/private",
+			browserStateRoot: "/runtime-state/runtime-a1b2c3d4/browser",
+			browserEnabled: false,
+			readyPath: "/run/t4/runtime-a1b2c3d4/host.ready",
+			workspaceRoot: "/workspace",
 			port: 8787,
+			idlePolicy: "allow-idle-sleep",
+			keepalive: false,
 		});
-		expect(() => sessionHostConfigFromEnv({ KUBERNETES_SERVICE_HOST: "10.96.0.1", T4_CLUSTER_SERVER_SERVICE_ACCOUNT: "server", T4_SESSION_NAME: "bad/name" })).toThrow("T4_SESSION_NAME");
-		expect(() => sessionHostConfigFromEnv({ KUBERNETES_SERVICE_HOST: "10.96.0.1", T4_CLUSTER_SERVER_SERVICE_ACCOUNT: "server", T4_SESSION_NAME: "session", T4_SESSION_STATE_ROOT: "/workspace/.t4/sessions/session", T4_KUBERNETES_API_AUDIENCE: "/invalid" })).toThrow("T4_KUBERNETES_API_AUDIENCE");
+		expect(sessionHostConfigFromEnv({ ...validHostEnv, T4_OMP_EXECUTABLE: undefined }).ompExecutable).toBe("/opt/t4/libexec/omp-authority");
+		expect(() => sessionHostConfigFromEnv({ ...validHostEnv, T4_OMP_EXECUTABLE: "/usr/local/bin/omp" })).toThrow("authority-principal wrapper");
+		expect(() => sessionHostConfigFromEnv({ ...validHostEnv, T4_SESSION_NAME: "bad/name" })).toThrow("T4_SESSION_NAME");
+		expect(() => sessionHostConfigFromEnv({ ...validHostEnv, T4_CREDENTIAL_BROKER_SOCKET: undefined })).toThrow("T4_CREDENTIAL_BROKER_SOCKET");
+		expect(() => sessionHostConfigFromEnv({ ...validHostEnv, T4_CREDENTIAL_BROKER_SOCKET: "/run/shared/broker.sock" })).toThrow("private broker mount");
+		expect(() => sessionHostConfigFromEnv({ ...validHostEnv, T4_SESSION_STATE_ROOT: "/workspace/.t4/sessions/session" })).toThrow("T4_SESSION_STATE_ROOT");
+		expect(() => sessionHostConfigFromEnv({ ...validHostEnv, T4_WORKSPACE_ROOT: "/runtime-state/runtime-a1b2c3d4/workspace" })).toThrow("must not overlap");
+		expect(() => sessionHostConfigFromEnv({ ...validHostEnv, T4_HOST_RUNTIME_DIR: "/run/t4/other" })).toThrow("must match");
+		expect(() => sessionHostConfigFromEnv({ ...validHostEnv, T4_RUNTIME_GENERATION: "gen_short" })).toThrow("T4_RUNTIME_GENERATION");
 	});
 });

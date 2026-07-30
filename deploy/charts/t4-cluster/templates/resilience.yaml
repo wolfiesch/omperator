@@ -1,0 +1,166 @@
+{{- if .Values.enabled }}
+{{- if and .Values.server.autoscaling.enabled (gt (int .Values.server.autoscaling.minReplicas) (int .Values.server.autoscaling.maxReplicas)) }}
+{{- fail "server.autoscaling.minReplicas must not exceed maxReplicas" }}
+{{- end }}
+{{- if and .Values.sshGateway.enabled .Values.sshGateway.autoscaling.enabled (gt (int .Values.sshGateway.autoscaling.minReplicas) (int .Values.sshGateway.autoscaling.maxReplicas)) }}
+{{- fail "sshGateway.autoscaling.minReplicas must not exceed maxReplicas" }}
+{{- end }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "controller") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
+spec:
+  maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "t4-cluster.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: controller
+{{- if .Values.server.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+spec:
+  minReplicas: {{ .Values.server.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.server.autoscaling.maxReplicas }}
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 60
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server") | quote }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.server.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.server.autoscaling.targetMemoryUtilizationPercentage }}
+{{- end }}
+{{- if and .Values.sshGateway.enabled .Values.sshGateway.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "ssh-gateway") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ssh-gateway
+spec:
+  minReplicas: {{ .Values.sshGateway.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.sshGateway.autoscaling.maxReplicas }}
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 60
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "ssh-gateway") | quote }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.sshGateway.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.sshGateway.autoscaling.targetMemoryUtilizationPercentage }}
+{{- end }}
+{{- if .Values.imagePrePull.enabled }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "runtime-prepull") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+    app.kubernetes.io/component: runtime-prepull
+spec:
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 10%
+  selector:
+    matchLabels:
+      {{- include "t4-cluster.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: runtime-prepull
+  template:
+    metadata:
+      labels:
+        {{- include "t4-cluster.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: runtime-prepull
+        app.kubernetes.io/part-of: t4-cluster
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 5
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values: {{ toJson .Values.session.nodeExclude }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: runtime-prepull
+          image: {{ include "t4-cluster.image" .Values.images.sessionRuntime | quote }}
+          imagePullPolicy: {{ .Values.images.sessionRuntime.pullPolicy | quote }}
+          command: ["/bin/sh", "-c", "trap : TERM INT; sleep infinity & wait"]
+          resources:
+            {{- toYaml .Values.imagePrePull.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: [ALL]
+{{- end }}
+{{- end }}

@@ -96,7 +96,7 @@ metadata:
     {{- include "t4-cluster.labels" . | nindent 4 }}
     app.kubernetes.io/component: model-gateway
 spec:
-  minAvailable: 1
+  minAvailable: 2
   selector:
     matchLabels:
       {{- include "t4-cluster.selectorLabels" . | nindent 6 }}

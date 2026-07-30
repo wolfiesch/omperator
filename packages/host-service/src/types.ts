@@ -255,6 +255,49 @@ export interface PreviewAuthority {
 	/** Override the chromium resolver (e.g. with a pre-staged path for tests). */
 	readonly chromiumResolver?: () => Promise<{ readonly path: string; readonly browserVersion: string }>;
 }
+export interface RuntimeActivitySignals {
+	readonly clients: number;
+	readonly ompTurns: number;
+	readonly ompRetries: number;
+	readonly ompCompactions: number;
+	readonly bashCommands: number;
+	readonly jobs: number;
+	readonly tasks: number;
+	readonly approvals: number;
+	readonly uiPending: number;
+	readonly terminalConnections: number;
+	readonly terminalLeases: number;
+	readonly browserPreviews: number;
+	readonly browserLeases: number;
+	readonly gatewayUpstreams: number;
+}
+export type RuntimeIdlePolicy = "allow-idle-sleep" | "keep-awake";
+export interface RuntimeActivitySnapshot {
+	readonly schemaVersion: 1;
+	readonly active: boolean;
+	readonly keepalive: boolean;
+	readonly policy: RuntimeIdlePolicy;
+	readonly signals: RuntimeActivitySignals;
+}
+export interface RuntimeExternalActivity {
+	readonly keepalive?: boolean;
+	readonly policy?: RuntimeIdlePolicy;
+	readonly terminalConnections?: number;
+	readonly terminalLeases?: number;
+	readonly browserPreviews?: number;
+	readonly browserLeases?: number;
+	readonly gatewayUpstreams?: number;
+}
+export interface RuntimeIngressDrainAuthority {
+	beginDrain(mode: "idle" | "explicit"): void;
+	rollbackDrain(): void;
+	quiesce(): Promise<void>;
+}
+export interface RuntimeShutdownAck {
+	readonly schemaVersion: 1;
+	readonly generation: string;
+	readonly durable: true;
+}
 
 export interface AppserverOptions {
 	hostId?: HostId;
@@ -332,6 +375,14 @@ export interface AppserverOptions {
 	testControl?: AppserverTestControl;
 	/** When set, the host runs a headless Chromium preview service for remote clients. */
 	previewAuthority?: PreviewAuthority;
+	/** Exact private route identity; never projected into runtime activity. */
+	runtimeIdentity?: Readonly<{ uid: string; generation: string }>;
+
+	/** Internal-only bounded activity contributed by runtime surfaces outside Appserver. */
+	runtimeActivity?: () => RuntimeExternalActivity;
+	runtimeIngress?: RuntimeIngressDrainAuthority;
+	/** Flushes all durable authorities after activity has atomically reached zero. */
+	durableFlush?: () => Promise<void>;
 }
 export interface AppserverDrainBusy {
 	readonly connections: number;
@@ -352,9 +403,15 @@ export interface AppserverDrainHealth {
 	readonly epoch: string;
 }
 export type AppserverDrainResult =
-	| { readonly state: "draining"; readonly health: AppserverDrainHealth; readonly busy: AppserverDrainBusy }
-	| { readonly state: "busy"; readonly health: AppserverDrainHealth; readonly busy: AppserverDrainBusy }
-	| { readonly state: "identity_mismatch"; readonly health: AppserverDrainHealth; readonly busy: AppserverDrainBusy };
+	| { readonly state: "drained"; readonly activity: RuntimeActivitySnapshot; readonly shutdownAck: RuntimeShutdownAck }
+	| { readonly state: "busy"; readonly activity: RuntimeActivitySnapshot }
+	| { readonly state: "flush_failed"; readonly activity: RuntimeActivitySnapshot }
+	| { readonly state: "identity_mismatch"; readonly activity: RuntimeActivitySnapshot };
+export type AppserverReopenResult =
+	| { readonly state: "reopened"; readonly generation: string }
+	| { readonly state: "already_reopened"; readonly generation: string }
+	| { readonly state: "not_drained"; readonly generation: string }
+	| { readonly state: "identity_mismatch"; readonly generation: string };
 export interface Projection {
 	hostId: HostId;
 	sessionId: SessionId;
@@ -378,6 +435,8 @@ export interface CommandOutcome {
 	frame: ServerFrame;
 	/** Per-delivery attach output. finish() strips this bulk data before idempotency caching. */
 	attachOutput?: PreparedAttachOutput;
+	/** Per-delivery additive events synthesized from a successful operation result. */
+	operationEvents?: readonly ServerFrame[];
 	unknown?: boolean;
 }
 export interface AppserverHandle {
@@ -389,6 +448,10 @@ export interface AppserverHandle {
 	snapshot(sessionId: SessionId): Projection | undefined;
 	replay(sessionId: SessionId, cursor: Cursor): ServerFrame[];
 	childFor(sessionId: SessionId): ChildHandle | undefined;
+	runtimeActivity(expectedRuntimeUid: string, expectedGeneration: string): RuntimeActivitySnapshot | undefined;
+	drainIfIdle(expectedRuntimeUid: string, expectedGeneration: string): Promise<AppserverDrainResult>;
+	quiesce(expectedRuntimeUid: string, expectedGeneration: string): Promise<AppserverDrainResult>;
+	reopen(expectedRuntimeUid: string, expectedGeneration: string): Promise<AppserverReopenResult>;
 }
 export type {
 	ChildProcess,

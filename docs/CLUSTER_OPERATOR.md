@@ -5,21 +5,15 @@ The portable `t4-cluster` chart runs the infrastructure control plane for T4 wor
 ## Prerequisites
 
 - Kubernetes 1.30 or newer.
-- An administrator-managed StorageClass that actually provisions `ReadWriteMany` volumes.
+- Administrator-managed, online-expandable StorageClasses for a real shared `ReadWriteMany` workspace and a separate fenced `ReadWriteOncePod` (preferred) or `ReadWriteOnce` runtime-state volume.
 - Three core immutable image digests: `t4-cluster-operator`, `t4-cluster-server`, and `t4-session-runtime`. The optional built-in credential gateway also requires `t4-model-gateway`.
 - An administrator-owned same-namespace ConfigMap containing the OMP `models.yml` and `config.yml` inputs. Every provider in `models.yml` must use `auth: none` and resolve to a private, NetworkPolicy-isolated model route.
 - Narrow Kubernetes API, model-route, CI-provider, ingress-controller, and metrics-scraper network identities and ports for the enabled integrations.
 - A local T4 client explicitly configured to request the default-false `cluster.operator` feature. Installing this chart does not enable the client feature.
 
-The chart does not install NFS, CSI drivers, a StorageClass, host paths, or backend-specific storage configuration. The cluster administrator must create and validate the RWX StorageClass. Mark a class as reviewed for this controller:
+The chart does not install NFS, CSI drivers, a StorageClass, host paths, or backend-specific storage configuration. The administrator selects separate workspace and runtime-state StorageClasses plus a compatible `VolumeSnapshotClass`. Declaring `cluster.t4.dev/access-modes: ReadWriteMany` is necessary but is not conformance proof.
 
-```yaml
-metadata:
-  annotations:
-    cluster.t4.dev/access-modes: ReadWriteMany
-```
-
-That declaration does not make a non-RWX backend safe. Missing classes, classes without this exact declaration, unbound claims, and claims without `ReadWriteMany` fail closed. A `T4Session` pod is never created before its workspace claim is both Bound and RWX.
+Before enabling the host, run `scripts/cluster-ci/storage-conformance.sh --plan`. The plan is local and performs no cluster request. On a disposable two-node cluster, `--run` writes shared workspace data and separate SQLite WAL/cmux/browser/OMP state, proves online expansion, rejects a simultaneous cross-node writer, remounts after replacement, checkpoints and snapshots each PVC, restores them, and proves a new generation. The harness records the three exact `passed` annotations only after every proof succeeds, then prints them with an explicit cleanup command. The controller reports these bounded observations in `T4ClusterHost.status.storageCapabilities`; missing, unknown, mismatched, or unsupported RWX/reattach observations fail closed before a runtime Pod. A plan or local unit test is not live-cluster proof.
 
 ## Install
 
@@ -37,6 +31,10 @@ Helm processes files in `crds/` separately on a direct install, but does not upg
 enabled: true
 storage:
   adminRWXStorageClass: portable-rwx
+  runtimeStateStorageClass: portable-runtime-rwop
+  runtimeStateSize: 10Gi
+  runtimeStateAccessMode: ReadWriteOncePod
+  volumeSnapshotClass: portable-snapshots
 images:
   controller:
     repository: registry.example/t4-cluster-operator
@@ -137,21 +135,39 @@ When chart-managed ingress is enabled, the class must be `tailscale`, and a host
 
 All APIs are namespaced under `cluster.t4.dev/v1alpha1`:
 
-- `T4ClusterHost` selects the reviewed RWX StorageClass, allowed runtime profile names, bounded projection policy, exact HTTPS origins, and optional CI Secret/ConfigMap references.
-- `T4Workspace` selects a host, bounded repository metadata, size, and `Retain` or `Delete` storage retention. The controller always requests `ReadWriteMany`.
-- `T4Session` selects a host, workspace, allowlisted runtime profile, optional initial-prompt Secret reference, GUI policy, and optional allowlisted CI repository/ref/commit metadata.
+- `T4ClusterHost` selects the reviewed workspace and runtime-state StorageClasses, the explicit runtime-state access mode, compatible snapshot class, allowed runtime profiles, exact HTTPS origins, and optional CI references. Its status surfaces only bounded storage capability observations and infrastructure conditions.
+- `T4Workspace` selects a host, bounded repository metadata, size, optional restore snapshot reference, and `Retain` or `Delete` storage retention. The controller always requests `ReadWriteMany`.
+- `T4Session` selects a host, workspace, allowlisted runtime profile, optional runtime-state restore snapshot, optional checkpoint request, GUI policy, and optional allowlisted CI metadata.
 
-Images, provider endpoints, resource policy, model routes, shell text, raw prompts, tokens, and secret values are not accepted in CRs. Status contains only `observedGeneration`, Kubernetes object references, infrastructure phases, PVC capacity/phase, and bounded conditions. It never reports OMP ids, agent trees, or runtime lifecycle truth.
+Images, provider endpoints, resource policy, model routes, shell text, raw prompts, tokens, and secret values are not accepted in CRs. Status contains only bounded infrastructure observations, Kubernetes object references, phases, PVC metadata, fencing state, and checkpoint acknowledgement/snapshot references. It never reports OMP ids, agent trees, user content, filesystem paths supplied by users, or secret values.
 
 The optional initial prompt is referenced by Secret name and key `prompt`; the Secret is mounted only into that session pod. Do not place prompt content in the CR or Helm values.
 
 `T4Workspace` has `cluster.t4.dev/workspace-protection`. With `retentionPolicy: Delete`, deletion waits for its PVC to disappear. With `Retain`, the controller first removes its owner reference and marks it retained, then permits workspace deletion. `T4Session` has `cluster.t4.dev/session-cleanup` and waits for its pod and Service to disappear.
 
+## Storage conformance, backup, and restore runbook
+
+Workspace files and runtime authority state are separate trust and consistency domains. `/workspace` contains shared project data only. The exclusive runtime-state volume contains OMP durable state, the cmux database/WAL and sockets, and browser profile state. Never put those authority paths on RWX storage unless a backend-specific implementation has separately proved safe shared-WAL and writer fencing semantics.
+
+For a consistent checkpoint, set a new bounded `spec.checkpoint.id` with `consistency: Quiesced`. The runtime must drain routes/tickets and persist OMP, cmux, and browser acknowledgements for the exact current `status.runtimeGeneration`. The controller accepts neither snapshot until every required acknowledgement is present, then creates separate workspace and runtime-state `VolumeSnapshot` objects labeled `cluster.t4.dev/snapshot-consistency=Quiesced` and the exact generation. Sleeping first is also valid because no writer remains. `CrashConsistent` is an explicit opt-in: it skips durable acknowledgements and is always visibly labeled; do not describe it as application-consistent.
+
+Before restore:
+
+1. Require both snapshot objects to be `ReadyToUse` in the target namespace and verify namespaced PVC sources, a valid source runtime-generation label, expected `cluster.t4.dev/snapshot-source`, consistency label, and StorageClass/snapshot-class driver compatibility.
+2. List active `T4Session` objects and refuse if the runtime-state snapshot is referenced by another runtime that still reports a Pod. Desired state or a stale fence status never overrides an active attachment; a snapshot never backs two live runtime-state writers.
+3. Drain and positively fence any target writer and attachment. `FenceUncertain` stops the restore with no attach, generation advance, route, or ticket.
+4. Create new PVCs from the immutable refs, record restore provenance, and advance through the existing compare-and-swap replacement machine to a fresh runtime generation. Never reuse the source generation.
+5. Preserve the stable public ID by default. Replacing it requires `restorePublicIdPolicy: Replace` plus an explicitly supplied new `publicId`; allocator/tombstone reuse is prohibited.
+6. Prove restored workspace data, OMP generation provenance, cmux SQLite integrity, and browser durable state before publishing routes. Keep the source snapshots until this proof and the retention decision are recorded.
+
+If any readiness, source, compatibility, ownership, fencing, or acknowledgement check is unavailable, stop. Do not patch status, relabel a crash-consistent snapshot, force-detach storage, or delete the source to make restore proceed.
+
+
 ## Images and runtime
 
 `cluster/images/controller/Dockerfile`, `cluster/images/cluster-server/Dockerfile`, `cluster/images/session-runtime/Dockerfile`, and `cluster/images/model-gateway/Dockerfile` use digest-pinned multi-platform build bases. BuildKit selects the requested target platform; the Dockerfiles do not hardcode or label an architecture that was not built. Debian packages are resolved through a dated snapshot. Published chart values still require per-image immutable digests.
 
-The session runtime verifies and builds the exact OMP tag `t4code-17.0.5-appserver-19` at commit `d83b688817651d39bfab00676db6109a2d1ccec5`. It preserves `t4-omp-authority/1`, starts the existing T4 session-host entrypoint, and provides Xvfb, a minimal window manager, and Chromium without privileged mode or host display access. The shared claim is mounted at `/workspace`; authority and browser state live in controller-selected per-session subdirectories. OMP configuration is copied from the read-only administrator ConfigMap projection into the private authority child home before launch. `/dev/shm` is an explicit memory-backed volume. Browser Preview remains the existing GUI stream and control surface.
+The session runtime fetches and verifies the exact owned OMP source commit `107c7ca3054dbd7f4b2247598580a63a06d72bc4`, descended from contract commit `d16c6168c86f40fc44f25118c2fd06fe160fcb93`. The image embeds `provenance/omp-runtime-v1.json`, labels both immutable revisions, and admits the complete `t4-omp-authority/1` method set. OMP, cmux, and the Omperator host roll as one compatibility set. The runtime starts the existing T4 session-host entrypoint and provides Xvfb, a minimal window manager, and Chromium without privileged mode or host display access. The shared claim is mounted at `/workspace`; authority and browser state live in controller-selected per-session subdirectories. OMP configuration is copied from the read-only administrator ConfigMap projection into the private authority child home before launch. `/dev/shm` is an explicit memory-backed volume. Browser Preview remains the existing GUI stream and control surface.
 
 Session pods do not receive an automatically mounted ServiceAccount token. The explicit projected reviewer token can only create TokenReviews and is not resource-authorized. The namespace-local ConfigMap projection contains credential-free `auth: none` OMP models and credential-free settings; session, controller, and server Pods receive no provider Secret reference or reusable provider credential. All containers drop capabilities, disallow privilege escalation, use RuntimeDefault seccomp, and use read-only root filesystems. No per-session NodePort, LoadBalancer, host network, host PID, host display, or hostPath is created.
 

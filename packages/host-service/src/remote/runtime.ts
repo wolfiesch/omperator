@@ -237,6 +237,10 @@ export async function createRemoteAppserver(options: RemoteAppserverOptions): Pr
 			snapshot: sessionId => inner.snapshot(sessionId),
 			replay: (sessionId, cursor) => inner.replay(sessionId, cursor),
 			childFor: sessionId => inner.childFor(sessionId),
+			runtimeActivity: (runtimeUid, generation) => inner.runtimeActivity(runtimeUid, generation),
+			drainIfIdle: (runtimeUid, generation) => inner.drainIfIdle(runtimeUid, generation),
+			quiesce: (runtimeUid, generation) => inner.quiesce(runtimeUid, generation),
+			reopen: (runtimeUid, generation) => inner.reopen(runtimeUid, generation),
 		};
 	} catch (error) {
 		policy.close();

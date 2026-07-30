@@ -1,0 +1,26 @@
+{
+  "name": "@t4-code/provider-engine",
+  "version": "0.2.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsgo --noEmit",
+    "typecheck": "tsgo --noEmit",
+    "test": "bun test test"
+  },
+  "dependencies": {
+    "@t4-code/cmux-runtime": "workspace:*",
+    "@t4-code/portable-control-store": "workspace:*",
+    "@t4-code/portable-core": "workspace:*",
+    "@t4-code/portable-driver": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.5",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

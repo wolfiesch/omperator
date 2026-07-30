@@ -307,7 +307,7 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
   );
   assert.ok(
     steps["current-authority-build"].commands.includes(
-      "(cd .current-continuity/omp && bun test packages/coding-agent/test/appserver-bridge.test.ts packages/coding-agent/test/appserver-session-lifecycle.test.ts)",
+      "(cd .current-continuity/omp && bun test packages/coding-agent/test/appserver-bridge.test.ts packages/coding-agent/test/appserver-bridge-smoke.test.ts)",
     ),
   );
   assert.deepEqual(steps["current-bridge-continuity"].depends_on, [

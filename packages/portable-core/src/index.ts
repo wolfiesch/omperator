@@ -83,12 +83,30 @@ export interface CapabilityFeatures {
   readonly scaleToZero: boolean;
 }
 
+export type StorageCapabilityState = "Supported" | "Unsupported" | "Unknown";
+
+export interface StorageCapabilityObservation {
+  readonly state: StorageCapabilityState;
+  readonly reason?: string;
+}
+
+export interface StorageCapabilities {
+  readonly workspaceReadWriteMany: StorageCapabilityObservation;
+  readonly runtimeStateAccessModes: readonly ("ReadWriteOncePod" | "ReadWriteOnce")[];
+  readonly runtimeStateReattach: StorageCapabilityObservation;
+  readonly onlineExpansion: StorageCapabilityObservation;
+  readonly volumeSnapshots: StorageCapabilityObservation;
+  readonly snapshotDataSource: StorageCapabilityObservation;
+  readonly observedAt: Timestamp;
+}
+
 export interface Capabilities {
   readonly [key: string]: unknown;
   readonly apiVersion: "v1";
   readonly protocols: CapabilitiesProtocols;
   readonly limits: CapabilityLimits;
   readonly features: CapabilityFeatures;
+  readonly storage?: StorageCapabilities;
 }
 
 export interface Scope {
@@ -153,6 +171,42 @@ export interface IdlePolicyEnabled {
 }
 
 export type IdlePolicy = IdlePolicyDisabled | IdlePolicyEnabled;
+
+export interface RuntimeResourceDemand {
+  readonly cpuMillis: number;
+  readonly memoryBytes: number;
+  readonly gpuUnits: number;
+}
+
+export interface ScopeCreationRatePolicy {
+  readonly windowSeconds: number;
+  readonly burst: number;
+  readonly maximumRetryAfterSeconds: number;
+}
+
+/** Operator-controlled, per-scope admission limits. Zero disables the corresponding capacity. */
+export interface ScopeAdmissionPolicy {
+  readonly maxActiveRuntimes: number;
+  readonly maxRetainedRuntimes: number;
+  readonly maxWorkspaceCapacityBytes: number;
+  readonly maxCpuMillis: number;
+  readonly maxMemoryBytes: number;
+  readonly maxGpuUnits: number;
+  readonly browserEnabled: boolean;
+  readonly runtimeResources: RuntimeResourceDemand;
+  readonly creationRate: ScopeCreationRatePolicy;
+}
+
+export type AdmissionDenialReason =
+  | "active_runtime_limit"
+  | "retained_runtime_limit"
+  | "workspace_capacity_limit"
+  | "cpu_limit"
+  | "memory_limit"
+  | "gpu_limit"
+  | "browser_disabled"
+  | "creation_rate_limit"
+  | "admission_unavailable";
 
 export interface RuntimeCreate {
   readonly scopeId: ScopeId;
@@ -371,6 +425,29 @@ function oneVersion(value: unknown, expected: 1 | 10, path: DecodePath): void {
   literal(value[0], expected, [...path, 0]);
 }
 
+function decodeStorageCapabilityObservationAt(value: unknown, path: DecodePath): StorageCapabilityObservation {
+  const item = record(value, path);
+  const state = own(item, "state", path);
+  if (state !== "Supported" && state !== "Unsupported" && state !== "Unknown") fail([...path, "state"], "StorageCapabilityState", state);
+  optional(item, "reason", path, (candidate, candidatePath) => text(candidate, 1, 64, candidatePath));
+  return item as unknown as StorageCapabilityObservation;
+}
+
+function decodeRuntimeStateAccessModeAt(value: unknown, path: DecodePath): "ReadWriteOncePod" | "ReadWriteOnce" {
+  if (value !== "ReadWriteOncePod" && value !== "ReadWriteOnce") fail(path, "a runtime-state access mode", value);
+  return value;
+}
+
+function decodeStorageCapabilitiesAt(value: unknown, path: DecodePath): StorageCapabilities {
+  const item = record(value, path);
+  for (const key of ["workspaceReadWriteMany", "runtimeStateReattach", "onlineExpansion", "volumeSnapshots", "snapshotDataSource"] as const) {
+    decodeStorageCapabilityObservationAt(own(item, key, path), [...path, key]);
+  }
+  array(own(item, "runtimeStateAccessModes", path), 2, [...path, "runtimeStateAccessModes"], decodeRuntimeStateAccessModeAt, true);
+  decodeTimestampAt(own(item, "observedAt", path), [...path, "observedAt"]);
+  return item as unknown as StorageCapabilities;
+}
+
 function decodeCapabilitiesAt(value: unknown, path: DecodePath): Capabilities {
   const item = record(value, path);
   literal(own(item, "apiVersion", path), "v1", [...path, "apiVersion"]);
@@ -390,6 +467,7 @@ function decodeCapabilitiesAt(value: unknown, path: DecodePath): Capabilities {
   integer(own(limits, "maxPageSize", [...path, "limits"]), 1, 200, [...path, "limits", "maxPageSize"]);
   const features = record(own(item, "features", path), [...path, "features"]);
   for (const key of ["restLifecycle", "sshProvider", "directCmuxWebSocket", "browser", "scaleToZero"] as const) boolean(own(features, key, [...path, "features"]), [...path, "features", key]);
+  optional(item, "storage", path, decodeStorageCapabilitiesAt);
   return item as unknown as Capabilities;
 }
 
@@ -451,6 +529,43 @@ function decodeIdlePolicyAt(value: unknown, path: DecodePath): IdlePolicy {
   fail([...path, "enabled"], "true or false", enabled);
 }
 
+function decodeRuntimeResourceDemandAt(value: unknown, path: DecodePath): RuntimeResourceDemand {
+  const item = record(value, path);
+  exactKeys(item, ["cpuMillis", "memoryBytes", "gpuUnits"], path);
+  integer(own(item, "cpuMillis", path), 0, 1_000_000_000, [...path, "cpuMillis"]);
+  integer(own(item, "memoryBytes", path), 0, Number.MAX_SAFE_INTEGER, [...path, "memoryBytes"]);
+  integer(own(item, "gpuUnits", path), 0, 1_000_000, [...path, "gpuUnits"]);
+  return item as unknown as RuntimeResourceDemand;
+}
+
+function decodeScopeCreationRatePolicyAt(value: unknown, path: DecodePath): ScopeCreationRatePolicy {
+  const item = record(value, path);
+  exactKeys(item, ["windowSeconds", "burst", "maximumRetryAfterSeconds"], path);
+  integer(own(item, "windowSeconds", path), 1, 86_400, [...path, "windowSeconds"]);
+  integer(own(item, "burst", path), 1, 100_000, [...path, "burst"]);
+  integer(own(item, "maximumRetryAfterSeconds", path), 1, 300, [...path, "maximumRetryAfterSeconds"]);
+  return item as unknown as ScopeCreationRatePolicy;
+}
+
+function decodeScopeAdmissionPolicyAt(value: unknown, path: DecodePath): ScopeAdmissionPolicy {
+  const item = record(value, path);
+  exactKeys(item, [
+    "maxActiveRuntimes", "maxRetainedRuntimes", "maxWorkspaceCapacityBytes",
+    "maxCpuMillis", "maxMemoryBytes", "maxGpuUnits", "browserEnabled",
+    "runtimeResources", "creationRate",
+  ], path);
+  integer(own(item, "maxActiveRuntimes", path), 0, 100_000, [...path, "maxActiveRuntimes"]);
+  integer(own(item, "maxRetainedRuntimes", path), 0, 100_000, [...path, "maxRetainedRuntimes"]);
+  integer(own(item, "maxWorkspaceCapacityBytes", path), 0, Number.MAX_SAFE_INTEGER, [...path, "maxWorkspaceCapacityBytes"]);
+  integer(own(item, "maxCpuMillis", path), 0, 1_000_000_000, [...path, "maxCpuMillis"]);
+  integer(own(item, "maxMemoryBytes", path), 0, Number.MAX_SAFE_INTEGER, [...path, "maxMemoryBytes"]);
+  integer(own(item, "maxGpuUnits", path), 0, 1_000_000, [...path, "maxGpuUnits"]);
+  boolean(own(item, "browserEnabled", path), [...path, "browserEnabled"]);
+  decodeRuntimeResourceDemandAt(own(item, "runtimeResources", path), [...path, "runtimeResources"]);
+  decodeScopeCreationRatePolicyAt(own(item, "creationRate", path), [...path, "creationRate"]);
+  return item as unknown as ScopeAdmissionPolicy;
+}
+
 function decodePageCursorAt(value: unknown, path: DecodePath): PageCursor {
   const item = record(value, path);
   optional(item, "nextCursor", path, (entry, entryPath) => text(entry, 1, 512, entryPath, CURSOR));
@@ -489,6 +604,9 @@ export const decodeScope: Decoder<Scope> = (value) => decodeScopeAt(value, []);
 export const decodeWorkspace: Decoder<Workspace> = (value) => decodeWorkspaceAt(value, []);
 export const decodeRuntime: Decoder<Runtime> = (value) => decodeRuntimeAt(value, []);
 export const decodeIdlePolicy: Decoder<IdlePolicy> = (value) => decodeIdlePolicyAt(value, []);
+export const decodeRuntimeResourceDemand: Decoder<RuntimeResourceDemand> = (value) => decodeRuntimeResourceDemandAt(value, []);
+export const decodeScopeCreationRatePolicy: Decoder<ScopeCreationRatePolicy> = (value) => decodeScopeCreationRatePolicyAt(value, []);
+export const decodeScopeAdmissionPolicy: Decoder<ScopeAdmissionPolicy> = (value) => decodeScopeAdmissionPolicyAt(value, []);
 export const decodePageCursor: Decoder<PageCursor> = (value) => decodePageCursorAt(value, []);
 export const decodeScopePage: Decoder<ScopePage> = (value) => decodePageAt(value, [], decodeScopeAt);
 export const decodeWorkspacePage: Decoder<WorkspacePage> = (value) => decodePageAt(value, [], decodeWorkspaceAt);

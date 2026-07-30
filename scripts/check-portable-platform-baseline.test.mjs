@@ -3,7 +3,10 @@ import { test } from "node:test";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { checkPortablePlatformBaseline } from "./check-portable-platform-baseline.mjs";
+import {
+  checkPortablePlatformBaseline,
+  COMMAND_REGISTRY_PATHS,
+} from "./check-portable-platform-baseline.mjs";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
 const manifestPath = path.join(repositoryRoot, "compat/portable-agent-platform-v1.json");
@@ -15,6 +18,7 @@ async function fixture(mutator = () => {}) {
   await mkdir(path.join(root, "docs/adr"), { recursive: true });
   await mkdir(path.join(root, "packages/t4-api-contract"), { recursive: true });
   await mkdir(path.join(root, "packages/host-wire/src"), { recursive: true });
+  await mkdir(path.join(root, "packages/host-wire/src/command-descriptors"), { recursive: true });
   await mkdir(
     path.join(root, "vendor/cmux-machine-provider-v1/upstream/cmux-tui/crates/cmux-tui-machine-protocol/src"),
     { recursive: true },
@@ -24,8 +28,12 @@ async function fixture(mutator = () => {}) {
     await readFile(path.join(repositoryRoot, "provenance/cmux-machine-provider-v1.json")),
   );
   await writeFile(
-    path.join(root, "docs/adr/020-portable-runtime-single-authority.md"),
-    await readFile(path.join(repositoryRoot, "docs/adr/020-portable-runtime-single-authority.md")),
+    path.join(root, "provenance/omp-runtime-v1.json"),
+    await readFile(path.join(repositoryRoot, "provenance/omp-runtime-v1.json")),
+  );
+  await writeFile(
+    path.join(root, "docs/adr/025-portable-runtime-single-authority.md"),
+    await readFile(path.join(repositoryRoot, "docs/adr/025-portable-runtime-single-authority.md")),
   );
   await writeFile(
     path.join(root, "docs/adr/021-portable-driver-control-contracts.md"),
@@ -47,10 +55,12 @@ async function fixture(mutator = () => {}) {
     path.join(root, "packages/t4-api-contract/openapi.json"),
     await readFile(path.join(repositoryRoot, "packages/t4-api-contract/openapi.json")),
   );
-  await writeFile(
-    path.join(root, "packages/host-wire/src/command.ts"),
-    await readFile(path.join(repositoryRoot, "packages/host-wire/src/command.ts")),
-  );
+  for (const registryPath of COMMAND_REGISTRY_PATHS) {
+    await writeFile(
+      path.join(root, registryPath),
+      await readFile(path.join(repositoryRoot, registryPath)),
+    );
+  }
   await writeFile(
     path.join(root, "packages/host-wire/src/envelope.ts"),
     await readFile(path.join(repositoryRoot, "packages/host-wire/src/envelope.ts")),
@@ -99,6 +109,8 @@ test("rejects drift in contract-bearing repositories, dates, tags, and rationale
     manifest.implementationStart.packagedOmpAuthority.upstreamRepository = "https://example.test/upstream";
     manifest.implementationStart.packagedOmpAuthority.upstreamTag = "moving-upstream-tag";
     manifest.ompPinResolution.reason = "trust the current package";
+    manifest.ompPinResolution.sourceCommit = "a".repeat(40);
+    manifest.ompPinResolution.bridge.compatibilityStatus = "missing-bridge";
     manifest.cmuxMachineProviderImport.manifestSha256 = "b".repeat(64);
     manifest.cmuxMachineProviderImport.fixtureCorpusSha256 = "c".repeat(64);
   });
@@ -113,6 +125,8 @@ test("rejects drift in contract-bearing repositories, dates, tags, and rationale
     "implementationStart.packagedOmpAuthority.upstreamRepository",
     "implementationStart.packagedOmpAuthority.upstreamTag",
     "ompPinResolution.reason",
+    "ompPinResolution.sourceCommit",
+    "ompPinResolution.bridge.compatibilityStatus",
     "cmuxMachineProviderImport.manifestSha256",
     "cmuxMachineProviderImport.fixtureCorpusSha256",
   ]) {
@@ -120,15 +134,15 @@ test("rejects drift in contract-bearing repositories, dates, tags, and rationale
   }
 });
 
-test("rejects removing the fail-closed OMP pin resolution", async () => {
+test("rejects weakening the admitted OMP pin resolution", async () => {
   const root = await fixture((manifest) => {
     manifest.ompPinResolution.strategy = "use-current-package";
     manifest.ompPinResolution.portableRuntimeAdmission = "allowed";
     manifest.compatibilitySetPolicy.independentComponentRollsAllowed = true;
   });
   const result = await checkPortablePlatformBaseline(root);
-  assert(result.failures.some((failure) => failure.includes("replace-before-portable-runtime")));
-  assert(result.failures.some((failure) => failure.includes("requires-descendant-integration-proof")));
+  assert(result.failures.some((failure) => failure.includes("immutable-source-authority")));
+  assert(result.failures.some((failure) => failure.includes("admitted")));
   assert(result.failures.some((failure) => failure.includes("independentComponentRollsAllowed")));
 });
 
@@ -166,7 +180,7 @@ test("rejects weakening the one-authority runtime topology", async () => {
 
 test("rejects topology documentation drift", async () => {
   const root = await fixture();
-  await writeFile(path.join(root, "docs/adr/020-portable-runtime-single-authority.md"), "drift\n");
+  await writeFile(path.join(root, "docs/adr/025-portable-runtime-single-authority.md"), "drift\n");
   const result = await checkPortablePlatformBaseline(root);
   assert(result.failures.some((failure) => failure.includes("runtimeTopology.documentationSha256")));
 });
@@ -904,10 +918,15 @@ test("rejects OpenAPI operationId registry drift", async () => {
 
 test("rejects COMMAND_DESCRIPTORS catalog drift", async () => {
   const root = await fixture();
-  const commandPath = path.join(root, "packages/host-wire/src/command.ts");
+  const commandPath = path.join(root, "packages/host-wire/src/command-descriptors/sessions.ts");
   const source = await readFile(commandPath, "utf8");
-  const marker = "export const COMMAND_DESCRIPTORS: Readonly<Record<string, CommandDescriptor>> = {";
-  await writeFile(commandPath, source.replace(marker, `${marker}\n\t"drift.command": {\n\t},`));
+  await writeFile(
+    commandPath,
+    source.replace(
+      "\n};",
+      '\n  "drift.command": descriptor("sessions.read", "session", "none", "none", "none"),\n};',
+    ),
+  );
   const result = await checkPortablePlatformBaseline(root);
   assert(
     result.failures.some((failure) => failure.includes("commandDescriptorKeys")),
@@ -946,9 +965,12 @@ test("rejects machine-provider control method drift", async () => {
 
 test("rejects COMMAND_DESCRIPTORS confirmation drift", async () => {
   const root = await fixture();
-  const commandPath = path.join(root, "packages/host-wire/src/command.ts");
+  const commandPath = path.join(root, "packages/host-wire/src/command-descriptors/sessions.ts");
   const source = await readFile(commandPath, "utf8");
-  await writeFile(commandPath, source.replace('\t\tconfirmation: "challenge",', '\t\tconfirmation: "none",'));
+  await writeFile(
+    commandPath,
+    source.replace('    "challenge",\n    true,\n  ),', '    "none",\n    true,\n  ),'),
+  );
   const result = await checkPortablePlatformBaseline(root);
   assert(
     result.failures.some((failure) => failure.includes("challengeCommandDescriptorKeys")),

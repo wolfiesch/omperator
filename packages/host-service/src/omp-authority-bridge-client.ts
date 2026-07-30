@@ -228,6 +228,13 @@ export class OmpAuthorityBridgeClient {
 		}
 	}
 
+	async flush(): Promise<void> {
+		await this.#request("authority.flush", {});
+	}
+	async quiesce(): Promise<void> {
+		await this.#request("authority.quiesce", {});
+	}
+
 	async stop(): Promise<void> {
 		if (this.#closed) return;
 		this.#closed = true;

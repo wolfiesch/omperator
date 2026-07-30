@@ -65,7 +65,9 @@ export interface paths {
     };
     "/v1/runtimes/{runtimeId}": {
         parameters: {
-            query?: never;
+            query?: {
+                scopeId?: components["parameters"]["ScopeFilter"];
+            };
             header?: never;
             path: {
                 runtimeId: components["parameters"]["RuntimeId"];
@@ -83,7 +85,9 @@ export interface paths {
     };
     "/v1/runtimes/{runtimeId}:sleep": {
         parameters: {
-            query?: never;
+            query?: {
+                scopeId?: components["parameters"]["ScopeFilter"];
+            };
             header?: never;
             path: {
                 runtimeId: components["parameters"]["RuntimeId"];
@@ -101,7 +105,9 @@ export interface paths {
     };
     "/v1/runtimes/{runtimeId}:wake": {
         parameters: {
-            query?: never;
+            query?: {
+                scopeId?: components["parameters"]["ScopeFilter"];
+            };
             header?: never;
             path: {
                 runtimeId: components["parameters"]["RuntimeId"];
@@ -119,7 +125,9 @@ export interface paths {
     };
     "/v1/runtimes/{runtimeId}/connections": {
         parameters: {
-            query?: never;
+            query?: {
+                scopeId?: components["parameters"]["ScopeFilter"];
+            };
             header?: never;
             path: {
                 runtimeId: components["parameters"]["RuntimeId"];
@@ -185,7 +193,9 @@ export interface paths {
     };
     "/v1/workspaces/{workspaceId}": {
         parameters: {
-            query?: never;
+            query?: {
+                scopeId?: components["parameters"]["ScopeFilter"];
+            };
             header?: never;
             path: {
                 workspaceId: components["parameters"]["WorkspaceId"];
@@ -1025,7 +1035,9 @@ export interface operations {
     };
     getRuntime: {
         parameters: {
-            query?: never;
+            query?: {
+                scopeId?: components["parameters"]["ScopeFilter"];
+            };
             header?: never;
             path: {
                 runtimeId: components["parameters"]["RuntimeId"];
@@ -1042,7 +1054,9 @@ export interface operations {
     };
     putRuntime: {
         parameters: {
-            query?: never;
+            query?: {
+                scopeId?: components["parameters"]["ScopeFilter"];
+            };
             header: {
                 "If-None-Match": components["parameters"]["IfNoneMatch"];
             };
@@ -1067,7 +1081,9 @@ export interface operations {
     };
     deleteRuntime: {
         parameters: {
-            query?: never;
+            query?: {
+                scopeId?: components["parameters"]["ScopeFilter"];
+            };
             header: {
                 "If-Match": components["parameters"]["IfMatch"];
             };
@@ -1090,7 +1106,9 @@ export interface operations {
     };
     patchRuntime: {
         parameters: {
-            query?: never;
+            query?: {
+                scopeId?: components["parameters"]["ScopeFilter"];
+            };
             header: {
                 "If-Match": components["parameters"]["IfMatch"];
             };
@@ -1115,7 +1133,9 @@ export interface operations {
     };
     sleepRuntime: {
         parameters: {
-            query?: never;
+            query?: {
+                scopeId?: components["parameters"]["ScopeFilter"];
+            };
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 "If-Match": components["parameters"]["IfMatch"];
@@ -1139,7 +1159,9 @@ export interface operations {
     };
     wakeRuntime: {
         parameters: {
-            query?: never;
+            query?: {
+                scopeId?: components["parameters"]["ScopeFilter"];
+            };
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 "If-Match": components["parameters"]["IfMatch"];
@@ -1163,7 +1185,9 @@ export interface operations {
     };
     getRuntimeConnections: {
         parameters: {
-            query?: never;
+            query?: {
+                scopeId?: components["parameters"]["ScopeFilter"];
+            };
             header?: never;
             path: {
                 runtimeId: components["parameters"]["RuntimeId"];
@@ -1235,7 +1259,9 @@ export interface operations {
     };
     getWorkspace: {
         parameters: {
-            query?: never;
+            query?: {
+                scopeId?: components["parameters"]["ScopeFilter"];
+            };
             header?: never;
             path: {
                 workspaceId: components["parameters"]["WorkspaceId"];
@@ -1252,7 +1278,9 @@ export interface operations {
     };
     putWorkspace: {
         parameters: {
-            query?: never;
+            query?: {
+                scopeId?: components["parameters"]["ScopeFilter"];
+            };
             header: {
                 "If-None-Match": components["parameters"]["IfNoneMatch"];
             };
@@ -1277,7 +1305,9 @@ export interface operations {
     };
     deleteWorkspace: {
         parameters: {
-            query?: never;
+            query?: {
+                scopeId?: components["parameters"]["ScopeFilter"];
+            };
             header: {
                 "If-Match": components["parameters"]["IfMatch"];
             };
@@ -1300,7 +1330,9 @@ export interface operations {
     };
     patchWorkspace: {
         parameters: {
-            query?: never;
+            query?: {
+                scopeId?: components["parameters"]["ScopeFilter"];
+            };
             header: {
                 "If-Match": components["parameters"]["IfMatch"];
             };

@@ -1,4 +1,4 @@
-# ADR-020: Portable runtimes use one host-owned OMP authority
+# ADR-025: Portable runtimes use one host-owned OMP authority
 
 - Status: accepted for Portable Agent Platform v1.
 - Scope: one top-level portable runtime, its one cmux machine, and its one OMP session authority.

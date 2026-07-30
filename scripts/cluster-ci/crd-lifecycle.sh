@@ -123,6 +123,11 @@ for resource in $live_resources; do
     rm -f "$installed_crd"
     continue
   fi
+  stored_versions=$("$kubectl" get "crd/$resource" -o 'jsonpath={.status.storedVersions[*]}')
+  if [ "$stored_versions" != v1alpha1 ]; then
+    echo "crd/$resource status.storedVersions is '$stored_versions'; expected exactly 'v1alpha1' before CRD mutation" >&2
+    exit 65
+  fi
   "$kubectl" get "$resource" --all-namespaces -o json >"$live_objects"
   run_validator objects "$crd_directory" <"$live_objects"
 done

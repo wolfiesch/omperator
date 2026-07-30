@@ -72,7 +72,7 @@
       }
     },
     "/v1/workspaces/{workspaceId}": {
-      "parameters": [{ "$ref": "#/components/parameters/WorkspaceId" }],
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceId" }, { "$ref": "#/components/parameters/ScopeFilter" }],
       "put": {
         "operationId": "putWorkspace",
         "parameters": [{ "$ref": "#/components/parameters/IfNoneMatch" }],
@@ -152,7 +152,7 @@
       }
     },
     "/v1/runtimes/{runtimeId}": {
-      "parameters": [{ "$ref": "#/components/parameters/RuntimeId" }],
+      "parameters": [{ "$ref": "#/components/parameters/RuntimeId" }, { "$ref": "#/components/parameters/ScopeFilter" }],
       "put": {
         "operationId": "putRuntime",
         "parameters": [{ "$ref": "#/components/parameters/IfNoneMatch" }],
@@ -212,7 +212,7 @@
       }
     },
     "/v1/runtimes/{runtimeId}:wake": {
-      "parameters": [{ "$ref": "#/components/parameters/RuntimeId" }],
+      "parameters": [{ "$ref": "#/components/parameters/RuntimeId" }, { "$ref": "#/components/parameters/ScopeFilter" }],
       "post": {
         "operationId": "wakeRuntime",
         "parameters": [
@@ -232,7 +232,7 @@
       }
     },
     "/v1/runtimes/{runtimeId}:sleep": {
-      "parameters": [{ "$ref": "#/components/parameters/RuntimeId" }],
+      "parameters": [{ "$ref": "#/components/parameters/RuntimeId" }, { "$ref": "#/components/parameters/ScopeFilter" }],
       "post": {
         "operationId": "sleepRuntime",
         "parameters": [
@@ -252,7 +252,7 @@
       }
     },
     "/v1/runtimes/{runtimeId}/connections": {
-      "parameters": [{ "$ref": "#/components/parameters/RuntimeId" }],
+      "parameters": [{ "$ref": "#/components/parameters/RuntimeId" }, { "$ref": "#/components/parameters/ScopeFilter" }],
       "get": {
         "operationId": "getRuntimeConnections",
         "responses": {

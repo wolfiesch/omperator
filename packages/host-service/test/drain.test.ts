@@ -5,234 +5,185 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { hostId } from "@t4-code/host-wire";
 import { createAppserver, type LocalAppserver } from "../src/server.ts";
-import type { AppserverAdminCallbacks } from "../src/types.ts";
+import type { AppserverOptions, RuntimeExternalActivity } from "../src/types.ts";
 import { RawUdsWebSocket } from "./raw-uds-client.ts";
 
 const host = hostId("host-test");
 const epoch = "epoch-test";
-const health = { ok: true as const, hostId: host, epoch };
-const idleBusy = {
-	connections: 0,
-	inflightMessages: 0,
-	startingSupervisors: 0,
-	lifecycleMutations: 0,
-	sessionOperations: 0,
-	activePrompts: 0,
-	rpcSupervisorsWithPendingCalls: 0,
-	busySessions: 0,
-	openTerminalSessions: 0,
-	pendingConfirmations: 0,
-	outboundSends: 0,
+const idleSignals = {
+	clients: 0, ompTurns: 0, ompRetries: 0, ompCompactions: 0, bashCommands: 0,
+	jobs: 0, tasks: 0, approvals: 0, uiPending: 0, terminalConnections: 0,
+	terminalLeases: 0, browserPreviews: 0, browserLeases: 0, gatewayUpstreams: 0,
 };
-
-interface AdminResponse {
-	status: number;
-	body: unknown;
-}
-
+const idleActivity = { schemaVersion: 1, active: false, keepalive: false, policy: "allow-idle-sleep", signals: idleSignals };
+interface AdminResponse { status: number; body: unknown; }
 const started: LocalAppserver[] = [];
 const roots: string[] = [];
-
 afterEach(async () => {
 	await Promise.allSettled(started.splice(0).map(appserver => appserver.stop()));
 	await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true })));
 });
-
-async function startAppserver(socketPath?: string, admin?: AppserverAdminCallbacks): Promise<LocalAppserver> {
-	const root = socketPath ? undefined : await fs.mkdtemp(path.join(os.tmpdir(), "omp-appserver-drain-"));
-	if (root) roots.push(root);
-	const appserver = createAppserver({
-		hostId: host,
-		epoch,
-		socketPath: socketPath ?? path.join(root!, "appserver.sock"),
-		admin,
+async function startAppserver(options: Partial<AppserverOptions> = {}): Promise<LocalAppserver> {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), "omp-appserver-drain-"));
+	roots.push(root);
+	const appserver = createAppserver({ hostId: host, epoch, socketPath: path.join(root, "appserver.sock"), ...options });
+	await appserver.start(); started.push(appserver); return appserver;
+}
+function adminRequest(socketPath: string, route: string, body: object): Promise<AdminResponse> {
+	const payload = JSON.stringify(body); const gate = Promise.withResolvers<AdminResponse>();
+	const request = http.request({ socketPath, path: route, method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(payload) } }, response => {
+		const chunks: Buffer[] = []; response.on("data", chunk => chunks.push(Buffer.from(chunk)));
+		response.once("error", gate.reject); response.once("end", () => gate.resolve({ status: response.statusCode ?? 0, body: JSON.parse(Buffer.concat(chunks).toString("utf8")) }));
 	});
-	await appserver.start();
-	started.push(appserver);
-	return appserver;
+	request.once("error", gate.reject); request.end(payload); return gate.promise;
 }
+const identity = { expectedRuntimeUid: String(host), expectedGeneration: epoch };
+const activity = (socketPath: string, body: object = identity) => adminRequest(socketPath, "/admin/runtime-activity", body);
+const drain = (socketPath: string, body: object = identity) => adminRequest(socketPath, "/admin/drain-if-idle", body);
+const quiesce = (socketPath: string, body: object = identity) => adminRequest(socketPath, "/admin/quiesce", body);
+const reopen = (socketPath: string, body: object = identity) => adminRequest(socketPath, "/admin/reopen", body);
 
-function adminRequest(socketPath: string, path: string, payload: string, partial = false) {
-	const gate = Promise.withResolvers<AdminResponse>();
-	const request = http.request(
-		{
-			socketPath,
-			path,
-			method: "POST",
-			headers: {
-				"content-type": "application/json",
-				"content-length": Buffer.byteLength(payload),
-			},
-		},
-		response => {
-			const chunks: Buffer[] = [];
-			response.on("data", chunk => chunks.push(Buffer.from(chunk)));
-			response.once("error", gate.reject);
-			response.once("end", () => {
-				try {
-					gate.resolve({
-						status: response.statusCode ?? 0,
-						body: JSON.parse(Buffer.concat(chunks).toString("utf8")),
-					});
-				} catch (error) {
-					gate.reject(error);
-				}
-			});
-		},
-	);
-	request.once("error", gate.reject);
-	if (partial) request.write(payload.slice(0, -1));
-	else request.end(payload);
-	return { request, response: gate.promise };
-}
-
-async function postDrain(
-	socketPath: string,
-	body: { expectedHostId: string; expectedEpoch: string },
-): Promise<AdminResponse> {
-	const payload = JSON.stringify(body);
-	return adminRequest(socketPath, "/admin/drain-if-idle", payload).response;
-}
-
-describe("atomic appserver drain", () => {
-	test("identity mismatch reports the complete idle snapshot and leaves websocket ingress usable", async () => {
+describe("bounded runtime activity and atomic drain", () => {
+	test("wrong host or generation rejects activity and cannot fence ingress", async () => {
 		const appserver = await startAppserver();
-		const response = await postDrain(appserver.socketPath, {
-			expectedHostId: "another-host",
-			expectedEpoch: epoch,
-		});
+		expect(await activity(appserver.socketPath, { expectedRuntimeUid: String(host), expectedGeneration: "stale" })).toEqual({ status: 403, body: { error: "invalid admin request" } });
+		expect(await drain(appserver.socketPath, { expectedRuntimeUid: "another-runtime", expectedGeneration: epoch })).toEqual({ status: 200, body: { state: "identity_mismatch", activity: idleActivity } });
+		const client = await RawUdsWebSocket.connect(appserver.socketPath); await client.close();
+	});
 
-		expect(response).toEqual({
-			status: 200,
-			body: { state: "identity_mismatch", health, busy: idleBusy },
+	test("each external signal, keepalive, and policy independently blocks drain without leaking values", async () => {
+		const external: RuntimeExternalActivity = {};
+		const mutable = external as Record<string, unknown>;
+		const appserver = await startAppserver({ runtimeActivity: () => external });
+		for (const signal of ["terminalConnections", "terminalLeases", "browserPreviews", "browserLeases", "gatewayUpstreams"] as const) {
+			mutable[signal] = 1;
+			const response = await drain(appserver.socketPath);
+			expect(response.body).toMatchObject({ state: "busy", activity: { active: true, signals: { [signal]: 1 } } });
+			delete mutable[signal];
+		}
+		mutable.keepalive = true;
+		expect((await drain(appserver.socketPath)).body).toMatchObject({ state: "busy", activity: { active: true, keepalive: true } });
+		delete mutable.keepalive; mutable.policy = "keep-awake";
+		expect((await drain(appserver.socketPath)).body).toMatchObject({ state: "busy", activity: { active: true, policy: "keep-awake" } });
+	});
+
+	test("a connected Appserver client is authoritative activity", async () => {
+		const appserver = await startAppserver(); const client = await RawUdsWebSocket.connect(appserver.socketPath);
+		expect((await activity(appserver.socketPath)).body).toMatchObject({ active: true, signals: { clients: 1 } });
+		expect((await drain(appserver.socketPath)).body).toMatchObject({ state: "busy", activity: { signals: { clients: 1 } } });
+		await client.close();
+	});
+
+	test("durable flush failure leaves ingress running", async () => {
+		const appserver = await startAppserver({ durableFlush: async () => { throw new Error("disk unavailable"); } });
+		expect(await drain(appserver.socketPath)).toEqual({ status: 200, body: { state: "flush_failed", activity: idleActivity } });
+		const client = await RawUdsWebSocket.connect(appserver.socketPath); await client.close();
+	});
+
+	test("idle drain flushes once and returns a generation-bound durable shutdown acknowledgement", async () => {
+		let flushes = 0; const appserver = await startAppserver({ durableFlush: async () => { flushes += 1; } });
+		expect(await drain(appserver.socketPath)).toEqual({ status: 200, body: { state: "drained", activity: idleActivity, shutdownAck: { schemaVersion: 1, generation: epoch, durable: true } } });
+		expect(flushes).toBe(1);
+		await expect(RawUdsWebSocket.connect(appserver.socketPath)).rejects.toThrow("websocket handshake failed");
+	});
+
+	test("generation-bound reopen clears a completed drain for wake-sleep-wake", async () => {
+		const transitions: string[] = [];
+		let flushes = 0;
+		const appserver = await startAppserver({
+			runtimeIngress: {
+				beginDrain: mode => { transitions.push(`begin:${mode}`); },
+				rollbackDrain: () => { transitions.push("reopen"); },
+				quiesce: async () => undefined,
+			},
+			durableFlush: async () => { flushes += 1; },
 		});
+		expect((await drain(appserver.socketPath)).body).toMatchObject({ state: "drained" });
+		expect((await reopen(appserver.socketPath, { ...identity, expectedGeneration: "stale" })).body).toEqual({ state: "identity_mismatch", generation: epoch });
+		await expect(RawUdsWebSocket.connect(appserver.socketPath)).rejects.toThrow("websocket handshake failed");
+		expect(await reopen(appserver.socketPath)).toEqual({ status: 200, body: { state: "reopened", generation: epoch } });
+		expect(await reopen(appserver.socketPath)).toEqual({ status: 200, body: { state: "already_reopened", generation: epoch } });
+		const client = await RawUdsWebSocket.connect(appserver.socketPath);
+		await client.close();
+		expect((await drain(appserver.socketPath)).body).toMatchObject({ state: "drained" });
+		expect(flushes).toBe(2);
+		expect(transitions).toEqual(["begin:idle", "reopen", "begin:idle"]);
+	});
+
+	test("concurrent drain retries await the same durable flush acknowledgement", async () => {
+		let flushes = 0;
+		const entered = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		const appserver = await startAppserver({
+			durableFlush: async () => {
+				flushes += 1;
+				entered.resolve();
+				await release.promise;
+			},
+		});
+		const first = drain(appserver.socketPath);
+		await entered.promise;
+		let secondSettled = false;
+		const second = drain(appserver.socketPath).finally(() => { secondSettled = true; });
+		await Bun.sleep(10);
+		expect(secondSettled).toBe(false);
+		release.resolve();
+		const expected = { status: 200, body: { state: "drained", activity: idleActivity, shutdownAck: { schemaVersion: 1, generation: epoch, durable: true } } };
+		expect(await first).toEqual(expected);
+		expect(await second).toEqual(expected);
+		expect(flushes).toBe(1);
+	});
+	test("external ingress is fenced before snapshot and rolled back on flush failure", async () => {
+		let gated = false;
+		const transitions: string[] = [];
+		const appserver = await startAppserver({
+			runtimeIngress: {
+				beginDrain: mode => { transitions.push(`begin:${mode}`); gated = true; },
+				rollbackDrain: () => { transitions.push("rollback"); gated = false; },
+				quiesce: async () => undefined,
+			},
+			durableFlush: async () => {
+				expect(gated).toBe(true);
+				throw new Error("checkpoint failed");
+			},
+		});
+		expect((await drain(appserver.socketPath)).body).toMatchObject({ state: "flush_failed" });
+		expect(transitions).toEqual(["begin:idle", "rollback"]);
+		expect(gated).toBe(false);
+	});
+
+	test("does not acknowledge when activity appears during the durable flush", async () => {
+		const external: RuntimeExternalActivity = {};
+		const mutable = external as Record<string, unknown>;
+		const appserver = await startAppserver({
+			runtimeActivity: () => external,
+			durableFlush: async () => { mutable.terminalConnections = 1; },
+		});
+		const response = await drain(appserver.socketPath);
+		expect(response.body).toMatchObject({ state: "busy", activity: { active: true, signals: { terminalConnections: 1 } } });
+		expect(response.body).not.toHaveProperty("shutdownAck");
 		const client = await RawUdsWebSocket.connect(appserver.socketPath);
 		await client.close();
 	});
 
-	test("an open connection reports busy without fencing existing or new clients", async () => {
-		const appserver = await startAppserver();
-		const first = await RawUdsWebSocket.connect(appserver.socketPath);
-		const response = await postDrain(appserver.socketPath, {
-			expectedHostId: host,
-			expectedEpoch: epoch,
+	test("explicit quiesce closes active clients and converges despite keep-awake policy", async () => {
+		const transitions: string[] = [];
+		const appserver = await startAppserver({
+			runtimeActivity: () => ({ keepalive: true, policy: "keep-awake" }),
+			runtimeIngress: {
+				beginDrain: mode => { transitions.push(`begin:${mode}`); },
+				rollbackDrain: () => { transitions.push("rollback"); },
+				quiesce: async () => { transitions.push("quiesce"); },
+			},
+			durableFlush: async () => { transitions.push("flush"); },
 		});
-
+		const client = await RawUdsWebSocket.connect(appserver.socketPath);
+		const response = await quiesce(appserver.socketPath);
 		expect(response).toEqual({
 			status: 200,
-			body: {
-				state: "busy",
-				health,
-				busy: { ...idleBusy, connections: 1 },
-			},
+			body: { state: "drained", activity: idleActivity, shutdownAck: { schemaVersion: 1, generation: epoch, durable: true } },
 		});
-		const second = await RawUdsWebSocket.connect(appserver.socketPath);
-		await Promise.all([first.close(), second.close()]);
-	});
-
-	test("an idle drain atomically fences new websocket command ingress until restart", async () => {
-		const appserver = await startAppserver();
-		const socketPath = appserver.socketPath;
-		const response = await postDrain(socketPath, {
-			expectedHostId: host,
-			expectedEpoch: epoch,
-		});
-
-		expect(response).toEqual({
-			status: 200,
-			body: { state: "draining", health, busy: idleBusy },
-		});
-		await expect(RawUdsWebSocket.connect(socketPath)).rejects.toThrow("websocket handshake failed");
-
-		await appserver.stop();
-		started.splice(started.indexOf(appserver), 1);
-		const restarted = await startAppserver(socketPath);
-		const client = await RawUdsWebSocket.connect(restarted.socketPath);
-		await client.close();
-	});
-
-	test("an in-flight owner mutation blocks drain and new mutations stay fenced after success", async () => {
-		const revoked: string[] = [];
-		const appserver = await startAppserver(undefined, {
-			issuePairingTicket: () => ({ code: "123456", expiresAt: Date.now() + 60_000 }),
-			listDevices: () => [],
-			revokeDevice: deviceId => {
-				revoked.push(deviceId);
-				return { revoked: true };
-			},
-		});
-		const blocker = await RawUdsWebSocket.connect(appserver.socketPath);
-		const payload = JSON.stringify({ deviceId: "device-before-drain" });
-		const pending = adminRequest(appserver.socketPath, "/admin/revoke", payload, true);
-
-		let concurrent: AdminResponse | undefined;
-		for (let attempt = 0; attempt < 20; attempt += 1) {
-			const response = await postDrain(appserver.socketPath, { expectedHostId: host, expectedEpoch: epoch });
-			if (
-				JSON.stringify(response.body) ===
-				JSON.stringify({
-					state: "busy",
-					health,
-					busy: { ...idleBusy, connections: 1, lifecycleMutations: 1 },
-				})
-			) {
-				concurrent = response;
-				break;
-			}
-			await Bun.sleep(5);
-		}
-		expect(concurrent).toEqual({
-			status: 200,
-			body: {
-				state: "busy",
-				health,
-				busy: { ...idleBusy, connections: 1, lifecycleMutations: 1 },
-			},
-		});
-
-		await blocker.close();
-		let mutationOnly: AdminResponse | undefined;
-		for (let attempt = 0; attempt < 20; attempt += 1) {
-			const response = await postDrain(appserver.socketPath, { expectedHostId: host, expectedEpoch: epoch });
-			if (
-				JSON.stringify(response.body) ===
-				JSON.stringify({
-					state: "busy",
-					health,
-					busy: { ...idleBusy, lifecycleMutations: 1 },
-				})
-			) {
-				mutationOnly = response;
-				break;
-			}
-			await Bun.sleep(5);
-		}
-		expect(mutationOnly).toEqual({
-			status: 200,
-			body: {
-				state: "busy",
-				health,
-				busy: { ...idleBusy, lifecycleMutations: 1 },
-			},
-		});
-
-		pending.request.end(payload.slice(-1));
-		expect(await pending.response).toEqual({ status: 200, body: { revoked: true } });
-		expect(revoked).toEqual(["device-before-drain"]);
-		expect(await postDrain(appserver.socketPath, { expectedHostId: host, expectedEpoch: epoch })).toEqual({
-			status: 200,
-			body: { state: "draining", health, busy: idleBusy },
-		});
-
-		const rejected = adminRequest(
-			appserver.socketPath,
-			"/admin/revoke",
-			JSON.stringify({ deviceId: "device-after-drain" }),
-		);
-		expect(await rejected.response).toEqual({
-			status: 503,
-			body: { error: "invalid admin request" },
-		});
-		expect(revoked).toEqual(["device-before-drain"]);
+		expect(transitions).toEqual(["begin:explicit", "quiesce", "flush"]);
+		await client.close().catch(() => undefined);
 	});
 });

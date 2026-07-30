@@ -48,7 +48,7 @@ spec:
               - matchExpressions:
                   - key: kubernetes.io/hostname
                     operator: NotIn
-                    values: ["k3s-worker-02"]
+                    values: {{ toJson .Values.session.nodeExclude }}
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
             - weight: 100
@@ -76,14 +76,16 @@ spec:
               valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
             - name: T4_SESSION_RUNTIME_IMAGE
               value: {{ include "t4-cluster.image" .Values.images.sessionRuntime | quote }}
+            - name: T4_RUNTIME_ACTIVITY_POLL_SECONDS
+              value: {{ .Values.controller.runtimeActivityPollSeconds | quote }}
             - name: T4_SESSION_OMP_CONFIG_MAP
               value: {{ .Values.session.omp.configMap | quote }}
             - name: T4_SESSION_OMP_MODELS_KEY
               value: {{ .Values.session.omp.modelsKey | quote }}
             - name: T4_SESSION_OMP_SETTINGS_KEY
               value: {{ .Values.session.omp.settingsKey | quote }}
-            - name: T4_SESSION_SERVICE_ACCOUNT
-              value: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "session") | quote }}
+            - name: T4_SESSION_TOKEN_REVIEWER_CLUSTER_ROLE
+              value: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "session-token-reviewer") | quote }}
             - name: T4_CLUSTER_SERVER_SERVICE_ACCOUNT
               value: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server") | quote }}
             - name: T4_KUBERNETES_API_AUDIENCE
@@ -202,7 +204,7 @@ spec:
               - matchExpressions:
                   - key: kubernetes.io/hostname
                     operator: NotIn
-                    values: ["k3s-worker-02"]
+                    values: {{ toJson .Values.session.nodeExclude }}
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
             - weight: 100
@@ -229,12 +231,53 @@ spec:
               value: "8080"
             - name: T4_CLUSTER_ADMIN_PORT
               value: "9090"
+            {{- if or .Values.server.identity.configMapRef.name .Values.server.identity.secretRef.name }}
+            - name: T4_CLUSTER_IDENTITY_CONFIG_FILE
+              value: /var/run/t4-identity/config.json
+            {{- else }}
             - name: T4_CLUSTER_IDENTITY_PROVIDER
-              value: {{ .Values.server.identityProvider | quote }}
+              value: "tailscale"
+            {{- end }}
             - name: T4_CLUSTER_TRUSTED_PROXY_ADDRESSES
               value: {{ join "," .Values.server.trustedProxyAddresses | quote }}
             - name: T4_CLUSTER_TRUSTED_PROXY_CIDRS
               value: {{ join "," .Values.server.trustedProxyCIDRs | quote }}
+            - name: T4_PUBLIC_REST_BASE_URL
+              value: {{ .Values.server.publicApi.restBaseURL | quote }}
+            - name: T4_PUBLIC_OMP_APP_WEBSOCKET_URL
+              value: {{ .Values.server.publicApi.ompAppWebSocketURL | quote }}
+            - name: T4_BUILD_VERSION
+              value: {{ .Values.server.publicApi.build.version | quote }}
+            - name: T4_BUILD_REVISION
+              value: {{ .Values.server.publicApi.build.revision | quote }}
+            - name: T4_BUILD_BUILT_AT
+              value: {{ .Values.server.publicApi.build.builtAt | quote }}
+            - name: T4_ADMISSION_MAX_ACTIVE_RUNTIMES
+              value: {{ .Values.server.admission.maxActiveRuntimes | quote }}
+            - name: T4_ADMISSION_MAX_RETAINED_RUNTIMES
+              value: {{ .Values.server.admission.maxRetainedRuntimes | quote }}
+            - name: T4_ADMISSION_MAX_WORKSPACE_CAPACITY_BYTES
+              value: {{ .Values.server.admission.maxWorkspaceCapacityBytes | quote }}
+            - name: T4_ADMISSION_MAX_CPU_MILLIS
+              value: {{ .Values.server.admission.maxCpuMillis | quote }}
+            - name: T4_ADMISSION_MAX_MEMORY_BYTES
+              value: {{ .Values.server.admission.maxMemoryBytes | quote }}
+            - name: T4_ADMISSION_MAX_GPU_UNITS
+              value: {{ .Values.server.admission.maxGpuUnits | quote }}
+            - name: T4_ADMISSION_BROWSER_ENABLED
+              value: {{ .Values.server.admission.browserEnabled | quote }}
+            - name: T4_ADMISSION_RUNTIME_CPU_MILLIS
+              value: {{ .Values.server.admission.runtimeResources.cpuMillis | quote }}
+            - name: T4_ADMISSION_RUNTIME_MEMORY_BYTES
+              value: {{ .Values.server.admission.runtimeResources.memoryBytes | quote }}
+            - name: T4_ADMISSION_RUNTIME_GPU_UNITS
+              value: {{ .Values.server.admission.runtimeResources.gpuUnits | quote }}
+            - name: T4_ADMISSION_CREATION_WINDOW_SECONDS
+              value: {{ .Values.server.admission.creationRate.windowSeconds | quote }}
+            - name: T4_ADMISSION_CREATION_BURST
+              value: {{ .Values.server.admission.creationRate.burst | quote }}
+            - name: T4_ADMISSION_MAXIMUM_RETRY_AFTER_SECONDS
+              value: {{ .Values.server.admission.creationRate.maximumRetryAfterSeconds | quote }}
             - name: T4_CLUSTER_HOST_NAME
               value: {{ .Values.clusterHost.name | quote }}
             - name: T4_CLUSTER_IDENTITY_TOKEN_FILE
@@ -253,6 +296,12 @@ spec:
               valueFrom: {fieldRef: {fieldPath: metadata.name}}
             - name: POD_UID
               valueFrom: {fieldRef: {fieldPath: metadata.uid}}
+            {{- if and .Values.sshGateway.enabled .Values.sshGateway.commands.provider }}
+            - name: T4_PROVIDER_INTERNAL_HMAC_FILE
+              value: /var/run/secrets/t4-provider-assertion/keyring.json
+            - name: T4_PROVIDER_INTERNAL_AUDIENCE
+              value: {{ regexReplaceAll "^wss?://" (default (printf "ws://%s.%s.svc:8080/internal/provider" (include "t4-cluster.suffixedName" (dict "context" . "suffix" "server")) .Release.Namespace) .Values.sshGateway.providerInternalWebSocketURL) "" | quote }}
+            {{- end }}
             {{- if .Values.woodpecker.existingSecret }}
             - name: T4_WOODPECKER_TOKEN
               valueFrom:
@@ -319,12 +368,49 @@ spec:
             - name: kubernetes-api-access
               mountPath: /var/run/secrets/kubernetes.io/serviceaccount
               readOnly: true
+            {{- if or .Values.server.identity.configMapRef.name .Values.server.identity.secretRef.name }}
+            - name: request-identity
+              mountPath: /var/run/t4-identity
+              readOnly: true
+            {{- end }}
             {{- if .Values.woodpecker.serviceAccountAudience }}
             - name: ci-identity
               mountPath: /var/run/secrets/t4-ci
               readOnly: true
             {{- end }}
+            {{- if and .Values.sshGateway.enabled .Values.sshGateway.commands.provider }}
+            - name: provider-assertion
+              mountPath: /var/run/secrets/t4-provider-assertion
+              readOnly: true
+            {{- end }}
       volumes:
+        {{- if or .Values.server.identity.configMapRef.name .Values.server.identity.secretRef.name }}
+        - name: request-identity
+          {{- if .Values.server.identity.configMapRef.name }}
+          configMap:
+            name: {{ .Values.server.identity.configMapRef.name | quote }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.server.identity.configMapRef.key | quote }}
+                path: config.json
+          {{- else }}
+          secret:
+            secretName: {{ .Values.server.identity.secretRef.name | quote }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.server.identity.secretRef.key | quote }}
+                path: config.json
+          {{- end }}
+        {{- end }}
+        {{- if and .Values.sshGateway.enabled .Values.sshGateway.commands.provider }}
+        - name: provider-assertion
+          secret:
+            secretName: {{ .Values.sshGateway.existingProviderAssertionSecret | quote }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.sshGateway.providerAssertionKeyringKey | quote }}
+                path: keyring.json
+        {{- end }}
         - name: cluster-identity
           projected:
             defaultMode: 0440
@@ -408,7 +494,7 @@ spec:
               - matchExpressions:
                   - key: kubernetes.io/hostname
                     operator: NotIn
-                    values: ["k3s-worker-02"]
+                    values: {{ toJson .Values.session.nodeExclude }}
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
             - weight: 100

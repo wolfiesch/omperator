@@ -1,7 +1,10 @@
 package controllers
 
 import (
+	"context"
+	"errors"
 	"sync"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -16,66 +19,107 @@ const (
 )
 
 var (
-	reconcileTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "t4_cluster_reconcile_total",
-			Help: "Total completed T4 cluster reconciliations by resource kind and result.",
+	reconcileDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:        "omperator_reconcile_duration_seconds",
+			Help:        "Controller reconciliation duration by bounded resource kind and result.",
+			ConstLabels: prometheus.Labels{"component": "cluster-operator"},
+			Buckets:     prometheus.DefBuckets,
 		},
-		[]string{"kind", "result"},
+		[]string{"resource", "result"},
 	)
-	conditionGauge = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "t4_cluster_condition",
-			Help: "Number of currently observed T4 cluster resources by kind, condition, and boolean status.",
+	reconcileErrors = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name:        "omperator_reconcile_errors_total",
+			Help:        "Controller reconciliation failures by bounded resource kind and error class.",
+			ConstLabels: prometheus.Labels{"component": "cluster-operator"},
 		},
-		[]string{"kind", "condition", "status"},
+		[]string{"resource", "error_class"},
+	)
+	runtimeStartDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:        "omperator_runtime_start_duration_seconds",
+			Help:        "Runtime start duration by bounded result.",
+			ConstLabels: prometheus.Labels{"component": "cluster-operator"},
+			Buckets:     prometheus.DefBuckets,
+		},
+		[]string{"result"},
+	)
+	runtimeFenceDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:        "omperator_runtime_fence_duration_seconds",
+			Help:        "Runtime positive-fence duration by bounded result.",
+			ConstLabels: prometheus.Labels{"component": "cluster-operator"},
+			Buckets:     prometheus.DefBuckets,
+		},
+		[]string{"result"},
+	)
+	storageOperationDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:        "omperator_storage_operation_duration_seconds",
+			Help:        "Storage operation duration by bounded operation and result.",
+			ConstLabels: prometheus.Labels{"component": "cluster-operator"},
+			Buckets:     prometheus.DefBuckets,
+		},
+		[]string{"operation", "result"},
+	)
+	runtimeReady = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name:        "omperator_runtime_ready",
+		Help:        "Number of currently ready runtimes.",
+		ConstLabels: prometheus.Labels{"component": "cluster-operator"},
+	})
+	drainTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name:        "omperator_drain_total",
+			Help:        "Generation-bound runtime drain outcomes.",
+			ConstLabels: prometheus.Labels{"component": "cluster-operator"},
+		},
+		[]string{"result"},
 	)
 	registerControllerMetricsOnce sync.Once
-	conditionStore                = aggregateConditionStore{
-		resources: make(map[string]map[types.NamespacedName]map[string]metav1.ConditionStatus),
-	}
+	runtimeReadyStore             = aggregateReadyStore{resources: make(map[types.NamespacedName]bool)}
 )
 
-var knownConditions = map[string][]string{
-	metricKindClusterHost: {"Available", "CIReady", "StorageReady"},
-	metricKindWorkspace:   {"HostReady", "Ready", "StorageReady"},
-	metricKindSession:     {"Available", "HostReady", "RuntimeConfigured", "WorkspaceReady"},
-}
-
-type aggregateConditionStore struct {
+type aggregateReadyStore struct {
 	mu        sync.Mutex
-	resources map[string]map[types.NamespacedName]map[string]metav1.ConditionStatus
+	resources map[types.NamespacedName]bool
 }
 
-func init() {
-	registerControllerMetrics()
-}
+func init() { registerControllerMetrics() }
 
 func registerControllerMetrics() {
 	registerControllerMetricsOnce.Do(func() {
-		controllermetrics.Registry.MustRegister(reconcileTotal, conditionGauge)
-		for kind, conditions := range knownConditions {
-			reconcileTotal.WithLabelValues(kind, "success")
-			reconcileTotal.WithLabelValues(kind, "error")
-			for _, conditionType := range conditions {
-				conditionGauge.WithLabelValues(kind, conditionType, "true").Set(0)
-				conditionGauge.WithLabelValues(kind, conditionType, "false").Set(0)
+		controllermetrics.Registry.MustRegister(reconcileDuration, reconcileErrors, runtimeStartDuration, runtimeFenceDuration, storageOperationDuration, runtimeReady, drainTotal)
+		for _, resource := range []string{metricKindClusterHost, metricKindWorkspace, metricKindSession} {
+			for _, result := range []string{"success", "error"} {
+				reconcileDuration.WithLabelValues(resource, result)
 			}
+			reconcileErrors.WithLabelValues(resource, "internal")
+		}
+		for _, result := range []string{"success", "error", "timeout", "fenced"} {
+			runtimeStartDuration.WithLabelValues(result)
+			runtimeFenceDuration.WithLabelValues(result)
+			for _, operation := range []string{"read", "write", "remount", "probe"} {
+				storageOperationDuration.WithLabelValues(operation, result)
+			}
+		}
+		runtimeReady.Set(0)
+		for _, result := range []string{"success", "error", "timeout"} {
+			drainTotal.WithLabelValues(result)
 		}
 	})
 }
 
-func observeReconcile(kind string, key types.NamespacedName, conditions []metav1.Condition, objectPresent bool, reconcileErr error) {
+func observeReconcile(kind string, key types.NamespacedName, phase string, objectPresent bool, reconcileErr error, startedAt time.Time) {
 	result := "success"
 	if reconcileErr != nil {
 		result = "error"
+		reconcileErrors.WithLabelValues(kind, "internal").Inc()
 	}
-	reconcileTotal.WithLabelValues(kind, result).Inc()
-
-	if !objectPresent && reconcileErr != nil {
-		return
+	reconcileDuration.WithLabelValues(kind, result).Observe(time.Since(startedAt).Seconds())
+	if kind == metricKindSession && (objectPresent || reconcileErr == nil) {
+		runtimeReadyStore.project(key, phase == "Ready", objectPresent)
 	}
-	conditionStore.project(kind, key, conditions, objectPresent)
 }
 
 func conditionObjectPresent(object metav1.Object, fetched bool, reconcileErr error) bool {
@@ -85,52 +129,54 @@ func conditionObjectPresent(object metav1.Object, fetched bool, reconcileErr err
 	return reconcileErr != nil || object.GetDeletionTimestamp().IsZero() || len(object.GetFinalizers()) > 0
 }
 
-func (s *aggregateConditionStore) project(kind string, key types.NamespacedName, conditions []metav1.Condition, objectPresent bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	resources := s.resources[kind]
-	if resources == nil {
-		resources = make(map[types.NamespacedName]map[string]metav1.ConditionStatus)
-		s.resources[kind] = resources
+func observeDrain(err error) {
+	result := "success"
+	if errors.Is(err, context.DeadlineExceeded) {
+		result = "timeout"
+	} else if err != nil {
+		result = "error"
 	}
-	if objectPresent {
-		current := resources[key]
-		if current == nil {
-			current = make(map[string]metav1.ConditionStatus, len(knownConditions[kind]))
-		} else {
-			clear(current)
-		}
-		for i := range conditions {
-			if containsCondition(knownConditions[kind], conditions[i].Type) && (conditions[i].Status == metav1.ConditionTrue || conditions[i].Status == metav1.ConditionFalse) {
-				current[conditions[i].Type] = conditions[i].Status
-			}
-		}
-		resources[key] = current
-	} else {
-		delete(resources, key)
-	}
-
-	for _, conditionType := range knownConditions[kind] {
-		var trueCount, falseCount int
-		for _, current := range resources {
-			switch current[conditionType] {
-			case metav1.ConditionTrue:
-				trueCount++
-			case metav1.ConditionFalse:
-				falseCount++
-			}
-		}
-		conditionGauge.WithLabelValues(kind, conditionType, "true").Set(float64(trueCount))
-		conditionGauge.WithLabelValues(kind, conditionType, "false").Set(float64(falseCount))
-	}
+	drainTotal.WithLabelValues(result).Inc()
 }
 
-func containsCondition(conditions []string, wanted string) bool {
-	for _, condition := range conditions {
-		if condition == wanted {
-			return true
+func durationResult(err error, failed, fenced bool) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	if err != nil || failed {
+		return "error"
+	}
+	if fenced {
+		return "fenced"
+	}
+	return "success"
+}
+
+func observeRuntimeStart(err error, failed bool, startedAt time.Time) {
+	runtimeStartDuration.WithLabelValues(durationResult(err, failed, false)).Observe(time.Since(startedAt).Seconds())
+}
+
+func observeRuntimeFence(err error, uncertain bool, startedAt time.Time) {
+	runtimeFenceDuration.WithLabelValues(durationResult(err, false, uncertain)).Observe(time.Since(startedAt).Seconds())
+}
+
+func observeStorageOperation(operation string, err error, failed bool, startedAt time.Time) {
+	storageOperationDuration.WithLabelValues(operation, durationResult(err, failed, false)).Observe(time.Since(startedAt).Seconds())
+}
+
+func (s *aggregateReadyStore) project(key types.NamespacedName, ready, objectPresent bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if objectPresent {
+		s.resources[key] = ready
+	} else {
+		delete(s.resources, key)
+	}
+	count := 0
+	for _, current := range s.resources {
+		if current {
+			count++
 		}
 	}
-	return false
+	runtimeReady.Set(float64(count))
 }

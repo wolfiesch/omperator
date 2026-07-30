@@ -48,8 +48,8 @@ describe("cluster operator wire contract", () => {
 				type: "welcome",
 				selectedProtocol: "omp-app/1",
 				hostId: "cluster-host-uid-1",
-				ompVersion: "17.0.5",
-				ompBuild: "d83b688817651d39bfab00676db6109a2d1ccec5",
+				ompVersion: "17.1.7",
+				ompBuild: "107c7ca3054dbd7f4b2247598580a63a06d72bc4",
 				appserverVersion: "0.2.1",
 				appserverBuild: "cluster",
 				epoch: "replica-pod-uid-1",
@@ -223,6 +223,13 @@ describe("cluster operator wire contract", () => {
 				repository: { repositoryId: "t4-code", ref: "refs/heads/main", commit: "abcdef0" },
 			}),
 		).toMatchObject({ displayName: "T4 code", capacity: "20Gi" });
+		expect(
+			decodeClusterWorkspaceCreateArguments({
+				displayName: "Exact bytes",
+				retentionPolicy: "Retain",
+				capacity: "21474836480",
+			}),
+		).toMatchObject({ capacity: "21474836480" });
 		expect(
 			decodeClusterSessionCreateArguments({
 				workspaceId: "workspace-one",

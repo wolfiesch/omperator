@@ -13,7 +13,6 @@ import type {
 import type { RemoteConnection } from "@t4-code/host-service";
 
 const SESSION_NAME = /^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$/u;
-const AUDIENCE = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/u;
 const INTERNAL_TOKEN_PLACEHOLDER = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const MAX_PROJECTED_TOKEN_BYTES = 16_384;
 interface ConnectionGrant { capabilities: Set<string>; features: Set<string>; }
@@ -93,16 +92,23 @@ export class ClusterInternalRemotePolicy implements RemoteConnectionPolicy {
 }
 
 export interface SessionHostConfig {
-	readonly kubernetesBaseUrl: string;
-	readonly kubernetesTokenPath: string;
-	readonly kubernetesCaPath: string;
-	readonly kubernetesNamespacePath: string;
-	readonly kubernetesApiAudience: string;
-	readonly serverServiceAccountName: string;
+	readonly credentialBrokerSocket: string;
+	readonly runtimeId: string;
+	readonly runtimeUid: string;
+	readonly generation: string;
 	readonly sessionName: string;
 	readonly ompExecutable: string;
 	readonly stateRoot: string;
+	readonly runtimeRoot: string;
+	readonly privateRuntimeRoot: string;
+	readonly browserStateRoot: string;
+	readonly browserEnabled: boolean;
+	readonly readyPath: string;
+	readonly workspaceRoot: string;
 	readonly port: number;
+	readonly idlePolicy: "allow-idle-sleep" | "keep-awake";
+	readonly keepalive: boolean;
+
 }
 function required(env: Readonly<Record<string, string | undefined>>, name: string): string {
 	const value = env[name];
@@ -117,33 +123,59 @@ function absolutePath(value: string, name: string): string {
 	if (!isAbsolute(value)) throw new Error(`${name} must be absolute`);
 	return value;
 }
-function audience(value: string): string {
-	if (value.length > 253 || !AUDIENCE.test(value)) throw new Error("T4_KUBERNETES_API_AUDIENCE is invalid");
-	return value;
-}
 export function sessionHostConfigFromEnv(env: Readonly<Record<string, string | undefined>>): SessionHostConfig {
-	const serviceHost = required(env, "KUBERNETES_SERVICE_HOST");
-	const servicePort = Number(env.KUBERNETES_SERVICE_PORT_HTTPS ?? env.KUBERNETES_SERVICE_PORT ?? "443");
-	if (!Number.isSafeInteger(servicePort) || servicePort < 1 || servicePort > 65_535) throw new Error("KUBERNETES_SERVICE_PORT is invalid");
-	const serverServiceAccountName = dns(required(env, "T4_CLUSTER_SERVER_SERVICE_ACCOUNT"), "T4_CLUSTER_SERVER_SERVICE_ACCOUNT");
 	const sessionName = dns(required(env, "T4_SESSION_NAME"), "T4_SESSION_NAME");
-	const ompExecutable = env.T4_OMP_EXECUTABLE ?? "/opt/t4/bin/omp";
-	if (!isAbsolute(ompExecutable)) throw new Error("T4_OMP_EXECUTABLE must be absolute");
+	const runtimeId = required(env, "T4_RUNTIME_ID");
+	const generation = required(env, "T4_RUNTIME_GENERATION");
+	const runtimeUid = required(env, "T4_RUNTIME_UID");
+	if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(runtimeUid)) throw new Error("T4_RUNTIME_UID is invalid");
+
+	if (!/^runtime-[a-z0-9](?:[-a-z0-9]{0,53}[a-z0-9])?$/u.test(runtimeId)) throw new Error("T4_RUNTIME_ID is invalid");
+	if (!/^gen_[A-Za-z0-9_-]{24}$/u.test(generation)) throw new Error("T4_RUNTIME_GENERATION is invalid");
+	const ompExecutable = env.T4_OMP_EXECUTABLE ?? "/opt/t4/libexec/omp-authority";
+	if (ompExecutable !== "/opt/t4/libexec/omp-authority") throw new Error("T4_OMP_EXECUTABLE must select the authority-principal wrapper");
 	const stateRoot = absolutePath(required(env, "T4_SESSION_STATE_ROOT"), "T4_SESSION_STATE_ROOT");
-	if (!/^\/workspace\/\.t4\/sessions\/[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$/u.test(stateRoot))
+	if (!/^\/runtime-state\/[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$/u.test(stateRoot))
 		throw new Error("T4_SESSION_STATE_ROOT must select one isolated session directory");
+	if (stateRoot !== `/runtime-state/${runtimeId}`) throw new Error("T4_SESSION_STATE_ROOT must match T4_RUNTIME_ID");
+	const runtimeRoot = absolutePath(required(env, "T4_HOST_RUNTIME_DIR"), "T4_HOST_RUNTIME_DIR");
+	if (runtimeRoot !== `/run/t4/${runtimeId}`) throw new Error("T4_HOST_RUNTIME_DIR must match T4_RUNTIME_ID");
+	const privateRuntimeRoot = absolutePath(required(env, "T4_PRIVATE_RUNTIME_DIR"), "T4_PRIVATE_RUNTIME_DIR");
+	if (privateRuntimeRoot !== `${stateRoot}/private`) throw new Error("T4_PRIVATE_RUNTIME_DIR must select the session private runtime");
+	const browserStateRoot = absolutePath(required(env, "T4_BROWSER_STATE_DIR"), "T4_BROWSER_STATE_DIR");
+	if (browserStateRoot !== `${stateRoot}/browser`) throw new Error("T4_BROWSER_STATE_DIR must select the session browser state");
+	const browserEnabled = env.T4_GUI_ENABLED === "true" ? true : env.T4_GUI_ENABLED === "false" ? false : undefined;
+	if (browserEnabled === undefined) throw new Error("T4_GUI_ENABLED must be true or false");
+	const readyPath = absolutePath(required(env, "T4_SESSION_HOST_READY_PATH"), "T4_SESSION_HOST_READY_PATH");
+	if (readyPath !== `${runtimeRoot}/host.ready`) throw new Error("T4_SESSION_HOST_READY_PATH must match T4_HOST_RUNTIME_DIR");
+	const workspaceRoot = absolutePath(required(env, "T4_WORKSPACE_ROOT"), "T4_WORKSPACE_ROOT");
+	if (workspaceRoot === stateRoot || workspaceRoot.startsWith(`${stateRoot}/`) || stateRoot.startsWith(`${workspaceRoot}/`))
+		throw new Error("T4_WORKSPACE_ROOT must not overlap T4_SESSION_STATE_ROOT");
+	const credentialBrokerSocket = absolutePath(required(env, "T4_CREDENTIAL_BROKER_SOCKET"), "T4_CREDENTIAL_BROKER_SOCKET");
+	if (credentialBrokerSocket !== "/run/t4-credential/broker.sock") throw new Error("T4_CREDENTIAL_BROKER_SOCKET must select the private broker mount");
 	const port = Number(env.T4_SESSION_HOST_PORT ?? "8787");
 	if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) throw new Error("T4_SESSION_HOST_PORT is invalid");
+	const idlePolicy = env.T4_IDLE_POLICY === "keep-awake" ? "keep-awake" : env.T4_IDLE_POLICY === "allow-idle-sleep" ? "allow-idle-sleep" : undefined;
+	if (!idlePolicy) throw new Error("T4_IDLE_POLICY must be allow-idle-sleep or keep-awake");
+	const keepalive = env.T4_RUNTIME_KEEPALIVE === "true" ? true : env.T4_RUNTIME_KEEPALIVE === "false" ? false : undefined;
+	if (keepalive === undefined) throw new Error("T4_RUNTIME_KEEPALIVE must be true or false");
+
 	return {
-		kubernetesBaseUrl: `https://${serviceHost}:${servicePort}`,
-		kubernetesTokenPath: absolutePath(env.T4_KUBERNETES_TOKEN_PATH ?? "/var/run/secrets/kubernetes.io/serviceaccount/token", "T4_KUBERNETES_TOKEN_PATH"),
-		kubernetesCaPath: absolutePath(env.T4_KUBERNETES_CA_PATH ?? "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt", "T4_KUBERNETES_CA_PATH"),
-		kubernetesNamespacePath: absolutePath(env.T4_KUBERNETES_NAMESPACE_PATH ?? "/var/run/secrets/kubernetes.io/serviceaccount/namespace", "T4_KUBERNETES_NAMESPACE_PATH"),
-		kubernetesApiAudience: audience(env.T4_KUBERNETES_API_AUDIENCE ?? "https://kubernetes.default.svc"),
-		serverServiceAccountName,
+		credentialBrokerSocket,
+		runtimeId,
+		runtimeUid,
+		generation,
 		sessionName,
 		ompExecutable,
 		stateRoot,
+		runtimeRoot,
+		privateRuntimeRoot,
+		browserStateRoot,
+		browserEnabled,
+		readyPath,
+		workspaceRoot,
 		port,
+		idlePolicy,
+		keepalive,
 	};
 }

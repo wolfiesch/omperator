@@ -4,7 +4,14 @@ import path from "node:path";
 
 const MANIFEST_PATH = "compat/portable-agent-platform-v1.json";
 const OPENAPI_PATH = "packages/t4-api-contract/openapi.json";
-const COMMAND_REGISTRY_PATH = "packages/host-wire/src/command.ts";
+export const COMMAND_REGISTRY_PATHS = [
+  "packages/host-wire/src/command-descriptors/ci.ts",
+  "packages/host-wire/src/command-descriptors/operations.ts",
+  "packages/host-wire/src/command-descriptors/preview.ts",
+  "packages/host-wire/src/command-descriptors/prompt-media.ts",
+  "packages/host-wire/src/command-descriptors/runtime-workspace.ts",
+  "packages/host-wire/src/command-descriptors/sessions.ts",
+];
 const CLIENT_FRAME_PATH = "packages/host-wire/src/envelope.ts";
 const PROVIDER_PROTOCOL_PATH =
   "vendor/cmux-machine-provider-v1/upstream/cmux-tui/crates/cmux-tui-machine-protocol/src/lib.rs";
@@ -21,6 +28,9 @@ const expected = Object.freeze({
   cmuxBaseline: "192e44428c16b98210c951ec4bd5a86bc7139014",
   ompRepository: "https://github.com/can1357/oh-my-pi",
   ompBaseline: "d16c6168c86f40fc44f25118c2fd06fe160fcb93",
+  portableOmpRepository: "https://github.com/wolfiesch/oh-my-pi",
+  portableOmpCommit: "107c7ca3054dbd7f4b2247598580a63a06d72bc4",
+  portableOmpProvenance: "provenance/omp-runtime-v1.json",
   implementationStart: "48b1ba7b94f468154ed0e0998118d01f7dbffbd0",
   packagedOmpRepository: "https://github.com/wolfiesch/oh-my-pi",
   packagedOmpTag: "t4code-17.0.5-appserver-15",
@@ -33,19 +43,19 @@ const expected = Object.freeze({
   cmuxProviderCrateTree: "983bee74116c7d5f5832a7695379c870cd41ef60",
   cmuxProviderSourceTreeSha256: "ecf8ea6183275110d6270bd6d563d39eb3cecf7296a7c8e44e21f9ca6a46ca63",
   cmuxProviderFixtureCorpusSha256: "bdcb88ee9f46f300b400165cdb2dac2eebc186cb6b78c068ccab3caae4460f23",
-  topologyDocumentation: "docs/adr/020-portable-runtime-single-authority.md",
-  topologyDocumentationSha256: "da84f4b15fb7c68770ed77baacf5802da84e7fda496b5df20435f209c4e874d3",
+  topologyDocumentation: "docs/adr/025-portable-runtime-single-authority.md",
+  topologyDocumentationSha256: "264fe8dd8d5b7196a1e8fc726c827a5940fb4221770ab17de0f4335556a8eeee",
   pinResolutionReason:
-    "The packaged authority bridge is based on OMP v17.0.5, while the portable contract was reviewed against a newer official OMP commit. Portable runtime behavior must use a new fork integration commit descended from the contract commit and must pass the pinned OMP RPC and authority-bridge gates before packaging.",
+    "The owned OMP fork commit is descended from the reviewed d16c616 contract, exposes the complete t4-omp-authority/1 method set, and passed the source bridge plus real host lifecycle gates.",
   authorizationDocumentation: "docs/adr/022-portable-identity-authorization-contract.md",
   authorizationDocumentationSha256: "76c1f3f13387b7fbf0beed0b7f643135848f6bdc9431b9de86c43b137845ac1a",
-  authorizationContractsSha256: "ee53955763299dc51907c029a33c6ebcbefc95bdf3fa33a522cc8af4e0c0236a",
+  authorizationContractsSha256: "17504f1eb88b4847ecf128ed20cda5bacb0ab6100fef9a9ef5b2dc7f06d7e472",
   lifecycleDocumentation: "docs/adr/023-portable-lifecycle-state-machines.md",
-  lifecycleDocumentationSha256: "7dd48e64ae618e9cc31ec52fa2285195e79f9af79499f0a01176451c7a181944",
-  lifecycleContractsSha256: "552b62ff96873215c7fda259acb6e7203dca98ddb722d78607371786d8d71eb6",
+  lifecycleDocumentationSha256: "83a06e408edc521cc00e28479141c8d34d8139c2466b764b875ff059376f6cba",
+  lifecycleContractsSha256: "8a86ca01041657095f879b8ee66ba18e7c5b08b4bcd1f9967340e92eeb60e6e2",
   threatModelDocumentation: "docs/adr/024-portable-threat-model.md",
-  threatModelDocumentationSha256: "02bb964d1c4599543f7897ac4f1b1a49c75e195c90f57700d85a061617f280af",
-  threatModelContractsSha256: "602627ce2439215365847f360d27d7303ea70eed411b426db7d76d4120aa13b4",
+  threatModelDocumentationSha256: "6ed95d461a780f9430585033bdac25a61c679bbb183279613c672cd0722cfb46",
+  threatModelContractsSha256: "2b400ef4413ca0232882f3868912acc71a7d48d2fa7632fef43c974dc2731cef",
   controlContracts: {
     decision: "backend-neutral-driver-and-control-store",
     documentation: "docs/adr/021-portable-driver-control-contracts.md",
@@ -262,37 +272,33 @@ function exactSourceSlice(source, startMarker, endMarker, label) {
   return source.slice(start, end);
 }
 
-function commandDescriptorKeys(source) {
-  const block = exactSourceSlice(
-    source,
-    "export const COMMAND_DESCRIPTORS: Readonly<Record<string, CommandDescriptor>> = {",
-    "export const DESKTOP_CATALOG_COMMANDS:",
-    "COMMAND_DESCRIPTORS",
+function commandDescriptorEntries(source) {
+  const entries = [...source.matchAll(/^\s*"([^"]+)":\s*descriptor\(([\s\S]*?)\),?$/gmu)].map(
+    ([, key, argumentsSource]) => {
+      const argumentsList = [...argumentsSource.matchAll(/"([^"]*)"/gu)].map((match) => match[1]);
+      if (argumentsList.length < 5) {
+        throw new Error(`COMMAND_DESCRIPTORS.${key} has an incomplete descriptor`);
+      }
+      return [key, argumentsList[4]];
+    },
   );
-  const keys = [...block.matchAll(/^\t"([^"]+)": \{$/gmu)].map((match) => match[1]);
-  if (!keys.length || new Set(keys).size !== keys.length) {
+  if (!entries.length || new Set(entries.map(([key]) => key)).size !== entries.length) {
     throw new Error("COMMAND_DESCRIPTORS keys are empty or duplicated");
   }
-  return keys;
-}
-function commandDescriptorConfirmations(source) {
-  const block = exactSourceSlice(
-    source,
-    "export const COMMAND_DESCRIPTORS: Readonly<Record<string, CommandDescriptor>> = {",
-    "export const DESKTOP_CATALOG_COMMANDS:",
-    "COMMAND_DESCRIPTORS",
-  );
-  const entries = [...block.matchAll(/^\t"([^"]+)": \{\n([\s\S]*?)^\t\},$/gmu)];
-  if (!entries.length) throw new Error("COMMAND_DESCRIPTORS blocks are empty");
-  const confirmations = entries.map(([, key, body]) => {
-    const matches = [...body.matchAll(/^\t\tconfirmation: "(none|challenge)",$/gmu)];
-    if (matches.length !== 1) throw new Error(`COMMAND_DESCRIPTORS.${key} must have one exact confirmation`);
-    return [key, matches[0][1]];
-  });
-  if (new Set(confirmations.map(([key]) => key)).size !== confirmations.length) {
-    throw new Error("COMMAND_DESCRIPTORS blocks are duplicated");
+  for (const [key, confirmation] of entries) {
+    if (confirmation !== "none" && confirmation !== "challenge") {
+      throw new Error(`COMMAND_DESCRIPTORS.${key} has an invalid confirmation`);
+    }
   }
-  return confirmations;
+  return entries;
+}
+
+function commandDescriptorKeys(source) {
+  return commandDescriptorEntries(source).map(([key]) => key);
+}
+
+function commandDescriptorConfirmations(source) {
+  return commandDescriptorEntries(source);
 }
 
 
@@ -444,9 +450,9 @@ const authorizationSemanticInvariants = [
   ["runtime patch unknown value fail open", (c) => c?.rest?.operations?.patchRuntime?.canonicalActionResolver?.unknownValue === "deny"],
   ["runtime patch finer action omission", (c) => c?.rest?.operations?.patchRuntime?.action === "runtime.update"],
   ["command confirmation registry omission", (c) => sameJson(c?.ompAppWss?.challengeCommandDescriptorKeys, [
-    "workspace.archive", "session.delete", "session.cancel", "session.close", "files.write",
-    "files.patch", "review.apply", "agent.cancel", "bash.run", "term.open", "config.write",
-    "settings.write", "preview.launch", "preview.navigate", "preview.upload",
+    "workspace.archive", "session.delete", "session.cancel", "session.close", "session.release",
+    "files.write", "files.patch", "review.apply", "agent.cancel", "bash.run", "term.open",
+    "config.write", "settings.write", "preview.launch", "preview.navigate", "preview.upload",
   ])],
   ["non-challenge confirmation fail open", (c) => c?.ompAppWss?.nonChallengeConfirmation === "none"],
 ];
@@ -570,6 +576,31 @@ const lifecycleSemanticInvariants = [
     c?.legacyCrdCompatibility?.missingDesiredStateDefault === "Running" &&
     c?.legacyCrdCompatibility?.newFieldsRequired === false &&
     c?.legacyCrdCompatibility?.existingPersistedObjectsRemainValid === true],
+  ["Kubernetes public fields and authorities must remain explicit", (c) =>
+    sameJson(c?.kubernetesV1Alpha1?.publicFields?.["T4ClusterHost.spec"], [
+      "storageClassName", "runtimeStateStorageProfile", "runtimeProfiles", "ciProvider", "allowedOrigins",
+    ]) &&
+    sameJson(c?.kubernetesV1Alpha1?.publicFields?.["T4Workspace.spec"], [
+      "publicId", "hostRef", "displayName", "owner", "repository", "size",
+      "storageClassName", "restoreSnapshotRef", "retentionPolicy",
+    ]) &&
+    sameJson(c?.kubernetesV1Alpha1?.publicFields?.["T4Session.spec"], [
+      "publicId", "publicHostProfileId", "hostRef", "workspaceRef", "title",
+      "runtimeProfile", "desiredState", "browserPolicy", "idlePolicy", "cmuxSessionName",
+      "runtimeStateRestoreSnapshotRef", "initialPromptSecretRef", "guiEnabled", "ci",
+    ]) &&
+    c?.kubernetesV1Alpha1?.trustBoundaries?.statusAuthority === "cluster-controller-only" &&
+    c?.kubernetesV1Alpha1?.trustBoundaries?.runtimeWriterLeaseAuthority ===
+      "per-session-service-account-resource-name-bound" &&
+    c?.kubernetesV1Alpha1?.trustBoundaries?.runtimeShellKubernetesCredentials === false],
+  ["Kubernetes CRD lifecycle must remain guarded and additive", (c) =>
+    c?.kubernetesV1Alpha1?.evolution === "additive-only-structural-openapi" &&
+    sameJson(c?.kubernetesV1Alpha1?.guardedLifecycle?.storedVersions, ["v1alpha1"]) &&
+    c?.kubernetesV1Alpha1?.guardedLifecycle?.liveObjectValidationBeforeMutation === true &&
+    c?.kubernetesV1Alpha1?.guardedLifecycle?.resourceVersionAndUidGuardedMutation === true &&
+    c?.kubernetesV1Alpha1?.guardedLifecycle?.servedOpenApiConvergenceRequired === true &&
+    c?.kubernetesV1Alpha1?.guardedLifecycle?.serverDryRunBeforeWorkloadMutation === true &&
+    c?.kubernetesV1Alpha1?.guardedLifecycle?.helmManagesCrds === false],
 ];
 
 const threatModelSemanticInvariants = [
@@ -828,6 +859,18 @@ export async function checkPortablePlatformBaseline(root = process.cwd()) {
     manifest.implementationStart?.packagedOmpAuthority?.upstreamTag,
     expected.packagedOmpUpstreamTag,
   );
+  requireEqual(
+    failures,
+    "implementationStart.packagedOmpAuthority.historical",
+    manifest.implementationStart?.packagedOmpAuthority?.historical,
+    true,
+  );
+  requireEqual(
+    failures,
+    "implementationStart.packagedOmpAuthority.portableRuntimeEligible",
+    manifest.implementationStart?.packagedOmpAuthority?.portableRuntimeEligible,
+    false,
+  );
 
   requireEqual(failures, "baselines.cmux.machineProviderProtocol", manifest.baselines?.cmux?.machineProviderProtocol, 1);
   requireEqual(failures, "baselines.cmux.muxProtocol", manifest.baselines?.cmux?.muxProtocol, 10);
@@ -967,18 +1010,18 @@ export async function checkPortablePlatformBaseline(root = process.cwd()) {
     lifecycleContracts?.documentationSha256,
     expected.lifecycleDocumentationSha256,
   );
-  requireEqual(failures, "portableLifecycleContracts.contractOnly", lifecycleContracts?.contractOnly, true);
+  requireEqual(failures, "portableLifecycleContracts.contractOnly", lifecycleContracts?.contractOnly, false);
   requireEqual(
     failures,
     "portableLifecycleContracts.runtimeImplementationIncluded",
     lifecycleContracts?.runtimeImplementationIncluded,
-    false,
+    true,
   );
   requireEqual(
     failures,
     "portableLifecycleContracts.publicSchemaChangesIncluded",
     lifecycleContracts?.publicSchemaChangesIncluded,
-    false,
+    true,
   );
   requireEqual(
     failures,
@@ -1010,7 +1053,7 @@ export async function checkPortablePlatformBaseline(root = process.cwd()) {
     topology?.writableOmpAuthoritiesPerSession !== lifecycleContracts?.desiredStateMachine?.Running?.writerCardinalityMaximum ||
     topology?.interactiveWriterInvocationAllowed !== false
   ) {
-    failures.push(diagnostic("portableLifecycleContracts ADR-020 single-authority alignment must hold"));
+    failures.push(diagnostic("portableLifecycleContracts ADR-025 single-authority alignment must hold"));
   }
   if (
     !sameJson(controlContracts?.revision?.distinctFrom, ["generation", "eventCursor"]) ||
@@ -1357,25 +1400,30 @@ export async function checkPortablePlatformBaseline(root = process.cwd()) {
     failures.push(diagnostic(`portable authorization OpenAPI registry is unreadable: ${error.message}`));
   }
   try {
-    const commandSource = await readFile(path.join(root, COMMAND_REGISTRY_PATH), "utf8");
+    const commandSource = (
+      await Promise.all(COMMAND_REGISTRY_PATHS.map((registryPath) => readFile(path.join(root, registryPath), "utf8")))
+    ).join("\n");
     requireJsonEqual(
       failures,
       "portableAuthorizationContracts.ompAppWss.commandDescriptorKeys",
-      authorizationContracts?.ompAppWss?.commandDescriptorKeys,
-      commandDescriptorKeys(commandSource),
+      [...(authorizationContracts?.ompAppWss?.commandDescriptorKeys ?? [])].sort(),
+      commandDescriptorKeys(commandSource).sort(),
     );
     const confirmationEntries = commandDescriptorConfirmations(commandSource);
     requireJsonEqual(
       failures,
       "portableAuthorizationContracts.ompAppWss command confirmation keys",
-      confirmationEntries.map(([key]) => key),
-      authorizationContracts?.ompAppWss?.commandDescriptorKeys,
+      confirmationEntries.map(([key]) => key).sort(),
+      [...(authorizationContracts?.ompAppWss?.commandDescriptorKeys ?? [])].sort(),
     );
     requireJsonEqual(
       failures,
       "portableAuthorizationContracts.ompAppWss.challengeCommandDescriptorKeys",
-      authorizationContracts?.ompAppWss?.challengeCommandDescriptorKeys,
-      confirmationEntries.filter(([, confirmation]) => confirmation === "challenge").map(([key]) => key),
+      [...(authorizationContracts?.ompAppWss?.challengeCommandDescriptorKeys ?? [])].sort(),
+      confirmationEntries
+        .filter(([, confirmation]) => confirmation === "challenge")
+        .map(([key]) => key)
+        .sort(),
     );
     if (confirmationEntries.some(([, confirmation]) => confirmation !== "challenge" && confirmation !== authorizationContracts?.ompAppWss?.nonChallengeConfirmation)) {
       failures.push(diagnostic("portableAuthorizationContracts.ompAppWss.nonChallengeConfirmation must match every non-challenge descriptor"));
@@ -1501,18 +1549,39 @@ export async function checkPortablePlatformBaseline(root = process.cwd()) {
     failures.push(diagnostic(`portableThreatModel.documentation is unreadable: ${error.message}`));
   }
 
+  requireEqual(failures, "ompPinResolution.repository", manifest.ompPinResolution?.repository, expected.portableOmpRepository);
+  requireEqual(failures, "ompPinResolution.sourceCommit", manifest.ompPinResolution?.sourceCommit, expected.portableOmpCommit);
+  requireCommit(failures, "ompPinResolution.sourceCommit", manifest.ompPinResolution?.sourceCommit);
   requireEqual(failures, "ompPinResolution.contractCommit", manifest.ompPinResolution?.contractCommit, expected.ompBaseline);
-  requireEqual(failures, "ompPinResolution.currentPackagedCommit", manifest.ompPinResolution?.currentPackagedCommit, expected.packagedOmpCommit);
-  requireEqual(failures, "ompPinResolution.strategy", manifest.ompPinResolution?.strategy, "replace-before-portable-runtime");
+  requireEqual(failures, "ompPinResolution.contractAncestry", manifest.ompPinResolution?.contractAncestry, "descendant");
+  requireEqual(failures, "ompPinResolution.provenance", manifest.ompPinResolution?.provenance, expected.portableOmpProvenance);
+  requireEqual(failures, "ompPinResolution.strategy", manifest.ompPinResolution?.strategy, "immutable-source-authority");
   requireEqual(
     failures,
     "ompPinResolution.portableRuntimeAdmission",
     manifest.ompPinResolution?.portableRuntimeAdmission,
-    "requires-descendant-integration-proof",
+    "admitted",
   );
   requireEqual(failures, "ompPinResolution.reason", manifest.ompPinResolution?.reason, expected.pinResolutionReason);
-  if (manifest.ompPinResolution?.contractCommit === manifest.ompPinResolution?.currentPackagedCommit) {
-    failures.push(diagnostic("OMP contract and packaged commits must not be conflated"));
+  requireEqual(failures, "ompPinResolution.bridge.protocol", manifest.ompPinResolution?.bridge?.protocol, "t4-omp-authority/1");
+  requireEqual(failures, "ompPinResolution.bridge.compatibilityStatus", manifest.ompPinResolution?.bridge?.compatibilityStatus, "admitted");
+  if (!Array.isArray(manifest.ompPinResolution?.bridge?.methods) || manifest.ompPinResolution.bridge.methods.length !== 33) {
+    failures.push(diagnostic("ompPinResolution.bridge.methods must contain the complete 33-method authority contract"));
+  }
+  if ("currentPackagedCommit" in (manifest.ompPinResolution ?? {})) {
+    failures.push(diagnostic("ompPinResolution must not retain a legacy packaged commit as the current portable authority"));
+  }
+  try {
+    const provenance = JSON.parse(await readFile(path.join(root, expected.portableOmpProvenance), "utf8"));
+    requireEqual(failures, "OMP provenance source repository", provenance.source?.repository, manifest.ompPinResolution?.repository);
+    requireEqual(failures, "OMP provenance source commit", provenance.source?.commit, manifest.ompPinResolution?.sourceCommit);
+    requireEqual(failures, "OMP provenance contract commit", provenance.source?.contractCommit, manifest.ompPinResolution?.contractCommit);
+    requireEqual(failures, "OMP provenance contract ancestry", provenance.source?.contractAncestry, manifest.ompPinResolution?.contractAncestry);
+    if (JSON.stringify(provenance.bridge) !== JSON.stringify(manifest.ompPinResolution?.bridge)) {
+      failures.push(diagnostic("OMP provenance bridge contract must match ompPinResolution.bridge"));
+    }
+  } catch (error) {
+    failures.push(diagnostic(`ompPinResolution.provenance is unreadable: ${error.message}`));
   }
 
   const rollTogether = manifest.compatibilitySetPolicy?.rollTogether;
