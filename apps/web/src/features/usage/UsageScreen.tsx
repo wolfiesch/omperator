@@ -144,7 +144,7 @@ const AVAILABILITY_COPY: Readonly<
 > = {
   "no-host": {
     title: "No OMP host is connected",
-    detail: "Connect a local profile or paired host, then T4 Code can read the same account usage OMP shows.",
+    detail: "Connect a local profile or paired host, then Omperator can read the same account usage OMP shows.",
   },
   connecting: {
     title: "Connecting to OMP",
@@ -152,11 +152,11 @@ const AVAILABILITY_COPY: Readonly<
   },
   "waiting-catalog": {
     title: "Waiting for OMP's command list",
-    detail: "The host is connected. T4 Code is waiting to confirm that this OMP build offers account usage.",
+    detail: "The host is connected. Omperator is waiting to confirm that this OMP build offers account usage.",
   },
   unsupported: {
     title: "Usage is not available from this host",
-    detail: "This OMP build has not published account usage to T4 Code, or this device does not have permission to read it.",
+    detail: "This OMP build has not published account usage to Omperator, or this device does not have permission to read it.",
   },
 };
 
@@ -172,7 +172,7 @@ function UnavailableUsage({
   const copy = browserOnly
     ? {
         title: "Usage is available in the desktop app",
-        detail: "This browser view has no OMP runtime connection. Open T4 Code on a desktop to see account limits.",
+        detail: "This browser view has no OMP runtime connection. Open Omperator on a desktop to see account limits.",
       }
     : AVAILABILITY_COPY[availability];
   return (

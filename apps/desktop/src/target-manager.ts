@@ -140,7 +140,7 @@ export class DesktopTargetManager {
         (feature) => feature !== "prompt.images" && feature !== "transcript.images",
       ),
     );
-    this.deviceName = options.deviceName ?? "T4 Code Desktop";
+    this.deviceName = options.deviceName ?? "Omperator Desktop";
   }
 
   isConnected(targetId = "local"): boolean { return this.runtimes.get(targetId)?.client.state === "ready"; }
@@ -408,7 +408,7 @@ export class DesktopTargetManager {
       capabilities: requestedCapabilities,
       requestedFeatures: this.requestedFeatures,
       compatibilityRequestedFeatures: this.compatibilityRequestedFeatures,
-      client: { name: "T4 Code", version: "0.1.33", build: "desktop", platform: process.platform },
+      client: { name: "Omperator", version: "0.2.1", build: "desktop", platform: process.platform },
       reconnect: { baseMs: 250, maxMs: 10_000 },
     };
     const client = createOmpClient(clientOptions);

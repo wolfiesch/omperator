@@ -105,7 +105,7 @@ export function PairingPanel({
               </span>
             </div>
             <p className="text-muted-foreground text-sm">
-              On the other device, open T4 Code, choose “Pair with a host”, and type
+              On the other device, open Omperator, choose “Pair with a host”, and type
               this code when it asks for one.
             </p>
           </>

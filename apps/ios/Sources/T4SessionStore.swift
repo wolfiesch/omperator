@@ -8,12 +8,12 @@
 import SwiftUI
 import HostWire
 import CryptoKit
+import Combine
 import os
-import Security
 
-private let t4log = Logger(subsystem: "sh.t4code.ios", category: "store")
+let t4log = Logger(subsystem: "sh.t4code.ios", category: "store")
 
-private struct PendingTranscriptQueue {
+struct PendingTranscriptQueue {
     private(set) var entries: [TranscriptEntry] = []
 
     var isEmpty: Bool { entries.isEmpty }
@@ -26,19 +26,18 @@ private struct PendingTranscriptQueue {
         }
     }
 
-    mutating func removeAll(where predicate: (TranscriptEntry) -> Bool) {
-        entries.removeAll(where: predicate)
-    }
-
     mutating func drainReadyPrefix(
         while isReady: (TranscriptEntry) -> Bool
     ) -> [TranscriptEntry] {
-        var count = 0
-        while count < entries.count, isReady(entries[count]) { count += 1 }
-        guard count > 0 else { return [] }
-        let ready = Array(entries.prefix(count))
-        entries.removeFirst(count)
-        return ready
+        var drained: [TranscriptEntry] = []
+        while let first = entries.first, isReady(first) {
+            drained.append(entries.removeFirst())
+        }
+        return drained
+    }
+
+    mutating func removeAll(where shouldRemove: (TranscriptEntry) -> Bool) {
+        entries.removeAll(where: shouldRemove)
     }
 }
 
@@ -92,6 +91,16 @@ enum T4RailFilter: String, CaseIterable, Identifiable {
 
 @MainActor
 final class T4SessionStore: ObservableObject {
+    let connectionModel = T4ConnectionInventoryModel()
+    let transcriptModel = T4TranscriptProjectionModel()
+    let promptModel = T4PromptLeaseModel()
+    let agentModel = T4AgentInventoryModel()
+    let terminalModel = T4TerminalModel()
+    let previewModel = T4PreviewBrowserModel()
+    let filesReviewModel = T4FilesReviewModel()
+    let catalogSettingsModel = T4CatalogSettingsModel()
+    private var domainModelSubscriptions = Set<AnyCancellable>()
+
     struct Group: Identifiable {
         let projectId: String
         let project: String
@@ -178,7 +187,10 @@ final class T4SessionStore: ObservableObject {
         let appserverVersion: String
     }
 
-    @Published private(set) var sessions: [SessionRef]
+    private(set) var sessions: [SessionRef] {
+        get { connectionModel.sessions }
+        set { connectionModel.sessions = newValue }
+    }
     @Published var query: String = ""
     /// Search and quick-filter state is deliberately ephemeral so relaunching
     /// can never make sessions appear to be missing.
@@ -189,50 +201,73 @@ final class T4SessionStore: ObservableObject {
     @Published private(set) var pinnedSessionIds: Set<String>
     @Published private(set) var projectManualOrder: [String]
     @Published private(set) var sessionManualOrderByScope: [String: [String]]
-    @Published private(set) var connecting = false
-    @Published private(set) var connected = false
-    @Published var lastError: String?
-    /// Composer prefill channel for cross-pane flows (e.g. browser "design
-    /// mode" annotation). The session detail composer observes this and
-    /// adopts the text into its draft, then clears it. Nil = nothing pending.
-    @Published var pendingComposerText: String?
+    private(set) var connecting: Bool {
+        get { connectionModel.connecting }
+        set { connectionModel.connecting = newValue }
+    }
+    private(set) var connected: Bool {
+        get { connectionModel.connected }
+        set { connectionModel.connected = newValue }
+    }
+    var lastError: String? {
+        get { connectionModel.lastError }
+        set { connectionModel.lastError = newValue }
+    }
     /// Human-readable endpoint the store is currently paired/connected to
     /// (e.g. "ws://macbookpro.my-tailnet.ts.net:8787/v1/ws"), for UI display.
-    @Published private(set) var pairedEndpoint: String?
+    private(set) var pairedEndpoint: String? {
+        get { connectionModel.pairedEndpoint }
+        set { connectionModel.pairedEndpoint = newValue }
+    }
     /// Host version/identity from the WelcomeFrame (hostId, OMP version,
     /// appserver version). Captured on connect, cleared on disconnect.
-    @Published private(set) var hostInfo: HostInfo?
+    private(set) var hostInfo: HostInfo? {
+        get { connectionModel.hostInfo }
+        set { connectionModel.hostInfo = newValue }
+    }
     @Published var selectedSession: SessionRef?
-    /// Session ids with durable entries that arrived while the session was
-    /// not selected — drives the rail's unread dot. Cleared on select, pruned
-    /// to the live inventory on each sessions push. In-memory only.
-    @Published private(set) var unreadSessions: Set<String> = []
     /// Live transcripts by sessionId (snapshot + streamed entries). Present
     /// only for attached sessions while connected; the sample rail falls back
     /// to `sampleTranscript` when disconnected.
-    @Published private(set) var liveEntries: [String: [TranscriptEntry]] = [:]
-    /// In-progress assistant text by sessionId, mirrored from `message.update`
-    /// live events. Cleared on `message.settled`/`message.discarded`/`turn.end`
-    /// and when the matching durable assistant entry lands via `.entry` (de-
-    /// dupe: the durable entry is the source of truth once it arrives). The
-    /// transcript view renders this as a pulsing live tail row after the
-    /// durable entries.
-    @Published private(set) var streamingText: [String: String] = [:]
-    /// Paced compatibility projection for hosts that emit flattened
-    /// `message.update` snapshots rather than ordered assistant blocks.
-    @Published private(set) var streamingMessages: [String: StreamingAssistantBuffer] = [:]
-    /// Ordered in-flight thinking, text, and tool-input blocks.
-    @Published private(set) var liveTurns: [String: LiveTurnTimeline] = [:]
-    /// Compatibility projection for hosts that emit tool lifecycle events
-    /// without ordered assistant blocks.
-    @Published private(set) var liveTools: [String: LiveToolProjection] = [:]
+    var liveEntries: [String: [TranscriptEntry]] {
+        get { transcriptModel.entries }
+        set { transcriptModel.entries = newValue }
+    }
+    /// Frame-paced assistant text/reasoning by session. Host snapshots remain
+    /// authoritative; the display buffer reveals them by whole graphemes.
+    private(set) var streamingMessages: [String: StreamingAssistantBuffer] {
+        get { transcriptModel.streamingMessages }
+        set { transcriptModel.streamingMessages = newValue }
+    }
+    /// Ordered OMP-native assistant blocks. Unlike the compatibility buffers,
+    /// this keeps thinking, response text, and generated tool input interleaved
+    /// exactly as the model emitted them.
+    private(set) var liveTurns: [String: LiveTurnTimeline] {
+        get { transcriptModel.liveTurns }
+        set { transcriptModel.liveTurns = newValue }
+    }
+    /// Transient tool arguments, execution progress, and results by session.
+    private(set) var liveTools: [String: LiveToolProjection] {
+        get { transcriptModel.liveTools }
+        set { transcriptModel.liveTools = newValue }
+    }
+    /// Durable rows that arrived before their frame-paced live projection
+    /// finished. A per-session queue preserves wire order across assistant and
+    /// tool rows, and only drains a ready prefix.
+    private var pendingTranscriptEntries: [String: PendingTranscriptQueue] = [:]
     /// Sessions with a turn in flight, from turn.start/turn.end events — the
     /// composer's stop button keys off this (the ref's `status` sticks at
     /// "active" long after the turn actually ends).
-    @Published private(set) var activeTurns: Set<String> = []
+    private(set) var activeTurns: Set<String> {
+        get { transcriptModel.activeTurns }
+        set { transcriptModel.activeTurns = newValue }
+    }
     /// OMP todo phases by sessionId (the plan strip's data), refreshed on
     /// attach and after streamed entries.
-    @Published private(set) var todoPhasesBySession: [String: [PlanPhase]] = [:]
+    private(set) var todoPhasesBySession: [String: [PlanPhase]] {
+        get { transcriptModel.todoPhasesBySession }
+        set { transcriptModel.todoPhasesBySession = newValue }
+    }
 
     /// Todo phases for a session (live when connected, empty otherwise).
     func todoPhases(for sessionId: String) -> [PlanPhase] {
@@ -269,110 +304,161 @@ final class T4SessionStore: ObservableObject {
         return out
     }
     /// Host catalog (models etc.) from catalog.get, fetched after connect.
-    @Published private(set) var catalog: [CatalogItem] = []
+    private(set) var catalog: [CatalogItem] {
+        get { catalogSettingsModel.catalog }
+        set { catalogSettingsModel.catalog = newValue }
+    }
     /// A confirmation challenge awaiting the user's approve/deny decision.
-    @Published var pendingConfirmation: ConfirmationChallenge?
+    var pendingConfirmation: ConfirmationChallenge? {
+        get { promptModel.pendingConfirmation }
+        set { promptModel.pendingConfirmation = newValue }
+    }
     /// A host ask (question mode) awaiting the user's answer, if any.
-    @Published var pendingAsk: PendingAsk?
+    var pendingAsk: PendingAsk? {
+        get { promptModel.pendingAsk }
+        set { promptModel.pendingAsk = newValue }
+    }
     /// Optimistic fast-mode state per session (the wire has no fast field).
-    @Published private(set) var fastBySession: [String: Bool] = [:]
+    private(set) var fastBySession: [String: Bool] {
+        get { promptModel.fastBySession }
+        set { promptModel.fastBySession = newValue }
+    }
     /// Per-session transcript paging state (transcript.page). `hasMore` is
     /// nil until the first older page resolves (unknown); the "Load earlier"
     /// button shows when hasMore is true OR (unknown and entries ≥ 50).
-    @Published private(set) var pagingState: [String: TranscriptPaging] = [:]
+    var pagingState: [String: TranscriptPaging] {
+        get { transcriptModel.pagingState }
+        set { transcriptModel.pagingState = newValue }
+    }
     /// Session currently prepending a paged history block. The detail view
     /// suppresses its scroll-to-bottom follow while this matches its session
     /// so prepended older rows don't yank the viewport to the bottom.
-    @Published private(set) var prependingSession: String?
+    var prependingSession: String? {
+        get { transcriptModel.prependingSession }
+        set { transcriptModel.prependingSession = newValue }
+    }
     /// Subagents per session, fed by .agent/.agentState/.agentLifecycle/
     /// .agentProgress/.agentEvent frames in observe(). The agents pane
     /// renders this; empty when the host has no subagents for a session.
-    @Published private(set) var agentsBySession: [String: [AgentState]] = [:]
+    private(set) var agentsBySession: [String: [AgentState]] {
+        get { agentModel.agentsBySession }
+        set { agentModel.agentsBySession = newValue }
+    }
     /// Per-terminal buffered output, keyed by terminalId. `terminal.output`
     /// frames append here (capped ~200KB per terminal, dropping the oldest
     /// chunk when exceeded). The terminal drawer feeds this to SwiftTerm.
-    @Published private(set) var terminalOutput: [String: String] = [:]
+    var terminalOutput: [String: String] {
+        get { terminalModel.output }
+        set { terminalModel.output = newValue }
+    }
     /// Per-terminal exit code, set when a `terminal.exit` frame arrives.
     /// Presence of a key means the pty has exited; nil value means exited
     /// with code 0 recorded as absent until exit.
-    @Published private(set) var terminalExits: [String: Int] = [:]
+    var terminalExits: [String: Int] {
+        get { terminalModel.exits }
+        set { terminalModel.exits = newValue }
+    }
     /// Per-session ordered terminal ids (max 4), in the order `openTerminal`
     /// opened them. The drawer renders one tab per id; the active id is the
     /// tab whose buffered output is rendered and whose keystrokes are sent.
-    @Published private(set) var openTerminalIds: [String: [String]] = [:]
+    var openTerminalIds: [String: [String]] {
+        get { terminalModel.openIdsBySession }
+        set { terminalModel.openIdsBySession = newValue }
+    }
     /// The active terminal id for a session — the tab the drawer renders and
     /// the target of `sendTerminalInput`/`resizeTerminal`. Set by `openTerminal`
     /// (new terminal becomes active) and `selectTerminal` (tab switch), and
     /// reselected to a neighbor when the active terminal is closed.
-    @Published private(set) var activeTerminalId: [String: String] = [:]
+    var activeTerminalId: [String: String] {
+        get { terminalModel.activeIdBySession }
+        set { terminalModel.activeIdBySession = newValue }
+    }
     /// Per-terminal last error (e.g. a denied term.open command). Cleared
     /// on a successful open or explicit close.
-    @Published private(set) var terminalErrors: [String: String] = [:]
+    var terminalErrors: [String: String] {
+        get { terminalModel.errors }
+        set { terminalModel.errors = newValue }
+    }
     /// Per-session browser URL for the browser pane (T4BrowserPane). The
     /// pane persists the URL field here so reopening a session's browser
     /// returns to the last visited page. Defaults to localhost:3000 via
     /// `browserURL(for:)` when unset.
-    @Published var browserURLBySession: [String: String] = [:]
+    var browserURLBySession: [String: String] {
+        get { previewModel.urlBySession }
+        set { previewModel.urlBySession = newValue }
+    }
     /// Code reviews per session, fed by `review` additive frames in observe().
     /// The review pane reads the latest reviewId from here to call
     /// review.read; empty when the host has not pushed a review.
-    @Published private(set) var reviewsBySession: [String: [ReviewFrame]] = [:]
+    private(set) var reviewsBySession: [String: [ReviewFrame]] {
+        get { filesReviewModel.reviewsBySession }
+        set { filesReviewModel.reviewsBySession = newValue }
+    }
     /// Last fetched usage snapshot (usage.read, host scope). nil until the
     /// usage pane first loads it; refreshed on demand. `generatedAt` is the
     /// host's epoch-millis timestamp.
-    @Published private(set) var usageSnapshot: UsageReadResult?
+    var usageSnapshot: UsageReadResult? {
+        get { catalogSettingsModel.usageSnapshot }
+        set { catalogSettingsModel.usageSnapshot = newValue }
+    }
     /// Last fetched host settings (settings.read, host scope). Carried as an
     /// opaque object map (boundedSettings) — keys are setting names, values
     /// are strings/bools/numbers. nil until the settings pane first loads it.
-    @Published private(set) var settingsSnapshot: [String: JSONValue]?
+    var settingsSnapshot: [String: JSONValue]? {
+        get { catalogSettingsModel.settingsSnapshot }
+        set { catalogSettingsModel.settingsSnapshot = newValue }
+    }
     /// Last fetched host settings revision (settings.read result.revision),
     /// required as `expectedRevision` for settings.write. nil until the
     /// settings pane first loads it.
-    @Published private(set) var settingsRevision: String?
+    var settingsRevision: String? {
+        get { catalogSettingsModel.settingsRevision }
+        set { catalogSettingsModel.settingsRevision = newValue }
+    }
     /// Cached artifact chunks by artifactId, populated by artifact.read.
     /// The artifacts pane taps a descriptor to load+preview content; the
     /// first chunk (offset 0) is enough for inline text/patch previews.
-    @Published private(set) var artifactChunks: [String: ArtifactReadChunk] = [:]
+    var artifactChunks: [String: ArtifactReadChunk] {
+        get { filesReviewModel.artifactChunks }
+        set { filesReviewModel.artifactChunks = newValue }
+    }
     /// Latest preview id per session, tracked from `preview.launch`/`state`/
     /// `navigation`/`capture` push frames and the `preview.launch` command
     /// result. `previewCapture(sessionId:previewId:)` uses this when no
     /// explicit previewId is given; the browser pane's Capture button is
     /// enabled while a preview is tracked.
-    @Published private(set) var previewIdBySession: [String: String] = [:]
+    var previewIdBySession: [String: String] {
+        get { previewModel.previewIdBySession }
+        set { previewModel.previewIdBySession = newValue }
+    }
     /// Decoded capture images by captureId, populated by `previewCapture`
     /// (the Capture button) and by the async fetch kicked off when a
     /// `preview.capture` push frame arrives. The browser pane renders the
     /// latest one full-fit; transcript capture rows look their image up here
     /// by `data.captureId`.
-    @Published private(set) var previewCaptureImages: [String: PlatformImage] = [:]
+    var previewCaptureImages: [String: PlatformImage] {
+        get { previewModel.captureImages }
+        set { previewModel.captureImages = newValue }
+    }
     /// Ordered capture rows per session — one per `preview.capture` push
     /// frame or explicit `preview.capture` command. Each carries the capture
     /// metadata plus the decoded image once the chunked fetch resolves. The
     /// browser pane and transcript render these as image rows.
-    @Published private(set) var previewCaptureRowsBySession: [String: [PreviewCaptureRow]] = [:]
-
-    /// Per-session region/tile layouts (right-dock panes, active tab, terminal
-    /// open, dock width, floating panes). Persisted to UserDefaults as JSON
-    /// (see T4SessionLayout.swift). Mutated through the extension methods so
-    /// persistence is centralized.
-    @Published var layoutBySession: [String: T4SessionLayout] = [:]
+    var previewCaptureRowsBySession: [String: [PreviewCaptureRow]] {
+        get { previewModel.captureRowsBySession }
+        set { previewModel.captureRowsBySession = newValue }
+    }
 
     /// True once a live host has spoken (refresh or push). Drives the boot
     /// splash: saved-connection devices see "Connecting…", not fake chat.
-    @Published private(set) var hasLiveInventory = false
+    private(set) var hasLiveInventory: Bool {
+        get { connectionModel.hasLiveInventory }
+        set { connectionModel.hasLiveInventory = newValue }
+    }
     /// True when a previous session's endpoint is persisted (restore will run).
     var hasSavedConnection: Bool {
-        // Ephemeral-credential runs never consult the Keychain (the macOS
-        // consent dialog ignores kSecUseAuthenticationUIFail for ACL-denied
-        // items and can block the main thread before first paint).
-        if ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("-T4DeviceToken=") }) { return true }
-        if Keychain.get(Self.savedEndpointKey) != nil { return true }
-        #if os(macOS)
-        // A local t4-host publishing an autoconnect credential counts as a
-        // saved connection: restore() will pick it up without any UI.
-        if LocalHostCredential.load() != nil { return true }
-        #endif
-        return false
+        EphemeralConnectionCredentials() != nil
+            || Keychain.get(Self.savedEndpointKey) != nil
     }
 
     /// True once a live host has spoken; false while showing the offline sample.
@@ -384,18 +470,15 @@ final class T4SessionStore: ObservableObject {
             .sorted { $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending }
     }
 
-    private var client: HostClient?
-    private var observationTask: Task<Void, Never>?
-    private var connectionGeneration: UInt64 = 0
-    private var hostId: String = ""
+    var client: HostClient?
+    var hostId: String = ""
     private var streamingTasks: [String: Task<Void, Never>] = [:]
     private var liveTurnTasks: [String: Task<Void, Never>] = [:]
     private var toolStreamingTasks: [String: Task<Void, Never>] = [:]
-    private var pendingTranscriptEntries: [String: PendingTranscriptQueue] = [:]
     /// Capabilities the host granted at welcome — gates optional commands
     /// (e.g. catalog.get needs catalog.read; an unauthorized command gets
     /// the connection closed by the remote policy).
-    private var grantedCapabilities: [String] = []
+    var grantedCapabilities: [String] = []
     /// Negotiated additive protocol features. Ownership UI uses these to
     /// expose safe copy/adoption actions only when the host supports them.
     private var grantedFeatures: Set<ProtocolFeature> = []
@@ -412,7 +495,6 @@ final class T4SessionStore: ObservableObject {
     private static let savedEndpointKey = "t4.endpoint"
     private static let savedDeviceIdKey = "t4.deviceId"
     private static let savedDeviceTokenKey = "t4.deviceToken"
-    private static let installationDeviceIdKey = "t4.installationDeviceId"
     private static let railListViewKey = "t4.rail.listView"
     private static let railOrganizationKey = "t4.rail.organization"
     private static let railSortKey = "t4.rail.sort"
@@ -702,7 +784,6 @@ final class T4SessionStore: ObservableObject {
 
     private func settleLiveProjection(for entry: TranscriptEntry, sessionId: String) {
         if entry.kind == .message, entry.role != "user" {
-            streamingText.removeValue(forKey: sessionId)
             streamingMessages.removeValue(forKey: sessionId)
             settleLiveTurnAssistant(sessionId: sessionId, entryId: entry.id)
         }
@@ -728,12 +809,15 @@ final class T4SessionStore: ObservableObject {
     /// then deletes the UserDefaults entries and sets the migrated flag so
     /// it never runs again. Called from `init()` so `hasSavedConnection`
     /// reflects migrated state before the first view reads it.
-    private static func migrateCredentialsToKeychainIfNeeded() {
-        let defaults = UserDefaults.standard
+    static func migrateCredentialsToKeychainIfNeeded(
+        arguments: [String] = ProcessInfo.processInfo.arguments,
+        defaults: UserDefaults = .standard
+    ) {
+        // A fresh-state test launch must leave legacy credentials intact for a
+        // later normal launch to migrate. Keychain writes are deliberately
+        // disabled in this mode, so deleting the source values would lose them.
+        guard Keychain.usesPersistentStore(arguments: arguments) else { return }
         if defaults.bool(forKey: keychainMigratedKey) { return }
-        // Ephemeral-credential runs (-T4Endpoint + -T4DeviceId + -T4DeviceToken)
-        // never touch the Keychain, so skip the migration read/write too.
-        if ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("-T4DeviceToken=") }) { return }
         for key in [savedEndpointKey, savedDeviceIdKey, savedDeviceTokenKey] {
             if Keychain.get(key) == nil,
                let value = defaults.string(forKey: key), !value.isEmpty {
@@ -746,8 +830,31 @@ final class T4SessionStore: ObservableObject {
 
     /// Auto-reconnect on launch with the last successful connection, if any.
     func restore() async {
-        // UI-test seam: -T4NoRestore forces the offline sample inventory.
-        if ProcessInfo.processInfo.arguments.contains("-T4NoRestore") { return }
+        let arguments = ProcessInfo.processInfo.arguments
+        // Harness seam: a complete endpoint/device/token triple is an
+        // in-memory connection profile. It never reads, writes, migrates, or
+        // deletes the developer's Keychain credentials.
+        if let ephemeral = EphemeralConnectionCredentials(arguments: arguments),
+           let endpoint = URL(string: ephemeral.endpoint),
+           !connected, !connecting {
+            await connect(
+                endpoint: endpoint,
+                identity: ClientIdentity(
+                    name: platformClientName,
+                    version: "0.1",
+                    build: "dev",
+                    platform: platformClientPlatform
+                ),
+                authentication: DeviceAuthentication(
+                    deviceId: ephemeral.deviceId,
+                    deviceToken: ephemeral.deviceToken
+                )
+            )
+            return
+        }
+        // UI-test seam: -T4NoRestore forces the offline sample inventory only
+        // when no complete in-memory connection profile was supplied.
+        if Self.shouldSkipRestore(arguments: arguments) { return }
         // UI-test seam: -T4ForgetCreds wipes saved connection credentials so
         // the boot lands on real onboarding (fresh-install path).
         if ProcessInfo.processInfo.arguments.contains("-T4ForgetCreds") {
@@ -756,65 +863,37 @@ final class T4SessionStore: ObservableObject {
             Keychain.remove(forKey: Self.savedDeviceTokenKey)
             return
         }
-        // Dev seam: -T4Endpoint/-T4DeviceId/-T4DeviceToken supply ephemeral
-        // credentials that bypass the Keychain entirely. Unsigned macOS dev
-        // builds shift signatures, and the keychain consent dialog can block
-        // the main thread before first paint — harnesses use these instead.
-        let seamArg = { (name: String) -> String? in
-            ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("-\(name)=") })
-                .map { String($0.dropFirst(name.count + 2)) }
+        // Dev seam: -T4Endpoint=wss://host:port/v1/ws overrides the saved
+        // endpoint (the one-time UserDefaults migration otherwise shadows
+        // `defaults write` tweaks between runs).
+        if let seam = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("-T4Endpoint=") }) {
+            Keychain.set(String(seam.dropFirst("-T4Endpoint=".count)), forKey: Self.savedEndpointKey)
         }
-        if let endpointSeam = seamArg("T4Endpoint"),
-           let seamDeviceId = seamArg("T4DeviceId"), let seamToken = seamArg("T4DeviceToken"),
-           let seamEndpoint = URL(string: endpointSeam), !connected, !connecting {
-            ephemeralCredentials = true
-            await connect(endpoint: seamEndpoint, identity: ClientIdentity(name: "t4-ios", version: "0.1", build: "dev", platform: "ios"),
-                          authentication: DeviceAuthentication(deviceId: seamDeviceId, deviceToken: seamToken))
-            return
-        }
-        if let seam = seamArg("T4Endpoint") {
-            Keychain.set(seam, forKey: Self.savedEndpointKey)
-        }
-        guard !connected, !connecting else { return }
-        if let endpointString = Keychain.get(Self.savedEndpointKey),
-           let endpoint = URL(string: endpointString) {
-            let deviceId = Keychain.get(Self.savedDeviceIdKey) ?? ""
-            let token = Keychain.get(Self.savedDeviceTokenKey) ?? ""
-            let auth: DeviceAuthentication? = (!deviceId.isEmpty && !token.isEmpty)
-                ? DeviceAuthentication(deviceId: deviceId, deviceToken: token) : nil
-            await connect(endpoint: endpoint, identity: ClientIdentity(name: "t4-ios", version: "0.1", build: "dev", platform: "ios"), authentication: auth)
-            if connected { return }
-        }
-        #if os(macOS)
-        // Local autoconnect: no saved remote (or it's unreachable) and a
-        // t4-host on this machine is publishing a credential. Same-machine
-        // trust — nothing is written to the Keychain; the host's 0600 file
-        // is the source of truth and rotates on every host start.
-        guard !connected, !connecting, let local = LocalHostCredential.load() else { return }
-        connectingLocalAutoconnect = true
-        await connect(endpoint: local.endpoint, identity: ClientIdentity(name: "t4-ios", version: "0.1", build: "dev", platform: "ios"),
-                      authentication: DeviceAuthentication(deviceId: local.deviceId, deviceToken: local.deviceToken))
-        connectingLocalAutoconnect = false
-        localAutoconnect = connected
-        #endif
+        guard !connected, !connecting,
+              let endpointString = Keychain.get(Self.savedEndpointKey),
+              let endpoint = URL(string: endpointString) else { return }
+        let deviceId = Keychain.get(Self.savedDeviceIdKey) ?? ""
+        let token = Keychain.get(Self.savedDeviceTokenKey) ?? ""
+        let auth: DeviceAuthentication? = (!deviceId.isEmpty && !token.isEmpty)
+            ? DeviceAuthentication(deviceId: deviceId, deviceToken: token) : nil
+        await connect(
+            endpoint: endpoint,
+            identity: ClientIdentity(
+                name: platformClientName,
+                version: "0.1",
+                build: "dev",
+                platform: platformClientPlatform
+            ),
+            authentication: auth
+        )
     }
 
-    /// True while the current connection came from the local host's
-    /// autoconnect file rather than an explicitly paired/saved host. Drives
-    /// the "This Mac · automatic" row in Settings.
-    @Published private(set) var localAutoconnect = false
-    /// Set only around the autoconnect connect() call so persist() skips the
-    /// Keychain for credentials the local host owns.
-    private var connectingLocalAutoconnect = false
-
-    /// True when the session's credentials came from -T4Endpoint/-T4DeviceId/
-    /// -T4DeviceToken launch seams: nothing may touch the Keychain this run
-    /// (delete-then-add against another signer's items triggers the macOS
-    /// consent dialog, which can block the main thread indefinitely).
-    private var ephemeralCredentials = false
+    static func shouldSkipRestore(arguments: [String]) -> Bool {
+        arguments.contains("-T4NoRestore")
+            && EphemeralConnectionCredentials(arguments: arguments) == nil
+    }
 
     private func persist(endpoint: URL, authentication: DeviceAuthentication?) {
-        if ephemeralCredentials || connectingLocalAutoconnect { return }
         // nil/empty values clear the item, matching the prior UserDefaults
         // semantics (an open host persists only the endpoint, no creds).
         Keychain.set(endpoint.absoluteString, forKey: Self.savedEndpointKey)
@@ -825,9 +904,12 @@ final class T4SessionStore: ObservableObject {
     /// Select a session (rail tap or auto-select of the most recent).
     func select(_ session: SessionRef?) {
         selectedSession = session
-        // Viewing clears the unread dot for the now-selected session.
-        if let session { unreadSessions.remove(session.sessionId) }
         if connected, let session { Task { await attach(sessionId: session.sessionId) } }
+    }
+
+    func selectDefaultVisibleSessionIfNeeded() {
+        guard selectedSession == nil else { return }
+        reconcileSelectionForVisibleList()
     }
 
     /// Attach to a session's transcript stream. The host replies with a
@@ -838,7 +920,6 @@ final class T4SessionStore: ObservableObject {
         do {
             _ = try await client.sendCommand(CommandIntent(
                 hostId: hostId, command: "session.attach", sessionId: sessionId))
-            t4log.notice("attach sent for \(sessionId, privacy: .public)")
         } catch {
             t4log.error("attach failed: \(error)")
             lastError = "\(error)"
@@ -913,18 +994,12 @@ final class T4SessionStore: ObservableObject {
     }
 
     private func acquireLease(sessionId: String, kind: LeaseKind = .prompt) async -> String? {
-        guard let client, connected, !hostId.isEmpty,
-              sessions.first(where: { $0.sessionId == sessionId })?.t4IsWritable == true,
-              var revision = revision(of: sessionId)
-        else {
-            lastError = "This session is read-only."
-            return nil
-        }
+        guard let client, connected, !hostId.isEmpty, var revision = revision(of: sessionId) else { return nil }
         for attempt in 0...1 {
             do {
                 let result = try await client.sendCommand(CommandIntent(
                     hostId: hostId, command: "\(kind.rawValue).acquire",
-                    args: ["ownerId": .string("t4-ios")],
+                    args: ["ownerId": .string(platformClientName)],
                     sessionId: sessionId, expectedRevision: revision))
                 return try result.leaseResult()
             } catch {
@@ -1006,21 +1081,16 @@ final class T4SessionStore: ObservableObject {
     /// Send a user prompt to a session (session.prompt), uploading any images
     /// first (session.image.begin/chunk → imageId refs). No-op with a clear
     /// error when not connected — the composer is disabled in that state.
-    /// Send a prompt. Returns true only when the host accepted it — callers
-    /// restore the composer draft on false so a failed send never eats the
-    /// user's message (lease conflict, dropped connection, upload failure).
-    @discardableResult
-    func sendPrompt(sessionId: String, text: String, images: [Data] = []) async -> Bool {
+    func sendPrompt(sessionId: String, text: String, images: [Data] = []) async {
         guard let client, connected, !hostId.isEmpty else {
             lastError = "Not connected to a host."
-            return false
+            return
         }
         do {
             var refs: [JSONValue] = []
             for image in images {
                 refs.append(.object(["imageId": .string(try await uploadImage(image, sessionId: sessionId))]))
             }
-            var accepted = false
             await withLease(sessionId: sessionId, release: false) { leaseId in
                 var args: [String: JSONValue] = ["message": .string(text), "leaseId": .string(leaseId)]
                 if !refs.isEmpty { args["images"] = .array(refs) }
@@ -1030,17 +1100,14 @@ final class T4SessionStore: ObservableObject {
                     _ = try await client.sendCommand(CommandIntent(
                         hostId: hostId, command: "session.prompt", args: args,
                         sessionId: sessionId))
-                    accepted = true
                     t4log.notice("prompt accepted for \(sessionId, privacy: .public)")
                 } catch {
                     t4log.error("prompt failed: \(error)")
                     lastError = "\(error)"
                 }
             }
-            return accepted
         } catch {
             lastError = "\(error)"
-            return false
         }
     }
 
@@ -1139,12 +1206,9 @@ final class T4SessionStore: ObservableObject {
             }
             do {
                 let result = try await client.sendCommand(CommandIntent(
-                    hostId: hostId,
-                    command: "session.release",
+                    hostId: hostId, command: "session.release",
                     args: ["leaseId": .string(leaseId)],
-                    sessionId: sessionId,
-                    expectedRevision: revision
-                ))
+                    sessionId: sessionId, expectedRevision: revision))
                 resumeCommand = try result.sessionReleaseResult()
             } catch {
                 t4log.error("releaseSession failed: \(error)")
@@ -1164,11 +1228,8 @@ final class T4SessionStore: ObservableObject {
         for attempt in 0...1 {
             do {
                 let result = try await client.sendCommand(CommandIntent(
-                    hostId: hostId,
-                    command: "session.reclaim",
-                    sessionId: sessionId,
-                    expectedRevision: revision
-                ))
+                    hostId: hostId, command: "session.reclaim",
+                    sessionId: sessionId, expectedRevision: revision))
                 try result.sessionReclaimResult()
                 await refresh()
                 return
@@ -1211,7 +1272,8 @@ final class T4SessionStore: ObservableObject {
     }
 
     /// Archive is reversible: the host retains the transcript and artifacts,
-    /// while Current stops rendering the session.
+    /// while Current stops rendering the session. Refresh after success so the
+    /// rail changes views immediately even before the next pushed inventory.
     func archiveSession(sessionId: String) async {
         guard sessions.first(where: { $0.sessionId == sessionId })?.t4IsWritable == true else {
             return
@@ -1233,7 +1295,8 @@ final class T4SessionStore: ObservableObject {
 
     /// Archive, restore, and archived-session delete are lifecycle mutations
     /// rather than in-session writes. They intentionally bypass controller
-    /// leases because an archived session cannot acquire one.
+    /// leases, matching the canonical web client and allowing actions while an
+    /// archived session cannot acquire a lease.
     private func runLeaseFreeLifecycleCommand(sessionId: String, command: String) async -> Bool {
         guard let client, connected, !hostId.isEmpty,
               let revision = revision(of: sessionId) else { return false }
@@ -1251,8 +1314,9 @@ final class T4SessionStore: ObservableObject {
         }
     }
 
-    /// Current sessions keep the controller-lease delete path. Archived
-    /// sessions dispatch the lifecycle command directly.
+    /// Delete a session (session.delete). Current sessions keep the existing
+    /// controller-lease path. Archived sessions cannot acquire a lease, so
+    /// they dispatch the challenged lifecycle command directly.
     func deleteSession(sessionId: String) async {
         guard let session = sessions.first(where: { $0.sessionId == sessionId }) else { return }
         if session.archivedAt != nil {
@@ -1326,10 +1390,15 @@ final class T4SessionStore: ObservableObject {
             self.sessionManualOrderByScope = [:]
         }
         Self.migrateCredentialsToKeychainIfNeeded()
-        self.sessions = Self.demoMode ? Self.sample : []
-        // Per-session region/tile layouts (UserDefaults JSON) — restored once
-        // at init so the first detail view reads persisted dock state.
-        loadLayouts()
+        connectionModel.sessions = Self.demoMode ? Self.sample : []
+        connectionModel.objectWillChange
+            .merge(with: promptModel.objectWillChange)
+            .merge(with: agentModel.objectWillChange)
+            .merge(with: previewModel.objectWillChange)
+            .merge(with: filesReviewModel.objectWillChange)
+            .merge(with: catalogSettingsModel.objectWillChange)
+            .sink { [weak self] in self?.objectWillChange.send() }
+            .store(in: &domainModelSubscriptions)
     }
 
     var currentSessionCount: Int {
@@ -1341,10 +1410,7 @@ final class T4SessionStore: ObservableObject {
     }
 
     var pinnedSessions: [SessionRef] {
-        sortSessions(
-            filteredSessions.filter { pinnedSessionIds.contains($0.sessionId) },
-            scope: "__pinned__"
-        )
+        sortSessions(filteredSessions.filter { pinnedSessionIds.contains($0.sessionId) }, scope: "__pinned__")
     }
 
     func setSessionListView(_ view: T4SessionListView) {
@@ -1442,9 +1508,7 @@ final class T4SessionStore: ObservableObject {
             return [
                 Group(
                     projectId: "__flat__",
-                    project: sessionListView == .current
-                        ? "All current sessions"
-                        : "All archived sessions",
+                    project: sessionListView == .current ? "All current sessions" : "All archived sessions",
                     sessions: sortSessions(filtered, scope: "__flat__")
                 ),
             ].filter { !$0.sessions.isEmpty }
@@ -1549,11 +1613,6 @@ final class T4SessionStore: ObservableObject {
         })
     }
 
-    func selectDefaultVisibleSessionIfNeeded() {
-        guard selectedSession == nil else { return }
-        reconcileSelectionForVisibleList()
-    }
-
     // MARK: - Attention inbox
     // Sessions needing the user: pending approval, awaiting input, or a
     // proposed plan ready for review. Highest-priority reason wins (approval
@@ -1582,43 +1641,8 @@ final class T4SessionStore: ObservableObject {
     /// Subagents for a session: live host state when connected, sample rows
     /// otherwise (agents-pane preview without a host).
     func agents(for sessionId: String) -> [AgentState] {
-        if connected {
-            if let live = agentsBySession[sessionId], !live.isEmpty { return live }
-            return projectedTaskAgents(for: sessionId)
-        }
+        if connected { return agentsBySession[sessionId] ?? [] }
         return Self.demoMode ? Self.sampleAgents : []
-    }
-
-    /// Fallback agent source: some runtimes stream no agent.* frames at all,
-    /// leaving the pane empty even while `task` subagents are visibly working
-    /// in the transcript. Project one row per named task-subagent from
-    /// tool-use entries (args.tasks[].name); a finished call (result present)
-    /// reads "completed", an open one "running".
-    private func projectedTaskAgents(for sessionId: String) -> [AgentState] {
-        var slots: [String: AgentState] = [:]
-        var order: [String] = []
-        for entry in liveEntries[sessionId] ?? [] {
-            guard entry.kind == .toolUse,
-                  case .object(let data) = entry.data,
-                  case .string("task") = data["tool"],
-                  case .object(let args)? = data["args"],
-                  case .array(let tasks)? = args["tasks"] else { continue }
-            let done: String
-            if case .bool(let ok)? = data["ok"] { done = ok ? "completed" : "failed" }
-            else if data["result"] != nil { done = "completed" }
-            else { done = "running" }
-            let intent: String?
-            if case .string(let i)? = args["i"] { intent = i } else { intent = nil }
-            for task in tasks {
-                guard case .object(let t) = task, case .string(let name)? = t["name"] else { continue }
-                if slots[name] == nil { order.append(name) }
-                var slot = slots[name] ?? AgentState(agentId: name, state: "running")
-                slot.state = done
-                slot.detail = intent
-                slots[name] = slot
-            }
-        }
-        return order.suffix(12).compactMap { slots[$0] }
     }
 
     /// Transcript entries for a session: the live host log when attached,
@@ -1648,8 +1672,8 @@ final class T4SessionStore: ObservableObject {
     /// command-gating feature names for the panes (preview, search, watch).
     private static let clientFeatures = [
         "resume", "prompt.lease", "controller.lease", "prompt.images", "transcript.page",
-        "session.delta", "files.list", "files.diff", "terminal.io",
-        "preview.control", "files.search", "transcript.search",
+        "session.delta", "files.list", "terminal.io",
+        "preview.control", "files.search", "files.diff", "transcript.search",
         "session.watch", "host.watch", "project.reveal",
         "session.observer", "session.unverified", "session.fork",
     ]
@@ -1669,19 +1693,22 @@ final class T4SessionStore: ObservableObject {
         return URLSessionHostWireTransport(endpoint: endpoint, session: session)
     }
 
+    /// A later healthy connection supersedes any earlier endpoint failure.
+    /// Keep this transition explicit so a transient restore/pair attempt cannot
+    /// leave a stale transport error pinned above a live session inventory.
+    func clearErrorAfterSuccessfulConnection() {
+        lastError = nil
+    }
+
     /// Connect to a t4-host over host-wire, handshake, and load the inventory.
     func connect(endpoint: URL, identity: ClientIdentity, authentication: DeviceAuthentication? = nil) async {
         connecting = true
         defer { connecting = false }
         let transport = makeTransport(endpoint: endpoint)
         let c = HostClient(transport: transport, config: HostClient.Config(identity: identity, authentication: authentication, requestedFeatures: Self.clientFeatures))
-        let generation = await replaceConnection(with: c)
+        client = c
         do {
             let welcome = try await c.connect()
-            guard generation == connectionGeneration, client === c else {
-                await c.close()
-                return
-            }
             hostId = welcome.hostId
             hostInfo = HostInfo(hostId: welcome.hostId, ompVersion: welcome.ompVersion, appserverVersion: welcome.appserverVersion)
             grantedCapabilities = welcome.grantedCapabilities
@@ -1690,20 +1717,14 @@ final class T4SessionStore: ObservableObject {
             if connected {
                 pairedEndpoint = endpoint.absoluteString
                 persist(endpoint: endpoint, authentication: authentication)
+                clearErrorAfterSuccessfulConnection()
                 await refresh()
                 await loadCatalog()
-                observationTask = Task { [weak self] in
-                    await self?.observe(client: c, generation: generation, expectedHostId: welcome.hostId)
-                }
+                Task { await observe() }
             } else {
                 t4log.error("connect: auth not accepted (\(welcome.authentication.rawValue, privacy: .public))")
             }
         } catch {
-            if generation == connectionGeneration, client === c {
-                await c.close()
-                client = nil
-                clearHostScopedState()
-            }
             t4log.error("connect failed: \(error)")
             lastError = "\(error)"
         }
@@ -1716,18 +1737,24 @@ final class T4SessionStore: ObservableObject {
     /// pair.start with the 6-digit code and persists the granted device token
     /// on success, mirroring connect()'s post-connect refresh/catalog/observe.
     func pairAndConnect(endpoint: URL, code: String, deviceName: String) async {
+        // A restored macOS WindowGroup can render more than one RootView.
+        // Each view runs the launch-argument pairing task, but a pairing
+        // ticket is single-use. Serialize those tasks through the shared
+        // store so only the first view can claim the ticket.
+        guard !connecting, !connected else { return }
         connecting = true
         defer { connecting = false }
         let transport = makeTransport(endpoint: endpoint)
-        let identity = ClientIdentity(name: "t4-ios", version: "0.1", build: "dev", platform: "ios")
+        let identity = ClientIdentity(
+            name: platformClientName,
+            version: "0.1",
+            build: "dev",
+            platform: platformClientPlatform
+        )
         let c = HostClient(transport: transport, config: HostClient.Config(identity: identity, authentication: nil, requestedFeatures: Self.clientFeatures))
-        let generation = await replaceConnection(with: c)
+        client = c
         do {
             let welcome = try await c.connect()
-            guard generation == connectionGeneration, client === c else {
-                await c.close()
-                return
-            }
             hostId = welcome.hostId
             hostInfo = HostInfo(hostId: welcome.hostId, ompVersion: welcome.ompVersion, appserverVersion: welcome.appserverVersion)
             if welcome.authentication == .paired || welcome.authentication == .local {
@@ -1737,19 +1764,21 @@ final class T4SessionStore: ObservableObject {
                 connected = true
                 pairedEndpoint = endpoint.absoluteString
                 persist(endpoint: endpoint, authentication: nil)
+                clearErrorAfterSuccessfulConnection()
                 await refresh()
                 await loadCatalog()
-                observationTask = Task { [weak self] in
-                    await self?.observe(client: c, generation: generation, expectedHostId: welcome.hostId)
-                }
+                Task { await observe() }
                 return
             }
-            let deviceId = try Self.installationDeviceId()
+            let slug = Self.slugify(deviceName)
             let intent = PairStartIntent(
                 code: code,
-                deviceId: deviceId,
+                // Device IDs are registry primary keys. Include an install
+                // nonce so a fresh install can pair even when the host still
+                // retains an older token for a device with the same name.
+                deviceId: "\(platformDeviceIdPrefix)-\(slug)-\(UUID().uuidString.lowercased())",
                 deviceName: deviceName,
-                platform: "ios",
+                platform: platformClientPlatform,
                 requestedCapabilities: ["sessions.read", "sessions.prompt", "sessions.control", "sessions.manage", "catalog.read", "files.list", "files.read", "files.diff", "term.open", "term.input", "term.resize", "preview.control", "preview.read", "usage.read", "agents.control", "audit.read", "config.read", "config.write"]
             )
             let ok = try await c.pair(intent)
@@ -1761,24 +1790,28 @@ final class T4SessionStore: ObservableObject {
             await connect(endpoint: endpoint, identity: identity, authentication: auth)
             if connected { pairedEndpoint = endpoint.absoluteString }
         } catch {
-            if generation == connectionGeneration, client === c {
-                await c.close()
-                client = nil
-                clearHostScopedState()
-            }
             lastError = "Pairing failed — check the code and that the host is running (\(error))"
         }
     }
 
-    private static func installationDeviceId() throws -> String {
-        if let existing = try Keychain.read(installationDeviceIdKey), !existing.isEmpty {
-            return existing
+    /// Lowercase the device name into a host-safe id slug: alphanumerics
+    /// kept, every other run collapsed to a single hyphen, trimmed. Falls
+    /// back to "device" when the name has no usable characters.
+    private static func slugify(_ name: String) -> String {
+        let lowered = name.lowercased()
+        var slug = ""
+        var lastWasDash = true
+        for ch in lowered {
+            if ch.isLetter || ch.isNumber {
+                slug.append(ch)
+                lastWasDash = false
+            } else if !lastWasDash {
+                slug.append("-")
+                lastWasDash = true
+            }
         }
-        let created = "ios-\(UUID().uuidString.lowercased())"
-        guard Keychain.set(created, forKey: installationDeviceIdKey) else {
-            throw Keychain.AccessError(operation: "write", status: errSecIO)
-        }
-        return created
+        if slug.hasSuffix("-") { slug.removeLast() }
+        return slug.isEmpty ? "device" : slug
     }
 
     /// Re-fetch the authoritative session list (session.list).
@@ -1825,789 +1858,18 @@ final class T4SessionStore: ObservableObject {
         }
     }
 
-    // MARK: - Files (read-only workspace browser)
 
-    /// List a directory in the session workspace (files.list). `path` is a
-    /// safe relative POSIX path; pass "" for the project root — the host
-    /// treats an absent/empty path as the workspace root. Returns the
-    /// entries (folders and files) or nil on failure (lastError is set).
-    /// NOTE: files.* is a desktop-bridge operation — standalone official
-    /// hosts don't implement it; the pane shows the honest failure.
-    func listFiles(sessionId: String, path: String) async -> [FileListEntry]? {
-        guard let client, connected, !hostId.isEmpty else {
-            lastError = "Not connected to a host."
-            return nil
-        }
-        var args: [String: JSONValue] = [:]
-        if !path.isEmpty { args["path"] = .string(path) }
-        do {
-            let result = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "files.list", args: args, sessionId: sessionId))
-            return try result.filesListResult()
-        } catch {
-            t4log.error("files.list failed: \(error)")
-            lastError = "This host has no files bridge (desktop hosts only)."
-            return nil
-        }
-    }
 
-    /// Read a file from the session workspace (files.read). `path` is a safe
-    /// relative POSIX path. Returns the content string (already decoded from
-    /// base64 when the host used that encoding) or nil on failure (lastError
-    /// is set). The host bounds content to MAX_FILE_BYTES.
-    func readFile(sessionId: String, path: String) async -> String? {
-        guard let client, connected, !hostId.isEmpty else {
-            lastError = "Not connected to a host."
-            return nil
-        }
-        do {
-            let result = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "files.read",
-                args: ["path": .string(path)], sessionId: sessionId))
-            let (content, _) = try result.filesReadResult()
-            return content
-        } catch {
-            t4log.error("files.read failed: \(error)")
-            lastError = "\(error)"
-            return nil
-        }
-    }
 
-    /// Read a binary file (e.g. an image) as `Data`. Reuses `readFile` (the
-    /// same files.read wire call) and base64-decodes the payload the host
-    /// returns for non-text files. Returns nil on failure or if the content
-    /// isn't valid base64 (text files, truncated reads). Used for file-pane
-    /// image thumbnails.
-    func readFileData(sessionId: String, path: String) async -> Data? {
-        guard let content = await readFile(sessionId: sessionId, path: path) else { return nil }
-        return Data(base64Encoded: content)
-    }
 
-    // MARK: - Files search & diff
-    // files.search (capability files.list, session scope, revision optional)
-    // searches the workspace by file-name substring; the host returns up to
-    // PROJECT_FILE_SEARCH_MAX_RESULTS (50) matches as safe relative paths plus
-    // a `truncated` flag. files.diff (capability files.diff) returns either
-    // `{diff}` patch text (no turnId) or a turn review snapshot `{turnId,
-    // baseTree, headTree, changes, patch?}` (turnId set); the snapshot's patch
-    // artifact is read via artifact.read. Both are desktop-bridge operations —
-    // standalone hosts don't implement them; the pane shows the honest failure.
-
-    /// Search the session workspace by file name (files.search). `query` is a
-    /// substring; the host returns up to 50 matches as safe relative paths.
-    /// Returns the matches or nil on failure (lastError is set).
-    func filesSearch(sessionId: String, query: String) async -> FilesSearchResult? {
-        guard let client, connected, !hostId.isEmpty else {
-            lastError = "Not connected to a host."
-            return nil
-        }
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return FilesSearchResult(matches: [], truncated: false) }
-        do {
-            let result = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "files.search",
-                args: ["query": .string(trimmed)], sessionId: sessionId))
-            return Self.decodeFilesSearchResult(result)
-        } catch {
-            t4log.error("files.search failed: \(error)")
-            lastError = "This host has no files bridge (desktop hosts only)."
-            return nil
-        }
-    }
-
-    /// Fetch a unified diff for the session workspace (files.diff). With no
-    /// `turnId` the host returns `{diff}` patch text; with a `turnId` it
-    /// returns a turn review snapshot whose `patch` artifact is read via
-    /// artifact.read. Returns the patch text (and change list when available)
-    /// or nil on failure (lastError is set).
-    func filesDiff(sessionId: String, turnId: String? = nil) async -> FilesDiffResult? {
-        guard let client, connected, !hostId.isEmpty else {
-            lastError = "Not connected to a host."
-            return nil
-        }
-        var args: [String: JSONValue] = [:]
-        if let turnId, !turnId.isEmpty { args["turnId"] = .string(turnId) }
-        do {
-            let result = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "files.diff", args: args, sessionId: sessionId))
-            guard result.ok, let body = result.result, case .object(let o) = body else {
-                lastError = "files.diff returned no result."
-                return nil
-            }
-            // {diff} patch-text shape (no turnId).
-            if case .string(let diff) = o["diff"] ?? .null {
-                return FilesDiffResult(patchText: diff, changes: [])
-            }
-            // Turn review snapshot shape (turnId present).
-            let changes = Self.parseTurnChanges(o["changes"] ?? .null)
-            var patchText: String?
-            if case .object(let pd) = o["patch"] ?? .null,
-               case .string(let artifactId) = pd["artifactId"] ?? .null {
-                if let chunk = await artifactRead(sessionId: sessionId, artifactId: artifactId),
-                   let data = chunk.decodedBytes {
-                    patchText = String(data: data, encoding: .utf8)
-                }
-            }
-            return FilesDiffResult(patchText: patchText, changes: changes)
-        } catch {
-            t4log.error("files.diff failed: \(error)")
-            lastError = "This host has no files bridge (desktop hosts only)."
-            return nil
-        }
-    }
-
-    /// Decode a files.search result body `{matches: [{path}], truncated}`.
-    private static func decodeFilesSearchResult(_ result: ResultFrame) -> FilesSearchResult? {
-        guard result.ok, let body = result.result, case .object(let o) = body else { return nil }
-        let truncated = (o["truncated"] ?? .null) == .bool(true)
-        let matches: [FilesSearchMatch] = {
-            guard case .array(let arr) = o["matches"] ?? .null else { return [] }
-            return arr.compactMap { v in
-                guard case .object(let m) = v, case .string(let p) = m["path"] ?? .null else { return nil }
-                return FilesSearchMatch(path: p)
-            }
-        }()
-        return FilesSearchResult(matches: matches, truncated: truncated)
-    }
-
-    /// Parse a turn review snapshot's `changes` array into typed rows.
-    private static func parseTurnChanges(_ value: JSONValue) -> [TurnFileChange] {
-        guard case .array(let arr) = value else { return [] }
-        return arr.compactMap { v in
-            guard case .object(let c) = v,
-                  case .string(let path) = c["path"] ?? .null,
-                  case .string(let status) = c["status"] ?? .null,
-                  case .string(let kind) = c["kind"] ?? .null else { return nil }
-            return TurnFileChange(path: path, status: status, kind: kind,
-                                  additions: intField(c["additions"]),
-                                  deletions: intField(c["deletions"]))
-        }
-    }
-
-    /// Extract a non-negative integer from a JSON number field (0 otherwise).
-    private static func intField(_ value: JSONValue?) -> Int {
-        if case .number(let n) = value, n.isFinite, n >= 0 { return Int(n) }
-        return 0
-    }
-
-    // MARK: - Terminal drawer
-    // term.open is a session-scoped command (capability term.open, revision
-    // optional) that opens a pty and returns {terminalId}. Output arrives as
-    // terminal.output additive frames (routed in observe()); the client sends
-    // terminal.input/terminal.resize/terminal.close as raw additive frames
-    // via HostClient.sendFrame (no requestId, no response). If the host denies
-    // term.open (the paired device lacks the capability), the command throws
-    // and lastError surfaces — the drawer shows an error row.
-
-    /// Open another terminal for a session (term.open {cols, rows}). Appends
-    /// the new terminalId to the session's ordered list (max 4) and makes it
-    /// the active tab. Returns the new terminalId, or nil on failure
-    /// (lastError / terminalErrors set). Callers that only need *a* terminal
-    /// should check `activeTerminal(sessionId:)` first and call this solely to
-    /// add a new tab — this method always opens a fresh pty.
-    @discardableResult
-    func openTerminal(sessionId: String, cols: Int = 80, rows: Int = 24) async -> String? {
-        guard let client, connected, !hostId.isEmpty else {
-            lastError = "Not connected to a host."
-            return nil
-        }
-        let ids = openTerminalIds[sessionId] ?? []
-        guard ids.count < 4 else {
-            lastError = "Terminal limit reached (4)."
-            terminalErrors[sessionId] = "Terminal limit reached (4)."
-            return nil
-        }
-        do {
-            let result = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "term.open",
-                args: ["cols": .number(Double(cols)), "rows": .number(Double(rows))],
-                sessionId: sessionId))
-            let terminalId = try result.termOpenResult()
-            openTerminalIds[sessionId, default: []].append(terminalId)
-            activeTerminalId[sessionId] = terminalId
-            terminalOutput[terminalId] = ""
-            terminalErrors.removeValue(forKey: sessionId)
-            t4log.notice("term.open \(terminalId, privacy: .public) for \(sessionId, privacy: .public)")
-            return terminalId
-        } catch {
-            t4log.error("term.open failed: \(error)")
-            lastError = "\(error)"
-            terminalErrors[sessionId] = "\(error)"
-            return nil
-        }
-    }
-
-    /// The active terminal id for a session (the tab the drawer renders and
-    /// the target of input/resize), or nil when no terminal is open.
-    func activeTerminal(sessionId: String) -> String? { activeTerminalId[sessionId] }
-
-    /// Switch the active tab for a session. No-op if `terminalId` is not in
-    /// the session's open list. Instant for the drawer — it re-renders the
-    /// active terminal's buffered output without re-opening the pty.
-    func selectTerminal(sessionId: String, terminalId: String) {
-        guard (openTerminalIds[sessionId] ?? []).contains(terminalId) else { return }
-        activeTerminalId[sessionId] = terminalId
-    }
-
-    /// Send user keystrokes to the session's active pty (terminal.input). No-op
-    /// when no terminal is active or not connected. `data` is UTF-8 text.
-    func sendTerminalInput(sessionId: String, data: String) async {
-        guard let client, let terminalId = activeTerminalId[sessionId] else { return }
-        let frame = TerminalInputFrame(hostId: hostId, sessionId: sessionId, terminalId: terminalId, data: data)
-        try? await client.sendFrame(frame)
-    }
-
-    /// Resize the session's active pty (terminal.resize {cols, rows}). No-op
-    /// when no terminal is active for the session.
-    func resizeTerminal(sessionId: String, cols: Int, rows: Int) async {
-        guard let client, let terminalId = activeTerminalId[sessionId] else { return }
-        let frame = TerminalResizeFrame(hostId: hostId, sessionId: sessionId, terminalId: terminalId, cols: cols, rows: rows)
-        try? await client.sendFrame(frame)
-    }
-
-    /// Close the session's active pty (terminal.close). Convenience for the
-    /// drawer's close control on the active tab; delegates to the per-terminal
-    /// close, which removes the id and selects a neighbor as active.
-    func closeTerminal(sessionId: String, reason: String? = nil) async {
-        guard let terminalId = activeTerminalId[sessionId] else { return }
-        await closeTerminal(terminalId: terminalId, reason: reason)
-    }
-
-    /// Close a specific pty by terminalId (terminal.close). Removes the id
-    /// from its session's ordered list and, if it was active, selects a
-    /// neighbor (the next tab, or the previous when closing the last) as the
-    /// new active tab. When the last terminal closes, the session has no
-    /// active terminal and the drawer shows its empty state.
-    func closeTerminal(terminalId: String, reason: String? = nil) async {
-        guard let sessionId = openTerminalIds.first(where: { $0.value.contains(terminalId) })?.key else { return }
-        if let client {
-            let frame = TerminalCloseFrame(hostId: hostId, sessionId: sessionId, terminalId: terminalId, reason: reason)
-            try? await client.sendFrame(frame)
-        }
-        removeTerminal(terminalId, sessionId: sessionId)
-    }
-
-    /// Remove a terminal from a session's list and reselect the active tab.
-    /// Shared by `closeTerminal(terminalId:)` and `clearTerminal`. Does not
-    /// send terminal.close — callers handle the wire frame (or transport is
-    /// gone, in the clear case).
-    private func removeTerminal(_ terminalId: String, sessionId: String) {
-        var ids = openTerminalIds[sessionId] ?? []
-        guard let removed = ids.firstIndex(where: { $0 == terminalId }) else { return }
-        ids.remove(at: removed)
-        terminalOutput.removeValue(forKey: terminalId)
-        terminalExits.removeValue(forKey: terminalId)
-        if ids.isEmpty {
-            openTerminalIds.removeValue(forKey: sessionId)
-            activeTerminalId.removeValue(forKey: sessionId)
-        } else {
-            openTerminalIds[sessionId] = ids
-            // Reselect only when the closed tab was active (or active is
-            // missing); otherwise leave the user's selection alone.
-            if activeTerminalId[sessionId] == nil || activeTerminalId[sessionId] == terminalId {
-                let neighborIdx = min(removed, ids.count - 1)
-                activeTerminalId[sessionId] = ids[neighborIdx]
-            }
-        }
-    }
-
-    /// Drop all terminal state for a session (e.g. on disconnect). Does not
-    /// send terminal.close — the transport is gone.
-    func clearTerminal(sessionId: String) {
-        for terminalId in openTerminalIds[sessionId] ?? [] {
-            terminalOutput.removeValue(forKey: terminalId)
-            terminalExits.removeValue(forKey: terminalId)
-        }
-        openTerminalIds.removeValue(forKey: sessionId)
-        activeTerminalId.removeValue(forKey: sessionId)
-        terminalErrors.removeValue(forKey: sessionId)
-    }
-
-    // MARK: - Browser pane
-    // The browser pane (T4BrowserPane) renders any http(s) URL directly in a
-    // WKWebView — it needs no host support. When the host DOES offer previews
-    // (capability preview.control/preview.read), `openPreview` opportunistically
-    // fires `preview.launch {url}` so the host's own preview pipeline (captures,
-    // navigation state) tracks the same URL, and records the returned previewId
-    // so the pane's Capture button can fire `preview.capture`. If the host lacks
-    // preview support, `preview.launch` errors and we no-op gracefully — the
-    // pane keeps rendering the URL directly regardless. `previewCapture`
-    // triggers a capture and reassembles its chunked bytes into a PlatformImage;
-    // `preview.capture` push frames (observe()) flow into the transcript as
-    // image rows and auto-fetch their bytes.
-
-    /// The default URL a session's browser opens to when none is persisted.
-    /// A dev server on localhost:3000 is the common case for T4 sessions.
-    static let defaultBrowserURL = "http://localhost:3000"
-
-    /// The persisted browser URL for a session, or the default when unset.
-    func browserURL(for sessionId: String) -> String {
-        browserURLBySession[sessionId] ?? Self.defaultBrowserURL
-    }
-
-    /// Persist the browser URL for a session (the pane's URL field calls this
-    /// on submit and on navigation). Idempotent; no host round-trip.
-    func setBrowserURL(for sessionId: String, url: String) {
-        browserURLBySession[sessionId] = url
-    }
-
-    /// Opportunistically ask the host to launch a preview for `url`
-    /// (preview.launch). No-op when not connected or when the host lacks
-    /// preview support — the pane renders the URL directly in WKWebView
-    /// regardless of the outcome here. A failure is expected for unsupported
-    /// hosts and is swallowed (lastError is preserved) so an unsupported
-    /// preview never surfaces a spurious error to the user. On success the
-    /// returned previewId is recorded in `previewIdBySession` so the Capture
-    /// button can target it.
-    func openPreview(sessionId: String, url: String) async {
-        guard let client, connected, !hostId.isEmpty else { return }
-        // Devices paired before preview caps existed get connection-killed on
-        // unauthorized commands — skip instead (the pane renders the URL fine).
-        guard grantedCapabilities.contains("preview.control") else { return }
-        let priorError = lastError
-        // preview.launch is a mutation: the host requires a live controller
-        // lease and denies (closing the connection) without one.
-        await withLease(sessionId: sessionId, kind: .controller) { leaseId in
-            guard let revision = revision(of: sessionId) else { return }
-            do {
-                let result = try await client.sendCommand(CommandIntent(
-                    hostId: hostId, command: "preview.launch",
-                    args: ["url": .string(url), "leaseId": .string(leaseId)],
-                    sessionId: sessionId, expectedRevision: revision))
-                let snapshot = try result.previewMutationResult()
-                previewIdBySession[sessionId] = snapshot.previewId
-            } catch {
-                // Unsupported hosts (no preview.control capability) error here —
-                // swallow so the pane keeps rendering the URL directly. Preserve
-                // the prior error so a preview failure never surfaces a spurious
-                // error to the user.
-                lastError = priorError
-            }
-        }
-    }
-
-    /// Capture a preview screenshot and reassemble its bytes into a platform
-    /// image. Sends `preview.capture` (which triggers a capture and returns
-    /// the snapshot + capture metadata), then streams the bytes via repeated
-    /// `preview.capture.read` calls (≤256KiB base64 chunks, ordered by
-    /// offset) until `complete`. The reassembled bytes are sha256-verified
-    /// against the metadata, decoded to a `PlatformImage`, cached by
-    /// captureId, and appended as a transcript capture row. `previewId`
-    /// defaults to the session's latest tracked preview. Returns nil when not
-    /// connected, the host lacks preview support, or the bytes fail to decode
-    /// (lastError is set).
-    @discardableResult
-    func previewCapture(sessionId: String, previewId: String? = nil) async -> PlatformImage? {
-        guard let client, connected, !hostId.isEmpty else {
-            lastError = "Not connected to a host."
-            return nil
-        }
-        guard grantedCapabilities.contains("preview.control") else { return nil }
-        let pid = previewId ?? previewIdBySession[sessionId]
-        guard let pid else {
-            lastError = "No preview available for this session."
-            return nil
-        }
-        do {
-            let result = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "preview.capture",
-                args: ["previewId": .string(pid)], sessionId: sessionId))
-            let snapshot = try result.previewMutationResult()
-            previewIdBySession[sessionId] = snapshot.previewId
-            guard let meta = snapshot.capture else {
-                lastError = "Preview returned no capture."
-                return nil
-            }
-            recordCapture(sessionId: sessionId, metadata: meta, previewId: snapshot.previewId)
-            return await fetchCaptureBytes(sessionId: sessionId, previewId: snapshot.previewId, metadata: meta)
-        } catch {
-            t4log.error("preview.capture failed: \(error)")
-            lastError = "\(error)"
-            return nil
-        }
-    }
-
-    /// The latest decoded capture image for a session (the browser pane's
-    /// Capture view renders this), or nil when no capture has resolved yet.
-    func latestCaptureImage(for sessionId: String) -> PlatformImage? {
-        guard let row = previewCaptureRowsBySession[sessionId]?.last else { return nil }
-        return row.image ?? previewCaptureImages[row.captureId]
-    }
-
-    /// Record a capture as it arrives: append a transcript image row (so
-    /// captures flow into the transcript) and a capture row (image pending).
-    /// Idempotent per captureId — re-arriving frames update in place.
-    private func recordCapture(sessionId: String, metadata: PreviewCaptureMetadata, previewId: String) {
-        upsertCaptureRow(sessionId: sessionId, metadata: metadata, previewId: previewId, image: nil)
-        appendCaptureTranscriptRow(sessionId: sessionId, metadata: metadata, previewId: previewId)
-    }
-
-    /// Insert or update the capture row for a session (keyed by captureId).
-    /// When the image resolves, the matching row's `image` is set so the
-    /// transcript / pane render pixels.
-    private func upsertCaptureRow(sessionId: String, metadata: PreviewCaptureMetadata, previewId: String, image: PlatformImage?) {
-        var rows = previewCaptureRowsBySession[sessionId] ?? []
-        if let index = rows.firstIndex(where: { $0.captureId == metadata.captureId }) {
-            rows[index].image = image
-        } else {
-            rows.append(PreviewCaptureRow(metadata: metadata, previewId: previewId, image: image))
-        }
-        previewCaptureRowsBySession[sessionId] = rows
-    }
-
-    /// Append a synthetic `preview-capture` transcript entry for a capture so
-    /// it flows into the transcript as an image row. The entry's `data`
-    /// carries `captureId`/`previewId`/`mimeType`/`width`/`height`; the
-    /// transcript view renders the image by looking up `data.captureId` in
-    /// `previewCaptureImages`. Idempotent per captureId (de-duped by id).
-    private func appendCaptureTranscriptRow(sessionId: String, metadata: PreviewCaptureMetadata, previewId: String) {
-        let entryId = metadata.captureId
-        let payload: JSONValue = .object([
-            "id": .string(entryId),
-            "hostId": .string(hostId),
-            "sessionId": .string(sessionId),
-            "kind": .string("preview-capture"),
-            "timestamp": .string("\(metadata.capturedAt)"),
-            "data": .object([
-                "captureId": .string(metadata.captureId),
-                "previewId": .string(previewId),
-                "mimeType": .string(metadata.mimeType.rawValue),
-                "width": .number(Double(metadata.width)),
-                "height": .number(Double(metadata.height)),
-            ]),
-        ])
-        guard let data = try? JSONEncoder().encode(payload),
-              let entry = try? TranscriptEntry.decode(data) else { return }
-        var entries = liveEntries[sessionId] ?? []
-        if !entries.contains(where: { $0.id == entryId }) {
-            entries.append(entry)
-            liveEntries[sessionId] = entries
-        }
-    }
-
-    /// Stream a capture's bytes via `preview.capture.read` (ordered chunks) and
-    /// reassemble into a `PlatformImage`. Verifies the sha256 digest, decodes
-    /// the bytes, caches the image by captureId, and updates the session's
-    /// capture row. Returns nil on a bounds/hash/decode mismatch (lastError
-    /// is set).
-    private func fetchCaptureBytes(sessionId: String, previewId: String, metadata: PreviewCaptureMetadata) async -> PlatformImage? {
-        guard let client else { return nil }
-        do {
-            var bytes = Data()
-            bytes.reserveCapacity(metadata.size)
-            var offset = 0
-            while offset < metadata.size {
-                let result = try await client.sendCommand(CommandIntent(
-                    hostId: hostId, command: "preview.capture.read",
-                    args: ["previewId": .string(previewId),
-                           "captureId": .string(metadata.captureId),
-                           "offset": .number(Double(offset))],
-                    sessionId: sessionId))
-                let chunk = try result.previewCaptureReadResult()
-                guard chunk.previewId == previewId, chunk.captureId == metadata.captureId,
-                      chunk.offset == offset, chunk.size == metadata.size else {
-                    throw T4WireError.invalidFrame(path: "result", reason: "preview capture chunk identity or offset mismatch")
-                }
-                guard let part = chunk.decodedBytes, part.count == chunk.nextOffset - offset else {
-                    throw T4WireError.invalidFrame(path: "result.content", reason: "preview capture chunk size mismatch")
-                }
-                bytes.append(part)
-                offset = chunk.nextOffset
-            }
-            guard bytes.count == metadata.size else {
-                throw T4WireError.bounds(path: "result", reason: "preview capture size mismatch")
-            }
-            let digest = SHA256.hash(data: bytes)
-            let hex = digest.map { String(format: "%02x", $0) }.joined()
-            guard hex == metadata.sha256 else {
-                throw T4WireError.invalidFrame(path: "capture.sha256", reason: "preview capture hash mismatch")
-            }
-            guard let image = platformImage(data: bytes) else {
-                lastError = "Preview capture bytes did not decode to an image."
-                return nil
-            }
-            previewCaptureImages[metadata.captureId] = image
-            upsertCaptureRow(sessionId: sessionId, metadata: metadata, previewId: previewId, image: image)
-            return image
-        } catch {
-            t4log.error("preview.capture.read failed: \(error)")
-            lastError = "\(error)"
-            return nil
-        }
-    }
-
-    // MARK: - Panes data
-    // Four detail-ellipsis panes — Usage, Review, Artifacts, Settings — each
-    // backed by a host-wire command. usage.read and settings.read/write are
-    // host-scope (no sessionId); review.read and artifact.read are session-
-    // scoped. review.read takes the latest reviewId from `reviewsBySession`
-    // (fed by `review` additive frames in observe()); artifact.read takes an
-    // artifactId from a transcript entry's `data.artifacts` descriptor list.
-    // All five degrade to a clear error banner when the host denies the
-    // command (e.g. the paired device lacks the capability).
-
-    /// Fetch the host usage snapshot (usage.read, host scope). Stores the
-    /// result in `usageSnapshot` and returns it; nil on failure (lastError
-    /// is set). Safe to repeat — the pane refreshes on demand.
-    @discardableResult
-    func usageRead() async -> UsageReadResult? {
-        guard let client, connected, !hostId.isEmpty else {
-            lastError = "Not connected to a host."
-            return nil
-        }
-        // Official-mode hosts don't implement usage.read; firing it anyway
-        // makes the host close the connection (remote-policy denial).
-        guard grantedCapabilities.contains("usage.read") else { return nil }
-        do {
-            let result = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "usage.read"))
-            let snapshot = try result.usageReadResult()
-            usageSnapshot = snapshot
-            return snapshot
-        } catch {
-            t4log.error("usage.read failed: \(error)")
-            lastError = "\(error)"
-            return nil
-        }
-    }
-
-    /// Fetch one code review (review.read, session scope). `reviewId` defaults
-    /// to the latest review frame's id for the session when nil. Returns the
-    /// typed result or nil on failure (lastError is set).
-    @discardableResult
-    func reviewRead(sessionId: String, reviewId: String? = nil) async -> ReviewReadResult? {
-        guard let client, connected, !hostId.isEmpty else {
-            lastError = "Not connected to a host."
-            return nil
-        }
-        let id = reviewId ?? reviewsBySession[sessionId]?.last?.reviewId
-        guard let id else {
-            lastError = "No review available for this session."
-            return nil
-        }
-        do {
-            let result = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "review.read",
-                args: ["reviewId": .string(id)], sessionId: sessionId))
-            return try result.reviewReadResult()
-        } catch {
-            t4log.error("review.read failed: \(error)")
-            lastError = "\(error)"
-            return nil
-        }
-    }
-
-    /// Read one chunk of a session-retained artifact (artifact.read, session
-    /// scope). `offset` defaults to 0 (the first chunk, enough for inline
-    // text/patch previews). Caches the chunk in `artifactChunks` and returns
-    // it; nil on failure (lastError is set).
-    @discardableResult
-    func artifactRead(sessionId: String, artifactId: String, offset: Int = 0) async -> ArtifactReadChunk? {
-        guard let client, connected, !hostId.isEmpty else {
-            lastError = "Not connected to a host."
-            return nil
-        }
-        do {
-            let result = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "artifact.read",
-                args: ["artifactId": .string(artifactId), "offset": .number(Double(offset))],
-                sessionId: sessionId))
-            let chunk = try result.artifactReadResult()
-            artifactChunks[artifactId] = chunk
-            return chunk
-        } catch {
-            t4log.error("artifact.read failed: \(error)")
-            lastError = "\(error)"
-            return nil
-        }
-    }
-
-    /// The wire's settings.read carries metadata entries ({type, effective}),
-    /// not bare values. Unwrap to the raw map the panes consume — entries that
-    /// are already bare (bridge hosts) pass through untouched.
-    private static func unwrapSettingsMetadata(_ settings: [String: JSONValue]) -> [String: JSONValue] {
-        settings.mapValues { value in
-            guard case .object(let entry) = value,
-                  entry["type"] != nil,
-                  let effective = entry["effective"]
-            else { return value }
-            return effective
-        }
-    }
-
-    /// Fetch the host settings map (settings.read, host scope). Stores the
-    /// map in `settingsSnapshot` and returns it; nil on failure (lastError
-    /// is set).
-    @discardableResult
-    func settingsRead() async -> [String: JSONValue]? {
-        guard let client, connected, !hostId.isEmpty else {
-            lastError = "Not connected to a host."
-            return nil
-        }
-        // Same guard as usageRead: hosts without a settings backend close
-        // the connection on unauthorized commands.
-        guard grantedCapabilities.contains("config.read") else { return nil }
-        do {
-            let result = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "settings.read"))
-            let read = try result.settingsReadResult()
-            let settings = Self.unwrapSettingsMetadata(read.settings)
-            settingsSnapshot = settings
-            settingsRevision = read.revision
-            return settings
-        } catch {
-            t4log.error("settings.read failed: \(error)")
-            lastError = "\(error)"
-            return nil
-        }
-    }
-
-    /// Write a partial settings object (settings.write, host scope, revision
-    /// required). `patch` is merged into the host settings; the host may answer
-    /// with a confirmation challenge instead of a result — that surfaces as
-    /// `pendingConfirmation` via observe() and the banner handles approve/deny.
-    /// Send without a confirmationId so the host issues the challenge; the
-    /// store's pendingConfirmation banner then drives the confirm() flow.
-    /// On success the new revision is captured from the result and the
-    /// snapshot re-read so masked values (providerKeys) stay authoritative.
-    /// Returns false on failure (lastError is set).
-    @discardableResult
-    func settingsWrite(patch: [String: JSONValue]) async -> Bool {
-        guard let client, connected, !hostId.isEmpty else {
-            lastError = "Not connected to a host."
-            return false
-        }
-        guard grantedCapabilities.contains("config.write") else {
-            lastError = "Settings writes require the config.write capability."
-            return false
-        }
-        guard let revision = settingsRevision else {
-            lastError = "Settings revision unknown — load settings first."
-            return false
-        }
-        do {
-            let result = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "settings.write",
-                args: patch, expectedRevision: revision))
-            // Result body: {written: true, revision: <new>}. Capture the new
-            // revision so the next write is conflict-free, then re-read to
-            // refresh the snapshot (the host is the source of truth, esp. for
-            // masked providerKeys).
-            if let echo = try result.settingsWriteResult(),
-               case .string(let newRev) = echo["revision"] ?? .null, !newRev.isEmpty {
-                settingsRevision = newRev
-            }
-            await settingsRead()
-            return true
-        } catch {
-            t4log.error("settings.write failed: \(error)")
-            lastError = "\(error)"
-            return false
-        }
-    }
-
-    /// Code reviews for a session: live review frames when connected, sample
-    /// rows otherwise (review-pane preview without a host).
-    func reviews(for sessionId: String) -> [ReviewFrame] {
-        if connected { return reviewsBySession[sessionId] ?? [] }
-        return Self.sampleReviews
-    }
-
-    /// Artifact descriptors referenced by a session's transcript entries.
-    /// Scans `data.artifacts` (an array of {artifactId, kind, mediaType, ...}
-    // descriptors) on every durable entry and de-dupes by artifactId. The
-    // artifacts pane lists these; tapping one calls `artifactRead` to load
-    // its first chunk for inline preview.
-    func artifacts(for sessionId: String) -> [ArtifactDescriptor] {
-        let entries = transcript(for: sessionId)
-        var seen = Set<String>()
-        var out: [ArtifactDescriptor] = []
-        for entry in entries {
-            guard let arr = entry.data.array("artifacts") else { continue }
-            for value in arr {
-                guard case .object(let obj) = value,
-                      case .string(let aid) = obj["artifactId"] ?? .null,
-                      !seen.contains(aid) else { continue }
-                seen.insert(aid)
-                if let descriptor = ArtifactDescriptor(from: value) {
-                    out.append(descriptor)
-                }
-            }
-        }
-        return out
-    }
-
-    // MARK: - Transcript paging (transcript.page)
-
-    /// Load one older transcript page for a session and prepend it to the
-    /// live transcript. The `before` cursor is the opaque `nextCursor` the
-    /// host returned from the previous `transcript.page` call; it is omitted
-    /// on the first page (the host then returns the newest page plus a cursor
-    /// for older history). Idempotent while a page is already in flight.
-    /// The host's `transcript-page-reader` decrypts `before` as an opaque
-    /// cursor payload — NOT an entry id — so the cursor from the prior result
-    /// is the only valid `before` value.
-    func loadEarlier(sessionId: String) async {
-        guard let client, connected, !hostId.isEmpty else { return }
-        // Idempotent: never overlap two page requests for one session.
-        if pagingState[sessionId]?.loading == true { return }
-        // Stop once the host has told us there is no more history.
-        if pagingState[sessionId]?.hasMore == false { return }
-
-        var state = pagingState[sessionId] ?? TranscriptPaging(nextCursor: nil, hasMore: nil, loading: false)
-        state.loading = true
-        pagingState[sessionId] = state
-
-        var args: [String: JSONValue] = ["limit": .number(50)]
-        if let before = state.nextCursor { args["before"] = .string(before) }
-
-        do {
-            let result = try await client.sendCommand(CommandIntent(
-                hostId: hostId, command: "transcript.page", args: args, sessionId: sessionId))
-            let page = try result.transcriptPageResult()
-
-            // Prepend the decoded older rows, dropping any that overlap the
-            // already-known live tail (the first page commonly overlaps the
-            // attach snapshot). The host returns entries oldest→newest.
-            let existing = liveEntries[sessionId] ?? []
-            let existingIds = Set(existing.map { $0.id })
-            let older = page.entries.map { TranscriptEntry(from: $0) }
-                .filter { !existingIds.contains($0.id) }
-
-            // Flag the prepend so the detail view suppresses its scroll-to-
-            // bottom follow; clear it on the next runloop tick so the
-            // count-change render still sees the flag set.
-            prependingSession = sessionId
-            if !older.isEmpty {
-                liveEntries[sessionId] = older + existing
-            }
-            pagingState[sessionId] = TranscriptPaging(
-                nextCursor: page.nextCursor,
-                hasMore: page.hasMore,
-                loading: false)
-            Task { @MainActor in prependingSession = nil }
-        } catch {
-            t4log.error("transcript.page failed: \(error)")
-            lastError = "\(error)"
-            var failed = pagingState[sessionId] ?? TranscriptPaging(nextCursor: nil, hasMore: nil, loading: false)
-            failed.loading = false
-            pagingState[sessionId] = failed
-            Task { @MainActor in prependingSession = nil }
-        }
-    }
 
     /// Live frames keep the inventory, transcripts, and confirmations current.
-    private func observe(client: HostClient, generation: UInt64, expectedHostId: String) async {
+    private func observe() async {
+        guard let client else { return }
         for await frame in await client.frames {
-            guard !Task.isCancelled,
-                  generation == connectionGeneration,
-                  self.client === client,
-                  hostId == expectedHostId else { return }
             switch frame {
             case .sessions(let inventory):
                 sessions = inventory.sessions
-                // Drop unread markers for sessions no longer in the inventory.
-                unreadSessions.formIntersection(Set(inventory.sessions.map(\.sessionId)))
                 markLive()
                 reconcileSelection()
             case .snapshot(let snapshot):
@@ -2623,19 +1885,17 @@ final class T4SessionStore: ObservableObject {
             case .entry(let entryFrame):
                 let entry = TranscriptEntry(from: entryFrame.entry)
                 let sid = entryFrame.sessionId
-                let wasKnown = liveEntries[sid]?.contains(where: { $0.id == entry.id }) == true
+                // A settled row can arrive in the same provider burst as its
+                // final delta. Keep it pending until the live projection has
+                // revealed that final snapshot. Once any row is pending, all
+                // later rows join the same queue so a fast tool cannot settle
+                // ahead of earlier paced assistant content.
                 if shouldDeferTranscriptEntry(entry, sessionId: sid) {
                     enqueuePendingTranscriptEntry(entry, sessionId: sid)
                     finishPendingTranscriptEntries(sessionId: sid)
                 } else {
                     appendDurableEntry(entry, sessionId: sid)
                     settleLiveProjection(for: entry, sessionId: sid)
-                }
-                if !wasKnown {
-                    // A durable entry on a session the user isn't viewing → unread dot.
-                    if sid != selectedSession?.sessionId {
-                        unreadSessions.insert(sid)
-                    }
                 }
             case .confirmation(let challenge):
                 pendingConfirmation = challenge
@@ -2650,44 +1910,38 @@ final class T4SessionStore: ObservableObject {
                 } else if let ask = frame.event.askRequest {
                     pendingAsk = PendingAsk(sessionId: frame.sessionId, request: ask)
                 }
-                // Assistant streaming: the host emits `message.update` with
-                // the FULL current text snapshot (not an append) per token
-                // batch, then `message.settled` once the durable entry is
-                // committed. Mirror the snapshot into streamingText while in
-                // flight; clear on settled/discarded/turn.end (the durable
-                // entry then arrives via .entry above).
                 let sid = frame.sessionId
                 switch frame.event.type {
                 case "turn.start":
                     activeTurns.insert(sid)
                 case "turn.end", "turn.error":
                     activeTurns.remove(sid)
-                    streamingText.removeValue(forKey: sid)
                     if liveTurns[sid] == nil {
                         finishPendingToolEntries(sessionId: sid)
                         toolStreamingTasks.removeValue(forKey: sid)?.cancel()
                         liveTools.removeValue(forKey: sid)
                     } else {
+                        // Settlement can race the final provider burst. Keep
+                        // the ordered projection alive until its paced frames
+                        // finish, then swap in the durable rows.
                         scheduleLiveTurnFrames(sessionId: sid)
                     }
                     Task { await refreshTodos(sessionId: sid) }
                 case "assistant.block.update":
                     receiveLiveTurnBlock(sessionId: sid, event: frame.event)
                 case "message.update":
-                    // Only stream the assistant voice; user echoes are sent
-                    // by the client itself and settle immediately.
                     if case .string(let role) = frame.event.fields["role"], role == "assistant",
                        case .string(let text) = frame.event.fields["text"] {
-                        streamingText[sid] = text
                         let reasoning: String
                         if case .string(let value) = frame.event.fields["reasoning"] { reasoning = value }
                         else { reasoning = "" }
                         receiveStreamingMessage(sessionId: sid, text: text, reasoning: reasoning)
                     }
                 case "message.settled":
+                    // The durable entry is the replacement signal. Clearing
+                    // here would skip the remaining paced frames.
                     break
                 case "message.discarded":
-                    streamingText.removeValue(forKey: sid)
                     clearStreamingMessage(sessionId: sid)
                     clearLiveTurn(sessionId: sid)
                 case "tool.input.update", "tool.start", "tool.progress", "tool.result":
@@ -2765,7 +2019,7 @@ final class T4SessionStore: ObservableObject {
                 recordCapture(sessionId: f.sessionId, metadata: f.capture, previewId: f.previewId)
                 Task { await fetchCaptureBytes(sessionId: f.sessionId, previewId: f.previewId, metadata: f.capture) }
             case .previewError(let f):
-                t4log.notice("preview error \(f.code, privacy: .public): \(f.message, privacy: .public)")
+                t4log.notice("preview error \(f.code, privacy: .public): \(f.message)")
             default:
                 break
             }
@@ -2798,41 +2052,13 @@ final class T4SessionStore: ObservableObject {
     }
 
     func disconnect() async {
-        connectionGeneration &+= 1
-        observationTask?.cancel()
-        observationTask = nil
         await client?.close()
         client = nil
-        clearHostScopedState()
-        pairedEndpoint = nil
-        localAutoconnect = false
-        Keychain.remove(forKey: Self.savedEndpointKey)
-        Keychain.remove(forKey: Self.savedDeviceIdKey)
-        Keychain.remove(forKey: Self.savedDeviceTokenKey)
-    }
-
-    private func replaceConnection(with next: HostClient) async -> UInt64 {
-        connectionGeneration &+= 1
-        let generation = connectionGeneration
-        observationTask?.cancel()
-        observationTask = nil
-        if let previous = client { await previous.close() }
-        clearHostScopedState()
-        client = next
-        return generation
-    }
-
-    private func clearHostScopedState() {
         connected = false
-        hostId = ""
+        grantedCapabilities = []
+        grantedFeatures = []
+        pairedEndpoint = nil
         hostInfo = nil
-        grantedCapabilities.removeAll()
-        grantedFeatures.removeAll()
-        sessions.removeAll()
-        selectedSession = nil
-        unreadSessions.removeAll()
-        liveEntries.removeAll()
-        streamingText.removeAll()
         for task in streamingTasks.values { task.cancel() }
         streamingTasks.removeAll()
         for task in liveTurnTasks.values { task.cancel() }
@@ -2843,28 +2069,15 @@ final class T4SessionStore: ObservableObject {
         liveTurns.removeAll()
         liveTools.removeAll()
         pendingTranscriptEntries.removeAll()
-        activeTurns.removeAll()
-        todoPhasesBySession.removeAll()
-        catalog.removeAll()
-        pendingConfirmation = nil
-        pendingAsk = nil
-        pagingState.removeAll()
-        agentsBySession.removeAll()
+        // Drop any open terminals — the transport is gone, no close frame.
         terminalOutput.removeAll()
         terminalExits.removeAll()
         openTerminalIds.removeAll()
         activeTerminalId.removeAll()
         terminalErrors.removeAll()
-        browserURLBySession.removeAll()
-        reviewsBySession.removeAll()
-        usageSnapshot = nil
-        settingsSnapshot = nil
-        settingsRevision = nil
-        artifactChunks.removeAll()
-        previewIdBySession.removeAll()
-        previewCaptureImages.removeAll()
-        previewCaptureRowsBySession.removeAll()
-        hasLiveInventory = false
+        Keychain.remove(forKey: Self.savedEndpointKey)
+        Keychain.remove(forKey: Self.savedDeviceIdKey)
+        Keychain.remove(forKey: Self.savedDeviceTokenKey)
     }
 
     // MARK: - Sample inventory (simulator preview without a live host)
@@ -2893,7 +2106,7 @@ final class T4SessionStore: ObservableObject {
     /// Sample code reviews — offline preview for the review pane (one
     /// pending review with a warning finding) so the sheet renders without
     /// a live host. Built by decoding a minimal `review` frame.
-    private static let sampleReviews: [ReviewFrame] = {
+    static let sampleReviews: [ReviewFrame] = {
         let json = """
         {"v":"omp-app/1","type":"review","hostId":"studio-mac","sessionId":"s1","reviewId":"review-sample","status":"pending","path":"src/fixture.ts","findings":[{"severity":"warning","message":"Fixture review finding for the mobile application flow.","line":12}]}
         """

@@ -22,6 +22,16 @@ public typealias PlatformFont = NSFont
 
 // MARK: - Device identity
 
+#if os(iOS)
+public let platformClientName = "t4-ios"
+public let platformClientPlatform = "ios"
+public let platformDeviceIdPrefix = "ios"
+#else
+public let platformClientName = "t4-macos"
+public let platformClientPlatform = "macos"
+public let platformDeviceIdPrefix = "macos"
+#endif
+
 /// The human-readable device name sent to the host during pairing.
 /// `UIDevice.current.name` on iOS; the Mac's Bonjour/local host name on macOS.
 @MainActor

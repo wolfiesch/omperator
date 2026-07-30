@@ -9,10 +9,11 @@ import {
 } from "@t4-code/protocol";
 import type { CommandResult } from "@t4-code/protocol/desktop-ipc";
 
-import type { LiveProjectAddress, LiveSessionAddress } from "../../platform/live-workspace.ts";
+import type { LiveProjectAddress, LiveSessionAddress } from "../../platform/live-address.ts";
 import { commandSupport } from "./session-controls.ts";
 import { sessionActionRejectionReason } from "./command-errors.ts";
-import { pendingPromptsFromRef } from "./pending-prompts.ts";
+import { sessionIsWorking } from "./session-working.ts";
+export { sessionIsWorking } from "./session-working.ts";
 import { sessionWriteLink } from "./session-inventory.ts";
 import { presentSessionControl, readSessionControl } from "./session-observer.ts";
 
@@ -21,6 +22,8 @@ export type SessionManagementCommand =
   | "session.archive"
   | "session.restore"
   | "session.close"
+  | "session.release"
+  | "session.reclaim"
   | "session.delete";
 
 export interface SessionManagementSupport {
@@ -88,7 +91,7 @@ export async function revealLiveProject(
 }
 
 const CONVERGENCE_TIMEOUT_MS = 10_000;
-const challengedManagementRuns = new Map<string, Promise<void>>();
+const challengedManagementRuns = new Map<string, Promise<string | void>>();
 
 /**
  * One shared freshness reason for the whole management surface: the support
@@ -160,53 +163,6 @@ export function sessionIsClosed(ref: SessionRef | undefined): boolean {
   return ref?.status === "closed";
 }
 
-export function sessionIsWorking(ref: SessionRef | undefined): boolean {
-  if (ref === undefined) return false;
-  if (pendingPromptsFromRef(ref).length > 0) return true;
-  const rawRef = ref as unknown as Record<string, unknown>;
-  if (
-    ref.status === "active" ||
-    ref.pendingApproval === true ||
-    ref.pendingUserInput === true ||
-    rawRef.working === true ||
-    rawRef.isWorking === true ||
-    rawRef.turnActive === true ||
-    rawRef.inFlight === true ||
-    (typeof rawRef.queuedMessageCount === "number" && rawRef.queuedMessageCount > 0) ||
-    (Array.isArray(rawRef.queuedMessages) && rawRef.queuedMessages.length > 0)
-  ) {
-    return true;
-  }
-  const liveState = ref?.liveState;
-  if (liveState === undefined || liveState === null || typeof liveState !== "object") return false;
-  const live = liveState as Record<string, unknown>;
-  const phase = live.phase;
-  return (
-    phase === "working" ||
-    phase === "running" ||
-    phase === "active" ||
-    phase === "streaming" ||
-    phase === "compacting" ||
-    phase === "queued" ||
-    phase === "waiting" ||
-    phase === "awaiting-input" ||
-    phase === "awaiting_input" ||
-    live.working === true ||
-    live.isWorking === true ||
-    live.isRunning === true ||
-    live.turnActive === true ||
-    live.inFlight === true ||
-    live.isStreaming === true ||
-    live.isCompacting === true ||
-    live.pendingApproval === true ||
-    live.pendingUserInput === true ||
-    (typeof live.queuedMessageCount === "number" && live.queuedMessageCount > 0) ||
-    (typeof live.queue === "number" && live.queue > 0) ||
-    (Array.isArray(live.queuedMessages) && live.queuedMessages.length > 0) ||
-    (Array.isArray(live.queue) && live.queue.length > 0)
-  );
-}
-
 export function managementCommandSupport(
   snapshot: DesktopRuntimeSnapshot,
   address: LiveSessionAddress,
@@ -244,14 +200,24 @@ export function managementCommandSupport(
   const control = readSessionControl(ref);
   const canProbeArchivedRestore =
     command === "session.restore" && sessionIsArchived(ref) && control?.mode === "reconciling";
-  if (control !== null && !canProbeArchivedRestore) {
+  const canReclaimReleased = command === "session.reclaim" && control?.mode === "released";
+  if (control !== null && !canProbeArchivedRestore && !canReclaimReleased) {
     return { supported: false, reason: presentSessionControl(control).managementReason };
+  }
+  if (command === "session.reclaim" && !canReclaimReleased) {
+    return { supported: false, reason: "This session has not been released to a terminal" };
   }
   if (command === "session.rename" && sessionIsArchived(ref)) {
     return { supported: false, reason: "Restore this session before renaming it" };
   }
   if (command === "session.close" && sessionIsArchived(ref)) {
     return { supported: false, reason: "Restore this session before terminating its runtime" };
+  }
+  if (command === "session.release" && sessionIsArchived(ref)) {
+    return { supported: false, reason: "Restore this session before continuing it in a terminal" };
+  }
+  if (command === "session.release" && sessionIsWorking(ref)) {
+    return { supported: false, reason: "Wait for the current work to finish before continuing in a terminal" };
   }
   if ((command === "session.archive" || command === "session.delete") && sessionIsWorking(ref)) {
     return { supported: false, reason: "Terminate the runtime before archiving or deleting it" };
@@ -261,7 +227,7 @@ export function managementCommandSupport(
 
 function assertAccepted(
   response: Pick<CommandResult, "accepted" | "result" | "error">,
-  resultKey: "renamed" | "archived" | "restored" | "closed" | "deleted" | null,
+  resultKey: "renamed" | "archived" | "restored" | "closed" | "released" | "reclaimed" | "deleted" | null,
 ): void {
   if (!response.accepted) {
     throw new Error(
@@ -527,7 +493,7 @@ function matchingManagementChallenge(
   payload: unknown,
   address: LiveSessionAddress,
   expectedRevision: string,
-  command: "session.close" | "session.delete",
+  command: "session.close" | "session.release" | "session.delete",
 ): payload is ConfirmationPayload {
   if (payload === null || typeof payload !== "object") return false;
   const challenge = payload as Partial<ConfirmationPayload>;
@@ -544,15 +510,18 @@ function matchingManagementChallenge(
 async function runChallengedManagementCommandNow(
   controller: DesktopRuntimeController,
   address: LiveSessionAddress,
-  commandName: "session.close" | "session.delete",
-): Promise<void> {
+  commandName: "session.close" | "session.release" | "session.delete",
+): Promise<string | void> {
   // Runs behind the per-session queue: an earlier run's dialog round-trip
   // may have spanned a takeover. Recheck before reading a revision.
   assertSessionWritableNow(controller, address);
   const expectedRevision = currentRevision(controller, address);
   const current = sessionRefForAddress(controller.getSnapshot(), address);
-  if (commandName === "session.close" && sessionIsArchived(current)) {
+  if ((commandName === "session.close" || commandName === "session.release") && sessionIsArchived(current)) {
     throw new Error("Restore this session before terminating its runtime.");
+  }
+  if (commandName === "session.release" && sessionIsWorking(current)) {
+    throw new Error("Wait for the current work to finish before continuing in a terminal.");
   }
   if (commandName === "session.delete" && sessionIsWorking(current)) {
     throw new Error("Terminate the runtime before archiving or deleting it.");
@@ -564,7 +533,7 @@ async function runChallengedManagementCommandNow(
   // already-cached lease first: a post-acquire gate failure may only release
   // a NEWLY acquired lease, never a preexisting one other flows rely on.
   const priorLease =
-    commandName === "session.close"
+    commandName === "session.close" || commandName === "session.release"
       ? controller.controllerLeaseFor(
           address.targetId,
           address.hostId,
@@ -573,7 +542,7 @@ async function runChallengedManagementCommandNow(
         )
       : undefined;
   const lease =
-    commandName === "session.close"
+    commandName === "session.close" || commandName === "session.release"
       ? await controller.acquireControllerLease(
           address.targetId,
           address.hostId,
@@ -607,7 +576,13 @@ async function runChallengedManagementCommandNow(
       stopChallengeWait();
       reject(
         new Error(
-          `The host did not issue the expected ${commandName === "session.close" ? "runtime termination" : "delete"} confirmation.`,
+          `The host did not issue the expected ${
+            commandName === "session.close"
+              ? "runtime termination"
+              : commandName === "session.release"
+                ? "terminal transfer"
+                : "delete"
+          } confirmation.`,
         ),
       );
     }, CONVERGENCE_TIMEOUT_MS);
@@ -649,10 +624,23 @@ async function runChallengedManagementCommandNow(
       challenge,
       command.then((response) => {
         if (!response.accepted) {
-          assertAccepted(response, commandName === "session.close" ? "closed" : "deleted");
+          assertAccepted(
+            response,
+            commandName === "session.close"
+              ? "closed"
+              : commandName === "session.release"
+                ? "released"
+                : "deleted",
+          );
         }
         throw new Error(
-          `The host completed ${commandName === "session.close" ? "runtime termination" : "deletion"} without its required challenge.`,
+          `The host completed ${
+            commandName === "session.close"
+              ? "runtime termination"
+              : commandName === "session.release"
+                ? "terminal transfer"
+                : "deletion"
+          } without its required challenge.`,
         );
       }),
     ]);
@@ -671,10 +659,40 @@ async function runChallengedManagementCommandNow(
     });
     if (!confirmation.accepted) {
       throw new Error(
-        `The host rejected the ${commandName === "session.close" ? "runtime termination" : "delete"} confirmation.`,
+        `The host rejected the ${
+          commandName === "session.close"
+            ? "runtime termination"
+            : commandName === "session.release"
+              ? "terminal transfer"
+              : "delete"
+        } confirmation.`,
       );
     }
-    assertAccepted(await command, commandName === "session.close" ? "closed" : "deleted");
+    const response = await command;
+    assertAccepted(
+      response,
+      commandName === "session.close"
+        ? "closed"
+        : commandName === "session.release"
+          ? "released"
+          : "deleted",
+    );
+    if (commandName === "session.release") {
+      const resumeCommand = (response.result as Record<string, unknown>).resumeCommand;
+      if (typeof resumeCommand !== "string" || resumeCommand.length === 0) {
+        throw new Error("The host returned an invalid terminal resume command.");
+      }
+      // The accepted release response is the authority for the terminal
+      // command. Refresh the inventory, but do not withhold that command while
+      // an older bridge projects the new ownership state conservatively.
+      const refresh = await controller.command(address.targetId, {
+        hostId: hostId(address.hostId),
+        command: "session.list",
+        args: {},
+      });
+      assertAccepted(refresh, null);
+      return resumeCommand;
+    }
   } finally {
     stopChallengeWait();
   }
@@ -690,8 +708,8 @@ async function runChallengedManagementCommandNow(
 async function runChallengedManagementCommand(
   controller: DesktopRuntimeController,
   address: LiveSessionAddress,
-  commandName: "session.close" | "session.delete",
-): Promise<void> {
+  commandName: "session.close" | "session.release" | "session.delete",
+): Promise<string | void> {
   const key = `${address.targetId}\u0000${sessionKey(address)}`;
   const previous = challengedManagementRuns.get(key) ?? Promise.resolve();
   const operation = previous
@@ -699,7 +717,7 @@ async function runChallengedManagementCommand(
     .then(() => runChallengedManagementCommandNow(controller, address, commandName));
   challengedManagementRuns.set(key, operation);
   try {
-    await operation;
+    return await operation;
   } finally {
     if (challengedManagementRuns.get(key) === operation) challengedManagementRuns.delete(key);
   }
@@ -710,6 +728,37 @@ export async function terminateLiveSession(
   address: LiveSessionAddress,
 ): Promise<void> {
   await runChallengedManagementCommand(controller, address, "session.close");
+}
+
+export async function releaseLiveSession(
+  controller: DesktopRuntimeController,
+  address: LiveSessionAddress,
+): Promise<string> {
+  const resumeCommand = await runChallengedManagementCommand(controller, address, "session.release");
+  if (typeof resumeCommand !== "string") throw new Error("The host did not return a terminal resume command.");
+  return resumeCommand;
+}
+
+export async function reclaimLiveSession(
+  controller: DesktopRuntimeController,
+  address: LiveSessionAddress,
+): Promise<void> {
+  assertSessionManagementFreshNow(controller, address);
+  const support = managementCommandSupport(controller.getSnapshot(), address, "session.reclaim");
+  if (!support.supported) throw new Error(support.reason ?? "Session reclaim is unavailable.");
+  const expectedRevision = currentRevision(controller, address);
+  const response = await controller.command(address.targetId, {
+    hostId: hostId(address.hostId),
+    sessionId: sessionId(address.sessionId),
+    command: "session.reclaim",
+    expectedRevision: revision(expectedRevision),
+    args: {},
+  });
+  assertAccepted(response, "reclaimed");
+  await refreshSessionList(controller, address, (snapshot) => {
+    const control = readSessionControl(sessionRefForAddress(snapshot, address));
+    return control === null;
+  });
 }
 
 export async function deleteLiveSession(

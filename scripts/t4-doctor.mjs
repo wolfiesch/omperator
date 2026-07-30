@@ -5,7 +5,7 @@ import { createJiti } from "jiti";
 
 const help = `Usage: node scripts/t4-doctor.mjs [--json]
 
-Run read-only, redacted checks for the T4 Code source toolchain, compatible
+Run read-only, redacted checks for the Omperator source toolchain, compatible
 OMP authority bridge, local T4 host, profiles, and optional Tailscale access.
 
 Options:

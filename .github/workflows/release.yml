@@ -164,15 +164,15 @@ jobs:
           node scripts/inspect-linux-update.mjs
           --version "$VERSION"
           --metadata release/latest-linux.yml
-          --artifact "release/T4-Code-${VERSION}-linux-amd64.deb"
-          --artifact "release/T4-Code-${VERSION}-linux-x86_64.AppImage"
+          --artifact "release/Omperator-${VERSION}-linux-amd64.deb"
+          --artifact "release/Omperator-${VERSION}-linux-x86_64.AppImage"
 
       - name: Stage Linux artifacts
         shell: bash
         run: |
           mkdir -p artifacts
-          cp release/T4-Code-*.deb release/T4-Code-*.AppImage release/latest-linux.yml artifacts/
-          (cd artifacts && sha256sum T4-Code-* > SHA256SUMS-linux.txt)
+          cp release/Omperator-*.deb release/Omperator-*.AppImage release/latest-linux.yml artifacts/
+          (cd artifacts && sha256sum Omperator-* > SHA256SUMS-linux.txt)
           (cd artifacts && sha256sum latest-linux.yml >> SHA256SUMS-linux.txt)
 
       - name: Upload Linux artifacts
@@ -285,8 +285,8 @@ jobs:
           mkdir -p artifacts
           cp \
             apps/mobile/android/app/build/outputs/apk/release/app-release.apk \
-            "artifacts/T4-Code-${VERSION}-android.apk"
-          (cd artifacts && sha256sum T4-Code-* > SHA256SUMS-android.txt)
+            "artifacts/Omperator-${VERSION}-android.apk"
+          (cd artifacts && sha256sum Omperator-* > SHA256SUMS-android.txt)
 
       - name: Upload Android artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -354,22 +354,36 @@ jobs:
         run: |
           pnpm inspect:package -- release/*.zip
           pnpm inspect:dmg -- release/*.dmg
+          node scripts/inspect-macos-update.mjs \
+            --version "${{ needs.verify.outputs.version }}" \
+            --metadata release/latest-mac.yml \
+            --zip "release/Omperator-${{ needs.verify.outputs.version }}-mac-arm64.zip" \
+            --dmg "release/Omperator-${{ needs.verify.outputs.version }}-mac-arm64.dmg" \
+            --blockmap "release/Omperator-${{ needs.verify.outputs.version }}-mac-arm64.zip.blockmap"
 
       - name: Verify Developer ID identity and notarization
         env:
           VERSION: ${{ needs.verify.outputs.version }}
         run: >-
           node scripts/inspect-macos-release.mjs
-          "release/T4-Code-${VERSION}-mac-arm64.zip"
-          "release/T4-Code-${VERSION}-mac-arm64.dmg"
+          "release/Omperator-${VERSION}-mac-arm64.zip"
+          "release/Omperator-${VERSION}-mac-arm64.dmg"
           .github/macos-release-identity.json
 
       - name: Stage macOS artifacts
         shell: bash
         run: |
           mkdir -p artifacts
-          cp release/T4-Code-*.dmg release/T4-Code-*.zip artifacts/
-          (cd artifacts && shasum -a 256 T4-Code-* > SHA256SUMS-macos.txt)
+          cp \
+            release/Omperator-*.dmg \
+            release/Omperator-*.zip \
+            release/Omperator-*.zip.blockmap \
+            release/latest-mac.yml \
+            artifacts/
+          (
+            cd artifacts
+            shasum -a 256 Omperator-*.dmg Omperator-*.zip > SHA256SUMS-macos.txt
+          )
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -435,11 +449,13 @@ jobs:
           set -euo pipefail
           expected=$(printf '%s\n' \
             "SHA256SUMS.txt" \
-            "T4-Code-${VERSION}-android.apk" \
-            "T4-Code-${VERSION}-linux-amd64.deb" \
-            "T4-Code-${VERSION}-linux-x86_64.AppImage" \
-            "T4-Code-${VERSION}-mac-arm64.dmg" \
-            "T4-Code-${VERSION}-mac-arm64.zip" \
+            "Omperator-${VERSION}-android.apk" \
+            "Omperator-${VERSION}-linux-amd64.deb" \
+            "Omperator-${VERSION}-linux-x86_64.AppImage" \
+            "Omperator-${VERSION}-mac-arm64.dmg" \
+            "Omperator-${VERSION}-mac-arm64.zip" \
+            "Omperator-${VERSION}-mac-arm64.zip.blockmap" \
+            "latest-mac.yml" \
             "latest-linux.yml" | sort)
           actual=$(find artifacts -maxdepth 1 -type f ! -name 'SHA256SUMS-*.txt' -printf '%f\n' | sort)
           [[ "$actual" == "$expected" ]]
@@ -462,11 +478,13 @@ jobs:
           fail_on_unmatched_files: true
           body_path: docs/CURRENT_RELEASE_NOTES.md
           files: |
-            artifacts/T4-Code-*.apk
-            artifacts/T4-Code-*.deb
-            artifacts/T4-Code-*.AppImage
-            artifacts/T4-Code-*.dmg
-            artifacts/T4-Code-*.zip
+            artifacts/Omperator-*.apk
+            artifacts/Omperator-*.deb
+            artifacts/Omperator-*.AppImage
+            artifacts/Omperator-*.dmg
+            artifacts/Omperator-*.zip
+            artifacts/Omperator-*.zip.blockmap
+            artifacts/latest-mac.yml
             artifacts/latest-linux.yml
             artifacts/SHA256SUMS.txt
 

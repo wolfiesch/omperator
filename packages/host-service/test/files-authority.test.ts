@@ -24,22 +24,25 @@ function context(signal = new AbortController().signal): OperationContext {
 		sessionId: sessionId("files-session"),
 		deviceId: "device-1",
 		connectionId: "connection-1",
-		capabilities: new Set(["files.list", "files.read"]),
+		capabilities: new Set(["files.list", "files.read", "files.diff"]),
 		abortSignal: signal,
 	};
+}
+
+async function initializeGitRepository(root: string): Promise<void> {
+	for (const args of [
+		["init"],
+		["add", "."],
+		["-c", "user.name=T4 Test", "-c", "user.email=t4@example.invalid", "commit", "-m", "base"],
+	]) {
+		const process = Bun.spawn(["git", "-C", root, ...args], { stdout: "ignore", stderr: "pipe" });
+		if ((await process.exited) !== 0) throw new Error(await new Response(process.stderr).text());
+	}
 }
 
 function authorityFixture(root: string): { authority: FilesAuthority; ctx: OperationContext } {
 	const authority = new FilesAuthority({ projectRootForSession: async (_id: SessionId) => root });
 	return { authority, ctx: context() };
-}
-
-function git(root: string, args: readonly string[]): void {
-	const result = Bun.spawnSync(["git", ...args], {
-		cwd: root,
-		env: { ...process.env, GIT_AUTHOR_NAME: "T4 Test", GIT_AUTHOR_EMAIL: "t4@example.invalid", GIT_COMMITTER_NAME: "T4 Test", GIT_COMMITTER_EMAIL: "t4@example.invalid" },
-	});
-	if (result.exitCode !== 0) throw new Error(result.stderr.toString());
 }
 
 describe("FilesAuthority filesList", () => {
@@ -152,39 +155,87 @@ describe("FilesAuthority filesRead", () => {
 		await expect(authority.filesRead({ path: "nope.txt" }, ctx)).rejects.toMatchObject({ code: "NOT_FOUND" });
 	});
 
-	test("operations() advertises exactly filesList, filesRead, and filesDiff", () => {
-		const { authority } = authorityFixture("/tmp");
-		expect(Object.keys(authority.operations()).sort()).toEqual(["filesDiff", "filesList", "filesRead"]);
-	});
 });
 
 describe("FilesAuthority filesDiff", () => {
-	test("includes untracked files instead of reporting a false-clean tree", async () => {
-		const root = await temporaryDirectory("t4-files-diff-untracked-");
-		git(root, ["init", "-q"]);
-		await writeFile(join(root, "tracked.txt"), "tracked\n");
-		git(root, ["add", "tracked.txt"]);
-		git(root, ["commit", "-qm", "initial"]);
-		await writeFile(join(root, "new.txt"), "new content\n");
+	test("returns the working-tree diff and optionally narrows it to one file", async () => {
+		const root = await temporaryDirectory("t4-files-diff-");
+		await writeFile(join(root, "one.txt"), "before one\n");
+		await writeFile(join(root, "two.txt"), "before two\n");
+		await initializeGitRepository(root);
+		await writeFile(join(root, "one.txt"), "after one\n");
+		await writeFile(join(root, "two.txt"), "after two\n");
+		const { authority, ctx } = authorityFixture(root);
+
+		const all = await authority.filesDiff({}, ctx);
+		expect(all.diff).toContain("one.txt");
+		expect(all.diff).toContain("two.txt");
+
+		const narrowed = await authority.filesDiff({ path: "one.txt" }, ctx);
+		expect(narrowed.diff).toContain("one.txt");
+		expect(narrowed.diff).not.toContain("two.txt");
+	});
+
+	test("scopes a pathless diff to a session rooted below the repository", async () => {
+		const repository = await temporaryDirectory("t4-files-diff-scope-");
+		const sessionRoot = join(repository, "session");
+		const siblingRoot = join(repository, "sibling");
+		await mkdir(sessionRoot);
+		await mkdir(siblingRoot);
+		await writeFile(join(sessionRoot, "inside.txt"), "inside before\n");
+		await writeFile(join(siblingRoot, "outside.txt"), "outside before\n");
+		await initializeGitRepository(repository);
+		await writeFile(join(sessionRoot, "inside.txt"), "inside after\n");
+		await writeFile(join(siblingRoot, "outside.txt"), "outside after\n");
+		const { authority, ctx } = authorityFixture(sessionRoot);
+
+		const result = await authority.filesDiff({}, ctx);
+		expect(result.diff).toContain("inside.txt");
+		expect(result.diff).not.toContain("outside.txt");
+	});
+
+	test("returns deletion diffs for paths that no longer exist", async () => {
+		const root = await temporaryDirectory("t4-files-diff-deleted-");
+		await writeFile(join(root, "deleted.txt"), "remove me\n");
+		await initializeGitRepository(root);
+		await rm(join(root, "deleted.txt"));
+		const { authority, ctx } = authorityFixture(root);
+
+		const result = await authority.filesDiff({ path: "deleted.txt" }, ctx);
+		expect(result.diff).toContain("deleted.txt");
+		expect(result.diff).toContain("-remove me");
+	});
+
+	test("truncates oversized diffs without exhausting the child-process buffer", async () => {
+		const root = await temporaryDirectory("t4-files-diff-large-");
+		await writeFile(join(root, "large.txt"), `${"a".repeat(MAX_FILE_BYTES * 2)}\n`);
+		await initializeGitRepository(root);
+		await writeFile(join(root, "large.txt"), `${"b".repeat(MAX_FILE_BYTES * 2)}\n`);
 		const { authority, ctx } = authorityFixture(root);
 
 		const result = await authority.filesDiff({}, ctx);
-		expect(result.diff).toContain("diff --git a/new.txt b/new.txt");
-		expect(result.diff).toContain("+new content");
+		expect(result.truncated).toBe(true);
+		expect(Buffer.byteLength(result.diff as string, "utf8")).toBeLessThanOrEqual(MAX_FILE_BYTES);
 	});
 
-	test("reviews a deleted path through its existing parent", async () => {
-		const root = await temporaryDirectory("t4-files-diff-deleted-");
-		git(root, ["init", "-q"]);
-		await mkdir(join(root, "src"));
-		await writeFile(join(root, "src", "old.txt"), "old content\n");
-		git(root, ["add", "src/old.txt"]);
-		git(root, ["commit", "-qm", "initial"]);
-		await rm(join(root, "src", "old.txt"));
+	test("rejects turn snapshots, escaping paths, and missing sessions", async () => {
+		const root = await temporaryDirectory("t4-files-diff-errors-");
+		const outside = await temporaryDirectory("t4-files-diff-outside-");
+		await writeFile(join(root, "tracked.txt"), "base\n");
+		await writeFile(join(outside, "secret.txt"), "secret\n");
+		await symlink(join(outside, "secret.txt"), join(root, "escape.txt"));
+		await initializeGitRepository(root);
 		const { authority, ctx } = authorityFixture(root);
 
-		const result = await authority.filesDiff({ path: "src/old.txt" }, ctx);
-		expect(result.diff).toContain("deleted file mode");
-		expect(result.diff).toContain("-old content");
+		await expect(authority.filesDiff({ turnId: "turn-1" }, ctx)).rejects.toMatchObject({ code: "UNSUPPORTED" });
+		await expect(authority.filesDiff({ path: "escape.txt" }, ctx)).rejects.toMatchObject({ code: "FORBIDDEN" });
+		await expect(authority.filesDiff({}, { ...ctx, sessionId: undefined })).rejects.toMatchObject({
+			code: "NOT_FOUND",
+		});
+	});
+
+	test("operations() advertises all standalone file operations", () => {
+		const { authority } = authorityFixture("/tmp");
+		expect(Object.keys(authority.operations()).sort()).toEqual(["filesDiff", "filesList", "filesRead"]);
 	});
 });

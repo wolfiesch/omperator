@@ -1,7 +1,12 @@
 import { STATUS_PILLS, type SessionStatus } from "@t4-code/ui";
+import type { ConnectionState } from "@t4-code/protocol/desktop-ipc";
 
 import type { WorkspaceSession } from "../../lib/workspace-data.ts";
-import { presentSessionControlKind } from "./session-observer.ts";
+import {
+  CACHED_WRITE_REASON,
+  OFFLINE_WRITE_REASON,
+  presentSessionControlKind,
+} from "./session-observer.ts";
 
 type ActivityStatus = Exclude<SessionStatus, "connecting">;
 
@@ -25,6 +30,26 @@ const STATUS_DETAIL: Record<ActivityStatus, string> = {
   error: "The latest turn stopped with an error.",
 };
 
+export const RECONNECTING_WRITE_REASON =
+  "Reconnecting to the host and syncing sessions. Your transcript stays readable; input returns when the live session is ready.";
+export const SYNCING_WRITE_REASON =
+  "Connected to the host and syncing sessions. Your transcript stays readable; input returns when the live session is ready.";
+
+/**
+ * Explain why a non-live composer is read-only without calling a host
+ * unreachable while its transport is reconnecting or its initial inventory
+ * is still syncing.
+ */
+export function presentSessionWriteReason(
+  link: "live" | "cached" | "offline",
+  connectionState: ConnectionState | null,
+): string | null {
+  if (link === "live") return null;
+  if (connectionState === "connecting") return RECONNECTING_WRITE_REASON;
+  if (connectionState === "connected") return SYNCING_WRITE_REASON;
+  return link === "cached" ? CACHED_WRITE_REASON : OFFLINE_WRITE_REASON;
+}
+
 function lifecyclePresentation(session: WorkspaceSession): SessionStatePresentation {
   if (session.lifecycle === "idle") {
     return {
@@ -45,7 +70,7 @@ function lifecyclePresentation(session: WorkspaceSession): SessionStatePresentat
   return {
     label: "Status unknown",
     detail:
-      "T4 has saved history for this session, but the runtime did not report whether it is running, idle, or stopped.",
+      "Omperator has saved history for this session, but the runtime did not report whether it is running, idle, or stopped.",
     status: null,
     busy: false,
   };
@@ -62,7 +87,7 @@ export function presentSessionState(session: WorkspaceSession): SessionStatePres
   if (session.freshness === "offline") {
     return {
       label: "Offline",
-      detail: "The host is unreachable. This is the last state T4 received.",
+      detail: "The host is unreachable. This is the last state Omperator received.",
       status: null,
       busy: false,
     };
@@ -105,6 +130,14 @@ export function presentSessionState(session: WorkspaceSession): SessionStatePres
     if (session.control === "suspect") {
       return {
         label: "Waiting",
+        detail: control.composerReason,
+        status: null,
+        busy: false,
+      };
+    }
+    if (session.control === "released") {
+      return {
+        label: "Ready for terminal",
         detail: control.composerReason,
         status: null,
         busy: false,

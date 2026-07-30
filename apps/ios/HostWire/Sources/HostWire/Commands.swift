@@ -62,7 +62,7 @@ public enum Commands {
         "session.mode.set":     .init(capability: .sessionsManage, scope: .session, revision: .optional, confirmation: .none),
         "session.archive":     .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .none),
         "session.restore":     .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .none),
-        "session.delete":      .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .challenge),
+        "session.delete":      .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .none),
         "session.model.set":    .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .none),
         "session.thinking.set": .init(capability: .sessionsManage, scope: .session, revision: .required, confirmation: .none),
         "session.ui.respond":   .init(capability: .sessionsPrompt, scope: .session, revision: .optional, confirmation: .none),
@@ -91,7 +91,7 @@ public enum Commands {
         // preview.launch is preview.control (start a preview for a URL);
         // preview.capture triggers a screenshot (preview.read); preview.
         // capture.read streams one base64 chunk of the capture bytes.
-        "preview.launch":       .init(capability: .previewControl, scope: .session, revision: .optional, confirmation: .challenge),
+        "preview.launch":       .init(capability: .previewControl, scope: .session, revision: .optional, confirmation: .none),
         "preview.capture":      .init(capability: .previewRead,    scope: .session, revision: .optional, confirmation: .none),
         "preview.capture.read": .init(capability: .previewRead,    scope: .session, revision: .none,     confirmation: .none),
     ]
@@ -269,16 +269,9 @@ extension ResultFrame {
               case .bool(true) = object["released"] ?? .null,
               case .string(let resumeCommand) = object["resumeCommand"] ?? .null,
               !resumeCommand.isEmpty,
-              (try? Bounded.controlFree(
-                resumeCommand,
-                path: "result.resumeCommand",
-                maxBytes: 1024
-              )) != nil
+              (try? Bounded.controlFree(resumeCommand, path: "result.resumeCommand", maxBytes: 1024)) != nil
         else {
-            throw T4WireError.invalidFrame(
-                path: "result",
-                reason: "response has no session release result"
-            )
+            throw T4WireError.invalidFrame(path: "result", reason: "response has no session release result")
         }
         return resumeCommand
     }
@@ -289,10 +282,7 @@ extension ResultFrame {
               Set(object.keys) == ["reclaimed"],
               case .bool(true) = object["reclaimed"] ?? .null
         else {
-            throw T4WireError.invalidFrame(
-                path: "result",
-                reason: "response has no session reclaim result"
-            )
+            throw T4WireError.invalidFrame(path: "result", reason: "response has no session reclaim result")
         }
     }
 

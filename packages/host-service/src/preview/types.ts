@@ -23,11 +23,6 @@ export interface PreviewChromiumExecutable {
 
 /** Resolves the pinned headless Chromium executable, staging it on first use. */
 export type PreviewChromiumResolver = () => Promise<PreviewChromiumExecutable>;
-export type PreviewBrowserLauncher = (options: {
-	readonly executablePath: string;
-	readonly headless: boolean;
-	readonly args: string[];
-}) => Promise<Browser>;
 
 /** Clock seam used for idle-timeout and capture timestamps. */
 export interface PreviewClock {
@@ -56,9 +51,6 @@ export interface PreviewLeaseRecord {
 export interface PreviewEntry {
 	readonly previewId: PreviewId;
 	readonly sessionId: SessionId;
-	readonly allowedOrigin: string;
-	readonly hostname: string;
-	readonly pinnedAddresses: readonly string[];
 	readonly authority?: PreviewAuthorityDescriptor;
 	browser: Browser;
 	context: BrowserContext;
@@ -78,8 +70,6 @@ export interface PreviewEntry {
 /** Options for constructing a PreviewService. */
 export interface PreviewServiceOptions {
 	readonly chromiumResolver: PreviewChromiumResolver;
-	/** Browser-launch seam used by conformance tests; production loads Playwright lazily. */
-	readonly browserLauncher?: PreviewBrowserLauncher;
 	readonly clock?: PreviewClock;
 	/** Maximum concurrent browser contexts per service. Defaults to 2. */
 	readonly maxConcurrent?: number;

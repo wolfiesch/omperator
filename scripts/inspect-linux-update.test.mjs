@@ -7,8 +7,8 @@ import {
 } from "./inspect-linux-update.mjs";
 
 const version = "0.1.17";
-const deb = `T4-Code-${version}-linux-amd64.deb`;
-const appImage = `T4-Code-${version}-linux-x86_64.AppImage`;
+const deb = `Omperator-${version}-linux-amd64.deb`;
+const appImage = `Omperator-${version}-linux-x86_64.AppImage`;
 const debHash = Buffer.alloc(64, 1).toString("base64");
 const appImageHash = Buffer.alloc(64, 2).toString("base64");
 const valid = `version: ${version}

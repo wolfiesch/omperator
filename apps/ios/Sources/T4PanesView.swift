@@ -606,8 +606,6 @@ struct T4SettingsPane: View {
     @State private var addingKey = false
     @State private var newKeyProvider = ""
     @State private var newKeyValue = ""
-    /// Connect/pair sheet state — remote hosts are managed from Settings.
-    @State private var showConnect = false
     private var t: Theme { theme.t }
 
     // Known model roles (host modelRoles keys). "default" is the fallback when
@@ -883,9 +881,6 @@ struct T4SettingsPane: View {
                 .replacingOccurrences(of: "wss://", with: "")
                 .replacingOccurrences(of: "ws://", with: "")
                 .replacingOccurrences(of: "/v1/ws", with: "") ?? "Not connected")
-            if store.localAutoconnect {
-                hostRow("Source", "This Mac · automatic")
-            }
             if let fp = pinnedFingerprint {
                 cardRow {
                     Text("wss fingerprint")
@@ -908,14 +903,6 @@ struct T4SettingsPane: View {
                 }
             }
             cardRow {
-                Button {
-                    showConnect = true
-                } label: {
-                    Label("Add or switch host…", systemImage: "plus")
-                        .font(.system(size: 13))
-                }
-            }
-            cardRow {
                 Button(role: .destructive) {
                     Task { await store.disconnect() }
                 } label: {
@@ -923,10 +910,6 @@ struct T4SettingsPane: View {
                 }
                 .disabled(!store.connected)
             }
-        }
-        .sheet(isPresented: $showConnect) {
-            T4ConnectView(store: store)
-                .environmentObject(theme)
         }
     }
 

@@ -6,7 +6,13 @@ Omperator is a desktop-first observability and control workspace for Oh My Pi (O
 
 This repository is an intentionally independent hard fork of [`LycaonLLC/t4-code`](https://github.com/LycaonLLC/t4-code), a repository owned by a friend of the Omperator maintainer. The fork was created so development, architecture, releases, governance, and product direction can proceed in an isolated, separately owned repository without depending on access to or coordination through the friend's repository. Preserve applicable MIT attribution and provenance, but do not assume changes must remain compatible with or be upstreamed to the original repository unless a task explicitly requires it.
 
-The repository and project are called **Omperator**. The shipped application, packages, paths, and documentation still contain the **T4 Code** name. A product rebrand from T4 Code to Omperator is under consideration but remains undecided. Until that decision is explicit, do not perform a broad rename or claim that the public product has been renamed; use Omperator for this repository and use T4 Code where it describes the current application, package, or release identity.
+The repository, project, and shipped product are called **Omperator**. The
+public application name and release artifacts changed from **T4 Code** in
+v0.2.0. Preserve the stable technical identities needed for safe upgrades:
+`net.t4code.app`, `t4-code://`, `@t4-code/*`, `t4-omp`, existing service
+labels, and the legacy Application Support and log paths. Keep **T4 Code** in
+historical provenance and compatibility records where it identifies the
+pre-v0.2.0 product or the upstream hard-fork source.
 
 ## Current project stage
 

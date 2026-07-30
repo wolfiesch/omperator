@@ -20,7 +20,6 @@ final class MacCommandsModel: ObservableObject {
     /// Monotonic ticks — the workspace observes these to perform one-shot UI
     /// actions without the Commands scene needing direct view-state access.
     @Published var focusSearchTick = 0
-    @Published var composerTick = 0
     @Published var dismissTick = 0
     @Published var connectTick = 0
     @Published var paletteTick = 0
@@ -32,7 +31,6 @@ final class MacCommandsModel: ObservableObject {
         withAnimation { columnVisibility = columnVisibility == .all ? .detailOnly : .all }
     }
     func focusSearch() { focusSearchTick &+= 1 }
-    func focusComposer() { composerTick &+= 1 }
     func dismissPresented() { dismissTick &+= 1 }
     func requestConnect() { connectTick &+= 1 }
     func openPalette() { paletteTick &+= 1 }
@@ -100,39 +98,8 @@ struct MacCommands: SwiftUI.Commands {
             Button("Focus Search") { commands?.focusSearch() }
                 .keyboardShortcut("f", modifiers: .command)
 
-            // ⌘L: jump to the message composer (browser-location-bar habit).
-            Button("Focus Composer") { commands?.focusComposer() }
-                .keyboardShortcut("l", modifiers: .command)
-
             Button("Close Sheet") { commands?.dismissPresented() }
                 .keyboardShortcut(.escape, modifiers: [])
-
-            // ⌘J: raise/lower the host-terminal drawer for the focused session.
-            Button("Toggle Terminal") { toggleTerminalDrawer() }
-                .keyboardShortcut("j", modifiers: .command)
-                .disabled(selected == nil)
-
-            Button("Next Unread") { selectNextUnread() }
-                .keyboardShortcut("u", modifiers: [.command, .option])
-                .disabled(store?.unreadSessions.isEmpty ?? true)
-
-            Divider()
-
-            // Right-dock tab switching: ⌘⌥1…⌘⌥6 select the Nth docked pane for
-            // the focused session (Browser/Files/Agents/Review/Search&Diff/
-            // Artifacts in dock order). ⌘1…⌘9 stays session selection.
-            Button("Dock Tab 1") { selectDockTab(0) }
-                .keyboardShortcut("1", modifiers: [.command, .option])
-            Button("Dock Tab 2") { selectDockTab(1) }
-                .keyboardShortcut("2", modifiers: [.command, .option])
-            Button("Dock Tab 3") { selectDockTab(2) }
-                .keyboardShortcut("3", modifiers: [.command, .option])
-            Button("Dock Tab 4") { selectDockTab(3) }
-                .keyboardShortcut("4", modifiers: [.command, .option])
-            Button("Dock Tab 5") { selectDockTab(4) }
-                .keyboardShortcut("5", modifiers: [.command, .option])
-            Button("Dock Tab 6") { selectDockTab(5) }
-                .keyboardShortcut("6", modifiers: [.command, .option])
 
         }
 
@@ -174,37 +141,6 @@ struct MacCommands: SwiftUI.Commands {
         store.select(flatSessions[i])
     }
 
-    /// ⌘J: flip the host-terminal drawer for the focused session. The flag
-    /// lives in the per-session layout, so the drawer animates via the store.
-    private func toggleTerminalDrawer() {
-        guard let store, let session = selected else { return }
-        let open = store.layout(for: session.sessionId).terminalOpen
-        store.setTerminalOpen(!open, for: session.sessionId)
-    }
 
-    /// ⌘⌥1…⌘⌥6: select the Nth docked pane (1-based index → 0-based here) for
-    /// the focused window's selected session. No-op out of range / no session.
-    private func selectDockTab(_ index: Int) {
-        guard let store, let session = selected else { return }
-        store.selectDockPane(at: index + 1, for: session.sessionId)
-    }
-
-    /// ⌘⌥U: cycle selection to the next session with an unread dot, in rail
-    /// order, wrapping past the current selection. No-op when none are unread.
-    private func selectNextUnread() {
-        guard let store else { return }
-        let flat = flatSessions
-        let ids = flat.map(\.sessionId)
-        let unread = store.unreadSessions
-        guard !unread.isEmpty, !ids.isEmpty else { return }
-        let start = selected.flatMap { ids.firstIndex(of: $0.sessionId) } ?? -1
-        for offset in 1...ids.count {
-            let idx = (start + offset + ids.count) % ids.count
-            if unread.contains(ids[idx]) {
-                store.select(flat[idx])
-                return
-            }
-        }
-    }
 }
 #endif

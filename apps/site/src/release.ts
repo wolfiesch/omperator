@@ -6,15 +6,15 @@ export const DOCS_URL = `${SITE_URL}/docs`;
 export const REPO_URL = "https://github.com/wolfiesch/omperator";
 export const OMP_URL = "https://github.com/can1357/oh-my-pi";
 export const OMP_RUNTIME_VERSION = "17.0.5";
-export const OMP_RUNTIME_COMMIT = "ca2902bc095a0b17067f4b8b34ecf454390f85ff";
-export const OMP_RUNTIME_TAG = "t4code-17.0.5-appserver-15";
+export const OMP_RUNTIME_COMMIT = "d83b688817651d39bfab00676db6109a2d1ccec5";
+export const OMP_RUNTIME_TAG = "t4code-17.0.5-appserver-19";
 export const OMP_RUNTIME_URL = `https://github.com/wolfiesch/oh-my-pi/tree/${OMP_RUNTIME_TAG}`;
 export const OMP_UPSTREAM_TAG = "v17.0.5";
 export const OMP_UPSTREAM_COMMIT = "9fd6e97113f5ed3a847e66d346970efdf8afcad9";
 export const OMP_UPSTREAM_URL = `${OMP_URL}/tree/${OMP_UPSTREAM_TAG}`;
 export const APP_WIRE_VERSION = "0.7.0";
-export const RELEASE_TAG = "v0.1.33";
-export const RELEASE_VERSION = "0.1.33";
+export const RELEASE_TAG = "v0.2.1";
+export const RELEASE_VERSION = "0.2.1";
 export const RELEASES_URL = `${REPO_URL}/releases/tag/${RELEASE_TAG}`;
 export const RELEASE_MANIFEST_URL = `${SITE_URL}/releases/latest.json`;
 
@@ -49,11 +49,11 @@ function asset(
 }
 
 export const RELEASE_ASSETS: readonly ReleaseAsset[] = [
-  asset("android", "apk", "universal", "T4-Code-0.1.33-android.apk", "Android APK"),
-  asset("linux", "deb", "x86_64", "T4-Code-0.1.33-linux-amd64.deb", "Linux .deb"),
-  asset("linux", "appimage", "x86_64", "T4-Code-0.1.33-linux-x86_64.AppImage", "Linux AppImage"),
-  asset("mac", "dmg", "arm64", "T4-Code-0.1.33-mac-arm64.dmg", "macOS .dmg"),
-  asset("mac", "zip", "arm64", "T4-Code-0.1.33-mac-arm64.zip", "macOS .zip"),
+  asset("android", "apk", "universal", "Omperator-0.2.1-android.apk", "Android APK"),
+  asset("linux", "deb", "x86_64", "Omperator-0.2.1-linux-amd64.deb", "Linux .deb"),
+  asset("linux", "appimage", "x86_64", "Omperator-0.2.1-linux-x86_64.AppImage", "Linux AppImage"),
+  asset("mac", "dmg", "arm64", "Omperator-0.2.1-mac-arm64.dmg", "macOS .dmg"),
+  asset("mac", "zip", "arm64", "Omperator-0.2.1-mac-arm64.zip", "macOS .zip"),
 ];
 
 export function assetsFor(platform: Platform): readonly ReleaseAsset[] {

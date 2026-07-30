@@ -8,7 +8,12 @@
 import { clampWidth } from "@t4-code/ui";
 import { createStore, type StoreApi } from "zustand/vanilla";
 
-import type { RailFilter, RailOrganization, RailSort } from "../lib/session-tree.ts";
+import {
+  type RailFilter,
+  type RailOrganization,
+  type RailSort,
+} from "../lib/rail-model.ts";
+export { isSessionUnread } from "../lib/rail-model.ts";
 import type { SessionListView } from "../lib/workspace-data.ts";
 import type { WorkspacePersistence } from "./persistence.ts";
 
@@ -443,19 +448,6 @@ export function markVisited(
  * turn finished after the last visit. Never-visited sessions are not unread —
  * the user has no baseline to be behind.
  */
-export function isSessionUnread(
-  lastVisitedAt: string | undefined,
-  latestTurnCompletedAt: string | null,
-): boolean {
-  if (latestTurnCompletedAt === null) return false;
-  const completedMs = Date.parse(latestTurnCompletedAt);
-  if (Number.isNaN(completedMs)) return false;
-  if (lastVisitedAt === undefined) return false;
-  const visitedMs = Date.parse(lastVisitedAt);
-  if (Number.isNaN(visitedMs)) return true;
-  return completedMs > visitedMs;
-}
-
 export function isAttentionOutcomeSeen(
   seenBySessionKey: Readonly<Record<string, string>>,
   sessionKey: string,

@@ -18,7 +18,7 @@ function liveSnapshot(pending: readonly Record<string, unknown>[]): DesktopRunti
   const ref = {
     hostId: hostId(host),
     sessionId: sessionId(session),
-    project: { projectId: "project-attention", name: "T4 Code" },
+    project: { projectId: "project-attention", name: "Omperator" },
     revision: revision("revision-attention"),
     title: "Attention session",
     status: "idle",

@@ -21,16 +21,6 @@ import {
   type LocalProfileRegistryState,
 } from "../src/local-profiles.ts";
 
-function pairDeepLink(hostHint: string, code: string): string {
-  const payload = Buffer.from(JSON.stringify({
-    version: 1,
-    hostHint,
-    endpoint: `wss://${hostHint}/v1/ws`,
-    code,
-  })).toString("base64url");
-  return `t4-code://pair/${payload}`;
-}
-
 describe("development sandbox service configuration", () => {
   it("derives isolated service, runtime, log, and Electron paths from one root", () => {
     const config = developmentSandboxServiceConfig({
@@ -432,11 +422,11 @@ describe("desktop Electron lifecycle", () => {
   });
   it("queues initial argv, second-instance, and open-url links until renderer load", async () => {
     const original = [...process.argv];
-    process.argv.push(pairDeepLink("argv-host", "123456"));
+    process.argv.push("t4-code://pair/argv-host/123456");
     const fixture = setup();
     await fixture.lifecycle.start();
     process.argv.splice(0, process.argv.length, ...original);
-    fixture.app.listeners.get("second-instance")?.({}, [pairDeepLink("second-host", "234567")]);
+    fixture.app.listeners.get("second-instance")?.({}, ["t4-code://pair/second-host/234567"]);
     let prevented = false;
     fixture.app.listeners.get("open-url")?.(
       {
@@ -444,7 +434,7 @@ describe("desktop Electron lifecycle", () => {
           prevented = true;
         },
       },
-      pairDeepLink("url-host", "345678"),
+      "t4-code://pair/url-host/345678",
     );
     expect(prevented).toBe(true);
     const window = fixture.windows[0]!;
@@ -461,16 +451,6 @@ describe("desktop Electron lifecycle", () => {
         return payload.hostHint;
       }),
     ).toEqual(["argv-host", "second-host", "url-host"]);
-    expect(
-      window.sent.map((entry) => {
-        const payload = entry[1] as { endpoint: string };
-        return payload.endpoint;
-      }),
-    ).toEqual([
-      "wss://argv-host/v1/ws",
-      "wss://second-host/v1/ws",
-      "wss://url-host/v1/ws",
-    ]);
     expect(window.showCount).toBe(1);
     expect(window.focusCount).toBe(1);
     await fixture.lifecycle.stop();

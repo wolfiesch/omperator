@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">T4 Code</string>
-    <string name="title_activity_main">T4 Code</string>
+    <string name="app_name">Omperator</string>
+    <string name="title_activity_main">Omperator</string>
     <string name="package_name">net.t4code.app</string>
     <string name="custom_url_scheme">net.t4code.app</string>
 </resources>

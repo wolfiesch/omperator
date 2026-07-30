@@ -570,12 +570,12 @@ test("routes an external runtime session through appserver-owned workspace ident
 	}
 }, 15_000);
 
-test("local clients execute challenge commands without a confirmation round trip", async () => {
-	const root = await realpath(await mkdtemp(join(tmpdir(), "t4-challenge-local-")));
+test("local clients open a terminal without a confirmation round trip", async () => {
+	const root = await realpath(await mkdtemp(join(tmpdir(), "t4-terminal-local-")));
 	const openedTerminal = crypto.randomUUID();
 	const appserver = createAppserver({
 		hostId: host,
-		epoch: "challenge-local-test",
+		epoch: "terminal-local-test",
 		socketPath: join(root, "run", "app.sock"),
 		discovery: {
 			async list() {
@@ -605,13 +605,11 @@ test("local clients execute challenge commands without a confirmation round trip
 		await appserver.start();
 		client = await RawUdsWebSocket.connect(appserver.socketPath);
 		client.sendJson({ ...hello(), capabilities: { client: ["term.open"] } });
-		await client.nextServer(); // welcome
+		await client.nextServer();
 		client.sendJson({
 			...command("term-open-1", "term.open", { cols: 80, rows: 24 }),
 			sessionId: "session-local",
 		});
-		// Same-machine Unix-socket clients bypass the remote confirmation
-		// challenge, so routine local terminal opens execute immediately.
 		expect(await response(client, "term-open-1")).toMatchObject({
 			ok: true,
 			result: { terminalId: openedTerminal },

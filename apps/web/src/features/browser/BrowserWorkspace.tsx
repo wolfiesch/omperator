@@ -210,7 +210,7 @@ function BrowserUnsupported({
           </EmptyMedia>
           <EmptyTitle>Native browser unavailable</EmptyTitle>
           <EmptyDescription className="max-w-md">
-            Browser workspaces require the T4 Code desktop app. This runtime cannot embed a
+            Browser workspaces require the Omperator desktop app. This runtime cannot embed a
             native browser view, but the existing host-backed Preview workspace is still
             available from the session.
           </EmptyDescription>
@@ -1342,7 +1342,7 @@ export function BrowserWorkspace({
             </DialogDescription>
           </DialogHeader>
           <div className="rounded-md border border-warning/30 bg-warning/8 p-3 text-sm">
-            This choice applies only to the current Browser workspace mount. T4 Code will not
+            This choice applies only to the current Browser workspace mount. Omperator will not
             select an authenticated profile from last-used state.
           </div>
           <DialogFooter>

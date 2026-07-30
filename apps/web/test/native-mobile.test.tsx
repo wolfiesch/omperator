@@ -356,7 +356,7 @@ describe("native mobile connection", () => {
     await vi.advanceTimersByTimeAsync(3_000);
     await expect(boot).resolves.toEqual({
       kind: "setup",
-      message: "Android secure storage did not answer. Close T4 Code and open it again.",
+      message: "Android secure storage did not answer. Close Omperator and open it again.",
     });
     expect(reads).toBe(2);
   });

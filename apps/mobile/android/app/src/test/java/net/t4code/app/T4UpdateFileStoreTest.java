@@ -22,10 +22,10 @@ public final class T4UpdateFileStoreTest {
     @Test
     public void startupRemovesPartialsAndVerifiedFilesButKeepsOneHandoff() throws Exception {
         File directory = temporaryFolder.newFolder("updates");
-        File partial = write(directory, "T4-Code-1.2.3-a.apk.partial");
-        File verified = write(directory, "T4-Code-1.2.3-b.apk");
-        File olderHandoff = write(directory, "T4-Code-1.2.2-a-installer.apk");
-        File newerHandoff = write(directory, "T4-Code-1.2.3-b-installer.apk");
+        File partial = write(directory, "Omperator-1.2.3-a.apk.partial");
+        File verified = write(directory, "Omperator-1.2.3-b.apk");
+        File olderHandoff = write(directory, "Omperator-1.2.2-a-installer.apk");
+        File newerHandoff = write(directory, "Omperator-1.2.3-b-installer.apk");
         assertTrue(olderHandoff.setLastModified(1_000));
         assertTrue(newerHandoff.setLastModified(2_000));
 
@@ -43,7 +43,7 @@ public final class T4UpdateFileStoreTest {
     @Test
     public void foregroundDownloadClearsAProcessDeathHandoff() throws Exception {
         File directory = temporaryFolder.newFolder("updates");
-        File oldHandoff = write(directory, "T4-Code-1.2.2-a-installer.apk");
+        File oldHandoff = write(directory, "Omperator-1.2.2-a-installer.apk");
         T4UpdateFileStore store = new T4UpdateFileStore(directory);
         assertNotNull(store.prepareOnStartup());
 

@@ -10,7 +10,7 @@ import { OmpMark } from "../src/brand/OmpMark.tsx";
 describe("BrandLockup", () => {
 	it("names the product as visible text", () => {
 		const markup = renderToStaticMarkup(<BrandLockup />);
-		expect(markup).toContain("T4 Code");
+		expect(markup).toContain("Omperator");
 	});
 
 	it("keeps the mark decorative so the name is announced once", () => {

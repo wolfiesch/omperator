@@ -1,4 +1,5 @@
 import { app } from "electron";
+import { join } from "node:path";
 import { DesktopLifecycle, developmentSandboxServiceConfig } from "./lifecycle.ts";
 import { desktopClusterOperatorEnabled } from "./cluster-operator-flag.ts";
 
@@ -87,6 +88,30 @@ type SandboxApp = {
   commandLine: { appendSwitch(name: string): void };
 };
 
+type InstalledIdentityApp = SandboxApp & {
+  getPath(name: string): string;
+  setName(name: string): void;
+};
+
+export const LEGACY_APPLICATION_DATA_NAME = "T4 Code";
+
+/**
+ * The v0.2 product name is Omperator, but changing Electron's internal name
+ * would silently select a new safeStorage key and userData directory. Keep
+ * those technical identities stable so the signed in-place update preserves
+ * encrypted host credentials, projection state, private runtimes, and local
+ * services.
+ */
+export function applyInstalledIdentityContinuity(
+  target: InstalledIdentityApp,
+  sandbox: { readonly electronUserData: string } | undefined,
+): void {
+  target.setName(LEGACY_APPLICATION_DATA_NAME);
+  if (sandbox === undefined) {
+    target.setPath("userData", join(target.getPath("appData"), LEGACY_APPLICATION_DATA_NAME));
+  }
+}
+
 /**
  * macOS resolves the default keychain from `$HOME`, and the development
  * sandbox redirects `HOME` to a disposable directory that has none. Without
@@ -151,7 +176,9 @@ export function bootstrapDesktopMain(options: MainRuntimeOptions): Promise<void>
   }
 }
 
-applyDevelopmentSandbox(app as unknown as SandboxApp, developmentSandboxServiceConfig());
+const developmentSandbox = developmentSandboxServiceConfig();
+applyInstalledIdentityContinuity(app as unknown as InstalledIdentityApp, developmentSandbox);
+applyDevelopmentSandbox(app as unknown as SandboxApp, developmentSandbox);
 
 const lifecycle = new DesktopLifecycle({
   clusterOperatorEnabled: desktopClusterOperatorEnabled(),
