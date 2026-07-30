@@ -568,34 +568,44 @@ final class T4SessionStore: ObservableObject {
         ]
         activeTurns.insert(sessionId)
         defer { activeTurns.remove(sessionId) }
-        for (index, kind, content, callId, tool) in blocks {
-            var length = 3
-            while length < content.count {
-                receiveLiveTurnBlock(
-                    sessionId: sessionId,
-                    event: Self.streamingProofEvent(
-                        entryId: entryId,
-                        blockIndex: index,
-                        blockKind: kind,
-                        content: String(content.prefix(length)),
-                        callId: callId,
-                        tool: tool
-                    )
-                )
-                try? await Task.sleep(for: .milliseconds(180))
-                length += 3
-            }
+
+        // Seed every row before pacing updates. The UI test attaches after app
+        // launch, so streaming blocks sequentially can finish the thinking row
+        // before the tool row exists and make simultaneous observation depend
+        // on simulator startup timing.
+        var lengths = Array(repeating: 3, count: blocks.count)
+        for (offset, block) in blocks.enumerated() {
             receiveLiveTurnBlock(
                 sessionId: sessionId,
                 event: Self.streamingProofEvent(
                     entryId: entryId,
-                    blockIndex: index,
-                    blockKind: kind,
-                    content: content,
-                    callId: callId,
-                    tool: tool
+                    blockIndex: block.0,
+                    blockKind: block.1,
+                    content: String(block.2.prefix(lengths[offset])),
+                    callId: block.3,
+                    tool: block.4
                 )
             )
+        }
+        try? await Task.sleep(for: .milliseconds(500))
+
+        while lengths.indices.contains(where: { lengths[$0] < blocks[$0].2.count }) {
+            for offset in blocks.indices where lengths[offset] < blocks[offset].2.count {
+                let block = blocks[offset]
+                lengths[offset] = min(block.2.count, lengths[offset] + 3)
+                receiveLiveTurnBlock(
+                    sessionId: sessionId,
+                    event: Self.streamingProofEvent(
+                        entryId: entryId,
+                        blockIndex: block.0,
+                        blockKind: block.1,
+                        content: String(block.2.prefix(lengths[offset])),
+                        callId: block.3,
+                        tool: block.4
+                    )
+                )
+            }
+            try? await Task.sleep(for: .milliseconds(250))
         }
     }
 
