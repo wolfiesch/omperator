@@ -227,4 +227,21 @@ describe("session runtime image build contract", () => {
 		expect(proof).toContain('commandApp("preview.capture.read"');
 		expect(proof).toContain("appBrowserPreview");
 	});
+	test("live proof creates a real cmux browser pane on the supervised CDP target", async () => {
+		const proof = await readRepositoryFile("scripts/session-runtime-live-proof.mjs");
+		expect(proof).toContain('"new-browser-tab"');
+		expect(proof).toContain('"list-workspaces"');
+		expect(proof).toContain('"http://127.0.0.1:9222/json/list"');
+		expect(proof).toContain("cmuxBrowserPane");
+	});
+	test("live proof rejects every browser path when the runtime profile disables GUI", async () => {
+		const proof = await readRepositoryFile("scripts/session-runtime-live-proof.mjs");
+		expect(proof).toContain('option("gui-enabled")');
+		expect(proof).toContain('T4_GUI_ENABLED: String(guiEnabled)');
+		expect(proof).toContain("disabledBrowserProfile");
+		expect(proof).toContain("chromiumAbsent");
+		expect(proof).toContain("cmuxCdpCapabilityAbsent");
+		expect(proof).toContain("previewCapabilitiesAbsent");
+		expect(proof).toContain("appPreviewUnadvertised");
+	});
 });

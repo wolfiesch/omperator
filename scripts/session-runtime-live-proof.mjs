@@ -210,7 +210,38 @@ function transcriptText(entries) {
 	return JSON.stringify(entries);
 }
 
-async function exerciseSharedSession(authorityPort, shellContainer, identityTokenFile, browserUrl) {
+async function exerciseCmuxBrowserPane(shellContainer, browserUrl) {
+	const socket = `/run/t4/${RUNTIME_ID}/cmux/c.sock`;
+	await docker("exec", shellContainer, "/usr/local/bin/cmux-tui", "new-browser-tab", "--socket", socket, "--url", browserUrl);
+	const workspaceTree = JSON.parse((await docker(
+		"exec", shellContainer, "/usr/local/bin/cmux-tui", "list-workspaces", "--socket", socket, "--json",
+	)).stdout);
+	const workspaceText = JSON.stringify(workspaceTree);
+	assert.match(workspaceText, /browser_source/u);
+	assert.ok(workspaceText.includes(browserUrl), `cmux workspace tree omitted ${browserUrl}: ${workspaceText}`);
+	const targets = JSON.parse((await docker(
+		"exec", shellContainer, "/usr/local/bin/bun", "--eval",
+		'process.stdout.write(JSON.stringify(await (await fetch("http://127.0.0.1:9222/json/list")).json()))',
+	)).stdout);
+	const target = targets.find((candidate) => candidate?.type === "page" && candidate?.url === browserUrl);
+	assert.ok(target?.id, `supervised Chromium omitted cmux target: ${JSON.stringify(targets)}`);
+	return {
+		url: browserUrl,
+		targetId: target.id,
+		workspaceTreeObserved: true,
+		supervisedCdpTargetObserved: true,
+	};
+}
+
+async function exerciseDisabledBrowserProfile(shellContainer) {
+	await docker(
+		"exec", shellContainer, "/bin/bash", "-ceu",
+		'test -z "${CMUX_MUX_CDP_URL:-}"; ! ps -eo comm= | grep -Fx chromium',
+	);
+	return { chromiumAbsent: true, cmuxCdpCapabilityAbsent: true };
+}
+
+async function exerciseSharedSession(authorityPort, shellContainer, identityTokenFile, browserUrl, guiEnabled) {
 	const transcript = [];
 	const pending = new Map();
 	let sequence = 0;
@@ -266,7 +297,8 @@ async function exerciseSharedSession(authorityPort, shellContainer, identityToke
 	const welcome = await negotiated.promise;
 	assert.equal(welcome.authentication, "paired");
 	for (const capability of ["preview.read", "preview.control", "preview.input"])
-		assert.ok(welcome.grantedCapabilities.includes(capability), `missing ${capability}`);
+		assert.equal(welcome.grantedCapabilities.includes(capability), guiEnabled, `${capability} profile mismatch`);
+	assert.equal(welcome.grantedFeatures.includes("preview.control"), guiEnabled);
 	const commandApp = (commandName, args = {}, sessionId, expectedRevision) => {
 		const requestId = `live-${++sequence}`;
 		const response = Promise.withResolvers();
@@ -319,49 +351,57 @@ async function exerciseSharedSession(authorityPort, shellContainer, identityToke
 		await poll("terminal prompt transcript", async () => transcriptText(transcript), (text) => text.includes("Terminal live proof prompt") && text.includes("Runtime proof response 2"))
 			.catch((error) => { throw new Error(`terminal output was ${JSON.stringify(terminal)} and app transcript was ${transcriptText(transcript)}`, { cause: error }); });
 
-		const launched = await commandApp("preview.launch", { url: browserUrl }, session.sessionId);
-		const previewId = launched.preview?.previewId;
-		assert.ok(previewId);
-		assert.equal(launched.preview.url, browserUrl);
-		const lease = await commandApp("preview.lease.acquire", { previewId, ttlMs: 30_000 }, session.sessionId);
-		assert.ok(lease.leaseId);
-		const inputText = "Browser preview live proof";
-		const filled = await commandApp("preview.fill", { previewId, leaseId: lease.leaseId, selector: "#proof-input", text: inputText }, session.sessionId);
-		assert.equal(filled.preview?.title, `Filled: ${inputText}`);
-		const captured = await commandApp("preview.capture", { previewId, leaseId: lease.leaseId }, session.sessionId);
-		const capture = captured.preview?.capture;
-		assert.ok(capture?.captureId);
-		assert.ok(capture.size > 0);
-		const chunks = [];
-		let offset = 0;
-		do {
-			const chunk = await commandApp("preview.capture.read", { previewId, captureId: capture.captureId, offset }, session.sessionId);
-			chunks.push(Buffer.from(chunk.content, "base64"));
-			offset = chunk.nextOffset;
-			assert.equal(chunk.size, capture.size);
-			if (chunk.complete) break;
-		} while (offset < capture.size);
-		const captureBytes = Buffer.concat(chunks);
-		assert.equal(captureBytes.byteLength, capture.size);
-		assert.equal(captureBytes.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
-		assert.equal(createHash("sha256").update(captureBytes).digest("hex"), capture.sha256);
-		const state = await commandApp("preview.state", { previewId }, session.sessionId);
-		assert.equal(state.previews?.[0]?.title, `Filled: ${inputText}`);
-		await commandApp("preview.lease.release", { previewId, leaseId: lease.leaseId }, session.sessionId);
-		return {
-			hostId: connection.hostId,
-			sessionId: session.sessionId,
-			appPromptObservedByTerminal: true,
-			terminalPromptObservedByApp: true,
-			sharedSessionHistory: true,
-			appBrowserPreview: {
+		let appBrowserPreview;
+		let disabledBrowserProfile;
+		if (guiEnabled) {
+			const launched = await commandApp("preview.launch", { url: browserUrl }, session.sessionId);
+			const previewId = launched.preview?.previewId;
+			assert.ok(previewId);
+			assert.equal(launched.preview.url, browserUrl);
+			const lease = await commandApp("preview.lease.acquire", { previewId, ttlMs: 30_000 }, session.sessionId);
+			assert.ok(lease.leaseId);
+			const inputText = "Browser preview live proof";
+			const filled = await commandApp("preview.fill", { previewId, leaseId: lease.leaseId, selector: "#proof-input", text: inputText }, session.sessionId);
+			assert.equal(filled.preview?.title, `Filled: ${inputText}`);
+			const captured = await commandApp("preview.capture", { previewId, leaseId: lease.leaseId }, session.sessionId);
+			const capture = captured.preview?.capture;
+			assert.ok(capture?.captureId);
+			assert.ok(capture.size > 0);
+			const chunks = [];
+			let offset = 0;
+			do {
+				const chunk = await commandApp("preview.capture.read", { previewId, captureId: capture.captureId, offset }, session.sessionId);
+				chunks.push(Buffer.from(chunk.content, "base64"));
+				offset = chunk.nextOffset;
+				assert.equal(chunk.size, capture.size);
+				if (chunk.complete) break;
+			} while (offset < capture.size);
+			const captureBytes = Buffer.concat(chunks);
+			assert.equal(captureBytes.byteLength, capture.size);
+			assert.equal(captureBytes.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
+			assert.equal(createHash("sha256").update(captureBytes).digest("hex"), capture.sha256);
+			const state = await commandApp("preview.state", { previewId }, session.sessionId);
+			assert.equal(state.previews?.[0]?.title, `Filled: ${inputText}`);
+			await commandApp("preview.lease.release", { previewId, leaseId: lease.leaseId }, session.sessionId);
+			appBrowserPreview = {
 				previewId,
 				url: browserUrl,
 				inputObserved: true,
 				captureId: capture.captureId,
 				captureBytes: capture.size,
 				captureSha256: capture.sha256,
-			},
+			};
+		} else {
+			disabledBrowserProfile = { previewCapabilitiesAbsent: true, appPreviewUnadvertised: true };
+		}
+		return {
+			hostId: connection.hostId,
+			sessionId: session.sessionId,
+			appPromptObservedByTerminal: true,
+			terminalPromptObservedByApp: true,
+			sharedSessionHistory: true,
+			...(appBrowserPreview ? { appBrowserPreview } : {}),
+			...(disabledBrowserProfile ? { disabledBrowserProfile } : {}),
 		};
 	} finally {
 		connection.close(1000, "live proof complete");
@@ -370,6 +410,9 @@ async function exerciseSharedSession(authorityPort, shellContainer, identityToke
 
 async function main() {
 	const image = requiredOption("image");
+	const guiEnabledValue = option("gui-enabled") ?? "true";
+	if (guiEnabledValue !== "true" && guiEnabledValue !== "false") throw new Error("--gui-enabled must be true or false");
+	const guiEnabled = guiEnabledValue === "true";
 	const artifactRoot = resolve(option("artifact-root") ?? ".artifacts/p3-runtime-live");
 	const suffix = `${process.pid}-${randomUUID().slice(0, 8)}`;
 	const prefix = `t4-p3-${suffix}`;
@@ -421,7 +464,7 @@ async function main() {
 			T4_SESSION_HOST_READY_PATH: `/run/t4/${RUNTIME_ID}/host.ready`,
 			T4_AUTHORITY_HEALTH_SOCKET: `/run/t4/${RUNTIME_ID}/authority-health.sock`,
 			T4_CMUX_SOCKET_MODE: "0660",
-			T4_GUI_ENABLED: "true",
+			T4_GUI_ENABLED: String(guiEnabled),
 		};
 		await docker(
 			"run", "--detach", "--name", containers.authority, "--platform", "linux/arm64", "--pull", "never",
@@ -487,12 +530,16 @@ async function main() {
 		assert.equal(socketMode, "660");
 		const credentialIdentity = JSON.parse((await docker("exec", containers.credential, "/usr/local/bin/cmux-tui", "identify", "--socket", `/run/t4-runtime-shared/t4/${RUNTIME_ID}/cmux/c.sock`, "--json")).stdout);
 		assert.equal(credentialIdentity.pid, identity.pid);
+		const browserUrl = `http://host.docker.internal:${services.modelPort}/proof`;
+		const cmuxBrowserPane = guiEnabled ? await exerciseCmuxBrowserPane(containers.shell, browserUrl) : undefined;
+		const disabledBrowserProfile = guiEnabled ? undefined : await exerciseDisabledBrowserProfile(containers.shell);
 		const authorityPort = Number((await docker("port", containers.authority, "8787/tcp")).stdout.split(":").at(-1));
 		const sharedSession = await exerciseSharedSession(
 			authorityPort,
 			containers.shell,
 			join(temporaryRoot, "server-identity-token"),
-			`http://host.docker.internal:${services.modelPort}/proof`,
+			browserUrl,
+			guiEnabled,
 		);
 		const activityPort = Number((await docker("port", containers.authority, "8788/tcp")).stdout.split(":").at(-1));
 		const activity = await fetch(`http://127.0.0.1:${activityPort}/internal/runtime/activity`, {
@@ -509,8 +556,17 @@ async function main() {
 			schemaVersion: 1,
 			passed: true,
 			image: { reference: image, architecture: inspected.Architecture, revision: imageRevision },
-			runtime: { runtimeId: RUNTIME_ID, runtimeUid: RUNTIME_UID, generation: GENERATION, cmux: identity, socketMode, sharedSession },
-			boundaries: { authorityHealth: true, shellReadiness: true, credentialCmuxAccess: true, sharedSessionHistory: true, appBrowserPreview: true, activityRuntimeUid: true, writerLeaseHeld: true },
+			runtime: {
+				runtimeId: RUNTIME_ID, runtimeUid: RUNTIME_UID, generation: GENERATION, cmux: identity, socketMode,
+				...(cmuxBrowserPane ? { cmuxBrowserPane } : {}),
+				...(disabledBrowserProfile ? { disabledBrowserProfile: { ...disabledBrowserProfile, ...sharedSession.disabledBrowserProfile } } : {}),
+				sharedSession,
+			},
+			boundaries: {
+				authorityHealth: true, shellReadiness: true, credentialCmuxAccess: true, browserProfileBehavior: true,
+				...(guiEnabled ? { cmuxBrowserPane: true, appBrowserPreview: true } : { disabledBrowserProfile: true }),
+				sharedSessionHistory: true, activityRuntimeUid: true, writerLeaseHeld: true,
+			},
 			requests: services.requests,
 		};
 		await writeFile(join(artifactRoot, "proof.json"), `${JSON.stringify(evidence, null, 2)}\n`);
