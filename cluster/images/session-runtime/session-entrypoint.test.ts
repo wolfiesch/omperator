@@ -68,7 +68,7 @@ const initializeScript = [
 	'export T4_OMP_HOME="${root}/home"',
 	'export T4_WRITER_LEASE_PATH="${root}/private/writer-lease"',
 	'export T4_HOST_RUNTIME_DIR="${short_mount}/${runtime_id}"',
-	'export T4_CMUX_SOCKET_PATH="${T4_HOST_RUNTIME_DIR}/c.sock"',
+	'export T4_CMUX_SOCKET_PATH="${T4_HOST_RUNTIME_DIR}/cmux/c.sock"',
 	"export T4_CMUX_SOCKET_MODE=0660",
 	'export T4_WORKSPACE_ROOT="${workspace_mount}"',
 	'initialize_runtime_roots "${runtime_mount}" "${workspace_mount}" "${short_mount}" "${TEST_UID}" "${TEST_GID}"',
@@ -147,7 +147,7 @@ describe("session runtime private roots", () => {
 			path.join(value.stateRoot, "authority"),
 			path.join(value.stateRoot, "artifacts"),
 			path.join(value.stateRoot, "cmux"),
-			path.join(value.shortMount, runtimeID, "c.sock"),
+			path.join(value.shortMount, runtimeID, "cmux", "c.sock"),
 			"0660",
 			"contract-session",
 			path.join(value.stateRoot, "browser"),
@@ -203,7 +203,7 @@ describe("session runtime private roots", () => {
 	test("rejects a cmux socket path beyond the portable Unix limit", async () => {
 		const value = await fixture(`short-${"x".repeat(90)}`);
 		const result = await initialize(value);
-		expect(Buffer.byteLength(path.join(value.shortMount, runtimeID, "c.sock"))).toBeGreaterThan(103);
+		expect(Buffer.byteLength(path.join(value.shortMount, runtimeID, "cmux", "c.sock"))).toBeGreaterThan(103);
 		expect(result.exitCode).toBe(64);
 		expect(result.stderr).toContain("cmux_socket_path_too_long");
 	});
@@ -211,7 +211,8 @@ describe("session runtime private roots", () => {
 	test("preserves the shell-owned cmux socket across an authority-container restart", async () => {
 		const value = await fixture();
 		expect((await initialize(value)).exitCode).toBe(0);
-		const socketPath = path.join(value.shortMount, runtimeID, "c.sock");
+		const socketPath = path.join(value.shortMount, runtimeID, "cmux", "c.sock");
+		await mkdir(path.dirname(socketPath), { mode: 0o770 });
 		await writeFile(socketPath, "", { mode: 0o600 });
 		const result = await initialize(value);
 		expect(result.exitCode).toBe(0);

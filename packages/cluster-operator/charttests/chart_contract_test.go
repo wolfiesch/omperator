@@ -1038,7 +1038,7 @@ func TestSessionEntrypointFailsClosedBeforeGUIWithoutPrivateOMPInputs(t *testing
 				"T4_OMP_HOME=/runtime-state/runtime-session-a/home",
 				"T4_WRITER_LEASE_PATH=/runtime-state/runtime-session-a/private/writer-lease",
 				"T4_HOST_RUNTIME_DIR=/run/t4/runtime-session-a",
-				"T4_CMUX_SOCKET_PATH=/run/t4/runtime-session-a/c.sock",
+				"T4_CMUX_SOCKET_PATH=/run/t4/runtime-session-a/cmux/c.sock",
 				"T4_CMUX_SOCKET_MODE=0660",
 				"T4_WORKSPACE_ROOT=/workspace",
 				"T4_CLUSTER_SERVER_SERVICE_ACCOUNT=t4-cluster-server",

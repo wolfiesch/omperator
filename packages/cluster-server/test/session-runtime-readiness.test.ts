@@ -36,7 +36,7 @@ const CONFIG: RuntimeReadinessConfig = {
 	artifactRoot: "/runtime-state/runtime-fixture/artifacts",
 	privateRuntimeRoot: "/runtime-state/runtime-fixture/private",
 	ompHome: "/runtime-state/runtime-fixture/home",
-	cmuxSocketPath: "/run/t4/runtime-fixture/c.sock",
+	cmuxSocketPath: "/run/t4/runtime-fixture/cmux/c.sock",
 	hostReadyPath: "/run/t4/runtime-fixture/host.ready",
 	generationAuthPath: "/run/t4-generation-auth/key",
 	browserEnabled: false,

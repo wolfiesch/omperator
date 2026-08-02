@@ -585,7 +585,7 @@ func TestSessionRuntimeStatePVCUsesIndependentProfileAndDurableMount(t *testing.
 		"T4_PRIVATE_RUNTIME_DIR": stateRoot + "/private",
 		"T4_OMP_HOME":            stateRoot + "/home",
 		"T4_HOST_RUNTIME_DIR":    shortRoot,
-		"T4_CMUX_SOCKET_PATH":    shortRoot + "/c.sock",
+		"T4_CMUX_SOCKET_PATH":    shortRoot + "/cmux/c.sock",
 		"T4_CMUX_SOCKET_MODE":    "0660",
 		"T4_RUNTIME_GENERATION":  got.Status.RuntimeGeneration,
 	}

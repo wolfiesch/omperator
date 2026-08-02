@@ -103,7 +103,7 @@ export function runtimeReadinessConfigFromEnv(env: NodeJS.ProcessEnv): RuntimeRe
 		[config.artifactRoot, join(config.stateRoot, "artifacts")],
 		[config.privateRuntimeRoot, join(config.stateRoot, "private")],
 		[config.ompHome, join(config.stateRoot, "home")],
-		[config.cmuxSocketPath, join(config.hostRuntimeRoot, "c.sock")],
+		[config.cmuxSocketPath, join(config.hostRuntimeRoot, "cmux", "c.sock")],
 		[config.hostReadyPath, join(config.hostRuntimeRoot, "host.ready")],
 	];
 	for (const [actual, expected] of exactPaths) if (actual !== expected) throw new Error(`controlled runtime path ${actual} does not match ${expected}`);

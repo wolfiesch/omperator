@@ -213,7 +213,7 @@ export async function runSessionHost(
 				await bridge.flush();
 				await search.reconcile([authoritativeSession], { pruneMissing: false });
 				await search.checkpoint();
-				await checkpointCmux(join(runtime, "c.sock"), config.sessionName);
+				await checkpointCmux(join(runtime, "cmux", "c.sock"), config.sessionName);
 				if (config.browserEnabled) await browserAuthority?.checkpoint();
 				for (const path of [
 					join(config.stateRoot, "authority"),

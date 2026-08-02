@@ -267,7 +267,7 @@ initialize_runtime_roots() {
   [[ "${T4_OMP_HOME}" == "${root}/home" ]] || runtime_error "omp_home_path"
   [[ "${T4_WRITER_LEASE_PATH}" == "${root}/private/writer-lease" ]] || runtime_error "writer_lease_path"
   [[ "${T4_HOST_RUNTIME_DIR}" == "${expected_short}" ]] || runtime_error "short_runtime_path"
-  [[ "${T4_CMUX_SOCKET_PATH}" == "${expected_short}/c.sock" ]] || runtime_error "cmux_socket_path"
+  [[ "${T4_CMUX_SOCKET_PATH}" == "${expected_short}/cmux/c.sock" ]] || runtime_error "cmux_socket_path"
   [[ "${T4_CMUX_SOCKET_MODE}" == "0660" ]] || runtime_error "cmux_socket_mode"
   [[ "${T4_WORKSPACE_ROOT}" == "${workspace_mount}" ]] || runtime_error "workspace_root"
 

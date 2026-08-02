@@ -210,7 +210,7 @@ async function main() {
 	const suffix = `${process.pid}-${randomUUID().slice(0, 8)}`;
 	const prefix = `t4-p3-${suffix}`;
 	const containers = { authority: `${prefix}-authority`, credential: `${prefix}-credential`, shell: `${prefix}-shell` };
-	const volumes = Object.fromEntries(["state", "runtime", "workspace", "secrets", "authority-tmp", "shell-tmp", "shm"].map((name) => [name.replace("-", "_"), `${prefix}-${name}`]));
+	const volumes = Object.fromEntries(["state", "runtime", "workspace", "secrets", "authority-tmp", "credential-tmp", "shell-tmp", "shm"].map((name) => [name.replace("-", "_"), `${prefix}-${name}`]));
 	const temporaryRoot = await mkdtemp(join(tmpdir(), "t4-p3-live-proof-"));
 	const generationAuth = randomBytes(32);
 	const services = await startProofServices(temporaryRoot, generationAuth);
@@ -236,8 +236,10 @@ async function main() {
 			"run", "--rm", "--platform", "linux/arm64", "--user", "0:0", "--entrypoint", "/bin/bash",
 			"--volume", `${volumes.state}:/runtime-state`, "--volume", `${volumes.runtime}:/run`,
 			"--volume", `${volumes.workspace}:/workspace`, "--volume", `${volumes.secrets}:/secrets`,
+			"--volume", `${volumes.authority_tmp}:/authority-tmp`, "--volume", `${volumes.credential_tmp}:/credential-tmp`,
+			"--volume", `${volumes.shell_tmp}:/shell-tmp`, "--volume", `${volumes.shm}:/shared-memory`,
 			"--volume", `${temporaryRoot}:/seed:ro`, image, "-ceu",
-			"mkdir -p /run/t4 /run/t4-credential; chown 10001:20001 /runtime-state /workspace /run/t4; chmod 0770 /runtime-state /workspace; chmod 0711 /run/t4; chown 10003:20001 /run/t4-credential; chmod 0770 /run/t4-credential; cp /seed/generation.key /secrets/key; chown 10003:20001 /secrets/key; chmod 0400 /secrets/key",
+			"mkdir -p /run/t4 /run/t4-credential; chown 10001:20001 /runtime-state /workspace /run/t4 /authority-tmp; chmod 0770 /runtime-state /workspace /authority-tmp; chmod 0711 /run/t4; chown 10003:20001 /run/t4-credential /credential-tmp; chmod 0770 /run/t4-credential /credential-tmp; chown 10002:20001 /shell-tmp /shared-memory; chmod 0770 /shell-tmp /shared-memory; cp /seed/generation.key /secrets/key; chown 10003:20001 /secrets/key; chmod 0400 /secrets/key",
 		);
 		const common = {
 			T4_RUNTIME_ID: RUNTIME_ID,
@@ -249,7 +251,7 @@ async function main() {
 			T4_CMUX_STATE_DIR: `/runtime-state/${RUNTIME_ID}/cmux`,
 			T4_BROWSER_STATE_DIR: `/runtime-state/${RUNTIME_ID}/browser`,
 			T4_HOST_RUNTIME_DIR: `/run/t4/${RUNTIME_ID}`,
-			T4_CMUX_SOCKET_PATH: `/run/t4/${RUNTIME_ID}/c.sock`,
+			T4_CMUX_SOCKET_PATH: `/run/t4/${RUNTIME_ID}/cmux/c.sock`,
 			T4_SESSION_HOST_READY_PATH: `/run/t4/${RUNTIME_ID}/host.ready`,
 			T4_AUTHORITY_HEALTH_SOCKET: `/run/t4/${RUNTIME_ID}/authority-health.sock`,
 			T4_CMUX_SOCKET_MODE: "0660",
@@ -277,6 +279,7 @@ async function main() {
 			"run", "--detach", "--name", containers.credential, "--platform", "linux/arm64", "--pull", "never",
 			"--read-only", "--user", "10003:20001", "--network", `container:${containers.authority}`,
 			"--volume", `${volumes.runtime}:/run`, "--volume", `${volumes.secrets}:/run/t4-generation-auth:ro`,
+			"--volume", `${volumes.credential_tmp}:/tmp`,
 			"--volume", `${temporaryRoot}/kubernetes:/var/run/secrets/kubernetes.io/serviceaccount:ro`,
 			...envArguments({
 				KUBERNETES_SERVICE_HOST: "host.docker.internal",
@@ -288,7 +291,7 @@ async function main() {
 				T4_RUNTIME_GENERATION: GENERATION,
 				T4_RUNTIME_UID: RUNTIME_UID,
 				T4_RUNTIME_ACTIVITY_PORT: "8788",
-				T4_CMUX_SOCKET_PATH: `/run/t4/${RUNTIME_ID}/c.sock`,
+				T4_CMUX_SOCKET_PATH: `/run/t4/${RUNTIME_ID}/cmux/c.sock`,
 				T4_RUNTIME_ACTIVITY_SOCKET: "/run/t4-credential/activity.sock",
 				T4_WRITER_LEASE_NAME: WRITER_LEASE,
 				T4_GENERATION_AUTH_PATH: "/run/t4-generation-auth/key",
@@ -307,12 +310,12 @@ async function main() {
 
 		await poll("authority health", async () => docker("exec", containers.authority, "/usr/local/bin/bun", "/usr/local/lib/t4/session-authority-health.js"), () => true);
 		await poll("shell readiness", async () => docker("exec", containers.shell, "/usr/local/bin/bun", "/usr/local/lib/t4/session-runtime-readiness.js", "readiness", "shell"), () => true);
-		const identity = JSON.parse((await docker("exec", containers.shell, "/usr/local/bin/cmux-tui", "identify", "--socket", `/run/t4/${RUNTIME_ID}/c.sock`, "--json")).stdout);
+		const identity = JSON.parse((await docker("exec", containers.shell, "/usr/local/bin/cmux-tui", "identify", "--socket", `/run/t4/${RUNTIME_ID}/cmux/c.sock`, "--json")).stdout);
 		assert.equal(identity.protocol, 10);
 		assert.equal(identity.session, SESSION_NAME);
-		const socketMode = (await docker("exec", containers.shell, "stat", "-c", "%a", `/run/t4/${RUNTIME_ID}/c.sock`)).stdout;
+		const socketMode = (await docker("exec", containers.shell, "stat", "-c", "%a", `/run/t4/${RUNTIME_ID}/cmux/c.sock`)).stdout;
 		assert.equal(socketMode, "660");
-		const credentialIdentity = JSON.parse((await docker("exec", containers.credential, "/usr/local/bin/cmux-tui", "identify", "--socket", `/run/t4/${RUNTIME_ID}/c.sock`, "--json")).stdout);
+		const credentialIdentity = JSON.parse((await docker("exec", containers.credential, "/usr/local/bin/cmux-tui", "identify", "--socket", `/run/t4/${RUNTIME_ID}/cmux/c.sock`, "--json")).stdout);
 		assert.equal(credentialIdentity.pid, identity.pid);
 		const activityPort = Number((await docker("port", containers.authority, "8788/tcp")).stdout.split(":").at(-1));
 		const activity = await fetch(`http://127.0.0.1:${activityPort}/internal/runtime/activity`, {

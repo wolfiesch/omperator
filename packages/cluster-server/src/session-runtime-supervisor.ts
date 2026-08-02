@@ -102,7 +102,7 @@ export function sessionRuntimeSupervisorConfigFromEnv(env: NodeJS.ProcessEnv): S
 	if (env.T4_CMUX_SOCKET_MODE !== "0660") throw new Error("T4_CMUX_SOCKET_MODE must be 0660");
 	if (cmuxStateDirectory !== join(stateRoot, "cmux")) throw new Error("T4_CMUX_STATE_DIR does not match the projected state root");
 	if (browserStateDirectory !== join(stateRoot, "browser")) throw new Error("T4_BROWSER_STATE_DIR does not match the projected state root");
-	if (cmuxSocketPath !== join(hostRuntimeDirectory, "c.sock")) throw new Error("T4_CMUX_SOCKET_PATH does not match the projected runtime root");
+	if (cmuxSocketPath !== join(hostRuntimeDirectory, "cmux", "c.sock")) throw new Error("T4_CMUX_SOCKET_PATH does not match the projected runtime root");
 	if (controlSocketPath.length > 100) throw new Error("supervisor control socket path is too long");
 	if (sessionHostReadyPath !== join(hostRuntimeDirectory, "host.ready")) throw new Error("T4_SESSION_HOST_READY_PATH does not match the projected runtime root");
 	if (env.T4_GENERATION_AUTH_PATH !== undefined) throw new Error("shell supervisor must not receive generation authentication credentials");

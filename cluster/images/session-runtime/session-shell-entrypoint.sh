@@ -51,6 +51,19 @@ fi
 }
 export HOME="${shell_home}"
 export XDG_RUNTIME_DIR="${T4_HOST_RUNTIME_DIR}"
+cmux_socket_dir="${T4_CMUX_SOCKET_PATH%/*}"
+[[ "${cmux_socket_dir}" == "${T4_HOST_RUNTIME_DIR}/cmux" ]] || {
+  printf '%s\n' '{"component":"session-shell","result":"cmux_socket_path_invalid"}' >&2
+  exit 64
+}
+if [[ ! -e "${cmux_socket_dir}" ]]; then
+  mkdir -m 0700 -- "${cmux_socket_dir}"
+  chmod 0770 -- "${cmux_socket_dir}"
+fi
+[[ -d "${cmux_socket_dir}" && ! -L "${cmux_socket_dir}" && "$(stat -c '%u:%g:%a' -- "${cmux_socket_dir}")" == "10002:20001:770" ]] || {
+  printf '%s\n' '{"component":"session-shell","result":"cmux_socket_directory_invalid"}' >&2
+  exit 64
+}
 rm -f -- "${T4_CMUX_SOCKET_PATH}" "/tmp/.X11-unix/X99"
 export CMUX_SESSION="${T4_SESSION_NAME}"
 exec /usr/local/bin/bun /usr/local/lib/t4/session-runtime-supervisor.js

@@ -183,6 +183,8 @@ describe("session runtime image build contract", () => {
 		expect(shellEntrypoint).toContain("! -r /opt/omp/packages/coding-agent/src/cli.ts");
 		expect(shellEntrypoint).toContain('! -e "${T4_SESSION_STATE_ROOT}/private/appserver.sock"');
 		expect(shellEntrypoint).toContain("seq 1 600");
+		expect(shellEntrypoint).toContain('cmux_socket_dir="${T4_CMUX_SOCKET_PATH%/*}"');
+		expect(shellEntrypoint).toContain('"10002:20001:770"');
 		expect(shellEntrypoint).toContain("authority_artifact_exposed");
 		expect(shellEntrypoint).toContain("authority_socket_exposed");
 	});
@@ -192,5 +194,13 @@ describe("session runtime image build contract", () => {
 		expect(sessionHost).not.toContain('new TranscriptSearchIndex(join(config.stateRoot, "transcript-search.sqlite"))');
 		expect(sessionHost).toContain('attentionOutcomePath: join(config.privateRuntimeRoot, "attention-outcomes.json")');
 		expect(sessionHost).not.toContain('attentionOutcomePath: join(config.stateRoot, "attention-outcomes.json")');
+	});
+	test("live proof reproduces Kubelet ownership for per-container temporary volumes", async () => {
+		const proof = await readRepositoryFile("scripts/session-runtime-live-proof.mjs");
+		expect(proof).toContain('`${volumes.authority_tmp}:/authority-tmp`');
+		expect(proof).toContain('`${volumes.credential_tmp}:/credential-tmp`');
+		expect(proof).toContain('`${volumes.shell_tmp}:/shell-tmp`');
+		expect(proof).toContain('`${volumes.shm}:/shared-memory`');
+		expect(proof).toContain("chown 10002:20001 /shell-tmp /shared-memory");
 	});
 });
