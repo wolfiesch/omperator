@@ -179,6 +179,7 @@ describe("session runtime image build contract", () => {
 		expect(shellEntrypoint).toContain("! -x /opt/t4/libexec/omp-authority");
 		expect(shellEntrypoint).toContain("! -r /opt/omp/packages/coding-agent/src/cli.ts");
 		expect(shellEntrypoint).toContain('! -e "${T4_SESSION_STATE_ROOT}/private/appserver.sock"');
+		expect(shellEntrypoint).toContain("seq 1 600");
 		expect(shellEntrypoint).toContain("authority_artifact_exposed");
 		expect(shellEntrypoint).toContain("authority_socket_exposed");
 	});

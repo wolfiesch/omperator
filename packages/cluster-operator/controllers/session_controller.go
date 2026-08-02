@@ -2070,15 +2070,15 @@ func (r *SessionReconciler) desiredPod(session *clusterv1alpha1.T4Session, works
 		},
 		Resources: *resources,
 		StartupProbe: &corev1.Probe{
-			ProbeHandler:     corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"/usr/local/bin/bun", "/opt/t4/packages/cluster-server/src/session-authority-health.ts"}}},
+			ProbeHandler:     corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"/usr/local/bin/bun", "/usr/local/lib/t4/session-authority-health.js"}}},
 			FailureThreshold: 30, PeriodSeconds: 2, TimeoutSeconds: 2,
 		},
 		ReadinessProbe: &corev1.Probe{
-			ProbeHandler:     corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"/usr/local/bin/bun", "/opt/t4/packages/cluster-server/src/session-authority-health.ts"}}},
+			ProbeHandler:     corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"/usr/local/bin/bun", "/usr/local/lib/t4/session-authority-health.js"}}},
 			FailureThreshold: 2, PeriodSeconds: 5, TimeoutSeconds: 2,
 		},
 		LivenessProbe: &corev1.Probe{
-			ProbeHandler:     corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"/usr/local/bin/bun", "/opt/t4/packages/cluster-server/src/session-authority-health.ts"}}},
+			ProbeHandler:     corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"/usr/local/bin/bun", "/usr/local/lib/t4/session-authority-health.js"}}},
 			FailureThreshold: 3, PeriodSeconds: 10, TimeoutSeconds: 2,
 		},
 		Lifecycle: &corev1.Lifecycle{PreStop: &corev1.LifecycleHandler{Exec: &corev1.ExecAction{Command: []string{"/bin/bash", "-c", `/usr/local/bin/bun -e 'const ready=JSON.parse(await Bun.file(process.env.T4_SESSION_HOST_READY_PATH).text()); process.kill(ready.pid, "SIGTERM")'; while test -e "$T4_SESSION_HOST_READY_PATH"; do sleep 0.05; done`}}}},

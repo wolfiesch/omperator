@@ -27,7 +27,7 @@ umask 077
 export CMUX_STATE_DIR="${T4_CMUX_STATE_DIR}"
 export CMUX_SOCKET_PATH="${T4_CMUX_SOCKET_PATH}"
 export CMUX_SOCKET_MODE=0660
-for _ in $(seq 1 300); do
+for _ in $(seq 1 600); do
   if [[ -d "${T4_CMUX_STATE_DIR}" && -d "${T4_BROWSER_STATE_DIR}" && -f "${T4_SESSION_HOST_READY_PATH}" ]]; then
     break
   fi

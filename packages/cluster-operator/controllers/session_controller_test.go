@@ -611,7 +611,7 @@ func TestSessionPodUsesSeparateCompositeExecProbes(t *testing.T) {
 	}
 	authority := pod.Spec.Containers[0]
 	for name, probe := range map[string]*corev1.Probe{"startup": authority.StartupProbe, "readiness": authority.ReadinessProbe, "liveness": authority.LivenessProbe} {
-		if probe == nil || probe.Exec == nil || len(probe.Exec.Command) != 2 || !strings.HasSuffix(probe.Exec.Command[1], "session-authority-health.ts") {
+		if probe == nil || probe.Exec == nil || len(probe.Exec.Command) != 2 || probe.Exec.Command[1] != "/usr/local/lib/t4/session-authority-health.js" {
 			t.Fatalf("authority %s probe is not authority-specific: %#v", name, probe)
 		}
 	}
