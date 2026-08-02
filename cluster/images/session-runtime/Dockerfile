@@ -7,7 +7,7 @@ RUN rm -f /etc/apt/sources.list.d/* \
        'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20250721T000000Z bookworm-security main' \
        > /etc/apt/sources.list \
     && apt-get -o Acquire::Check-Valid-Until=false update \
-    && apt-get install -y --no-install-recommends ca-certificates git pkg-config libssl-dev \
+    && apt-get install -y --no-install-recommends build-essential ca-certificates cmake git libclang-dev pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=docker.io/oven/bun:1.3.14-debian@sha256:9dba1a1b43ce28c9d7931bfc4eb00feb63b0114720a0277a8f939ae4dfc9db6f /usr/local/bin/bun /usr/local/bin/bun
 COPY provenance/omp-runtime-v1.json /opt/provenance/omp-runtime-v1.json

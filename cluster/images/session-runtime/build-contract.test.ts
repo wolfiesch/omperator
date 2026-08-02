@@ -71,6 +71,7 @@ describe("session runtime image build contract", () => {
 		expect(matrix.portableRuntime.contractCommit).toBe(provenance.source.contractCommit);
 		expect(matrix.portableRuntime.bridge).toEqual(provenance.bridge);
 		expect(dockerfile).toContain("COPY provenance/omp-runtime-v1.json /opt/provenance/omp-runtime-v1.json");
+		expect(dockerfile).toContain("build-essential ca-certificates cmake git libclang-dev pkg-config libssl-dev");
 		expect(dockerfile).toContain('git fetch --depth=1 origin "${omp_commit}"');
 		expect(dockerfile).toContain(`git rev-parse 'FETCH_HEAD^{commit}'`);
 		expect(dockerfile).toContain('test "$(git rev-parse HEAD)" = "${omp_commit}"');
