@@ -52,6 +52,11 @@ function delay(milliseconds) {
 	return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
 }
 
+function errorSummary(error) {
+	if (!(error instanceof Error)) return String(error);
+	return error.cause ? `${error.message}: ${errorSummary(error.cause)}` : error.message;
+}
+
 async function poll(label, operation, accept, timeoutMs = TIMEOUT_MS) {
 	const deadline = Date.now() + timeoutMs;
 	let lastError;
@@ -330,6 +335,26 @@ async function main() {
 		await writeFile(join(artifactRoot, "proof.json"), `${JSON.stringify(evidence, null, 2)}\n`);
 		process.stdout.write(`${JSON.stringify(evidence, null, 2)}\n`);
 		passed = true;
+	} catch (error) {
+		await mkdir(artifactRoot, { recursive: true });
+		const containerStates = {};
+		for (const [role, name] of Object.entries(containers)) {
+			containerStates[role] = await docker("inspect", "--format", "{{json .State}}", name)
+				.then(({ stdout }) => JSON.parse(stdout))
+				.catch(() => ({ missing: true }));
+			const logs = await docker("logs", name)
+				.then(({ stdout, stderr }) => [stdout, stderr].filter(Boolean).join("\n"))
+				.catch((logError) => `logs unavailable: ${errorSummary(logError)}`);
+			await writeFile(join(artifactRoot, `${role}.log`), `${logs}\n`);
+		}
+		await writeFile(join(artifactRoot, "failure.json"), `${JSON.stringify({
+			schemaVersion: 1,
+			passed: false,
+			image,
+			error: errorSummary(error),
+			containerStates,
+		}, null, 2)}\n`);
+		throw error;
 	} finally {
 		await Promise.all(Object.values(containers).map((name) => docker("rm", "--force", name).catch(() => undefined)));
 		await Promise.all(Object.values(volumes).map((name) => docker("volume", "rm", name).catch(() => undefined)));
