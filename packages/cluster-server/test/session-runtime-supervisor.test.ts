@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "vite-plus/test";
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
 	runSessionRuntimeSupervisor,
@@ -26,11 +26,12 @@ async function runtimeFixture(browserEnabled = false): Promise<RuntimeFixture> {
 	const cmuxStateDirectory = join(stateRoot, "cmux");
 	const browserStateDirectory = join(stateRoot, "browser");
 	const sessionHostReadyPath = join(root, "host.ready");
-	await Promise.all([workspaceRoot, cmuxStateDirectory, browserStateDirectory].map(path => mkdir(path, { recursive: true })));
+	const cmuxSocketDirectory = join(root, "cmux");
+	await Promise.all([workspaceRoot, cmuxStateDirectory, browserStateDirectory, cmuxSocketDirectory].map(path => mkdir(path, { recursive: true })));
 	await writeFile(sessionHostReadyPath, "ready\n");
 	const log = join(root, "children.log");
 	const displaySocketPath = join(root, "display.sock");
-	const cmuxSocketPath = join(root, "cmux.sock");
+	const cmuxSocketPath = join(cmuxSocketDirectory, "c.sock");
 	return {
 		root,
 		log,
@@ -98,9 +99,11 @@ describe("session shell fail-closed supervisor", () => {
 		const running = runSessionRuntimeSupervisor(value.config, dependencies);
 		await waitForStarted(value.log, "chromium");
 		const cmuxSocketMode = (await stat(value.config.cmuxSocketPath)).mode & 0o777;
+		const cmuxSocketDirectoryMode = (await stat(dirname(value.config.cmuxSocketPath))).mode & 0o777;
 		process.emit("SIGTERM", "SIGTERM");
 		expect(await running).toBe(143);
 		expect(cmuxSocketMode).toBe(0o660);
+		expect(cmuxSocketDirectoryMode).toBe(0o770);
 		const log = await childLog(value.log);
 		expect(log.some(line => line.startsWith("session-host:started:"))).toBe(false);
 		for (const kind of ["xvfb", "fluxbox", "cmux", "chromium"]) expect(log.some(line => line.startsWith(`${kind}:term:`))).toBe(true);

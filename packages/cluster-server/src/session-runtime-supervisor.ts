@@ -3,7 +3,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, type Server as NetServer } from "node:net";
 import { chmod, lstat, unlink } from "node:fs/promises";
 import { constants as osConstants } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { CMUX_PROTOCOL_VERSION, verifyCmuxBinary } from "../../cmux-runtime/src/index.ts";
 
 const STARTUP_TIMEOUT_MS = 10_000;
@@ -355,6 +355,7 @@ export async function runSessionRuntimeSupervisor(
 		start("fluxbox", config.fluxbox);
 		const cmux = start("cmux", config.cmux);
 		await waitForSocket(config.cmuxSocketPath, cmux, startupDeadline);
+		await chmod(dirname(config.cmuxSocketPath), 0o770);
 		await chmod(config.cmuxSocketPath, 0o660);
 		if (shuttingDown) throw new Error("cmux exited during startup");
 		await identifyCmux(config, cmux, startupDeadline, shutdownRequested.promise, () => shuttingDown);
