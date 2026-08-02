@@ -117,7 +117,7 @@ export async function runSessionHost(
 	let activityServer: Bun.Server<undefined> | undefined;
 	const activitySocketPath = join(dirname(config.credentialBrokerSocket), "activity.sock");
 
-	const search = new TranscriptSearchIndex(join(config.stateRoot, "transcript-search.sqlite"));
+	const search = new TranscriptSearchIndex(join(config.privateRuntimeRoot, "transcript-search.sqlite"));
 	try {
 		const authorities = bridge.createAuthorities();
 		const existing = await authorities.sessionAuthority.list();
@@ -142,7 +142,7 @@ export async function runSessionHost(
 			hostId: runtimeHostId,
 			epoch: `generation:${config.generation}`,
 			socketPath: join(config.privateRuntimeRoot, "appserver.sock"),
-			attentionOutcomePath: join(config.stateRoot, "attention-outcomes.json"),
+			attentionOutcomePath: join(config.privateRuntimeRoot, "attention-outcomes.json"),
 			ompVersion: ready.ompVersion,
 			ompBuild: ready.ompBuild,
 			appserverVersion: "0.2.1",

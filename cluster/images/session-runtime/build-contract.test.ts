@@ -183,4 +183,11 @@ describe("session runtime image build contract", () => {
 		expect(shellEntrypoint).toContain("authority_artifact_exposed");
 		expect(shellEntrypoint).toContain("authority_socket_exposed");
 	});
+	test("keeps authority-only databases below the private runtime root", async () => {
+		const sessionHost = await readRepositoryFile("packages/cluster-server/src/session-host-main.ts");
+		expect(sessionHost).toContain('new TranscriptSearchIndex(join(config.privateRuntimeRoot, "transcript-search.sqlite"))');
+		expect(sessionHost).not.toContain('new TranscriptSearchIndex(join(config.stateRoot, "transcript-search.sqlite"))');
+		expect(sessionHost).toContain('attentionOutcomePath: join(config.privateRuntimeRoot, "attention-outcomes.json")');
+		expect(sessionHost).not.toContain('attentionOutcomePath: join(config.stateRoot, "attention-outcomes.json")');
+	});
 });
