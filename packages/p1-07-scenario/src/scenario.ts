@@ -286,6 +286,7 @@ async function main(): Promise<void> {
   const activeControlSockets = new Set<Socket>();
   const activeStreamSockets = new Set<Socket>();
   const requests: RequestRecord[] = [];
+  const controlOutcomes: string[] = [];
   const usedTickets: string[] = [];
   const usedTicketGenerations: string[] = [];
   let controlSequence = 0;
@@ -453,7 +454,23 @@ async function main(): Promise<void> {
             const bytes = chunk as Uint8Array;
             ingress.update(bytes);
             frameCapture.accept(bytes);
-            for (const response of await session.receive(bytes)) { egress.update(response); await socketWrite(socket, response); }
+            for (const response of await session.receive(bytes)) {
+              const envelope = JSON.parse(Buffer.from(response.subarray(0, -1)).toString("utf8")) as {
+                id?: string;
+                result?: Record<string, unknown>;
+                error?: { code?: unknown };
+              };
+              const request = envelope.id === undefined ? undefined : requests.find(record => record.id === envelope.id);
+              if (request) {
+                if (envelope.error) controlOutcomes.push(`${request.method}:error:${String(envelope.error.code ?? "unknown")}`);
+                else if (request.method === "open_machine") {
+                  const transport = envelope.result?.transport as Record<string, unknown> | undefined;
+                  controlOutcomes.push(`open_machine:ok:transport=${String(transport?.kind ?? "missing")}:workspaceAuthority=${String(envelope.result?.workspace_mirror_authority !== undefined)}`);
+                } else controlOutcomes.push(`${request.method}:ok`);
+              }
+              egress.update(response);
+              await socketWrite(socket, response);
+            }
           }
           await session.finish();
         } finally {
@@ -599,12 +616,20 @@ async function main(): Promise<void> {
       const runtimeContext = runtime?.outcome === "found"
         ? JSON.stringify({ desiredState: runtime.resource.desiredState, phase: runtime.resource.phase, generation: runtime.resource.generation, conditions: runtime.resource.conditions })
         : runtime?.outcome;
+      const transportContext = JSON.stringify({
+        requests: requests.map(record => record.method),
+        controlOutcomes,
+        controlConnections: controlSequence,
+        streamConnections: streamSequence,
+        streamHandshakes: usedTickets.length,
+        runtimeRoutes: routeSequence,
+      });
       const startupFailures = [...statuses.values()]
         .map(path => `${path}.error`)
         .filter(existsSync)
         .map(path => readFileSync(path, "utf8").trim());
       const screen = renderTerminal(ptyOutput).filter(line => line.trim() !== "");
-      return `runtime=${runtimeContext ?? "not-created"} startupFailures=${JSON.stringify(startupFailures)} screen=${JSON.stringify(screen)}${bounded ? ` output=${JSON.stringify(bounded)} coordinateProbe=${JSON.stringify(coordinateProbe)}` : ""}`;
+      return `runtime=${runtimeContext ?? "not-created"} transport=${transportContext} startupFailures=${JSON.stringify(startupFailures)} screen=${JSON.stringify(screen)}${bounded ? ` output=${JSON.stringify(bounded)} coordinateProbe=${JSON.stringify(coordinateProbe)}` : ""}`;
     };
     activeWaitFailure = () => {
       const exited = client?.exited();

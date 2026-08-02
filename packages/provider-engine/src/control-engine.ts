@@ -213,7 +213,7 @@ export class ProviderControlSession{
      this.#issued.set(connectionId,{ticket:issued.ticket,binding});
      this.#revision++;
      this.#deps.metrics?.increment("omperator_wake_total",{result:"success"});
-     return encodeProviderSuccess(id,{connection_id:connectionId,ticket:issued.ticket,expires_at:issued.expiresAt,revision:this.#revision});
+     return encodeProviderSuccess(id,{connection_id:connectionId,transport:{kind:"provider_stream",ticket:issued.ticket,expires_at:issued.expiresAt}});
     }
     if(route.outcome!=="notReady"){this.#deps.metrics?.increment("omperator_wake_total",{result:"error"});return encodeProviderFailure(id,failure("wake_failed",`machine route is ${route.outcome}`,false))}
    }

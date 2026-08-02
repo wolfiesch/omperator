@@ -41,7 +41,7 @@ Supporting fields: `status.fencingGeneration`, `status.fencingPodUID`,
 kubectl config current-context
 kubectl -n t4-system get t4sessions -o \
   jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.phase}{"\t"}{.status.fenceState}{"\t"}{.status.runtimeGeneration}{"\t"}{.status.fencingGeneration}{"\t"}{.status.podName}{"\n"}{end}'
-kubectl -n t4-system get t4session NAME -o jsonpath='{.status.conditions}{"\n"}' 
+kubectl -n t4-system get t4session NAME -o jsonpath='{.status.conditions}{"\n"}'
 ```
 
 ### 2. Identify why proof failed

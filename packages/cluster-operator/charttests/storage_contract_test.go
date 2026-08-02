@@ -60,4 +60,3 @@ func TestStorageRecoveryCRDsExposeBoundedContracts(t *testing.T) {
 		"restorePublicIdPolicy:",
 	)
 }
-

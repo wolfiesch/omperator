@@ -342,4 +342,3 @@ func unstructuredSet(object *unstructured.Unstructured, value any, fields ...str
 }
 
 func pointer(value string) *string { return &value }
-
