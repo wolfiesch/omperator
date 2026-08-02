@@ -167,7 +167,7 @@ async function startProofServices(root, generationAuth) {
 		void (async () => {
 			if (requests.modelTraffic.length < 16) requests.modelTraffic.push({ method: request.method, url: request.url });
 			if (request.method === "GET" && request.url === "/proof") {
-				const body = Buffer.from('<!doctype html><title>Runtime live proof</title><input id="proof-input" oninput="document.title=`Filled: ${this.value}`">');
+				const body = Buffer.from('<!doctype html><title>Runtime live proof</title><input id="proof-input" oninput="localStorage.proof=this.value;document.title=`Filled: ${this.value}`"><script>if(localStorage.proof){document.querySelector("#proof-input").value=localStorage.proof;document.title=`Filled: ${localStorage.proof}`}</script>');
 				response.writeHead(200, { "content-type": "text/html", "content-length": body.length });
 				response.end(body);
 				return;
@@ -225,12 +225,90 @@ async function exerciseCmuxBrowserPane(shellContainer, browserUrl) {
 	)).stdout);
 	const target = targets.find((candidate) => candidate?.type === "page" && candidate?.url === browserUrl);
 	assert.ok(target?.id, `supervised Chromium omitted cmux target: ${JSON.stringify(targets)}`);
+	assert.ok(target.webSocketDebuggerUrl);
+	const durableValue = "Cmux durable browser state";
+	const evaluated = await cdpEvaluate(shellContainer, target.webSocketDebuggerUrl, `localStorage.proof=${JSON.stringify(durableValue)};document.querySelector("#proof-input").value=${JSON.stringify(durableValue)};document.title=${JSON.stringify(`Filled: ${durableValue}`)};localStorage.proof`);
+	assert.equal(evaluated, durableValue);
 	return {
 		url: browserUrl,
 		targetId: target.id,
+		durableValue,
 		workspaceTreeObserved: true,
 		supervisedCdpTargetObserved: true,
 	};
+}
+
+async function cdpEvaluate(shellContainer, webSocketUrl, expression) {
+	const script = [
+		'const socket = new WebSocket(process.env.T4_PROOF_CDP_URL);',
+		'await new Promise((resolve, reject) => { socket.addEventListener("open", resolve, { once: true }); socket.addEventListener("error", () => reject(new Error("CDP socket failed to open")), { once: true }); });',
+		'const response = Promise.withResolvers();',
+		'socket.addEventListener("message", event => { const frame = JSON.parse(String(event.data)); if (frame.id === 1) response.resolve(frame); });',
+		'socket.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: process.env.T4_PROOF_CDP_EXPRESSION, returnByValue: true } }));',
+		'const frame = await response.promise;',
+		'if (frame.error || frame.result?.exceptionDetails) throw new Error(`CDP evaluation failed: ${JSON.stringify(frame)}`);',
+		'process.stdout.write(JSON.stringify(frame.result?.result?.value));',
+		'socket.close();',
+	].join("");
+	const result = await docker("exec", "--env", `T4_PROOF_CDP_URL=${webSocketUrl}`, "--env", `T4_PROOF_CDP_EXPRESSION=${expression}`, shellContainer, "/usr/local/bin/bun", "--eval", script);
+	return JSON.parse(result.stdout);
+}
+
+async function verifyDurableReconnect(authorityPort, shellContainer, identityTokenFile, expectedSessionId, browserUrl, expectedFragments, guiEnabled) {
+	const transcript = [];
+	const pending = new Map();
+	let sequence = 0;
+	const connector = new WebSocketPodHostConnector({ identityTokenFile, keepAliveMs: 30_000 });
+	let connection;
+	connection = await connector.connect({
+		clusterSessionId: SESSION_NAME,
+		runtimeGeneration: GENERATION,
+		routeGeneration: GENERATION,
+		url: `ws://127.0.0.1:${authorityPort}/v1/ws`,
+	}, (frame) => {
+		if (frame.type === "response") {
+			const waiter = pending.get(frame.requestId);
+			if (waiter) {
+				pending.delete(frame.requestId);
+				if (frame.ok === false) waiter.reject(new Error(JSON.stringify(frame.error ?? { code: "command_failed" })));
+				else waiter.resolve(frame.result);
+			}
+		}
+		if (frame.type === "snapshot") transcript.splice(0, transcript.length, ...frame.entries);
+		if (frame.type === "entry") transcript.push(frame.entry);
+	});
+	const commandApp = (command, args = {}, sessionId) => {
+		const requestId = `reconnect-${++sequence}`;
+		const response = Promise.withResolvers();
+		pending.set(requestId, response);
+		connection.send({ v: "omp-app/1", type: "command", requestId, commandId: `reconnect-command-${sequence}`, timestamp: new Date().toISOString(), hostId: connection.hostId, command, args, ...(sessionId ? { sessionId } : {}) });
+		return response.promise;
+	};
+	try {
+		const { sessions } = await commandApp("session.list");
+		assert.equal(sessions.length, 1);
+		assert.equal(sessions[0].sessionId, expectedSessionId);
+		await commandApp("session.attach", {}, expectedSessionId);
+		await poll("durable app transcript", async () => transcriptText(transcript), text => expectedFragments.every(fragment => text.includes(fragment)));
+		const terminal = await docker("exec", shellContainer, "/bin/bash", "-ceu", 'printf "%s\\n" "/quit" | /usr/local/bin/omp');
+		for (const fragment of expectedFragments) assert.match(terminal.stdout, new RegExp(fragment.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"));
+		let browserState;
+		if (guiEnabled) {
+			const socket = `/run/t4/${RUNTIME_ID}/cmux/c.sock`;
+			const workspaceText = await poll("durable cmux browser pane", async () => (await docker("exec", shellContainer, "/usr/local/bin/cmux-tui", "list-workspaces", "--socket", socket, "--json")).stdout, text => text.includes(browserUrl));
+			assert.match(workspaceText, /browser_source/u);
+			const target = await poll("durable Chromium target", async () => {
+				const targets = JSON.parse((await docker("exec", shellContainer, "/usr/local/bin/bun", "--eval", 'process.stdout.write(JSON.stringify(await (await fetch("http://127.0.0.1:9222/json/list")).json()))')).stdout);
+				return targets.find(candidate => candidate?.type === "page" && candidate?.url === browserUrl);
+			}, value => Boolean(value?.webSocketDebuggerUrl));
+			const durableValue = await cdpEvaluate(shellContainer, target.webSocketDebuggerUrl, "localStorage.proof");
+			assert.equal(durableValue, "Cmux durable browser state");
+			browserState = { workspaceSelectionRestored: true, profileStateRestored: true, durableValue };
+		}
+		return { appReattached: true, terminalReattached: true, sessionId: expectedSessionId, historyRestored: true, ...(browserState ? { browserState } : {}) };
+	} finally {
+		connection.close(1000, "durable reconnect proof complete");
+	}
 }
 
 async function exerciseDisabledBrowserProfile(shellContainer) {
@@ -413,11 +491,16 @@ async function main() {
 	const guiEnabledValue = option("gui-enabled") ?? "true";
 	if (guiEnabledValue !== "true" && guiEnabledValue !== "false") throw new Error("--gui-enabled must be true or false");
 	const guiEnabled = guiEnabledValue === "true";
+	const restartProofValue = option("restart-proof") ?? "false";
+	if (restartProofValue !== "true" && restartProofValue !== "false") throw new Error("--restart-proof must be true or false");
+	const restartProof = restartProofValue === "true";
+	if (restartProof && !guiEnabled) throw new Error("--restart-proof requires --gui-enabled true");
 	const artifactRoot = resolve(option("artifact-root") ?? ".artifacts/p3-runtime-live");
 	const suffix = `${process.pid}-${randomUUID().slice(0, 8)}`;
 	const prefix = `t4-p3-${suffix}`;
 	const containers = { authority: `${prefix}-authority`, credential: `${prefix}-credential`, shell: `${prefix}-shell` };
 	const volumes = Object.fromEntries(["state", "runtime", "workspace", "secrets", "credential-broker", "authority-tmp", "credential-tmp", "shell-tmp"].map((name) => [name.replace("-", "_"), `${prefix}-${name}`]));
+	const extraVolumes = [];
 	const temporaryRoot = await mkdtemp(join(tmpdir(), "t4-p3-live-proof-"));
 	const generationAuth = randomBytes(32);
 	const services = await startProofServices(temporaryRoot, generationAuth);
@@ -465,6 +548,163 @@ async function main() {
 			T4_AUTHORITY_HEALTH_SOCKET: `/run/t4/${RUNTIME_ID}/authority-health.sock`,
 			T4_CMUX_SOCKET_MODE: "0660",
 			T4_GUI_ENABLED: String(guiEnabled),
+		};
+		const seedPodVolumes = async () => {
+			await docker(
+				"run", "--rm", "--platform", "linux/arm64", "--user", "0:0", "--entrypoint", "/bin/bash",
+				"--volume", `${volumes.state}:/runtime-state:nocopy`, "--volume", `${volumes.runtime}:/runtime-run:nocopy`,
+				"--volume", `${volumes.workspace}:/workspace:nocopy`, "--volume", `${volumes.secrets}:/secrets:nocopy`,
+				"--volume", `${volumes.credential_broker}:/credential-broker:nocopy`,
+				"--volume", `${volumes.authority_tmp}:/authority-tmp:nocopy`, "--volume", `${volumes.credential_tmp}:/credential-tmp:nocopy`,
+				"--volume", `${volumes.shell_tmp}:/shell-tmp:nocopy`,
+				"--volume", `${temporaryRoot}:/seed:ro`, image, "-ceu",
+				"chown 10001:20001 /runtime-state /workspace /runtime-run /authority-tmp; chmod 0770 /runtime-state /workspace /runtime-run /authority-tmp; chown 10003:20001 /credential-broker /credential-tmp; chmod 0770 /credential-broker /credential-tmp; chown 10002:20001 /shell-tmp; chmod 0770 /shell-tmp; test -e /secrets/key || cp /seed/generation.key /secrets/key; chown 10003:20001 /secrets/key; chmod 0400 /secrets/key",
+			);
+		};
+		const launchRuntime = async () => {
+			await docker(
+				"run", "--detach", "--name", containers.authority, "--platform", "linux/arm64", "--pull", "never",
+				"--read-only", "--user", "10001:20001", "--publish", "127.0.0.1::8787", "--publish", "127.0.0.1::8788",
+				...volumeArguments(volumes, temporaryRoot), "--volume", `${volumes.credential_broker}:/run/t4-credential:nocopy`,
+				"--volume", `${volumes.authority_tmp}:/tmp:nocopy`,
+				...envArguments({
+					...common,
+					T4_RUNTIME_UID: RUNTIME_UID,
+					T4_AUTHORITY_STATE_DIR: `/runtime-state/${RUNTIME_ID}/authority`,
+					T4_ARTIFACT_ROOT: `/runtime-state/${RUNTIME_ID}/artifacts`,
+					T4_PRIVATE_RUNTIME_DIR: `/runtime-state/${RUNTIME_ID}/private`,
+					T4_OMP_HOME: `/runtime-state/${RUNTIME_ID}/home`,
+					T4_WRITER_LEASE_PATH: `/runtime-state/${RUNTIME_ID}/private/writer-lease`,
+					T4_CLUSTER_SERVER_SERVICE_ACCOUNT: SERVER_SERVICE_ACCOUNT,
+					T4_CREDENTIAL_BROKER_SOCKET: "/run/t4-credential/broker.sock",
+					T4_IDLE_POLICY: "allow-idle-sleep",
+					T4_RUNTIME_KEEPALIVE: "false",
+				}), image,
+			);
+			await docker(
+				"run", "--detach", "--name", containers.credential, "--platform", "linux/arm64", "--pull", "never",
+				"--read-only", "--user", "10003:20001", "--network", `container:${containers.authority}`,
+				"--volume", `${volumes.runtime}:/run/t4-runtime-shared:nocopy`,
+				"--volume", `${volumes.credential_broker}:/run/t4-credential:nocopy`,
+				"--volume", `${volumes.secrets}:/run/t4-generation-auth:ro,nocopy`,
+				"--volume", `${volumes.credential_tmp}:/tmp:nocopy`,
+				"--volume", `${temporaryRoot}/kubernetes:/var/run/secrets/kubernetes.io/serviceaccount:ro`,
+				...envArguments({
+					KUBERNETES_SERVICE_HOST: "host.docker.internal",
+					KUBERNETES_SERVICE_PORT_HTTPS: String(services.kubernetesPort),
+					T4_CLUSTER_SERVER_SERVICE_ACCOUNT: SERVER_SERVICE_ACCOUNT,
+					T4_KUBERNETES_TOKEN_PATH: "/var/run/secrets/kubernetes.io/serviceaccount/token",
+					T4_KUBERNETES_CA_PATH: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
+					T4_KUBERNETES_NAMESPACE_PATH: "/var/run/secrets/kubernetes.io/serviceaccount/namespace",
+					T4_RUNTIME_GENERATION: GENERATION,
+					T4_RUNTIME_UID: RUNTIME_UID,
+					T4_RUNTIME_ACTIVITY_PORT: "8788",
+					T4_CMUX_SOCKET_PATH: `/run/t4-runtime-shared/t4/${RUNTIME_ID}/cmux/c.sock`,
+					T4_RUNTIME_ACTIVITY_SOCKET: "/run/t4-credential/activity.sock",
+					T4_WRITER_LEASE_NAME: WRITER_LEASE,
+					T4_GENERATION_AUTH_PATH: "/run/t4-generation-auth/key",
+					T4_CREDENTIAL_BROKER_SOCKET: "/run/t4-credential/broker.sock",
+					POD_UID,
+				}), "--entrypoint", "/usr/bin/tini", image, "--", "/usr/local/bin/bun", "/usr/local/lib/t4/session-credential-broker.js",
+			);
+			await docker(
+				"run", "--detach", "--name", containers.shell, "--platform", "linux/arm64", "--pull", "never",
+				"--read-only", "--user", "10002:20001", "--network", `container:${containers.authority}`,
+				"--pid", `container:${containers.authority}`, "--volume", `${volumes.state}:/runtime-state:nocopy`,
+				"--volume", `${volumes.runtime}:/run:nocopy`, "--volume", `${volumes.workspace}:/workspace:nocopy`,
+				"--volume", `${volumes.shell_tmp}:/tmp:nocopy`,
+				"--tmpfs", "/dev/shm:rw,exec,nosuid,nodev,mode=1770,uid=10002,gid=20001",
+				...envArguments(common), "--entrypoint", "/usr/bin/tini", image, "--", "/usr/local/bin/t4-session-shell",
+			);
+		};
+		const awaitRuntime = async () => {
+			await poll("authority health", async () => docker("exec", containers.authority, "/usr/local/bin/bun", "/usr/local/lib/t4/session-authority-health.js"), () => true);
+			await poll("shell readiness", async () => docker("exec", containers.shell, "/usr/local/bin/bun", "/usr/local/lib/t4/session-runtime-readiness.js", "readiness", "shell"), () => true);
+			assert.equal(services.lease().spec.holderIdentity, POD_UID);
+			return {
+				authorityPort: Number((await docker("port", containers.authority, "8787/tcp")).stdout.split(":").at(-1)),
+				activityPort: Number((await docker("port", containers.authority, "8788/tcp")).stdout.split(":").at(-1)),
+			};
+		};
+		const replacePodEphemeralStorage = async () => {
+			const keys = ["runtime", "credential_broker", "authority_tmp", "credential_tmp", "shell_tmp"];
+			for (const key of keys) await docker("volume", "rm", volumes[key]);
+			for (const key of keys) await docker("volume", "create", volumes[key]);
+			await seedPodVolumes();
+		};
+		const removeRuntimeContainers = async (signal) => {
+			if (signal === "SIGKILL") {
+				await Promise.all(Object.values(containers).map(name => docker("kill", "--signal", "KILL", name).catch(() => undefined)));
+			} else {
+				for (const name of [containers.shell, containers.authority, containers.credential]) await docker("stop", "--time", "20", name).catch(() => undefined);
+			}
+			const states = {};
+			for (const [role, name] of Object.entries(containers)) {
+				states[role] = await docker("inspect", "--format", "{{json .State}}", name)
+					.then(({ stdout }) => JSON.parse(stdout))
+					.catch(() => ({ missing: true }));
+			}
+			if (signal !== "SIGKILL") assert.notEqual(states.authority?.ExitCode, 137, `authority graceful stop escalated to SIGKILL: ${JSON.stringify(states)}`);
+			await Promise.all(Object.values(containers).map(name => docker("rm", "--force", name).catch(() => undefined)));
+			return states;
+		};
+		const writerLeaseExists = async () => {
+			const result = await docker(
+				"run", "--rm", "--platform", "linux/arm64", "--user", "10001:20001", "--entrypoint", "/bin/bash",
+				"--volume", `${volumes.state}:/runtime-state:ro,nocopy`, image, "-ceu",
+				`test -e /runtime-state/${RUNTIME_ID}/private/writer-lease && printf present || printf absent`,
+			);
+			return result.stdout === "present";
+		};
+		const writerLeaseSnapshot = async () => (await docker(
+			"run", "--rm", "--platform", "linux/arm64", "--user", "10001:20001", "--entrypoint", "/bin/bash",
+			"--volume", `${volumes.state}:/runtime-state:ro,nocopy`, image, "-ceu",
+			`if test -e /runtime-state/${RUNTIME_ID}/private/writer-lease; then cat /runtime-state/${RUNTIME_ID}/private/writer-lease; else printf absent; fi`,
+		)).stdout;
+		const proveDuplicateWriterRejected = async () => {
+			const duplicateName = `${prefix}-duplicate-authority`;
+			const duplicateVolumes = {
+				runtime: `${prefix}-duplicate-runtime`,
+				broker: `${prefix}-duplicate-broker`,
+				tmp: `${prefix}-duplicate-tmp`,
+			};
+			extraVolumes.push(...Object.values(duplicateVolumes));
+			for (const volume of Object.values(duplicateVolumes)) await docker("volume", "create", volume);
+			await docker(
+				"run", "--rm", "--platform", "linux/arm64", "--user", "0:0", "--entrypoint", "/bin/bash",
+				"--volume", `${duplicateVolumes.runtime}:/runtime:nocopy`, "--volume", `${duplicateVolumes.broker}:/broker:nocopy`,
+				"--volume", `${duplicateVolumes.tmp}:/tmp-volume:nocopy`, image, "-ceu",
+				"chown 10001:20001 /runtime /tmp-volume; chmod 0770 /runtime /tmp-volume; chown 10003:20001 /broker; chmod 0770 /broker",
+			);
+			await docker(
+				"create", "--name", duplicateName, "--platform", "linux/arm64", "--read-only", "--user", "10001:20001",
+				"--volume", `${volumes.state}:/runtime-state:nocopy`, "--volume", `${duplicateVolumes.runtime}:/run:nocopy`,
+				"--volume", `${volumes.workspace}:/workspace:nocopy`, "--volume", `${temporaryRoot}/omp-config:/run/t4-omp-config-source:ro`,
+				"--volume", `${temporaryRoot}/kubernetes:/var/run/secrets/kubernetes.io/serviceaccount:ro`,
+				"--volume", `${duplicateVolumes.broker}:/run/t4-credential:nocopy`, "--volume", `${duplicateVolumes.tmp}:/tmp:nocopy`,
+				...envArguments({
+					...common,
+					T4_RUNTIME_UID: RUNTIME_UID,
+					T4_AUTHORITY_STATE_DIR: `/runtime-state/${RUNTIME_ID}/authority`,
+					T4_ARTIFACT_ROOT: `/runtime-state/${RUNTIME_ID}/artifacts`,
+					T4_PRIVATE_RUNTIME_DIR: `/runtime-state/${RUNTIME_ID}/private`,
+					T4_OMP_HOME: `/runtime-state/${RUNTIME_ID}/home`,
+					T4_WRITER_LEASE_PATH: `/runtime-state/${RUNTIME_ID}/private/writer-lease`,
+					T4_CLUSTER_SERVER_SERVICE_ACCOUNT: SERVER_SERVICE_ACCOUNT,
+					T4_CREDENTIAL_BROKER_SOCKET: "/run/t4-credential/broker.sock",
+					T4_IDLE_POLICY: "allow-idle-sleep",
+					T4_RUNTIME_KEEPALIVE: "false",
+				}), image,
+			);
+			try {
+				await docker("start", duplicateName);
+				await poll("duplicate writer exit", async () => JSON.parse((await docker("inspect", "--format", "{{json .State}}", duplicateName)).stdout), state => state.Running === false);
+				const logs = await docker("logs", duplicateName).then(({ stdout, stderr }) => `${stdout}\n${stderr}`);
+				assert.match(logs, /writer_lease_live_duplicate/u);
+				return { rejected: true, error: "writer_lease_live_duplicate" };
+			} finally {
+				await docker("rm", "--force", duplicateName).catch(() => undefined);
+			}
 		};
 		await docker(
 			"run", "--detach", "--name", containers.authority, "--platform", "linux/arm64", "--pull", "never",
@@ -551,6 +791,56 @@ async function main() {
 		const activityBody = await activity.json();
 		assert.equal(activityBody.policy, "allow-idle-sleep");
 		assert.equal(services.lease().spec.holderIdentity, POD_UID);
+		let restartEvidence;
+		if (restartProof) {
+			const expectedFragments = ["App live proof prompt", "Terminal live proof prompt"];
+			assert.equal(await writerLeaseExists(), true);
+			const initialDuplicate = await proveDuplicateWriterRejected();
+			const quiesce = await fetch(`http://127.0.0.1:${activityPort}/internal/runtime/quiesce`, {
+				method: "POST",
+				headers: { authorization: `Bearer ${generationAuth.toString("base64url")}`, "content-type": "application/json" },
+				body: JSON.stringify({ expectedRuntimeUid: RUNTIME_UID, expectedGeneration: GENERATION }),
+			});
+			assert.equal(quiesce.status, 200, `graceful quiesce failed: ${await quiesce.text()}`);
+			const gracefulExitStates = await removeRuntimeContainers("SIGTERM");
+			await poll("Kubernetes writer lease release", async () => services.lease().spec.holderIdentity, holder => holder === null);
+			assert.equal(await writerLeaseExists(), false, `graceful writer lease remained; exits=${JSON.stringify(gracefulExitStates)} lease=${JSON.stringify(await writerLeaseSnapshot())}`);
+			await replacePodEphemeralStorage();
+			await launchRuntime();
+			const gracefulPorts = await awaitRuntime();
+			const gracefulReconnect = await verifyDurableReconnect(
+				gracefulPorts.authorityPort,
+				containers.shell,
+				join(temporaryRoot, "server-identity-token"),
+				sharedSession.sessionId,
+				browserUrl,
+				expectedFragments,
+				guiEnabled,
+			);
+			assert.equal(await writerLeaseExists(), true);
+			await removeRuntimeContainers("SIGKILL");
+			assert.equal(await writerLeaseExists(), true);
+			assert.equal(services.lease().spec.holderIdentity, POD_UID);
+			await replacePodEphemeralStorage();
+			await launchRuntime();
+			const crashPorts = await awaitRuntime();
+			const crashReconnect = await verifyDurableReconnect(
+				crashPorts.authorityPort,
+				containers.shell,
+				join(temporaryRoot, "server-identity-token"),
+				sharedSession.sessionId,
+				browserUrl,
+				expectedFragments,
+				guiEnabled,
+			);
+			const finalDuplicate = await proveDuplicateWriterRejected();
+			restartEvidence = {
+				gracefulRestart: { quiesced: true, writerLeaseReleased: true, exitStates: gracefulExitStates, durableReconnect: gracefulReconnect },
+				crashRestart: { staleWriterLeaseReclaimed: true, kubernetesLeaseRetainedBySamePod: true, durableReconnect: crashReconnect },
+				oneWriter: { initialDuplicate, finalDuplicate },
+				podEphemeralStorageReplaced: true,
+			};
+		}
 		const imageRevision = inspected?.Config?.Labels?.["org.opencontainers.image.revision"];
 		const evidence = {
 			schemaVersion: 1,
@@ -561,11 +851,13 @@ async function main() {
 				...(cmuxBrowserPane ? { cmuxBrowserPane } : {}),
 				...(disabledBrowserProfile ? { disabledBrowserProfile: { ...disabledBrowserProfile, ...sharedSession.disabledBrowserProfile } } : {}),
 				sharedSession,
+				...(restartEvidence ? { restartProof: restartEvidence } : {}),
 			},
 			boundaries: {
 				authorityHealth: true, shellReadiness: true, credentialCmuxAccess: true, browserProfileBehavior: true,
 				...(guiEnabled ? { cmuxBrowserPane: true, appBrowserPreview: true } : { disabledBrowserProfile: true }),
 				sharedSessionHistory: true, activityRuntimeUid: true, writerLeaseHeld: true,
+				...(restartEvidence ? { gracefulRestart: true, crashRestart: true, durableReconnect: true, singleWriter: true, podEphemeralStorageReplaced: true } : {}),
 			},
 			requests: services.requests,
 		};
@@ -601,7 +893,7 @@ async function main() {
 		throw error;
 	} finally {
 		await Promise.all(Object.values(containers).map((name) => docker("rm", "--force", name).catch(() => undefined)));
-		await Promise.all(Object.values(volumes).map((name) => docker("volume", "rm", name).catch(() => undefined)));
+		await Promise.all([...Object.values(volumes), ...extraVolumes].map((name) => docker("volume", "rm", name).catch(() => undefined)));
 		await Promise.all([closeServer(services.kubernetes), closeServer(services.model)]);
 		await rm(temporaryRoot, { recursive: true, force: true });
 	}

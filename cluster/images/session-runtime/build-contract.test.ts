@@ -244,4 +244,14 @@ describe("session runtime image build contract", () => {
 		expect(proof).toContain("previewCapabilitiesAbsent");
 		expect(proof).toContain("appPreviewUnadvertised");
 	});
+	test("live proof replaces pod-ephemeral storage across graceful and crash restarts", async () => {
+		const proof = await readRepositoryFile("scripts/session-runtime-live-proof.mjs");
+		expect(proof).toContain('option("restart-proof")');
+		expect(proof).toContain("/internal/runtime/quiesce");
+		expect(proof).toContain("gracefulRestart");
+		expect(proof).toContain("crashRestart");
+		expect(proof).toContain("durableReconnect");
+		expect(proof).toContain("writer_lease_live_duplicate");
+		expect(proof).toContain("podEphemeralStorageReplaced");
+	});
 });

@@ -238,6 +238,20 @@ linuxOnlyDescribe("session runtime writer lease", () => {
 		expect(await lstat(lease).catch(() => null)).toBeNull();
 	});
 
+	test("removes its lease during teardown without re-reading its live proc identity", async () => {
+		const value = await fixture();
+		const script = [
+			initializeQuietScript,
+			'acquire_writer_lease "${T4_WRITER_LEASE_PATH}" "${T4_RUNTIME_ID}" "${T4_RUNTIME_GENERATION}" "${TEST_UID}" "${TEST_GID}"',
+			"process_start_time() { return 1; }",
+			"cleanup_writer_lease",
+		].join("\n");
+		const result = await runShell(script, [entrypoint, value.runtimeMount, value.workspaceMount, value.shortMount, runtimeID]);
+		expect(result.exitCode).toBe(0);
+		const lease = path.join(value.stateRoot, "private", "writer-lease");
+		expect(await lstat(lease).catch(() => null)).toBeNull();
+	});
+
 	test("a signal during lease publication removes only the locked inode and permits reacquisition", async () => {
 		const value = await fixture();
 		const script = [

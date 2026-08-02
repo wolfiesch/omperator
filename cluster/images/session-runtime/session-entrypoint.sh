@@ -141,6 +141,8 @@ T4_WRITER_LEASE_HELD=false
 T4_WRITER_LEASE_OWNER_BASHPID=""
 T4_WRITER_LEASE_OWNER_TOKEN=""
 T4_WRITER_LEASE_INODE=""
+T4_WRITER_LEASE_OWNER_BOOT_ID=""
+T4_WRITER_LEASE_OWNER_START_TIME=""
 T4_WRITER_LEASE_PUBLISHING=false
 T4_WRITER_LEASE_INTERRUPTED_STATUS=""
 
@@ -155,7 +157,7 @@ writer_lease_before_publish() {
 cleanup_writer_lease() {
   [[ "${T4_WRITER_LEASE_HELD}" == "true" ]] || return 0
   [[ "${BASHPID}" == "${T4_WRITER_LEASE_OWNER_BASHPID}" ]] || return 0
-  local current_inode="" current_token="" current_pid="" current_start="" current_boot="" observed_start="" observed_boot=""
+  local current_inode="" current_token="" current_pid="" current_start="" current_boot=""
   flock -n 9 2>/dev/null || return 0
   if [[ -f "${T4_WRITER_LEASE_PATH}" && ! -L "${T4_WRITER_LEASE_PATH}" ]]; then
     current_inode="$(stat -c '%d:%i' -- "${T4_WRITER_LEASE_PATH}" 2>/dev/null || stat -f '%d:%i' -- "${T4_WRITER_LEASE_PATH}" 2>/dev/null || true)"
@@ -166,14 +168,12 @@ cleanup_writer_lease() {
       current_boot="${LEASE_BOOT_ID}"
     fi
   fi
-  observed_start="$(process_start_time "${BASHPID}" 2>/dev/null || true)"
-  observed_boot="$(current_boot_id 2>/dev/null || true)"
   if [[ "${current_inode}" == "${T4_WRITER_LEASE_INODE}" ]] &&
     { [[ "${T4_WRITER_LEASE_PUBLISHING}" == "true" ]] ||
       { [[ "${current_token}" == "${T4_WRITER_LEASE_OWNER_TOKEN}" ]] &&
         [[ "${current_pid}" == "${BASHPID}" ]] &&
-        [[ -n "${observed_boot}" && "${current_boot}" == "${observed_boot}" ]] &&
-        [[ -n "${observed_start}" && "${current_start}" == "${observed_start}" ]]; }; }; then
+        [[ -n "${T4_WRITER_LEASE_OWNER_BOOT_ID}" && "${current_boot}" == "${T4_WRITER_LEASE_OWNER_BOOT_ID}" ]] &&
+        [[ -n "${T4_WRITER_LEASE_OWNER_START_TIME}" && "${current_start}" == "${T4_WRITER_LEASE_OWNER_START_TIME}" ]]; }; }; then
     rm -f -- "${T4_WRITER_LEASE_PATH}"
     sync -f "$(dirname "${T4_WRITER_LEASE_PATH}")" 2>/dev/null || true
   fi
@@ -181,6 +181,8 @@ cleanup_writer_lease() {
   exec 9>&-
   T4_WRITER_LEASE_HELD=false
   T4_WRITER_LEASE_PUBLISHING=false
+  T4_WRITER_LEASE_OWNER_BOOT_ID=""
+  T4_WRITER_LEASE_OWNER_START_TIME=""
 }
 
 # This local durable lease complements Kubernetes Pod/PVC fencing; it never substitutes for it.
@@ -221,6 +223,8 @@ acquire_writer_lease() {
   [[ "${owner_token}" =~ ^[0-9a-f]{32}$ ]] || runtime_error "writer_lease_owner_token"
   T4_WRITER_LEASE_OWNER_BASHPID="${BASHPID}"
   T4_WRITER_LEASE_OWNER_TOKEN="${owner_token}"
+  T4_WRITER_LEASE_OWNER_BOOT_ID="${owner_boot}"
+  T4_WRITER_LEASE_OWNER_START_TIME="${owner_start}"
   T4_WRITER_LEASE_HELD=true
   T4_WRITER_LEASE_PUBLISHING=true
   writer_lease_before_publish
