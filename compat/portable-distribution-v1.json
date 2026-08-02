@@ -60,7 +60,7 @@
   },
   "runtimeCompatibilitySet": {
     "specificationContractCommit": "d16c6168c86f40fc44f25118c2fd06fe160fcb93",
-    "ompSourceCommit": "b86f6116e6223ebb2d747748dc1dc14ddcb35428",
+    "ompSourceCommit": "923ea217b0c3613e5fe3c58811d1b0cb5be6b539",
     "ompAuthorityProtocol": "t4-omp-authority/1",
     "appProtocol": "omp-app/1",
     "source": "compat/omp-app-matrix.json",
@@ -113,7 +113,7 @@
         "upstreamRef": "v17.0.5",
         "upstreamCommit": "9fd6e97113f5ed3a847e66d346970efdf8afcad9",
         "pinnedRepository": "https://github.com/wolfiesch/oh-my-pi",
-        "pinnedCommit": "b86f6116e6223ebb2d747748dc1dc14ddcb35428",
+        "pinnedCommit": "923ea217b0c3613e5fe3c58811d1b0cb5be6b539",
         "patchSetSource": "compat/omp-app-matrix.json#/publishedRuntime/integrationPatches",
         "upstreamContainsPatches": false,
         "packagedInProduct": true,

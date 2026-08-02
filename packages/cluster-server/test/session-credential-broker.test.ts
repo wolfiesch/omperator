@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
+import { Writable } from "node:stream";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { SessionCredentialClient } from "../src/session-credential-client.ts";
-import { credentialBrokerRegistrationIsFresh, decodeSessionCredentialBrokerRequest, releaseSessionWriterAuthority, runSessionCredentialBroker } from "../src/session-credential-broker.ts";
+import { credentialBrokerRegistrationIsFresh, decodeSessionCredentialBrokerRequest, forwardCmuxClientFrame, releaseSessionWriterAuthority, runSessionCredentialBroker } from "../src/session-credential-broker.ts";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -26,6 +27,16 @@ describe("session credential broker boundary", () => {
 		expect(credentialBrokerRegistrationIsFresh(10_000, 25_001)).toBe(false);
 		expect(credentialBrokerRegistrationIsFresh(25_001, 25_000)).toBe(false);
 		expect(credentialBrokerRegistrationIsFresh(undefined, 25_000)).toBe(false);
+	});
+
+	it("pauses raw cmux clients until the upstream socket drains", () => {
+		const events: string[] = [];
+		const client = { readyState: 1, pause: () => events.push("pause"), resume: () => events.push("resume") };
+		const upstream = new Writable({ highWaterMark: 1, write: () => undefined });
+		forwardCmuxClientFrame(client, upstream, Buffer.from("frame"), () => events.push("close"));
+		expect(events).toEqual(["pause"]);
+		upstream.emit("drain");
+		expect(events).toEqual(["pause", "resume"]);
 	});
 
 	it("closes raw cmux clients and upstreams before releasing writer authority", async () => {

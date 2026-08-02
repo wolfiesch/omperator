@@ -2045,6 +2045,7 @@ func (r *SessionReconciler) desiredPod(session *clusterv1alpha1.T4Session, works
 			{Name: "T4_ARTIFACT_ROOT", Value: stateRoot + "/artifacts"},
 			{Name: "T4_PRIVATE_RUNTIME_DIR", Value: stateRoot + "/private"},
 			{Name: "T4_OMP_HOME", Value: stateRoot + "/home"},
+			{Name: "T4_WRITER_LEASE_PATH", Value: stateRoot + "/private/writer-lease"},
 			{Name: "T4_HOST_RUNTIME_DIR", Value: shortRuntimeRoot},
 			{Name: "T4_CMUX_SOCKET_PATH", Value: shortRuntimeRoot + "/cmux/c.sock"},
 			{Name: "T4_SESSION_HOST_READY_PATH", Value: shortRuntimeRoot + "/host.ready"},

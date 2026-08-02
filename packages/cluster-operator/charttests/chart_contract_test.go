@@ -920,7 +920,7 @@ func TestImageContractsArePinnedAndAuthorityCompatible(t *testing.T) {
 		}
 	}
 	assertContains(t, session,
-		"b86f6116e6223ebb2d747748dc1dc14ddcb35428",
+		"923ea217b0c3613e5fe3c58811d1b0cb5be6b539",
 		"provenance/omp-runtime-v1.json",
 		"t4-omp-authority/1",
 		"session-entrypoint.sh",
@@ -950,10 +950,8 @@ func TestImageContractsArePinnedAndAuthorityCompatible(t *testing.T) {
 	assertContains(t, server, "packages/cluster-server/src/main.ts")
 	assertContains(t, modelGateway, "packages/model-gateway/src/main.ts")
 	assertContains(t, entrypoint,
-		"T4_CLUSTER_SERVER_SERVICE_ACCOUNT",
-		"/var/run/secrets/kubernetes.io/serviceaccount/token",
-		"/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
-		"/var/run/secrets/kubernetes.io/serviceaccount/namespace",
+		`[[ "${T4_WRITER_LEASE_PATH}" == "${root}/private/writer-lease" ]]`,
+		`[[ "${T4_CMUX_SOCKET_MODE}" == "0660" ]]`,
 		"T4_OMP_CONFIG_SOURCE_DIR",
 		"unexpected_arguments",
 		`[[ "$#" -eq 0 ]]`,
@@ -970,6 +968,9 @@ func TestImageContractsArePinnedAndAuthorityCompatible(t *testing.T) {
 		`/usr/local/bin/bun /usr/local/lib/t4/assert-omp-credentials-absent.js`,
 		"omp_credential_state_present",
 	)
+	if strings.Contains(entrypoint, "T4_CLUSTER_SERVER_SERVICE_ACCOUNT") || strings.Contains(entrypoint, "T4_KUBERNETES_TOKEN_PATH") {
+		t.Fatal("authority entrypoint requires credential-sidecar Kubernetes identity")
+	}
 }
 
 func TestSessionEntrypointFailsClosedBeforeGUIWithoutPrivateOMPInputs(t *testing.T) {
@@ -990,9 +991,8 @@ func TestSessionEntrypointFailsClosedBeforeGUIWithoutPrivateOMPInputs(t *testing
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			source := filepath.Join(root, "omp-source")
-			projection := filepath.Join(root, "kubernetes")
 			bin := filepath.Join(root, "bin")
-			for _, directory := range []string{source, projection, bin} {
+			for _, directory := range []string{source, bin} {
 				if err := os.MkdirAll(directory, 0o700); err != nil {
 					t.Fatal(err)
 				}
@@ -1004,11 +1004,6 @@ func TestSessionEntrypointFailsClosedBeforeGUIWithoutPrivateOMPInputs(t *testing
 			}
 			if test.writeSettings {
 				if err := os.WriteFile(filepath.Join(source, "config.yml"), []byte(test.settings), 0o600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			for _, name := range []string{"token", "ca.crt", "namespace"} {
-				if err := os.WriteFile(filepath.Join(projection, name), []byte("projected"), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -1041,10 +1036,6 @@ func TestSessionEntrypointFailsClosedBeforeGUIWithoutPrivateOMPInputs(t *testing
 				"T4_CMUX_SOCKET_PATH=/run/t4/runtime-session-a/cmux/c.sock",
 				"T4_CMUX_SOCKET_MODE=0660",
 				"T4_WORKSPACE_ROOT=/workspace",
-				"T4_CLUSTER_SERVER_SERVICE_ACCOUNT=t4-cluster-server",
-				"T4_KUBERNETES_TOKEN_PATH="+filepath.Join(projection, "token"),
-				"T4_KUBERNETES_CA_PATH="+filepath.Join(projection, "ca.crt"),
-				"T4_KUBERNETES_NAMESPACE_PATH="+filepath.Join(projection, "namespace"),
 				"T4_OMP_CONFIG_SOURCE_DIR="+source,
 				"T4_TEST_XVFB_MARKER="+marker,
 			)

@@ -1335,7 +1335,7 @@
   },
   "ompPinResolution": {
     "repository": "https://github.com/wolfiesch/oh-my-pi",
-    "sourceCommit": "b86f6116e6223ebb2d747748dc1dc14ddcb35428",
+    "sourceCommit": "923ea217b0c3613e5fe3c58811d1b0cb5be6b539",
     "contractCommit": "d16c6168c86f40fc44f25118c2fd06fe160fcb93",
     "contractAncestry": "descendant",
     "provenance": "provenance/omp-runtime-v1.json",

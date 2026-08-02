@@ -19,8 +19,8 @@ import { createBrowserPreviewOperations, mergeBrowserPreviewOperations, type Bro
 import { SessionCredentialClient } from "./session-credential-client.ts";
 import { startSessionAuthorityHealth, type SessionAuthorityHealthHandle } from "./session-authority-health.ts";
 
-const OMP_VERSION = "17.1.2";
-const OMP_COMMIT = "b86f6116e6223ebb2d747748dc1dc14ddcb35428";
+const OMP_VERSION = "17.0.5";
+const OMP_COMMIT = "923ea217b0c3613e5fe3c58811d1b0cb5be6b539";
 
 export async function claimDedicatedSessionOwnership(
 	ownershipPath: string,

@@ -193,7 +193,7 @@ RUN case "${TARGETARCH}" in \
     && chown root:root /usr/local/bin/omp /usr/local/bin/t4-session-shell /usr/local/lib/t4/*.js
 ENV T4_WORKSPACE_ROOT=/workspace \
     T4_HOST_PORT=8787 \
-    T4_OMP_BUILD=b86f6116e6223ebb2d747748dc1dc14ddcb35428 \
+    T4_OMP_BUILD=923ea217b0c3613e5fe3c58811d1b0cb5be6b539 \
     DISPLAY=:99 \
     HOME=/run/t4 \
     XDG_RUNTIME_DIR=/run/t4
@@ -209,8 +209,8 @@ LABEL org.opencontainers.image.source="${SOURCE_REPOSITORY}" \
       io.t4.cmux.provenance="/usr/share/t4/provenance/cmux-runtime-v1.json" \
       io.t4.cmux.binary-manifest="/usr/share/t4/provenance/cmux-tui.manifest.json" \
       io.t4.cmux.license="MIT" \
-      io.t4.omp.version="17.1.2" \
-      io.t4.omp.revision="b86f6116e6223ebb2d747748dc1dc14ddcb35428" \
+      io.t4.omp.version="17.0.5" \
+      io.t4.omp.revision="923ea217b0c3613e5fe3c58811d1b0cb5be6b539" \
       io.t4.omp.contract-revision="d16c6168c86f40fc44f25118c2fd06fe160fcb93" \
       io.t4.omp.provenance="/usr/share/t4/provenance/omp-runtime-v1.json" \
       io.t4.omp.authority="t4-omp-authority/1" \

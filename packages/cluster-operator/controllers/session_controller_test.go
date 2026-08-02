@@ -639,6 +639,13 @@ func TestSessionPodUsesSeparateCompositeExecProbes(t *testing.T) {
 			t.Fatalf("%s projection authority=%t shell=%t credential=%t, want credential-only", name, authorityHas, shellHas, credentialHas)
 		}
 	}
+	authorityEnv := map[string]string{}
+	for _, variable := range authority.Env {
+		authorityEnv[variable.Name] = variable.Value
+	}
+	if authorityEnv["T4_WRITER_LEASE_PATH"] != "/runtime-state/runtime-session/private/writer-lease" {
+		t.Fatalf("authority writer lease path = %q", authorityEnv["T4_WRITER_LEASE_PATH"])
+	}
 	for _, container := range pod.Spec.Containers[:2] {
 		for _, mount := range container.VolumeMounts {
 			if mount.Name == "kubernetes-api-access" || mount.Name == "generation-auth" {

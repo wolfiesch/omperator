@@ -125,6 +125,17 @@ export async function releaseSessionWriterAuthority(fence: () => void, authority
 	fence();
 	await authority.release();
 }
+type CmuxInputClient = { readonly readyState: number; pause(): void; resume(): void };
+type CmuxInputUpstream = { readonly destroyed: boolean; write(chunk: Uint8Array): boolean; once(event: "drain", listener: () => void): unknown };
+
+export function forwardCmuxClientFrame(client: CmuxInputClient, upstream: CmuxInputUpstream, chunk: Buffer, close: () => void): void {
+	if (chunk.byteLength > CMUX_MAX_FRAME_BYTES || upstream.destroyed) { close(); return; }
+	if (upstream.write(chunk)) return;
+	client.pause();
+	upstream.once("drain", () => {
+		if (!upstream.destroyed && client.readyState === WebSocket.OPEN) client.resume();
+	});
+}
 
 
 export async function runSessionCredentialBroker(config: SessionCredentialBrokerConfig): Promise<void> {
@@ -242,7 +253,7 @@ export async function runSessionCredentialBroker(config: SessionCredentialBroker
 		};
 		client.on("message", value => {
 			const chunk = value instanceof ArrayBuffer ? Buffer.from(value) : Array.isArray(value) ? Buffer.concat(value) : Buffer.from(value);
-			if (chunk.byteLength > CMUX_MAX_FRAME_BYTES || upstream.destroyed || !upstream.write(chunk)) close();
+			forwardCmuxClientFrame(client, upstream, chunk, close);
 		});
 		client.once("close", close);
 		client.once("error", close);

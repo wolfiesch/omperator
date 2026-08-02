@@ -397,17 +397,9 @@ main() {
   : "${T4_CMUX_SOCKET_PATH:?T4_CMUX_SOCKET_PATH is required}"
   : "${T4_CMUX_SOCKET_MODE:?T4_CMUX_SOCKET_MODE is required}"
   : "${T4_WORKSPACE_ROOT:?T4_WORKSPACE_ROOT is required}"
-  : "${T4_CLUSTER_SERVER_SERVICE_ACCOUNT:?T4_CLUSTER_SERVER_SERVICE_ACCOUNT is required}"
   [[ "$#" -eq 0 ]] || runtime_error "unexpected_arguments"
 
   export T4_OMP_CONFIG_SOURCE_DIR="${T4_OMP_CONFIG_SOURCE_DIR:-/run/t4-omp-config-source}"
-  export T4_KUBERNETES_TOKEN_PATH="${T4_KUBERNETES_TOKEN_PATH:-/var/run/secrets/kubernetes.io/serviceaccount/token}"
-  export T4_KUBERNETES_CA_PATH="${T4_KUBERNETES_CA_PATH:-/var/run/secrets/kubernetes.io/serviceaccount/ca.crt}"
-  export T4_KUBERNETES_NAMESPACE_PATH="${T4_KUBERNETES_NAMESPACE_PATH:-/var/run/secrets/kubernetes.io/serviceaccount/namespace}"
-  local projected_file
-  for projected_file in "${T4_KUBERNETES_TOKEN_PATH}" "${T4_KUBERNETES_CA_PATH}" "${T4_KUBERNETES_NAMESPACE_PATH}"; do
-    [[ -f "${projected_file}" && -r "${projected_file}" ]] || runtime_error "kubernetes_api_projection"
-  done
 
   local models_source="${T4_OMP_CONFIG_SOURCE_DIR}/models.yml"
   local settings_source="${T4_OMP_CONFIG_SOURCE_DIR}/config.yml"

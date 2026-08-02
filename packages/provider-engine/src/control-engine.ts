@@ -41,7 +41,7 @@ function canonicalWire(value:WireValue):string{
 const stringField=(r:Record<string,WireValue>,key:string)=>r[key] as string;
 const status=(phase:string,desired:string)=>phase==="Ready"&&desired==="Running"?"running":phase==="Starting"||phase==="Creating"?"connecting":desired==="Sleeping"?"sleeping":desired==="Stopped"?"stopped":"unavailable";
 export class ProviderControlSession{
- #state:State="awaitHello";#buffer=new Uint8Array();#generation="";#capabilities:readonly string[]=[];#revision=0n;#selectedScope:string|undefined;readonly #issued=new Map<string,Issued>();
+ #state:State="awaitHello";#buffer=new Uint8Array();#generation="";#capabilities:readonly string[]=[];#revision=0n;#selectedScope:string|undefined;readonly #issued=new Map<string,Issued>();#queue:Promise<void>=Promise.resolve();
  readonly #deps:ProviderControlDependencies;readonly #identity:ProviderIngressIdentity;readonly #ownerId:string;
  constructor(dependencies:ProviderControlDependencies,identity:ProviderIngressIdentity){if(!dependencies.authorize||!dependencies.creationPolicy)throw new TypeError("authorization and creation policies are mandatory");this.#deps=dependencies;this.#identity=identity;this.#ownerId=`owner_${randomUUID().replaceAll("-","")}`}
  private wakeTimeoutMs():number{const value=this.#deps.wakeTimeoutMs??MAX_WAKE_TIMEOUT_MS;return Number.isSafeInteger(value)&&value>0&&value<=MAX_WAKE_TIMEOUT_MS?value:MAX_WAKE_TIMEOUT_MS}
@@ -50,7 +50,9 @@ export class ProviderControlSession{
  private async wait(milliseconds:number):Promise<void>{if(this.#deps.sleep)await this.#deps.sleep(milliseconds);else await new Promise<void>(resolve=>setTimeout(resolve,milliseconds))}
 
  get providerControlGeneration(){return this.#generation||undefined}
- async receive(chunk:Uint8Array):Promise<readonly Uint8Array[]>{
+ #enqueue<T>(operation:()=>Promise<T>):Promise<T>{const queued=this.#queue.then(operation,operation);this.#queue=queued.then(()=>undefined,()=>undefined);return queued}
+ receive(chunk:Uint8Array):Promise<readonly Uint8Array[]>{return this.#enqueue(()=>this.#receive(chunk))}
+ async #receive(chunk:Uint8Array):Promise<readonly Uint8Array[]>{
   if(this.#state==="closed"||this.#state==="closing")return[];
   const joined=new Uint8Array(this.#buffer.byteLength+chunk.byteLength);joined.set(this.#buffer);joined.set(chunk,this.#buffer.byteLength);
   const out:Uint8Array[]=[];let start=0;
@@ -65,10 +67,12 @@ export class ProviderControlSession{
    this.#buffer=joined.subarray(start);
    if(this.#buffer.byteLength>MAX_CONTROL_FRAME_BYTES)throw new Error("control frame too large");
    return out;
-  }catch(cause){await this.close();throw cause}
+  }catch(cause){await this.#close();throw cause}
  }
- async finish(){const partial=this.#buffer.byteLength>0;await this.close();if(partial)throw new Error("control connection ended with a partial frame")}
- async close(){
+ finish():Promise<void>{return this.#enqueue(()=>this.#finish())}
+ async #finish():Promise<void>{const partial=this.#buffer.byteLength>0;await this.#close();if(partial)throw new Error("control connection ended with a partial frame")}
+ close():Promise<void>{return this.#enqueue(()=>this.#close())}
+ async #close():Promise<void>{
   if(this.#state==="closed")return;
   this.#state="closing";
   if(this.#generation){

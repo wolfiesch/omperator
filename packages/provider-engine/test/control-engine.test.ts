@@ -146,3 +146,16 @@ test("ambiguous generation CAS retries with the same owner without stealing dupl
  expect(response((await create().receive(hello))[0]!).error.code).toBe("conflict");
  await first.close();
 });
+
+test("serializes concurrent receive calls across asynchronous authorization", async () => {
+ const deps=dependencies(),methods:string[]=[];
+ let release!:()=>void;const blocked=new Promise<void>(resolve=>{release=resolve});
+ const session=createProviderControlSession({providerId:"provider",providerName:"Provider",driver:deps.driver,tickets:deps.tickets,connections:new MemoryProviderConnectionRegistry(),authorize:async request=>{methods.push(request.method);if(request.method==="hello")await blocked;return allowed()},creationPolicy:{runtime:async()=>{throw new Error()},workspace:async()=>{throw new Error()}}},{principalId:"principal",transport:"internal",authority:{}});
+ const hello=session.receive(request("hello","hello",{token:"bearer",client:{name:"client",version:"1",supported_versions:[1]}}));
+ const snapshot=session.receive(request("snapshot","snapshot",{}));
+ await Promise.resolve();expect(methods).toEqual(["hello"]);
+ release();
+ const [helloFrames,snapshotFrames]=await Promise.all([hello,snapshot]);
+ expect(response(helloFrames[0]!).error).toBeUndefined();
+ expect(response(snapshotFrames[0]!).result.scopes[0].id).toBe("scope");
+});
