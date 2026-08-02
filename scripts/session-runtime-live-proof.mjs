@@ -219,6 +219,8 @@ async function exerciseCmuxBrowserPane(shellContainer, browserUrl) {
 	const workspaceText = JSON.stringify(workspaceTree);
 	assert.match(workspaceText, /browser_source/u);
 	assert.ok(workspaceText.includes(browserUrl), `cmux workspace tree omitted ${browserUrl}: ${workspaceText}`);
+	const activeWorkspace = workspaceTree.workspaces?.find(candidate => candidate?.active === true);
+	assert.ok(activeWorkspace?.key);
 	const targets = JSON.parse((await docker(
 		"exec", shellContainer, "/usr/local/bin/bun", "--eval",
 		'process.stdout.write(JSON.stringify(await (await fetch("http://127.0.0.1:9222/json/list")).json()))',
@@ -233,6 +235,9 @@ async function exerciseCmuxBrowserPane(shellContainer, browserUrl) {
 		url: browserUrl,
 		targetId: target.id,
 		durableValue,
+		workspaceKey: activeWorkspace.key,
+		workspaceName: activeWorkspace.name,
+		workspaceRevision: workspaceTree.workspace_revision,
 		workspaceTreeObserved: true,
 		supervisedCdpTargetObserved: true,
 	};
@@ -254,7 +259,7 @@ async function cdpEvaluate(shellContainer, webSocketUrl, expression) {
 	return JSON.parse(result.stdout);
 }
 
-async function verifyDurableReconnect(authorityPort, shellContainer, identityTokenFile, expectedSessionId, browserUrl, expectedFragments, guiEnabled) {
+async function verifyDurableReconnect(authorityPort, shellContainer, identityTokenFile, expectedSessionId, browserUrl, expectedWorkspaceKey, expectedFragments, guiEnabled) {
 	const transcript = [];
 	const pending = new Map();
 	let sequence = 0;
@@ -295,15 +300,17 @@ async function verifyDurableReconnect(authorityPort, shellContainer, identityTok
 		let browserState;
 		if (guiEnabled) {
 			const socket = `/run/t4/${RUNTIME_ID}/cmux/c.sock`;
-			const workspaceText = await poll("durable cmux browser pane", async () => (await docker("exec", shellContainer, "/usr/local/bin/cmux-tui", "list-workspaces", "--socket", socket, "--json")).stdout, text => text.includes(browserUrl));
-			assert.match(workspaceText, /browser_source/u);
+			const workspaceTree = await poll("durable cmux workspace selection", async () => JSON.parse((await docker("exec", shellContainer, "/usr/local/bin/cmux-tui", "list-workspaces", "--socket", socket, "--json")).stdout), tree => tree.workspaces?.some(workspace => workspace.key === expectedWorkspaceKey && workspace.active === true));
+			const restoredWorkspace = workspaceTree.workspaces.find(workspace => workspace.key === expectedWorkspaceKey);
+			assert.equal(restoredWorkspace.active, true);
+			await docker("exec", shellContainer, "/usr/local/bin/cmux-tui", "new-browser-tab", "--socket", socket, "--url", browserUrl);
 			const target = await poll("durable Chromium target", async () => {
 				const targets = JSON.parse((await docker("exec", shellContainer, "/usr/local/bin/bun", "--eval", 'process.stdout.write(JSON.stringify(await (await fetch("http://127.0.0.1:9222/json/list")).json()))')).stdout);
 				return targets.find(candidate => candidate?.type === "page" && candidate?.url === browserUrl);
 			}, value => Boolean(value?.webSocketDebuggerUrl));
 			const durableValue = await cdpEvaluate(shellContainer, target.webSocketDebuggerUrl, "localStorage.proof");
 			assert.equal(durableValue, "Cmux durable browser state");
-			browserState = { workspaceSelectionRestored: true, profileStateRestored: true, durableValue };
+			browserState = { workspaceSelectionRestored: true, workspaceKey: expectedWorkspaceKey, browserSurfaceReopened: true, profileStateRestored: true, durableValue };
 		}
 		return { appReattached: true, terminalReattached: true, sessionId: expectedSessionId, historyRestored: true, ...(browserState ? { browserState } : {}) };
 	} finally {
@@ -814,6 +821,7 @@ async function main() {
 				join(temporaryRoot, "server-identity-token"),
 				sharedSession.sessionId,
 				browserUrl,
+				cmuxBrowserPane.workspaceKey,
 				expectedFragments,
 				guiEnabled,
 			);
@@ -830,6 +838,7 @@ async function main() {
 				join(temporaryRoot, "server-identity-token"),
 				sharedSession.sessionId,
 				browserUrl,
+				cmuxBrowserPane.workspaceKey,
 				expectedFragments,
 				guiEnabled,
 			);
