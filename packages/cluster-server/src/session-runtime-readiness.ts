@@ -5,14 +5,28 @@ import { access, lstat, open, readFile, realpath, unlink } from "node:fs/promise
 import { constants as fsConstants } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { CMUX_PROTOCOL_VERSION, CMUX_SOURCE_COMMIT } from "../../cmux-runtime/src/index.ts";
+import { CMUX_GHOSTTY_COMMIT, CMUX_PROTOCOL_VERSION, CMUX_SOURCE_COMMIT } from "../../cmux-runtime/src/index.ts";
 
 const execute = promisify(execFile);
 const MAX_IDENTITY_BYTES = 16 * 1024;
 const MAX_READY_BYTES = 4 * 1024;
 const BROWSER_TIMEOUT_MS = 750;
-const CMUX_IDENTITY_KEYS = ["app", "build_commit", "capabilities", "pid", "protocol", "session"] as const;
-const CMUX_CAPABILITIES = ["provider-managed-workspace-authority-v2"] as const;
+const CMUX_IDENTITY_KEYS = [
+	"app", "build_commit", "capabilities", "daemon_handoff", "generation", "ghostty_commit", "pid", "protocol",
+	"registry_id", "session", "terminal_revision", "version", "workspace_revision",
+] as const;
+const CMUX_CAPABILITIES = [
+	"attach-initial-size",
+	"workspace-registry-v1",
+	"viewport-splits-v1",
+	"viewport-column-resize-v1",
+	"layout-undo-v1",
+	"clear-history-v1",
+	"surface-subscribe-filter",
+	"provider-managed-workspace-authority-v2",
+	"clear-history-key-v1",
+] as const;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 
 export type RuntimeProbeKind = "startup" | "readiness" | "liveness";
 
@@ -216,9 +230,17 @@ export async function probeSessionRuntime(
 	const identity = await dependencies.identifyCmux(config);
 	exactKeys(identity, CMUX_IDENTITY_KEYS, "cmux identify");
 	if (identity.protocol !== CMUX_PROTOCOL_VERSION) throw new Error("cmux identify protocol is not version 10");
-	if (identity.app !== "cmux-tui" || identity.build_commit !== CMUX_SOURCE_COMMIT) throw new Error("cmux identify build identity does not match the pinned runtime");
+	if (identity.app !== "cmux-tui" || identity.build_commit !== CMUX_SOURCE_COMMIT ||
+		identity.ghostty_commit !== CMUX_GHOSTTY_COMMIT || identity.version !== "0.1.0")
+		throw new Error("cmux identify build identity does not match the pinned runtime");
+	if (identity.daemon_handoff !== 1 || typeof identity.generation !== "string" || !UUID_PATTERN.test(identity.generation) ||
+		typeof identity.registry_id !== "string" || !UUID_PATTERN.test(identity.registry_id))
+		throw new Error("cmux identify runtime identity is invalid");
 	if (identity.session !== config.sessionName) throw new Error("cmux identify session does not match the controlled runtime");
 	if (typeof identity.pid !== "number" || !dependencies.processAlive(identity.pid)) throw new Error("cmux identify PID is not a current process");
+	if (typeof identity.terminal_revision !== "number" || !Number.isSafeInteger(identity.terminal_revision) || identity.terminal_revision < 0 ||
+		typeof identity.workspace_revision !== "number" || !Number.isSafeInteger(identity.workspace_revision) || identity.workspace_revision < 0)
+		throw new Error("cmux identify revisions are invalid");
 	if (!Array.isArray(identity.capabilities) || identity.capabilities.length !== CMUX_CAPABILITIES.length ||
 		identity.capabilities.some((value, index) => typeof value !== "string" || value !== CMUX_CAPABILITIES[index]))
 		throw new Error("cmux provider-managed workspace capability set is invalid");

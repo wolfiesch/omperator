@@ -210,7 +210,7 @@ async function main() {
 	const suffix = `${process.pid}-${randomUUID().slice(0, 8)}`;
 	const prefix = `t4-p3-${suffix}`;
 	const containers = { authority: `${prefix}-authority`, credential: `${prefix}-credential`, shell: `${prefix}-shell` };
-	const volumes = Object.fromEntries(["state", "runtime", "workspace", "secrets", "authority-tmp", "credential-tmp", "shell-tmp", "shm"].map((name) => [name.replace("-", "_"), `${prefix}-${name}`]));
+	const volumes = Object.fromEntries(["state", "runtime", "workspace", "secrets", "authority-tmp", "credential-tmp", "shell-tmp"].map((name) => [name.replace("-", "_"), `${prefix}-${name}`]));
 	const temporaryRoot = await mkdtemp(join(tmpdir(), "t4-p3-live-proof-"));
 	const generationAuth = randomBytes(32);
 	const services = await startProofServices(temporaryRoot, generationAuth);
@@ -237,9 +237,9 @@ async function main() {
 			"--volume", `${volumes.state}:/runtime-state`, "--volume", `${volumes.runtime}:/run`,
 			"--volume", `${volumes.workspace}:/workspace`, "--volume", `${volumes.secrets}:/secrets`,
 			"--volume", `${volumes.authority_tmp}:/authority-tmp`, "--volume", `${volumes.credential_tmp}:/credential-tmp`,
-			"--volume", `${volumes.shell_tmp}:/shell-tmp`, "--volume", `${volumes.shm}:/shared-memory`,
+			"--volume", `${volumes.shell_tmp}:/shell-tmp`,
 			"--volume", `${temporaryRoot}:/seed:ro`, image, "-ceu",
-			"mkdir -p /run/t4 /run/t4-credential; chown 10001:20001 /runtime-state /workspace /run/t4 /authority-tmp; chmod 0770 /runtime-state /workspace /authority-tmp; chmod 0711 /run/t4; chown 10003:20001 /run/t4-credential /credential-tmp; chmod 0770 /run/t4-credential /credential-tmp; chown 10002:20001 /shell-tmp /shared-memory; chmod 0770 /shell-tmp /shared-memory; cp /seed/generation.key /secrets/key; chown 10003:20001 /secrets/key; chmod 0400 /secrets/key",
+			"mkdir -p /run/t4 /run/t4-credential; chown 10001:20001 /runtime-state /workspace /run/t4 /authority-tmp; chmod 0770 /runtime-state /workspace /authority-tmp; chmod 0711 /run/t4; chown 10003:20001 /run/t4-credential /credential-tmp; chmod 0770 /run/t4-credential /credential-tmp; chown 10002:20001 /shell-tmp; chmod 0770 /shell-tmp; cp /seed/generation.key /secrets/key; chown 10003:20001 /secrets/key; chmod 0400 /secrets/key",
 		);
 		const common = {
 			T4_RUNTIME_ID: RUNTIME_ID,
@@ -304,7 +304,8 @@ async function main() {
 			"--read-only", "--user", "10002:20001", "--network", `container:${containers.authority}`,
 			"--pid", `container:${containers.authority}`, "--volume", `${volumes.state}:/runtime-state`,
 			"--volume", `${volumes.runtime}:/run`, "--volume", `${volumes.workspace}:/workspace`,
-			"--volume", `${volumes.shell_tmp}:/tmp`, "--volume", `${volumes.shm}:/dev/shm`,
+			"--volume", `${volumes.shell_tmp}:/tmp`,
+			"--tmpfs", "/dev/shm:rw,exec,nosuid,nodev,mode=1770,uid=10002,gid=20001",
 			...envArguments(common), "--entrypoint", "/usr/bin/tini", image, "--", "/usr/local/bin/t4-session-shell",
 		);
 

@@ -195,12 +195,13 @@ describe("session runtime image build contract", () => {
 		expect(sessionHost).toContain('attentionOutcomePath: join(config.privateRuntimeRoot, "attention-outcomes.json")');
 		expect(sessionHost).not.toContain('attentionOutcomePath: join(config.stateRoot, "attention-outcomes.json")');
 	});
-	test("live proof reproduces Kubelet ownership for per-container temporary volumes", async () => {
+	test("live proof reproduces Kubelet ownership for per-container temporary volumes and shared memory", async () => {
 		const proof = await readRepositoryFile("scripts/session-runtime-live-proof.mjs");
 		expect(proof).toContain('`${volumes.authority_tmp}:/authority-tmp`');
 		expect(proof).toContain('`${volumes.credential_tmp}:/credential-tmp`');
 		expect(proof).toContain('`${volumes.shell_tmp}:/shell-tmp`');
-		expect(proof).toContain('`${volumes.shm}:/shared-memory`');
-		expect(proof).toContain("chown 10002:20001 /shell-tmp /shared-memory");
+		expect(proof).toContain('"--tmpfs", "/dev/shm:rw,exec,nosuid,nodev,mode=1770,uid=10002,gid=20001"');
+		expect(proof).toContain("chown 10002:20001 /shell-tmp");
+		expect(proof).not.toContain("volumes.shm");
 	});
 });

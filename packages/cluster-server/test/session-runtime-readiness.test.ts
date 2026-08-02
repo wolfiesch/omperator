@@ -3,7 +3,7 @@ import { access, mkdir, mkdtemp, readdir, realpath, rm, symlink } from "node:fs/
 import { constants as fsConstants } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vite-plus/test";
-import { CMUX_SOURCE_COMMIT } from "../../cmux-runtime/src/index.ts";
+import { CMUX_GHOSTTY_COMMIT, CMUX_SOURCE_COMMIT } from "../../cmux-runtime/src/index.ts";
 import {
 	probeSessionRuntime,
 	runtimeReadinessConfigFromEnv,
@@ -18,10 +18,27 @@ const AUTH_SHA256 = createHash("sha256").update(AUTH).digest("hex");
 const CMUX_IDENTITY = {
 	app: "cmux-tui",
 	build_commit: CMUX_SOURCE_COMMIT,
-	capabilities: ["provider-managed-workspace-authority-v2"],
+	capabilities: [
+		"attach-initial-size",
+		"workspace-registry-v1",
+		"viewport-splits-v1",
+		"viewport-column-resize-v1",
+		"layout-undo-v1",
+		"clear-history-v1",
+		"surface-subscribe-filter",
+		"provider-managed-workspace-authority-v2",
+		"clear-history-key-v1",
+	],
+	daemon_handoff: 1,
+	generation: "a9db9c11-3b96-454d-ac91-3333a765daaa",
+	ghostty_commit: CMUX_GHOSTTY_COMMIT,
 	pid: 42,
 	protocol: 10,
+	registry_id: "7135870c-9eec-4426-aac8-244a69864780",
 	session: "fixture",
+	terminal_revision: 0,
+	version: "0.1.0",
+	workspace_revision: 0,
 };
 const CONFIG: RuntimeReadinessConfig = {
 	runtimeId: "runtime-fixture",
@@ -90,6 +107,13 @@ describe("session runtime composite readiness", () => {
 			{ ...CMUX_IDENTITY, capabilities: [...CMUX_IDENTITY.capabilities, "unexpected"] },
 			{ ...CMUX_IDENTITY, capabilities: [...CMUX_IDENTITY.capabilities, ...CMUX_IDENTITY.capabilities] },
 			{ ...CMUX_IDENTITY, capabilities: [42] },
+			{ ...CMUX_IDENTITY, daemon_handoff: 0 },
+			{ ...CMUX_IDENTITY, generation: "not-a-uuid" },
+			{ ...CMUX_IDENTITY, ghostty_commit: "0".repeat(40) },
+			{ ...CMUX_IDENTITY, registry_id: "not-a-uuid" },
+			{ ...CMUX_IDENTITY, terminal_revision: -1 },
+			{ ...CMUX_IDENTITY, version: "unexpected" },
+			{ ...CMUX_IDENTITY, workspace_revision: 1.5 },
 		]) {
 			await expect(probeSessionRuntime("readiness", CONFIG, dependencies({ identifyCmux: async () => identity }))).rejects.toThrow();
 		}
