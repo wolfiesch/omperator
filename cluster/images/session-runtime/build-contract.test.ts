@@ -188,7 +188,7 @@ describe("session runtime image build contract", () => {
 		expect(shellEntrypoint).toContain("authority_artifact_exposed");
 		expect(shellEntrypoint).toContain("authority_socket_exposed");
 		for (const singleton of ["SingletonLock", "SingletonSocket", "SingletonCookie"])
-			expect(shellEntrypoint).toContain(`\"${"${T4_BROWSER_STATE_DIR}"}/${singleton}\"`);
+			expect(shellEntrypoint).toContain(`"${"${T4_BROWSER_STATE_DIR}"}/${singleton}"`);
 		expect(shellEntrypoint).toContain("browser_singleton_artifact_invalid");
 	});
 	test("keeps authority-only databases below the private runtime root", async () => {
