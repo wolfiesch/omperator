@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "vite-plus/test";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -97,8 +97,10 @@ describe("session shell fail-closed supervisor", () => {
 		const value = await runtimeFixture(true);
 		const running = runSessionRuntimeSupervisor(value.config, dependencies);
 		await waitForStarted(value.log, "chromium");
+		const cmuxSocketMode = (await stat(value.config.cmuxSocketPath)).mode & 0o777;
 		process.emit("SIGTERM", "SIGTERM");
 		expect(await running).toBe(143);
+		expect(cmuxSocketMode).toBe(0o660);
 		const log = await childLog(value.log);
 		expect(log.some(line => line.startsWith("session-host:started:"))).toBe(false);
 		for (const kind of ["xvfb", "fluxbox", "cmux", "chromium"]) expect(log.some(line => line.startsWith(`${kind}:term:`))).toBe(true);

@@ -355,6 +355,7 @@ export async function runSessionRuntimeSupervisor(
 		start("fluxbox", config.fluxbox);
 		const cmux = start("cmux", config.cmux);
 		await waitForSocket(config.cmuxSocketPath, cmux, startupDeadline);
+		await chmod(config.cmuxSocketPath, 0o660);
 		if (shuttingDown) throw new Error("cmux exited during startup");
 		await identifyCmux(config, cmux, startupDeadline, shutdownRequested.promise, () => shuttingDown);
 		if (shuttingDown) throw new Error("cmux exited during identity verification");

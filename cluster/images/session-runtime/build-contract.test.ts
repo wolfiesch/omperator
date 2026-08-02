@@ -197,9 +197,13 @@ describe("session runtime image build contract", () => {
 	});
 	test("live proof reproduces Kubelet ownership for per-container temporary volumes and shared memory", async () => {
 		const proof = await readRepositoryFile("scripts/session-runtime-live-proof.mjs");
-		expect(proof).toContain('`${volumes.authority_tmp}:/authority-tmp`');
-		expect(proof).toContain('`${volumes.credential_tmp}:/credential-tmp`');
-		expect(proof).toContain('`${volumes.shell_tmp}:/shell-tmp`');
+		expect(proof).toContain('`${volumes.authority_tmp}:/authority-tmp:nocopy`');
+		expect(proof).toContain('`${volumes.credential_tmp}:/credential-tmp:nocopy`');
+		expect(proof).toContain('`${volumes.shell_tmp}:/shell-tmp:nocopy`');
+		expect(proof).toContain('`${volumes.workspace}:/workspace:nocopy`');
+		expect(proof).toContain('`${volumes.credential_broker}:/run/t4-credential:nocopy`');
+		expect(proof).toContain('`${volumes.runtime}:/run/t4-runtime-shared:nocopy`');
+		expect(proof).toContain('T4_CMUX_SOCKET_PATH: `/run/t4-runtime-shared/t4/${RUNTIME_ID}/cmux/c.sock`');
 		expect(proof).toContain('"--tmpfs", "/dev/shm:rw,exec,nosuid,nodev,mode=1770,uid=10002,gid=20001"');
 		expect(proof).toContain("chown 10002:20001 /shell-tmp");
 		expect(proof).not.toContain("volumes.shm");
