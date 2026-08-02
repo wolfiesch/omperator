@@ -128,7 +128,7 @@ async function startProofServices(root, generationAuth) {
 		},
 		spec: { holderIdentity: null, acquireTime: null, renewTime: null, leaseTransitions: 0 },
 	};
-	const requests = { tokenReviews: 0, leaseReads: 0, leaseWrites: 0, model: 0 };
+	const requests = { tokenReviews: 0, leaseReads: 0, leaseWrites: 0, model: 0, modelTraffic: [] };
 	const leasePath = `/apis/coordination.k8s.io/v1/namespaces/${NAMESPACE}/leases/${WRITER_LEASE}`;
 	const kubernetes = createHttpsServer({ key, cert: certificate }, (request, response) => {
 		void (async () => {
@@ -165,6 +165,7 @@ async function startProofServices(root, generationAuth) {
 
 	const model = createHttpServer((request, response) => {
 		void (async () => {
+			if (requests.modelTraffic.length < 16) requests.modelTraffic.push({ method: request.method, url: request.url });
 			if (request.method === "GET" && request.url === "/proof") {
 				const body = Buffer.from("<!doctype html><title>Runtime live proof</title><input id=proof-input>");
 				response.writeHead(200, { "content-type": "text/html", "content-length": body.length });
@@ -175,7 +176,7 @@ async function startProofServices(root, generationAuth) {
 				response.writeHead(404).end();
 				return;
 			}
-			await readBody(request);
+			await readBody(request, 2 * 1024 * 1024);
 			requests.model++;
 			const id = `chatcmpl-live-proof-${requests.model}`;
 			const frames = [
@@ -213,7 +214,21 @@ async function exerciseSharedSession(authorityPort, shellContainer, identityToke
 	const transcript = [];
 	const pending = new Map();
 	let sequence = 0;
-	const connector = new WebSocketPodHostConnector({ identityTokenFile, keepAliveMs: 30_000 });
+	const negotiated = Promise.withResolvers();
+	const connector = new WebSocketPodHostConnector({
+		identityTokenFile,
+		keepAliveMs: 30_000,
+		webSocketFactory: (url) => {
+			const socket = new WebSocket(url);
+			socket.addEventListener("message", (event) => {
+				try {
+					const frame = JSON.parse(String(event.data));
+					if (frame.type === "welcome") negotiated.resolve(frame);
+				} catch { /* the production connector owns protocol rejection */ }
+			}, { once: false });
+			return socket;
+		},
+	});
 	const connection = await connector.connect({
 		clusterSessionId: SESSION_NAME,
 		runtimeGeneration: GENERATION,
@@ -224,7 +239,7 @@ async function exerciseSharedSession(authorityPort, shellContainer, identityToke
 			const waiter = pending.get(frame.requestId);
 			if (waiter) {
 				pending.delete(frame.requestId);
-				if (frame.ok === false) waiter.reject(new Error(`${waiter.command}: ${String(frame.error?.message ?? frame.error?.code ?? "command failed")}`));
+				if (frame.ok === false) waiter.reject(new Error(`${waiter.command}: ${JSON.stringify(frame.error ?? { code: "command_failed" })}`));
 				else waiter.resolve(frame.result);
 			}
 			return;
@@ -233,6 +248,8 @@ async function exerciseSharedSession(authorityPort, shellContainer, identityToke
 		if (frame.type === "entry") transcript.push(frame.entry);
 	});
 	assert.ok(connection.hostId);
+	const welcome = await negotiated.promise;
+	assert.equal(welcome.authentication, "paired");
 	const commandApp = (commandName, args = {}, sessionId, expectedRevision) => {
 		const requestId = `live-${++sequence}`;
 		const response = Promise.withResolvers();
@@ -261,20 +278,29 @@ async function exerciseSharedSession(authorityPort, shellContainer, identityToke
 			const inventory = await commandApp("session.list");
 			return inventory.sessions.find((candidate) => candidate.sessionId === session.sessionId);
 		}, (candidate) => Boolean(candidate?.revision && candidate?.liveState?.sessionControl === undefined));
-		const lease = await commandApp("prompt.lease.acquire", { ownerId: "runtime-live-proof" }, session.sessionId, session.revision);
+		const initialState = await commandApp("session.state.get", {}, session.sessionId);
+		assert.deepEqual(initialState.model, { id: "deterministic", provider: "proof", displayName: "Runtime proof deterministic" });
 		({ sessions } = await commandApp("session.list"));
 		session = sessions.find((candidate) => candidate.sessionId === session.sessionId);
 		assert.ok(session?.revision);
-		await commandApp("session.prompt", { message: "App live proof prompt", leaseId: lease.leaseId }, session.sessionId, session.revision);
-		await poll("app prompt transcript", async () => transcriptText(transcript), (text) => text.includes("App live proof prompt") && text.includes("Runtime proof response 1"));
+		await commandApp("session.prompt", { message: "App live proof prompt" }, session.sessionId, session.revision);
+		await poll("app prompt transcript", async () => transcriptText(transcript), (text) => text.includes("App live proof prompt") && text.includes("Runtime proof response 1"))
+			.catch((error) => { throw new Error(`app prompt transcript was ${transcriptText(transcript)}`, { cause: error }); });
+		await poll("app prompt idle state", async () => commandApp("session.state.get", {}, session.sessionId), (state) => state.isStreaming === false && state.messageCount >= 2);
+		await poll("app prompt idle inventory", async () => {
+			const inventory = await commandApp("session.list");
+			return inventory.sessions.find((candidate) => candidate.sessionId === session.sessionId);
+		}, (candidate) => candidate?.status === "idle");
 
 		const terminal = await docker(
 			"exec", shellContainer, "/bin/bash", "-ceu",
 			'printf "%s\\n%s\\n" "Terminal live proof prompt" "/quit" | /usr/local/bin/omp',
 		);
+		assert.doesNotMatch(terminal.stderr, /omp attach:/u);
 		assert.match(terminal.stdout, /App live proof prompt/u);
 		assert.match(terminal.stdout, /Runtime proof response 1/u);
-		await poll("terminal prompt transcript", async () => transcriptText(transcript), (text) => text.includes("Terminal live proof prompt") && text.includes("Runtime proof response 2"));
+		await poll("terminal prompt transcript", async () => transcriptText(transcript), (text) => text.includes("Terminal live proof prompt") && text.includes("Runtime proof response 2"))
+			.catch((error) => { throw new Error(`terminal output was ${JSON.stringify(terminal)} and app transcript was ${transcriptText(transcript)}`, { cause: error }); });
 		return {
 			hostId: connection.hostId,
 			sessionId: session.sessionId,
@@ -308,7 +334,7 @@ async function main() {
 		]);
 		await Promise.all([
 			writeFile(join(temporaryRoot, "omp-config", "models.yml"), `providers:\n  proof:\n    baseUrl: http://host.docker.internal:${services.modelPort}/v1\n    api: openai-completions\n    auth: none\n    models:\n      - id: deterministic\n        name: Runtime proof deterministic\n        reasoning: false\n        input: [text]\n        contextWindow: 32768\n        maxTokens: 4096\n`, { mode: 0o444 }),
-			writeFile(join(temporaryRoot, "omp-config", "config.yml"), "setupVersion: 1\nstartup:\n  setupWizard: false\n  checkUpdate: false\n", { mode: 0o444 }),
+			writeFile(join(temporaryRoot, "omp-config", "config.yml"), "setupVersion: 1\nstartup:\n  setupWizard: false\n  checkUpdate: false\nmodelRoles:\n  default: proof/deterministic\n", { mode: 0o444 }),
 			writeFile(join(temporaryRoot, "kubernetes", "token"), `${REVIEWER_TOKEN}\n`, { mode: 0o444 }),
 			writeFile(join(temporaryRoot, "kubernetes", "ca.crt"), services.certificate, { mode: 0o444 }),
 			writeFile(join(temporaryRoot, "kubernetes", "namespace"), `${NAMESPACE}\n`, { mode: 0o444 }),
@@ -454,6 +480,7 @@ async function main() {
 			image,
 			error: errorSummary(error),
 			containerStates,
+			requests: services.requests,
 		}, null, 2)}\n`);
 		throw error;
 	} finally {
