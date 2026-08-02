@@ -9,6 +9,7 @@ import { createServer as createHttpsServer } from "node:https";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { WebSocketPodHostConnector } from "../packages/cluster-server/src/pod-host-router.ts";
 
 const execute = promisify(execFile);
 const TIMEOUT_MS = 60_000;
@@ -204,6 +205,88 @@ function volumeArguments(volumes, temporaryRoot) {
 	];
 }
 
+function transcriptText(entries) {
+	return JSON.stringify(entries);
+}
+
+async function exerciseSharedSession(authorityPort, shellContainer, identityTokenFile) {
+	const transcript = [];
+	const pending = new Map();
+	let sequence = 0;
+	const connector = new WebSocketPodHostConnector({ identityTokenFile, keepAliveMs: 30_000 });
+	const connection = await connector.connect({
+		clusterSessionId: SESSION_NAME,
+		runtimeGeneration: GENERATION,
+		routeGeneration: GENERATION,
+		url: `ws://127.0.0.1:${authorityPort}/v1/ws`,
+	}, (frame) => {
+		if (frame.type === "response") {
+			const waiter = pending.get(frame.requestId);
+			if (waiter) {
+				pending.delete(frame.requestId);
+				if (frame.ok === false) waiter.reject(new Error(`${waiter.command}: ${String(frame.error?.message ?? frame.error?.code ?? "command failed")}`));
+				else waiter.resolve(frame.result);
+			}
+			return;
+		}
+		if (frame.type === "snapshot") transcript.splice(0, transcript.length, ...frame.entries);
+		if (frame.type === "entry") transcript.push(frame.entry);
+	});
+	assert.ok(connection.hostId);
+	const commandApp = (commandName, args = {}, sessionId, expectedRevision) => {
+		const requestId = `live-${++sequence}`;
+		const response = Promise.withResolvers();
+		pending.set(requestId, { ...response, command: commandName });
+		connection.send({
+			v: "omp-app/1",
+			type: "command",
+			requestId,
+			commandId: `live-command-${sequence}`,
+			timestamp: new Date().toISOString(),
+			hostId: connection.hostId,
+			command: commandName,
+			args,
+			...(sessionId ? { sessionId } : {}),
+			...(expectedRevision ? { expectedRevision } : {}),
+		});
+		return response.promise;
+	};
+	try {
+		let { sessions } = await commandApp("session.list");
+		assert.equal(sessions.length, 1);
+		let session = sessions[0];
+		assert.ok(session?.sessionId);
+		await commandApp("session.attach", {}, session.sessionId);
+		session = await poll("app session write authority", async () => {
+			const inventory = await commandApp("session.list");
+			return inventory.sessions.find((candidate) => candidate.sessionId === session.sessionId);
+		}, (candidate) => Boolean(candidate?.revision && candidate?.liveState?.sessionControl === undefined));
+		const lease = await commandApp("prompt.lease.acquire", { ownerId: "runtime-live-proof" }, session.sessionId, session.revision);
+		({ sessions } = await commandApp("session.list"));
+		session = sessions.find((candidate) => candidate.sessionId === session.sessionId);
+		assert.ok(session?.revision);
+		await commandApp("session.prompt", { message: "App live proof prompt", leaseId: lease.leaseId }, session.sessionId, session.revision);
+		await poll("app prompt transcript", async () => transcriptText(transcript), (text) => text.includes("App live proof prompt") && text.includes("Runtime proof response 1"));
+
+		const terminal = await docker(
+			"exec", shellContainer, "/bin/bash", "-ceu",
+			'printf "%s\\n%s\\n" "Terminal live proof prompt" "/quit" | /usr/local/bin/omp',
+		);
+		assert.match(terminal.stdout, /App live proof prompt/u);
+		assert.match(terminal.stdout, /Runtime proof response 1/u);
+		await poll("terminal prompt transcript", async () => transcriptText(transcript), (text) => text.includes("Terminal live proof prompt") && text.includes("Runtime proof response 2"));
+		return {
+			hostId: connection.hostId,
+			sessionId: session.sessionId,
+			appPromptObservedByTerminal: true,
+			terminalPromptObservedByApp: true,
+			sharedSessionHistory: true,
+		};
+	} finally {
+		connection.close(1000, "live proof complete");
+	}
+}
+
 async function main() {
 	const image = requiredOption("image");
 	const artifactRoot = resolve(option("artifact-root") ?? ".artifacts/p3-runtime-live");
@@ -230,6 +313,7 @@ async function main() {
 			writeFile(join(temporaryRoot, "kubernetes", "ca.crt"), services.certificate, { mode: 0o444 }),
 			writeFile(join(temporaryRoot, "kubernetes", "namespace"), `${NAMESPACE}\n`, { mode: 0o444 }),
 			writeFile(join(temporaryRoot, "generation.key"), generationAuth, { mode: 0o444 }),
+			writeFile(join(temporaryRoot, "server-identity-token"), `${SERVER_TOKEN}\n`, { mode: 0o400 }),
 		]);
 		for (const volume of Object.values(volumes)) await docker("volume", "create", volume);
 		await docker(
@@ -322,6 +406,8 @@ async function main() {
 		assert.equal(socketMode, "660");
 		const credentialIdentity = JSON.parse((await docker("exec", containers.credential, "/usr/local/bin/cmux-tui", "identify", "--socket", `/run/t4-runtime-shared/t4/${RUNTIME_ID}/cmux/c.sock`, "--json")).stdout);
 		assert.equal(credentialIdentity.pid, identity.pid);
+		const authorityPort = Number((await docker("port", containers.authority, "8787/tcp")).stdout.split(":").at(-1));
+		const sharedSession = await exerciseSharedSession(authorityPort, containers.shell, join(temporaryRoot, "server-identity-token"));
 		const activityPort = Number((await docker("port", containers.authority, "8788/tcp")).stdout.split(":").at(-1));
 		const activity = await fetch(`http://127.0.0.1:${activityPort}/internal/runtime/activity`, {
 			method: "POST",
@@ -337,8 +423,8 @@ async function main() {
 			schemaVersion: 1,
 			passed: true,
 			image: { reference: image, architecture: inspected.Architecture, revision: imageRevision },
-			runtime: { runtimeId: RUNTIME_ID, runtimeUid: RUNTIME_UID, generation: GENERATION, cmux: identity, socketMode },
-			boundaries: { authorityHealth: true, shellReadiness: true, credentialCmuxAccess: true, activityRuntimeUid: true, writerLeaseHeld: true },
+			runtime: { runtimeId: RUNTIME_ID, runtimeUid: RUNTIME_UID, generation: GENERATION, cmux: identity, socketMode, sharedSession },
+			boundaries: { authorityHealth: true, shellReadiness: true, credentialCmuxAccess: true, sharedSessionHistory: true, activityRuntimeUid: true, writerLeaseHeld: true },
 			requests: services.requests,
 		};
 		await writeFile(join(artifactRoot, "proof.json"), `${JSON.stringify(evidence, null, 2)}\n`);

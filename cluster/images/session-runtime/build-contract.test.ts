@@ -208,4 +208,13 @@ describe("session runtime image build contract", () => {
 		expect(proof).toContain("chown 10002:20001 /shell-tmp");
 		expect(proof).not.toContain("volumes.shm");
 	});
+	test("live proof exercises both packaged OMP clients against one durable session", async () => {
+		const proof = await readRepositoryFile("scripts/session-runtime-live-proof.mjs");
+		expect(proof).toContain('import { WebSocketPodHostConnector } from "../packages/cluster-server/src/pod-host-router.ts"');
+		expect(proof).toContain("server-identity-token");
+		expect(proof).toContain('"App live proof prompt"');
+		expect(proof).toContain('"Terminal live proof prompt"');
+		expect(proof).toContain("/usr/local/bin/omp");
+		expect(proof).toContain("sharedSessionHistory");
+	});
 });

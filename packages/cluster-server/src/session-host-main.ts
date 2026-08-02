@@ -4,13 +4,14 @@ import { createConnection } from "node:net";
 import { dirname, join } from "node:path";
 import {
 	OmpAuthorityBridgeClient,
+	SessionOwnershipStore,
 	TranscriptSearchIndex,
 	appserverSupportedCapabilities,
 	appserverSupportedFeatures,
 	createAppserver,
 	type AppserverHandle,
 } from "@t4-code/host-service";
-import { hostId } from "@t4-code/host-wire";
+import { hostId, type SessionId } from "@t4-code/host-wire";
 import { ClusterInternalRemotePolicy, sessionHostConfigFromEnv, type SessionHostConfig } from "./session-host-policy.ts";
 import { removeTerminalAttachIdentity, writeTerminalAttachIdentity } from "./terminal-attach-identity.ts";
 import { startTerminalAttachBroker, type TerminalAttachBrokerHandle } from "./terminal-attach-broker.ts";
@@ -20,6 +21,15 @@ import { startSessionAuthorityHealth, type SessionAuthorityHealthHandle } from "
 
 const OMP_VERSION = "17.1.2";
 const OMP_COMMIT = "b86f6116e6223ebb2d747748dc1dc14ddcb35428";
+
+export async function claimDedicatedSessionOwnership(
+	ownershipPath: string,
+	session: { readonly sessionId: SessionId; readonly path: string },
+): Promise<void> {
+	const ownership = new SessionOwnershipStore(ownershipPath);
+	await ownership.load();
+	await ownership.add(session.sessionId, session.path);
+}
 
 async function durableSyncTree(path: string): Promise<void> {
 	const stat = await lstat(path);
@@ -123,6 +133,8 @@ export async function runSessionHost(
 		const existing = await authorities.sessionAuthority.list();
 		if (existing.length > 1) throw new Error("session pod contains more than one authoritative OMP session");
 		const authoritativeSession = existing[0] ?? await authorities.sessionAuthority.create(config.workspaceRoot, config.sessionName);
+		const sessionOwnershipPath = join(config.privateRuntimeRoot, "owned-sessions.json");
+		await claimDedicatedSessionOwnership(sessionOwnershipPath, authoritativeSession);
 		const hostInfo = await authorities.hostInfo();
 		const runtimeHostId = hostId(`pod:${config.sessionName}`);
 		const credentialIdentity = await credential.register(config.generation, String(runtimeHostId), String(authoritativeSession.sessionId));
@@ -143,6 +155,7 @@ export async function runSessionHost(
 			epoch: `generation:${config.generation}`,
 			socketPath: join(config.privateRuntimeRoot, "appserver.sock"),
 			attentionOutcomePath: join(config.privateRuntimeRoot, "attention-outcomes.json"),
+			sessionOwnershipPath,
 			ompVersion: ready.ompVersion,
 			ompBuild: ready.ompBuild,
 			appserverVersion: "0.2.1",
