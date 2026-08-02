@@ -65,5 +65,17 @@ fi
   exit 64
 }
 rm -f -- "${T4_CMUX_SOCKET_PATH}" "/tmp/.X11-unix/X99"
+for browser_singleton in \
+  "${T4_BROWSER_STATE_DIR}/SingletonLock" \
+  "${T4_BROWSER_STATE_DIR}/SingletonSocket" \
+  "${T4_BROWSER_STATE_DIR}/SingletonCookie"; do
+  if [[ -e "${browser_singleton}" || -L "${browser_singleton}" ]]; then
+    [[ -L "${browser_singleton}" ]] || {
+      printf '%s\n' '{"component":"session-shell","result":"browser_singleton_artifact_invalid"}' >&2
+      exit 64
+    }
+    rm -f -- "${browser_singleton}"
+  fi
+done
 export CMUX_SESSION="${T4_SESSION_NAME}"
 exec /usr/local/bin/bun /usr/local/lib/t4/session-runtime-supervisor.js
