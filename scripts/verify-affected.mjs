@@ -81,6 +81,12 @@ export function planAffectedVerification(inputPaths) {
       "bridge continuity inputs changed",
       ["T4_OMP_SOURCE_DIR"],
     ));
+    add(commands, command(
+      "current-bridge-continuity",
+      ["pnpm", "verify:current-omp-bridge"],
+      "current OMP authority bridge inputs changed",
+      ["T4_CURRENT_OMP_SOURCE_DIR"],
+    ));
   }
   if (classifications.ios) {
     add(commands, command("ios", ["node", "scripts/verify-ios.mjs"], "iOS application or the wire contract it mirrors changed"));
