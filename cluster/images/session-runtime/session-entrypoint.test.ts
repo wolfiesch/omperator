@@ -69,7 +69,7 @@ const initializeScript = [
 	'export T4_WRITER_LEASE_PATH="${root}/private/writer-lease"',
 	'export T4_HOST_RUNTIME_DIR="${short_mount}/${runtime_id}"',
 	'export T4_CMUX_SOCKET_PATH="${T4_HOST_RUNTIME_DIR}/c.sock"',
-	"export T4_CMUX_SOCKET_MODE=0600",
+	"export T4_CMUX_SOCKET_MODE=0660",
 	'export T4_WORKSPACE_ROOT="${workspace_mount}"',
 	'initialize_runtime_roots "${runtime_mount}" "${workspace_mount}" "${short_mount}" "${TEST_UID}" "${TEST_GID}"',
 	`printf '%s\\n' "\${HOME}" "\${XDG_RUNTIME_DIR}" "\${PI_CODING_AGENT_DIR}" "\${T4_OMP_AUTHORITY_DIR}" "\${T4_OMP_ARTIFACT_ROOT}" "\${CMUX_STATE_DIR}" "\${CMUX_SOCKET_PATH}" "\${CMUX_SOCKET_MODE}" "\${CMUX_SESSION}" "\${T4_BROWSER_STATE_DIR}" "\${T4_WORKSPACE_ROOT}" "\${T4_WRITER_LEASE_PATH}" "\${T4_RUNTIME_GENERATION}" "\${T4_HOST_RUNTIME_DIR}" "\${T4_SESSION_HOST_READY_PATH}"`,
@@ -109,6 +109,14 @@ afterEach(async () => {
 });
 
 describe("session runtime private roots", () => {
+	test("preserves the controller-projected runtime resource UID", async () => {
+		const result = await runShell(
+			'set -euo pipefail; export T4_RUNTIME_UID="runtime-resource-uid"; source "$1"; printf "%s\\n" "$T4_RUNTIME_UID"',
+			[entrypoint],
+		);
+		expect(result).toMatchObject({ exitCode: 0, stdout: "runtime-resource-uid\n", stderr: "" });
+	});
+
 	test("initializes distinct durable roots and exports the P3-03 environment contract", async () => {
 		const value = await fixture();
 		const result = await initialize(value);
@@ -140,7 +148,7 @@ describe("session runtime private roots", () => {
 			path.join(value.stateRoot, "artifacts"),
 			path.join(value.stateRoot, "cmux"),
 			path.join(value.shortMount, runtimeID, "c.sock"),
-			"0600",
+			"0660",
 			"contract-session",
 			path.join(value.stateRoot, "browser"),
 			value.workspaceMount,

@@ -2,8 +2,8 @@
 set -euo pipefail
 umask 077
 
-readonly T4_RUNTIME_UID=10001
-readonly T4_RUNTIME_GID=20001
+readonly T4_AUTHORITY_OS_UID=10001
+readonly T4_SESSION_OS_GID=20001
 readonly T4_MAX_UNIX_SOCKET_PATH_BYTES=103
 
 runtime_error() {
@@ -268,7 +268,7 @@ initialize_runtime_roots() {
   [[ "${T4_WRITER_LEASE_PATH}" == "${root}/private/writer-lease" ]] || runtime_error "writer_lease_path"
   [[ "${T4_HOST_RUNTIME_DIR}" == "${expected_short}" ]] || runtime_error "short_runtime_path"
   [[ "${T4_CMUX_SOCKET_PATH}" == "${expected_short}/c.sock" ]] || runtime_error "cmux_socket_path"
-  [[ "${T4_CMUX_SOCKET_MODE}" == "0600" ]] || runtime_error "cmux_socket_mode"
+  [[ "${T4_CMUX_SOCKET_MODE}" == "0660" ]] || runtime_error "cmux_socket_mode"
   [[ "${T4_WORKSPACE_ROOT}" == "${workspace_mount}" ]] || runtime_error "workspace_root"
 
   for root in "${T4_SESSION_STATE_ROOT}" "${T4_AUTHORITY_STATE_DIR}" "${T4_CMUX_STATE_DIR}" "${T4_BROWSER_STATE_DIR}" "${T4_ARTIFACT_ROOT}" "${T4_PRIVATE_RUNTIME_DIR}" "${T4_OMP_HOME}" "${T4_HOST_RUNTIME_DIR}"; do
@@ -377,6 +377,7 @@ entrypoint_cleanup() {
 
 main() {
   : "${T4_RUNTIME_ID:?T4_RUNTIME_ID is required}"
+  : "${T4_RUNTIME_UID:?T4_RUNTIME_UID is required}"
   : "${T4_SESSION_STATE_ID:?T4_SESSION_STATE_ID is required}"
   : "${T4_RUNTIME_GENERATION:?T4_RUNTIME_GENERATION is required}"
   : "${T4_SESSION_STATE_ROOT:?T4_SESSION_STATE_ROOT is required}"
@@ -409,20 +410,20 @@ main() {
   [[ -f "${models_source}" && -r "${models_source}" && -s "${models_source}" ]] || runtime_error "omp_models"
   [[ -f "${settings_source}" && -r "${settings_source}" && -s "${settings_source}" ]] || runtime_error "omp_settings"
 
-  initialize_runtime_roots "/runtime-state" "/workspace" "/run/t4" "${T4_RUNTIME_UID}" "${T4_RUNTIME_GID}"
+  initialize_runtime_roots "/runtime-state" "/workspace" "/run/t4" "${T4_AUTHORITY_OS_UID}" "${T4_SESSION_OS_GID}"
   trap 'lease_acquisition_signal 143' TERM
   trap 'lease_acquisition_signal 130' INT
   trap entrypoint_cleanup EXIT
-  acquire_writer_lease "${T4_WRITER_LEASE_PATH}" "${T4_RUNTIME_ID}" "${T4_RUNTIME_GENERATION}" "${T4_RUNTIME_UID}" "${T4_RUNTIME_GID}"
+  acquire_writer_lease "${T4_WRITER_LEASE_PATH}" "${T4_RUNTIME_ID}" "${T4_RUNTIME_GENERATION}" "${T4_AUTHORITY_OS_UID}" "${T4_SESSION_OS_GID}"
   trap 'forward_supervisor_signal TERM 143' TERM
   trap 'forward_supervisor_signal INT 130' INT
   local models_destination="${PI_CODING_AGENT_DIR}/models.yml"
   local settings_destination="${PI_CODING_AGENT_DIR}/config.yml"
   if [[ -e "${models_destination}" || -L "${models_destination}" ]]; then
-    validate_private_file "${models_destination}" "${T4_RUNTIME_UID}" "${T4_RUNTIME_GID}" "omp_models_destination"
+    validate_private_file "${models_destination}" "${T4_AUTHORITY_OS_UID}" "${T4_SESSION_OS_GID}" "omp_models_destination"
   fi
   if [[ -e "${settings_destination}" || -L "${settings_destination}" ]]; then
-    validate_private_file "${settings_destination}" "${T4_RUNTIME_UID}" "${T4_RUNTIME_GID}" "omp_settings_destination"
+    validate_private_file "${settings_destination}" "${T4_AUTHORITY_OS_UID}" "${T4_SESSION_OS_GID}" "omp_settings_destination"
   fi
   models_private="${PI_CODING_AGENT_DIR}/.models.yml.new"
   settings_private="${PI_CODING_AGENT_DIR}/.config.yml.new"
@@ -432,8 +433,8 @@ main() {
   install -m 0600 "${settings_source}" "${settings_private}"
   mv -f "${models_private}" "${models_destination}"
   mv -f "${settings_private}" "${settings_destination}"
-  validate_private_file "${models_destination}" "${T4_RUNTIME_UID}" "${T4_RUNTIME_GID}" "omp_models_destination"
-  validate_private_file "${settings_destination}" "${T4_RUNTIME_UID}" "${T4_RUNTIME_GID}" "omp_settings_destination"
+  validate_private_file "${models_destination}" "${T4_AUTHORITY_OS_UID}" "${T4_SESSION_OS_GID}" "omp_models_destination"
+  validate_private_file "${settings_destination}" "${T4_AUTHORITY_OS_UID}" "${T4_SESSION_OS_GID}" "omp_settings_destination"
   sync -f "${models_destination}" &&
     sync -f "${settings_destination}" &&
     sync -f "${PI_CODING_AGENT_DIR}" || runtime_error "runtime_state_not_durable"

@@ -124,7 +124,7 @@ describe("session shell fail-closed supervisor", () => {
 			T4_SESSION_STATE_ROOT: "/runtime-state/runtime-config-test", T4_HOST_RUNTIME_DIR: "/run/t4/runtime-config-test",
 			T4_CMUX_STATE_DIR: "/runtime-state/runtime-config-test/cmux", T4_CMUX_SOCKET_PATH: "/run/t4/runtime-config-test/c.sock",
 			T4_BROWSER_STATE_DIR: "/runtime-state/runtime-config-test/browser", T4_WORKSPACE_ROOT: "/workspace",
-			T4_CMUX_SOCKET_MODE: "0600", CMUX_STATE_DIR: "/runtime-state/runtime-config-test/cmux",
+			T4_CMUX_SOCKET_MODE: "0660", CMUX_STATE_DIR: "/runtime-state/runtime-config-test/cmux",
 			CMUX_SOCKET_PATH: "/run/t4/runtime-config-test/c.sock", CMUX_SESSION: "config-test",
 			T4_SESSION_HOST_READY_PATH: "/run/t4/runtime-config-test/host.ready",
 		};

@@ -99,7 +99,7 @@ export function sessionRuntimeSupervisorConfigFromEnv(env: NodeJS.ProcessEnv): S
 	if (stateRoot !== `/runtime-state/${runtimeId}`) throw new Error("T4_SESSION_STATE_ROOT does not match T4_RUNTIME_ID");
 	if (hostRuntimeDirectory !== `/run/t4/${runtimeId}`) throw new Error("T4_HOST_RUNTIME_DIR does not match T4_RUNTIME_ID");
 	if (workspaceRoot !== "/workspace") throw new Error("T4_WORKSPACE_ROOT must be the projected workspace root");
-	if (env.T4_CMUX_SOCKET_MODE !== "0600") throw new Error("T4_CMUX_SOCKET_MODE must be 0600");
+	if (env.T4_CMUX_SOCKET_MODE !== "0660") throw new Error("T4_CMUX_SOCKET_MODE must be 0660");
 	if (cmuxStateDirectory !== join(stateRoot, "cmux")) throw new Error("T4_CMUX_STATE_DIR does not match the projected state root");
 	if (browserStateDirectory !== join(stateRoot, "browser")) throw new Error("T4_BROWSER_STATE_DIR does not match the projected state root");
 	if (cmuxSocketPath !== join(hostRuntimeDirectory, "c.sock")) throw new Error("T4_CMUX_SOCKET_PATH does not match the projected runtime root");
@@ -228,7 +228,7 @@ async function identifyCmux(
 				HOME: process.env.HOME ?? "/run/t4",
 				CMUX_STATE_DIR: config.cmuxStateDirectory,
 				CMUX_SOCKET_PATH: config.cmuxSocketPath,
-				CMUX_SOCKET_MODE: "0600",
+				CMUX_SOCKET_MODE: "0660",
 				CMUX_SESSION: config.sessionName,
 			},
 			stdio: ["ignore", "pipe", "pipe"],
@@ -309,7 +309,7 @@ export async function runSessionRuntimeSupervisor(
 			DISPLAY: config.display,
 			CMUX_STATE_DIR: config.cmuxStateDirectory,
 			CMUX_SOCKET_PATH: config.cmuxSocketPath,
-			CMUX_SOCKET_MODE: "0600",
+			CMUX_SOCKET_MODE: "0660",
 			CMUX_SESSION: config.sessionName,
 			T4_RUNTIME_ID: config.runtimeId,
 			T4_RUNTIME_GENERATION: config.generation,
