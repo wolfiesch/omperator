@@ -1,0 +1,1397 @@
+{
+  "schemaVersion": 1,
+  "contract": "omperator-portable-agent-platform-v1",
+  "specification": {
+    "url": "https://roycorp.net/briefs/omperator-portable-agent-platform-v1-f4c81ee5.html",
+    "date": "2026-07-28",
+    "sha256": "f31778a0d57b3b39b822faa0d6e7a3f1af2888dd09a9a39780025c43acce6194"
+  },
+  "baselines": {
+    "omperator": {
+      "repository": "https://github.com/wolfiesch/omperator",
+      "commit": "2ab8fc746f3b588d172da57101036e0d8dd3e0e7"
+    },
+    "cmux": {
+      "repository": "https://github.com/manaflow-ai/cmux",
+      "commit": "192e44428c16b98210c951ec4bd5a86bc7139014",
+      "machineProviderProtocol": 1,
+      "muxProtocol": 10
+    },
+    "omp": {
+      "repository": "https://github.com/can1357/oh-my-pi",
+      "commit": "d16c6168c86f40fc44f25118c2fd06fe160fcb93",
+      "rpcProtocols": [1, 2]
+    }
+  },
+  "implementationStart": {
+    "omperatorCommit": "48b1ba7b94f468154ed0e0998118d01f7dbffbd0",
+    "packagedOmpAuthority": {
+      "historical": true,
+      "portableRuntimeEligible": false,
+      "repository": "https://github.com/wolfiesch/oh-my-pi",
+      "tag": "t4code-17.0.5-appserver-15",
+      "commit": "ca2902bc095a0b17067f4b8b34ecf454390f85ff",
+      "upstreamRepository": "https://github.com/can1357/oh-my-pi",
+      "upstreamTag": "v17.0.5",
+      "upstreamCommit": "9fd6e97113f5ed3a847e66d346970efdf8afcad9"
+    }
+  },
+  "cmuxMachineProviderImport": {
+    "manifest": "provenance/cmux-machine-provider-v1.json",
+    "manifestSha256": "ae1e6eafc6f302f201530eed9ee7fba1e1f839e2a05214ef38165efbf2568d4d",
+    "sourceCommit": "192e44428c16b98210c951ec4bd5a86bc7139014",
+    "crateGitTree": "983bee74116c7d5f5832a7695379c870cd41ef60",
+    "sourceTreeSha256": "ecf8ea6183275110d6270bd6d563d39eb3cecf7296a7c8e44e21f9ca6a46ca63",
+    "fixtureCorpusSha256": "bdcb88ee9f46f300b400165cdb2dac2eebc186cb6b78c068ccab3caae4460f23",
+    "toolingAndConformanceOnly": true,
+    "packagedInProduct": false,
+    "packagingRequiresLicenseReview": true
+  },
+  "portableControlContracts": {
+    "decision": "backend-neutral-driver-and-control-store",
+    "documentation": "docs/adr/021-portable-driver-control-contracts.md",
+    "documentationSha256": "518a33eaf5d2c671bd7b5b70bde4cad035ef25a46780db907b28b4347efa4ede",
+    "supersedesRequiredBackend": "postgresql",
+    "requiredBackend": null,
+    "optionalImplementations": ["kubernetes-api-objects", "sqlite", "postgresql"],
+    "firstCodeImplementationWorkPackage": "P1-01",
+    "driver": {
+      "operations": {
+        "scope": ["get", "list"],
+        "workspace": ["create", "get", "list", "update", "delete"],
+        "runtime": ["create", "get", "list", "update", "delete", "setDesiredState"],
+        "capability": ["get"],
+        "runtimeRoute": ["resolve"],
+        "infrastructureEvent": ["list", "watch"]
+      },
+      "reportedCapabilityCategories": ["storage", "browser", "transport", "autoscaling"],
+      "unsupportedCapabilityResult": "typed-unsupported",
+      "backendFieldsAllowed": false
+    },
+    "routes": {
+      "descriptorFields": ["kind", "reference"],
+      "routeKinds": ["cmux-v10", "omp-app-v1"],
+      "referenceSemantics": "opaque-equality-only",
+      "boundTo": ["runtimeId", "generation"],
+      "invalidatedByGenerationChange": true,
+      "backendFieldsAllowed": false,
+      "edgeEndpointFieldsAllowed": false,
+      "publicConnectionDescriptorRole": "edge-dto-not-driver-route"
+    },
+    "revision": {
+      "semantics": "opaque-equality-only",
+      "distinctFrom": ["generation", "eventCursor"],
+      "orderingAllowed": false,
+      "derivationAllowed": false,
+      "expectedRevisionRequiredFor": [
+        "workspace.update",
+        "workspace.delete",
+        "runtime.update",
+        "runtime.delete",
+        "runtime.setDesiredState"
+      ],
+      "workspaceRetentionMutation": "workspace.update",
+      "mismatchOutcome": "revisionMismatch",
+      "mismatchIncludesCurrentRevision": true,
+      "mismatchSideEffectsAllowed": false,
+      "lastWriteWinsAllowed": false
+    },
+    "idempotency": {
+      "operations": ["reserve", "complete"],
+      "lookupKey": ["principalId", "scopeId", "method", "canonicalPath", "idempotencyKey"],
+      "requestFingerprint": ["canonicalBodyDigest"],
+      "replicaSafe": true,
+      "authoritativeSharedStoreRequired": true,
+      "minimumRetentionSeconds": 86400,
+      "reserveAtomic": true,
+      "reserveOutcomes": ["new", "pending", "replay", "conflict"],
+      "matchingFingerprintOutcomes": ["pending", "replay"],
+      "differingFingerprintOutcome": "conflict",
+      "newOutcomeReturnsReservationToken": true,
+      "replayOutcomeIncludesRecordedResult": true,
+      "completeCondition": "matching-reservation-token",
+      "indeterminateRecovery": "fail-closed-pending-until-authoritative-reconciliation",
+      "processLocalFallbackAllowed": false
+    },
+    "tickets": {
+      "operations": ["mint", "consume", "revoke"],
+      "store": "authoritative-shared-cas",
+      "storedMaterial": "sha256-digest-only",
+      "plaintextRetentionAllowed": false,
+      "recordAndConsumeBoundTo": ["runtimeId", "runtimeGeneration", "providerControlGeneration", "purpose"],
+      "maximumTtlSeconds": 60,
+      "consumption": "atomic-compare-and-delete",
+      "revocation": "atomic",
+      "invalidationTriggers": [
+        "controlDisconnect",
+        "providerControlGenerationReplacement",
+        "runtimeGenerationReplacement",
+        "explicitCancellation"
+      ],
+      "singleUse": true,
+      "replicaSafe": true
+    },
+    "tombstones": {
+      "operations": ["put", "get"],
+      "creationOrder": "before-backend-delete",
+      "creationAtomic": true,
+      "deletionOnCreationUncertaintyAllowed": false,
+      "minimumRetentionSeconds": 86400,
+      "maximumRetentionSeconds": 604800,
+      "maximumRecordsPerScope": 100000,
+      "capacityOutcome": "reject-delete-before-evicting-required-tombstone",
+      "identifierReuseAfterExpiryAllowed": false,
+      "identifierReuseAuthority": "stable-id-allocator-registry"
+    },
+    "eventJournal": {
+      "operations": ["append", "readAfter", "subscribe"],
+      "entryFields": [
+        "eventId",
+        "resourceKind",
+        "resourceId",
+        "scopeId",
+        "revision",
+        "phase",
+        "timestamp"
+      ],
+      "entryFieldBounds": "existing-portable-api-schemas",
+      "payload": "bounded-infrastructure-lifecycle-invalidations-only",
+      "replicaSafe": true,
+      "ordering": "monotonic-per-scope",
+      "retention": "bounded",
+      "cursorSemantics": "opaque",
+      "cursorDistinctFrom": ["revision", "generation"],
+      "expiredCursorOutcome": "cursorExpired",
+      "sseExpiredCursorEvent": {
+        "fields": ["event", "eventId", "reason", "timestamp"],
+        "event": "reset",
+        "reason": "cursor_expired",
+        "allocatedFields": ["eventId", "timestamp"],
+        "allocatedFieldBounds": "existing-portable-api-schemas"
+      },
+      "listReturnsCursor": "atomic-high-water-H",
+      "readAfterReturns": ["orderedBatch", "tailNextCursorT"],
+      "emptyReadAfterTailCursor": "H",
+      "subscribeStarts": "strictly-after-T",
+      "subscribeReplayCursor": "T",
+      "interCallEventLossAllowed": false,
+      "listWatchGapAllowed": false
+    }
+  },
+  "portableAuthorizationContracts": {
+    "decision": "provider-neutral-server-derived-explicit-allow",
+    "documentation": "docs/adr/022-portable-identity-authorization-contract.md",
+    "documentationSha256": "76c1f3f13387b7fbf0beed0b7f643135848f6bdc9431b9de86c43b137845ac1a",
+    "contractOnly": true,
+    "runtimeImplementationIncluded": false,
+    "publicSchemaChangesIncluded": false,
+    "firstProductNeutralTypesWorkPackage": "P1-01",
+    "identityAdapters": {
+      "categories": [
+        "oidc-oauth2.1",
+        "openssh-key-or-certificate",
+        "tailscale-trusted-ingress",
+        "administrator-mtls-or-service-identity"
+      ],
+      "productionMinimumEnabled": 1,
+      "tailscaleOnlyContractAllowed": false,
+      "stableProviderSubjectVisibility": "adapter-private",
+      "adapterHeaderNamesVisibility": "adapter-private",
+      "unknownAdapter": "deny"
+    },
+    "interfaces": {
+      "IdentityAdapter": {
+        "input": ["authenticatedTransportEvidence"],
+        "output": ["adapterKind", "adapterSubject", "authenticatedAt"],
+        "provesOnly": "adapter-subject",
+        "maySupply": ["identity-evidence"],
+        "mayNotSupply": ["principalId", "scopeId", "membership", "role", "policy", "resourceAuthority"]
+      },
+      "PrincipalResolver": {
+        "input": ["adapterKind", "adapterSubject"],
+        "output": ["principalId", "kind", "enabled", "principalRevision"],
+        "failure": "deny"
+      },
+      "ScopeMembershipSource": {
+        "input": ["principalId", "scopeId"],
+        "output": ["membershipRevision", "roleIds"],
+        "clientClaimsAuthoritative": false
+      },
+      "ResourceScopeResolver": {
+        "input": ["resourceKind", "resourceId"],
+        "output": ["scopeId", "resourceState", "resourceProfile", "resourceGeneration", "resourceAuthorityRevision"],
+        "clientClaimsAuthoritative": false
+      },
+      "PolicySource": {
+        "input": ["scopeId", "membershipRevision"],
+        "output": ["policyRevision", "roleBindings"],
+        "roleIdentifiers": "opaque-policy-bound"
+      },
+      "AuthorizationChecker": {
+        "input": ["principalId", "scopeId", "resourceKind", "resourceId", "action", "transport"],
+        "output": ["allowed", "reasonCode", "policyRevision", "effectiveCapabilities"],
+        "authorizationOutcome": "explicit-allow-only",
+        "denyOverrides": true
+      },
+      "CapabilityEvaluator": {
+        "formula": ["implementation", "profile", "state", "authorization"],
+        "operator": "intersection",
+        "clientRequest": "optional-final-narrowing-intersection"
+      }
+    },
+    "serverDerivedAuthorities": [
+      "principalMapping",
+      "scopeMembership",
+      "resourceScope",
+      "resourceGeneration",
+      "resourceProfile",
+      "resourceState",
+      "roleBindings",
+      "currentPolicy"
+    ],
+    "roles": {
+      "semantics": "opaque-policy-bound-identifiers",
+      "implicitRoleNames": [],
+      "implicitOwnerGrantAllowed": false,
+      "implicitAdminGrantAllowed": false,
+      "creatorGrantAllowed": false
+    },
+    "canonicalActions": [
+      "scope.read",
+      "scope.admin",
+      "workspace.read",
+      "workspace.create",
+      "workspace.update",
+      "workspace.delete",
+      "workspace.purge",
+      "runtime.read",
+      "runtime.create",
+      "runtime.wake",
+      "runtime.sleep",
+      "runtime.stop",
+      "runtime.delete",
+      "runtime.purge",
+      "runtime.connect.cmux",
+      "runtime.connect.omp-app/1",
+      "browser.read",
+      "browser.control",
+      "browser.input",
+      "settings.read",
+      "settings.write",
+      "config.read",
+      "config.write",
+      "destructive.confirmation"
+    ],
+    "policy": {
+      "allowRule": "explicit-only",
+      "denyOverridesAllow": true,
+      "unknownAction": "deny",
+      "missingAuthority": "deny",
+      "unknownAuthority": "deny",
+      "ambiguousAuthority": "deny",
+      "unavailableAuthority": "deny",
+      "wildcardActionsAllowed": false,
+      "prefixActionsAllowed": false,
+      "fallbackActionsAllowed": false
+    },
+    "capabilities": {
+      "formula": ["implementation", "profile", "state", "authorization"],
+      "operator": "intersection",
+      "clientRequestMayOnlyNarrow": true,
+      "discoveryAndEnforcementUseSameResult": true
+    },
+    "rest": {
+      "anonymousActions": ["discovery.read"],
+      "operations": {
+        "getDiscovery": { "action": "discovery.read", "canonicalActions": [], "anonymous": true },
+        "getVersion": { "action": "platform.version.read", "canonicalActions": ["scope.read"], "anonymous": false },
+        "getCapabilities": { "action": "platform.capabilities.read", "canonicalActions": ["scope.read"], "anonymous": false },
+        "listScopes": { "action": "scope.list", "canonicalActions": ["scope.read"], "anonymous": false },
+        "listWorkspaces": { "action": "workspace.list", "canonicalActions": ["workspace.read"], "anonymous": false },
+        "putWorkspace": { "action": "workspace.create", "canonicalActions": ["workspace.create"], "anonymous": false },
+        "getWorkspace": { "action": "workspace.read", "canonicalActions": ["workspace.read"], "anonymous": false },
+        "patchWorkspace": { "action": "workspace.update", "canonicalActions": ["workspace.update"], "anonymous": false },
+        "deleteWorkspace": {
+          "action": "workspace.delete",
+          "canonicalActions": ["workspace.delete", "destructive.confirmation"],
+          "anonymous": false
+        },
+        "listRuntimes": { "action": "runtime.list", "canonicalActions": ["runtime.read"], "anonymous": false },
+        "putRuntime": { "action": "runtime.create", "canonicalActions": ["runtime.create"], "anonymous": false },
+        "getRuntime": { "action": "runtime.read", "canonicalActions": ["runtime.read"], "anonymous": false },
+        "patchRuntime": {
+          "action": "runtime.update",
+          "canonicalActionResolver": {
+            "fieldActions": {
+              "displayName": ["scope.admin"],
+              "browserPolicy": ["scope.admin"],
+              "idlePolicy": ["scope.admin"]
+            },
+            "desiredStateActions": {
+              "Running": ["runtime.wake"],
+              "Sleeping": ["runtime.sleep"],
+              "Stopped": ["runtime.stop"]
+            },
+            "multiField": "union",
+            "duplicateActionEvaluation": "once",
+            "unknownField": "deny",
+            "unknownValue": "deny",
+            "decodeFailure": "deny",
+            "missingMapping": "deny"
+          },
+          "anonymous": false
+        },
+        "deleteRuntime": {
+          "action": "runtime.delete",
+          "canonicalActions": ["runtime.delete", "destructive.confirmation"],
+          "anonymous": false
+        },
+        "wakeRuntime": { "action": "runtime.wake", "canonicalActions": ["runtime.wake"], "anonymous": false },
+        "sleepRuntime": { "action": "runtime.sleep", "canonicalActions": ["runtime.sleep"], "anonymous": false },
+        "getRuntimeConnections": {
+          "action": "runtime.connections.read",
+          "canonicalActions": ["runtime.read"],
+          "anonymous": false,
+          "descriptorRequiresRouteConnectAction": true
+        },
+        "getEvents": {
+          "action": "scope.events.read",
+          "canonicalActions": ["scope.read"],
+          "anonymous": false,
+          "authorityQueryConstrained": true
+        }
+      },
+      "listAuthorityQueryConstrained": true,
+      "sseAuthorityQueryConstrained": true
+    },
+    "connectionActions": {
+      "omp-app-websocket": "runtime.connect.omp-app/1",
+      "cmux-websocket": "runtime.connect.cmux",
+      "machine-provider-ssh": "connection.ssh.connect"
+    },
+    "ompAppWss": {
+      "openAction": "runtime.connect.omp-app/1",
+      "authorizeEveryFrame": true,
+      "frameActions": {
+        "hello": "connection.omp-app.open",
+        "command": "derive-one-to-one-from-command-descriptor-key",
+        "confirm": "require-destructive-confirmation-and-reauthorize-bound-original-action",
+        "pair.start": "connection.omp-app.pair",
+        "ping": "connection.omp-app.ping",
+        "terminal.input": "omp.frame.terminal.input",
+        "terminal.resize": "omp.frame.terminal.resize",
+        "terminal.close": "omp.frame.terminal.close"
+      },
+      "commandActionPrefix": "omp.command.",
+      "commandDescriptorKeys": [
+        "runtime.list",
+        "workspace.list",
+        "workspace.create",
+        "workspace.import",
+        "workspace.archive",
+        "workspace.recover",
+        "host.list",
+        "session.list",
+        "transcript.search",
+        "transcript.context",
+        "transcript.page",
+        "project.reveal",
+        "session.create",
+        "session.fork",
+        "session.attach",
+        "session.prompt",
+        "session.image.begin",
+        "session.image.chunk",
+        "session.image.discard",
+        "session.image.read",
+        "artifact.read",
+        "session.state.get",
+        "session.steer",
+        "session.followUp",
+        "session.rename",
+        "session.retry",
+        "session.compact",
+        "session.pause",
+        "session.resume",
+        "session.archive",
+        "session.restore",
+        "session.delete",
+        "session.model.set",
+        "session.thinking.set",
+        "session.fast.set",
+        "session.mode.set",
+        "session.ui.respond",
+        "session.cancel",
+        "session.close",
+        "session.release",
+        "session.reclaim",
+        "files.read",
+        "files.write",
+        "files.patch",
+        "files.list",
+        "files.search",
+        "files.diff",
+        "review.read",
+        "review.apply",
+        "agent.cancel",
+        "bash.run",
+        "term.open",
+        "audit.read",
+        "audit.tail",
+        "config.write",
+        "settings.read",
+        "settings.write",
+        "catalog.get",
+        "broker.status",
+        "usage.read",
+        "host.watch",
+        "session.watch",
+        "controller.lease.acquire",
+        "controller.lease.renew",
+        "controller.lease.release",
+        "prompt.lease.acquire",
+        "prompt.lease.renew",
+        "prompt.lease.release",
+        "preview.launch",
+        "preview.state",
+        "preview.activate",
+        "preview.navigate",
+        "preview.back",
+        "preview.forward",
+        "preview.reload",
+        "preview.close",
+        "preview.capture",
+        "preview.capture.read",
+        "preview.click",
+        "preview.fill",
+        "preview.scroll",
+        "preview.type",
+        "preview.select",
+        "preview.press",
+        "preview.upload",
+        "preview.policy.check",
+        "preview.lease.acquire",
+        "preview.lease.renew",
+        "preview.lease.release",
+        "preview.handoff",
+        "ci.run"
+      ],
+      "challengeCommandDescriptorKeys": [
+        "workspace.archive",
+        "session.delete",
+        "session.cancel",
+        "session.close",
+        "session.release",
+        "files.write",
+        "files.patch",
+        "review.apply",
+        "agent.cancel",
+        "bash.run",
+        "term.open",
+        "config.write",
+        "settings.write",
+        "preview.launch",
+        "preview.navigate",
+        "preview.upload"
+      ],
+      "nonChallengeConfirmation": "none",
+      "commandCanonicalActions": {
+        "runtime.list": ["runtime.read"],
+        "workspace.list": ["workspace.read"],
+        "workspace.create": ["workspace.create"],
+        "workspace.import": ["workspace.create"],
+        "workspace.archive": ["workspace.update"],
+        "workspace.recover": ["workspace.update"],
+        "host.list": ["scope.read"],
+        "settings.read": ["settings.read"],
+        "settings.write": ["settings.write"],
+        "config.write": ["config.write"],
+        "preview.launch": ["browser.control"],
+        "preview.state": ["browser.read"],
+        "preview.activate": ["browser.control"],
+        "preview.navigate": ["browser.control"],
+        "preview.back": ["browser.control"],
+        "preview.forward": ["browser.control"],
+        "preview.reload": ["browser.control"],
+        "preview.close": ["browser.control"],
+        "preview.capture": ["browser.read"],
+        "preview.capture.read": ["browser.read"],
+        "preview.click": ["browser.input"],
+        "preview.fill": ["browser.input"],
+        "preview.scroll": ["browser.input"],
+        "preview.type": ["browser.input"],
+        "preview.select": ["browser.input"],
+        "preview.press": ["browser.input"],
+        "preview.upload": ["browser.input"],
+        "preview.policy.check": ["browser.read"],
+        "preview.lease.acquire": ["browser.control"],
+        "preview.lease.renew": ["browser.control"],
+        "preview.lease.release": ["browser.control"],
+        "preview.handoff": ["browser.control"]
+      },
+      "unmappedCanonicalAction": "none-but-fine-action-still-required",
+      "commandActions": "exact-prefix-plus-descriptor-key",
+      "pingRequiresAuthentication": true,
+      "unmappedFrame": "deny"
+    },
+    "confirmation": {
+      "singleUse": true,
+      "expiry": "bounded",
+      "boundTo": [
+        "principalId",
+        "scopeId",
+        "resourceKind",
+        "resourceId",
+        "action",
+        "transport",
+        "resourceGeneration",
+        "membershipRevision",
+        "policyRevision"
+      ],
+      "requiredActions": ["destructive.confirmation", "bound-original-action"],
+      "consume": "reauthorize-original-action-against-current-authorities"
+    },
+    "directCmuxWss": {
+      "openAction": "runtime.connect.cmux",
+      "streamDirectionActions": ["cmux.stream.send", "cmux.stream.receive"],
+      "authorizationGranularity": "stream-direction-not-semantic-frame",
+      "protocolBytes": "opaque",
+      "semanticTranslationAllowed": false,
+      "perFrameActionDecodingAllowed": false,
+      "openRequiresCurrentGeneration": true,
+      "unknownDirection": "deny"
+    },
+    "ssh": {
+      "dispatcher": "argv-exact-no-shell",
+      "requiredCommands": {
+        "cmux provider control": {
+          "parse": "exact-literal-no-arguments",
+          "pty": "forbidden",
+          "actions": ["connection.ssh.connect", "connection.ssh.provider-control"]
+        },
+        "cmux provider stream": {
+          "parse": "exact-literal-no-arguments",
+          "pty": "forbidden",
+          "actions": ["connection.ssh.connect", "connection.ssh.provider-stream"]
+        }
+      },
+      "optionalCommands": {
+        "cmux-tui relay --session <id>": {
+          "enabledOnlyByExplicitRegistry": true,
+          "advertisedOnlyWhenEnabled": true,
+          "parse": ["literal:cmux-tui", "literal:relay", "literal:--session", "boundedOpaqueSessionId"],
+          "pty": "forbidden",
+          "actions": ["connection.ssh.connect", "runtime.connect.cmux"]
+        },
+        "omperator attach <runtime-id>": {
+          "enabledOnlyByExplicitRegistry": true,
+          "advertisedOnlyWhenEnabled": true,
+          "parse": ["literal:omperator", "literal:attach", "boundedOpaqueRuntimeId"],
+          "pty": "required",
+          "actions": ["connection.ssh.connect", "runtime.connect.omp-app/1"]
+        },
+        "omperator version": {
+          "enabledOnlyByExplicitRegistry": true,
+          "advertisedOnlyWhenEnabled": true,
+          "parse": "exact-literal-no-arguments",
+          "pty": "forbidden",
+          "actions": ["connection.ssh.connect", "scope.read"]
+        }
+      },
+      "disabledOptionalCommand": "deny-and-unadvertised",
+      "directCommandArgv": [
+        ["omperatorctl", "provider", "--endpoint", "<https-url>", "--profile", "<name>", "control"],
+        ["omperatorctl", "provider", "--endpoint", "<https-url>", "--profile", "<name>", "stream"]
+      ],
+      "cmuxCommandPrefix": ["omperatorctl", "provider", "--endpoint", "<https-url>", "--profile", "<name>", "--"],
+      "directCommandAdapterEvidence": {
+        "package": "packages/provider-adapter",
+        "parserAndRelaySource": "packages/provider-adapter/src/index.ts",
+        "stdioBinSource": "packages/provider-adapter/src/bin.ts",
+        "contractTests": "packages/provider-adapter/test/provider-adapter.test.ts",
+        "connectorInjection": "OMPERATORCTL_CONNECTOR_MODULE:createOmperatorctlConnector",
+        "realGatewayConnector": "deferred-to-P4-no-fallback"
+      },
+      "localP107ScenarioEvidence": {
+        "package": "packages/p1-07-scenario",
+        "connectorModule": "packages/p1-07-scenario/src/connector.ts",
+        "scenarioDriver": "packages/p1-07-scenario/src/scenario.ts",
+        "runtimeHost": "packages/p1-07-scenario/src/runtime-host.ts",
+        "client": "unmodified-pinned-cmux-under-real-pty",
+        "providerPath": "ProviderControlSession-and-runProviderStream-direct-no-semantic-translation",
+        "hashes": ["adapter-ingress-egress", "provider-engine-ingress-egress", "provider-relay", "runtime-ingress-egress"],
+        "lifecycle": ["list", "create", "open", "close", "sleep", "wake", "stream-loss-reconnect", "control-generation-reconnect"],
+        "artifact": ".artifacts/p1-07/p1-07-evidence.json",
+        "verification": "pending-main-real-scenario-run"
+      },
+      "providerControl": {
+        "authorizeEveryRequest": true,
+        "methodCanonicalActions": {
+          "hello": ["scope.read"],
+          "negotiate_client_capabilities": ["scope.read"],
+          "subscribe_notices": ["runtime.read"],
+          "acknowledge_notice": ["runtime.read"],
+          "snapshot": ["runtime.read"],
+          "open_machine": ["runtime.connect.cmux"],
+          "select_scope": ["scope.read"],
+          "create_machine": ["runtime.create"],
+          "connect_external_machine": ["runtime.create"],
+          "machine_lifecycle_snapshot": ["runtime.read"],
+          "rename_machine": ["scope.admin"],
+          "delete_machine": ["runtime.delete", "destructive.confirmation"],
+          "restore_machine": ["runtime.create"],
+          "purge_machine": ["runtime.purge", "destructive.confirmation"],
+          "create_workspace": ["workspace.create"],
+          "workspace_snapshot": ["workspace.read"],
+          "rename_workspace": ["workspace.update"],
+          "delete_workspace": ["workspace.delete", "destructive.confirmation"],
+          "restore_workspace": ["workspace.update"],
+          "purge_workspace": ["workspace.purge", "destructive.confirmation"],
+          "invoke_action": ["exact-enabled-target-action"],
+          "close_machine": ["runtime.stop"]
+        },
+        "invokeActionTargets": {
+          "wake": "runtime.wake",
+          "sleep": "runtime.sleep",
+          "stop": "runtime.stop"
+        },
+        "unknownMethodOrTarget": "deny"
+      },
+      "requiresCurrentRouteGeneration": true,
+      "shell": "deny",
+      "forwarding": "deny",
+      "agentForwarding": "deny",
+      "x11Forwarding": "deny",
+      "tunneling": "deny",
+      "subsystem": "deny",
+      "unknownCommandOrMode": "deny"
+    },
+    "trustedProxy": {
+      "enabledOnlyByExplicitConfiguration": true,
+      "immediatePeerTrustRequired": true,
+      "authenticatedTransportRequired": true,
+      "missingIdentityHeader": "deny",
+      "duplicateIdentityHeader": "deny",
+      "conflictingIdentityHeaders": "deny",
+      "ambiguousIdentityEvidence": "deny",
+      "unknownOrDisabledAdapter": "deny",
+      "adapterHeaderNamesVisibility": "adapter-private",
+      "supplies": ["identity-evidence"],
+      "neverSupplies": ["principalId", "scopeId", "membership", "role", "policy"]
+    },
+    "internalRoute": {
+      "workloadAction": "internal.route.open",
+      "workloadAuthorizationRequired": true,
+      "delegatedEdgeAuthorityRequired": true,
+      "delegatedAuthorityBoundTo": [
+        "audience",
+        "purpose",
+        "principalId",
+        "scopeId",
+        "resourceKind",
+        "resourceId",
+        "action",
+        "transport",
+        "runtimeGeneration",
+        "routeGeneration"
+      ],
+      "workloadIdentityImpliesEdgeAuthority": false,
+      "edgeAuthorityImpliesWorkloadAuthority": false,
+      "unknownAction": "deny"
+    },
+    "grantInvalidation": [
+      "principalRevocation",
+      "membershipRevision",
+      "policyRevision",
+      "resourceStateChange",
+      "resourceProfileChange",
+      "resourceGenerationChange",
+      "routeGenerationChange"
+    ],
+    "authorityUnavailability": "deny-not-extend-cache",
+    "connectionDescriptors": {
+      "omitUnauthorizedTransports": true,
+      "readAuthorityDoesNotImplyConnectAuthority": true
+    },
+    "concealment": {
+      "crossScopeOutcome": "consistent-not-found-shaped",
+      "appliesTo": ["get", "mutation", "connect", "list", "watch", "confirmation", "error"],
+      "existenceLeakAllowed": false
+    },
+    "distinctAuthorities": [
+      "identityEvidence",
+      "principalMapping",
+      "scopeMembership",
+      "resourceScope",
+      "roleBinding",
+      "policy",
+      "workload",
+      "delegatedEdge",
+      "connection",
+      "capability"
+    ],
+    "decisionLog": {
+      "semantics": "bounded-redacted-emission-only",
+      "maximumRecordBytes": 16384,
+      "maximumStringBytes": 512,
+      "fields": [
+        "eventKind",
+        "decision",
+        "reasonCode",
+        "action",
+        "transport",
+        "resourceKind",
+        "principalReference",
+        "scopeReference",
+        "resourceReference",
+        "authorityRevisionReferences",
+        "generationReferences",
+        "timestamp"
+      ],
+      "references": "pseudonymous",
+      "excluded": [
+        "credentials",
+        "tickets",
+        "adapterEvidence",
+        "rawProviderSubject",
+        "policyDocument",
+        "roleBindingDocument",
+        "headers",
+        "cookies",
+        "queryString",
+        "requestBody",
+        "responseBody",
+        "prompt",
+        "terminalBytes",
+        "transcript",
+        "browserData",
+        "fileContent",
+        "filePath",
+        "environment",
+        "backendCoordinate",
+        "routeReference"
+      ],
+      "loggingFailureMayAllow": false,
+      "persistenceRequiredByP006": false,
+      "retentionRequiredByP006": false
+    }
+  },
+  "portableLifecycleContracts": {
+    "decision": "fail-closed-writer-fence-state-machines",
+    "documentation": "docs/adr/023-portable-lifecycle-state-machines.md",
+    "documentationSha256": "83a06e408edc521cc00e28479141c8d34d8139c2466b764b875ff059376f6cba",
+    "contractOnly": false,
+    "runtimeImplementationIncluded": true,
+    "publicSchemaChangesIncluded": true,
+    "kubernetesV1Alpha1": {
+      "apiVersion": "cluster.t4.dev/v1alpha1",
+      "evolution": "additive-only-structural-openapi",
+      "publicFields": {
+        "T4ClusterHost.spec": ["storageClassName", "runtimeStateStorageProfile", "runtimeProfiles", "ciProvider", "allowedOrigins"],
+        "T4ClusterHost.status": ["observedGeneration", "conditions"],
+        "T4Workspace.spec": ["publicId", "hostRef", "displayName", "owner", "repository", "size", "storageClassName", "restoreSnapshotRef", "retentionPolicy"],
+        "T4Workspace.status": ["observedGeneration", "pvcName", "pvcPhase", "capacity", "selectedStorageClassName", "filesystemRoot", "attachmentCount", "snapshotRef", "phase", "conditions"],
+        "T4Session.spec": ["publicId", "publicHostProfileId", "hostRef", "workspaceRef", "title", "runtimeProfile", "desiredState", "browserPolicy", "idlePolicy", "cmuxSessionName", "runtimeStateRestoreSnapshotRef", "initialPromptSecretRef", "guiEnabled", "ci"],
+        "T4Session.status": ["observedGeneration", "runtimeGeneration", "generationSecretEpoch", "generationSecretName", "fenceState", "fencingPodUid", "fencingGeneration", "fencingVolumeIdentity", "cmuxSessionName", "runtimeStatePVCName", "runtimeStateVolumeIdentity", "runtimeStateStorageClassName", "runtimeStateCapacity", "runtimeStateFilesystemRoot", "podUid", "runtimeStateSnapshotRef", "podName", "serviceName", "phase", "conditions"]
+      },
+      "trustBoundaries": {
+        "specAuthority": "authorized-cluster-server-or-administrator",
+        "statusAuthority": "cluster-controller-only",
+        "runtimeWriterLeaseAuthority": "per-session-service-account-resource-name-bound",
+        "tokenReviewAuthority": "per-session-runtime-authority-container-only",
+        "runtimeShellKubernetesCredentials": false,
+        "controlStoreAuthority": "cluster-server-namespaced-configmap-cas",
+        "publicIdentity": "immutable-once-populated",
+        "runtimeGeneration": "controller-owned-opaque-status"
+      },
+      "guardedLifecycle": {
+        "storedVersions": ["v1alpha1"],
+        "servedVersion": "v1alpha1",
+        "storageVersion": "v1alpha1",
+        "conversion": "None",
+        "liveObjectValidationBeforeMutation": true,
+        "resourceVersionAndUidGuardedMutation": true,
+        "servedOpenApiConvergenceRequired": true,
+        "serverDryRunBeforeWorkloadMutation": true,
+        "helmManagesCrds": false
+      }
+    },
+    "authorities": {
+      "desiredStateSource": "authoritative-resource-input",
+      "workloadMayRewriteDesiredState": false,
+      "runtimeGenerationSource": "authoritative-control-plane-cas",
+      "distinctValues": [
+        "resourceRevision",
+        "runtimeGeneration",
+        "kubernetesMetadataGeneration",
+        "kubernetesObservedGeneration",
+        "eventCursor",
+        "providerControlGeneration",
+        "routeReference"
+      ],
+      "runtimeGenerationDerivationAllowedFrom": []
+    },
+    "openApiRegistry": {
+      "desiredStates": ["Running", "Sleeping", "Stopped"],
+      "publicPhases": [
+        "Pending",
+        "Provisioning",
+        "Starting",
+        "Ready",
+        "Sleeping",
+        "Stopped",
+        "Deleting",
+        "Unavailable",
+        "Degraded",
+        "Failed"
+      ]
+    },
+    "desiredStateMachine": {
+      "Running": {
+        "sequence": ["Pending", "Provisioning", "Starting", "Ready"],
+        "writerCardinalityMaximum": 1,
+        "routePublicationPhase": "Ready"
+      },
+      "Sleeping": {
+        "sequence": ["Draining", "Fencing", "Sleeping"],
+        "terminalRequiresAbsent": ["runtimeProcess", "writer", "route", "ticket", "generationCredential"],
+        "durableStateRetained": true,
+        "providerPolicyWakeAllowed": true,
+        "equivalentToDelete": false
+      },
+      "Stopped": {
+        "sequence": ["Draining", "Fencing", "Stopped"],
+        "terminalRequiresAbsent": ["runtimeProcess", "writer", "route", "ticket", "generationCredential"],
+        "durableStateRetained": true,
+        "providerPolicyWakeAllowed": false,
+        "explicitAuthorizedStartRequired": true,
+        "equivalentToDelete": false
+      }
+    },
+    "generationMachine": {
+      "initialGenerationAllocatedForEveryDesiredState": true,
+      "advanceRequires": ["NoPriorWriterOrFenceProven", "expectedResourceRevision", "authoritativeCas"],
+      "advanceBeforeFenceProvenAllowed": false,
+      "advanceOnNoWriterTerminalPhase": false,
+      "potentialWriterAttemptGenerationReuseAllowed": false,
+      "casConflictOutcome": "no-attach-no-start",
+      "readinessRequiresWorkloadGenerationMatch": true,
+      "fenceUncertainBlocks": [
+        "generationAdvance",
+        "route",
+        "ticket",
+        "credential",
+        "attachment",
+        "replacement",
+        "finalizerProgress",
+        "writerCapableStart"
+      ],
+      "fenceUncertainExitRequires": [
+        "fresh-authoritative-proof-under-new-resource-revision",
+        "explicit-manual-recovery-under-new-resource-revision"
+      ]
+    },
+    "drainMachine": {
+      "orderedStates": [
+        "RouteDraining",
+        "TicketsRevoked",
+        "CredentialsRevoked",
+        "ConnectionsClosing",
+        "AuthorityQuiescing",
+        "FenceVerifying"
+      ],
+      "resultStates": ["FenceProven", "FenceUncertain"],
+      "missingQuiesceAcknowledgement": "continue-to-external-fencing-never-assume-success",
+      "controlStoreUncertainty": "fail-closed"
+    },
+    "fenceMachine": {
+      "states": [
+        "NoPriorWriter",
+        "DrainRequired",
+        "ShutdownRequested",
+        "FenceVerifying",
+        "FenceProven",
+        "FenceUncertain"
+      ],
+      "uncertainTerminalOutcomes": ["FenceUncertain"],
+      "fenceUncertainAutomaticRetryAllowed": false,
+      "fenceUncertainPublicProjection": {
+        "phase": "Degraded",
+        "condition": "Fenced",
+        "status": "False",
+        "reason": "FenceUncertain"
+      },
+      "kubernetesProofConjunction": [
+        "oldPodUidAuthoritativelyAbsentOrTerminated",
+        "generationCredentialsRevoked",
+        "oldServiceAndEndpointsCannotRoute",
+        "runtimeStateAttachmentReleasedOrOldNodeStorageFenced",
+        "sameResourceRevisionAndGenerationDecision"
+      ],
+      "kubernetesInsufficientAlone": [
+        "lease",
+        "deletionRequest",
+        "cachedPodMiss",
+        "tcpFailure",
+        "rwxAnnotation",
+        "timeout"
+      ],
+      "localProofConjunction": [
+        "supervisedProcessGroupAndDescendantsDead",
+        "generationCredentialsAndSocketRoutesRevoked",
+        "exclusiveRuntimeStateWriterLeaseReacquired",
+        "oldProcessWriteAccessAbsent"
+      ],
+      "localInsufficientAlone": ["pidAbsence", "filesystemLock"],
+      "timersMayConvertUncertaintyToSuccess": false
+    },
+    "replacementMachine": {
+      "orderedActions": [
+        "recordCauseAndRemoveRouteReadiness",
+        "revokeTicketsCredentialsAndCloseConnections",
+        "terminateAndProveProcessPlusAttachmentFence",
+        "casFreshRuntimeGeneration",
+        "attachExclusiveRuntimeStateAndCreateOneProcessGroup",
+        "acquireWriterLeaseAndStartAuthorities",
+        "proveCompositeReadinessThenPublishRoutesAndMintTickets",
+        "onPotentialWriterFailureReturnThroughDrainFenceAndFreshGeneration"
+      ],
+      "fenceRequiredBeforeAction": "casFreshRuntimeGeneration",
+      "leaseAloneIsFenceProof": false,
+      "readinessFailureRoutesPresent": false
+    },
+    "readiness": {
+      "conjunction": [
+        "desiredStateRunning",
+        "publicPhaseReady",
+        "authoritativeAndWorkloadRuntimeGenerationMatch",
+        "everyOlderGenerationFenced",
+        "runtimeStateStorageReady",
+        "exclusiveWriterLeaseHeld",
+        "cmuxIdentifyProtocol10Ready",
+        "singlePinnedOmpAuthorityReady",
+        "internalGenerationAuthenticationReady",
+        "profileRequiredBrowserReady"
+      ],
+      "properSubsetSufficient": false,
+      "tcpOrPodReadinessSufficient": false,
+      "routeAndTicketPublication": "after-full-conjunction-only"
+    },
+    "deletionMachine": {
+      "orderedStates": [
+        "DeleteAccepted",
+        "DrainingAndFencing",
+        "Tombstoned",
+        "BackendCleanup",
+        "RetentionDisposition",
+        "FinalizerComplete"
+      ],
+      "tombstoneBeforeBackendDelete": true,
+      "backendDeleteOnTombstoneUncertaintyAllowed": false,
+      "fenceProvenBeforeTombstone": true,
+      "tombstoneImmediatelyBeforeBackendCleanup": true,
+      "tombstoneRetainedAfterRetentionDisposition": true,
+      "finalizerRequires": [
+        "durableRetainedTombstone",
+        "writerAndAttachmentFenceProven",
+        "ownedWorkloadCleanupComplete",
+        "routesAbsent",
+        "ticketsAbsent",
+        "credentialsAbsent",
+        "retentionDispositionComplete"
+      ],
+      "fenceUncertainAllowsFinalizerRemoval": false,
+      "stableIdentifierReuseAllowed": false,
+      "workspaceAndRuntimeStateRetentionIndependent": true
+    },
+    "snapshotRestore": {
+      "consistentSnapshotRequires": ["SleepingOrOmpAndCmuxConfirmedQuiescence", "routesAndTicketsDrained"],
+      "unquiescedSnapshotLabel": "crash-consistent",
+      "restoreRequires": [
+        "authorizedExpectedRevisionAndIdentityDecision",
+        "targetHasNoLiveWriter",
+        "sourceSnapshotNotAttachedToAnotherLiveRuntime",
+        "storageAndControlAuthoritiesAvailable",
+        "freshFencedRuntimeGeneration"
+      ],
+      "sourceGenerationReuseAllowed": false,
+      "oneSnapshotAttachedToTwoLiveRuntimesAllowed": false,
+      "uncertainAttachmentOutcome": "FenceUncertain",
+      "restoreRoutePublication": "after-full-readiness-only"
+    },
+    "storageSeparation": {
+      "workspaceStorage": "shared-project-files-policy-governed-rwx",
+      "runtimeStateStorage": "exclusive-single-writer-omp-cmux-browser-supervisor-state",
+      "workspaceAttachmentProvesRuntimeStateFence": false,
+      "runtimeStateFenceProofRequiredFor": [
+        "generationAdvance",
+        "replacement",
+        "restore",
+        "purge",
+        "finalizerCompletion"
+      ]
+    },
+    "routeTicketInvalidation": {
+      "routesAndTicketsBoundTo": ["runtimeId", "runtimeGeneration"],
+      "publicationPhase": "Ready",
+      "invalidationTriggers": [
+        "drainInitiation",
+        "desiredStateLeavesRunning",
+        "runtimeGenerationReplacement",
+        "providerControlGenerationReplacement",
+        "controlDisconnect",
+        "explicitCancellation",
+        "deletion",
+        "restoreStart",
+        "resourceScopeProfileOrAuthorizationChange"
+      ],
+      "invalidationActions": [
+        "removeDriverRouteReferences",
+        "removeEdgeDescriptors",
+        "stopTicketMinting",
+        "atomicallyRevokeApplicableUnconsumedTickets"
+      ]
+    },
+    "legacyCrdCompatibility": {
+      "missingDesiredStateDefault": "Running",
+      "newFieldsRequired": false,
+      "existingPersistedObjectsRemainValid": true
+    },
+    "implementationBoundaries": {
+      "productNeutralTypes": ["P1-01", "P1-03"],
+      "kubernetesLifecycle": ["P2-01", "P2-02", "P2-03", "P2-04", "P2-05", "P2-06", "P2-07"],
+      "runtimeSupervision": ["P3-02", "P3-03", "P3-05"],
+      "gatewayRouting": ["P4-01", "P4-02", "P4-03", "P4-04", "P4-05"],
+      "storageAndRestore": ["P5-06", "P5-07"],
+      "conformance": ["P7-05", "P7-06", "P7-07", "P7-08", "P7-09"]
+    }
+  },
+  "portableThreatModel": {
+    "decision": "transport-provider-backend-neutral-fail-closed-threat-controls",
+    "documentation": "docs/adr/024-portable-threat-model.md",
+    "documentationSha256": "6ed95d461a780f9430585033bdac25a61c679bbb183279613c672cd0722cfb46",
+    "specificationSection": "Appendix B.10",
+    "contractOnly": true,
+    "runtimeImplementationIncluded": false,
+    "deploymentChangesIncluded": false,
+    "publicSchemaChangesIncluded": false,
+    "newProtocolIncluded": false,
+    "trustBoundaries": [
+      "public-rest-sse",
+      "public-omp-app-wss",
+      "public-direct-cmux-wss",
+      "public-ssh-provider",
+      "public-discovery-status-observability",
+      "trusted-ingress-identity-adapter",
+      "edge-control-plane",
+      "driver-backend-control-store",
+      "backend-object-storage-controller-runtime",
+      "controller-runtime",
+      "runtime-process",
+      "runtime-credential-model-gateway",
+      "runtime-browser-cdp",
+      "runtime-network-egress",
+      "component-observability-sink"
+    ],
+    "assets": [
+      "omp-session-and-user-content",
+      "cmux-and-runtime-durable-state",
+      "workspace-and-runtime-state-storage",
+      "identity-scope-policy-and-resource-authority",
+      "routes-tickets-generations-revisions-and-ledgers",
+      "provider-model-credentials-browser-profile-and-cdp",
+      "bounded-infrastructure-observability"
+    ],
+    "threatClasses": [
+      "ticketReplay",
+      "senderIdentity",
+      "shellPathInjection",
+      "credentialExposure",
+      "crossScopeAccess",
+      "duplicateWriters",
+      "runtimeIsolation",
+      "auditLeakage"
+    ],
+    "ticketReplay": {
+      "stride": ["spoofing", "elevation-of-privilege"],
+      "storedMaterial": "sha256-digest-only",
+      "plaintextRetentionAllowed": false,
+      "boundTo": [
+        "runtimeId",
+        "runtimeGeneration",
+        "providerControlGeneration",
+        "purpose",
+        "audience",
+        "principalId",
+        "scopeId"
+      ],
+      "currentGenerationRequired": true,
+      "maximumTtlSeconds": 60,
+      "consumption": "atomic-compare-and-delete",
+      "singleUse": true,
+      "replicaSafe": true,
+      "invalidationTriggers": [
+        "controlDisconnect",
+        "providerControlGenerationReplacement",
+        "runtimeGenerationReplacement",
+        "explicitCancellation"
+      ],
+      "mismatchOrUncertaintyOutcome": "deny-before-side-effect"
+    },
+    "senderIdentity": {
+      "stride": ["spoofing", "repudiation", "elevation-of-privilege"],
+      "transportEvidenceVisibility": "adapter-private",
+      "serverDerivedAuthorities": [
+        "principalMapping",
+        "scopeMembership",
+        "resourceScope",
+        "resourceGeneration",
+        "resourceProfile",
+        "resourceState",
+        "roleBindings",
+        "currentPolicy"
+      ],
+      "clientClaimsAuthoritative": false,
+      "workloadAndDelegatedAuthorityDistinct": true,
+      "authorizationOutcome": "explicit-allow-only",
+      "denyOverrides": true,
+      "ambiguousOrUnknownEvidence": "deny"
+    },
+    "shellPathInjection": {
+      "stride": ["tampering", "elevation-of-privilege"],
+      "commandExecution": "array-only-exact-argv",
+      "executionPrimitive": "execFile-or-posix_spawn-equivalent",
+      "shellEnabled": false,
+      "commandStringAllowed": false,
+      "interpolationAllowed": false,
+      "sshCommandRegistry": "exact-allowlist",
+      "sshShell": "deny",
+      "sshForwarding": "deny",
+      "pathRoot": "controller-owned",
+      "pathForm": "canonical-normalized-relative",
+      "forbiddenPathForms": ["dot-dot", "leading-slash", "nul", "backslash"],
+      "unknownFields": "deny-before-side-effect",
+      "imageOverride": "deny",
+      "rawSecretInput": "deny"
+    },
+    "credentialExposure": {
+      "stride": ["information-disclosure"],
+      "runtimeReusableProviderCredentialsAllowed": false,
+      "references": "pseudonymous",
+      "surfaces": ["logs", "metrics", "status", "events", "discovery", "traces", "connectionDescriptors"],
+      "excluded": [
+        "credentials",
+        "tickets",
+        "adapterEvidence",
+        "rawProviderSubject",
+        "policyDocument",
+        "roleBindingDocument",
+        "headers",
+        "cookies",
+        "queryString",
+        "requestBody",
+        "responseBody",
+        "prompt",
+        "terminalBytes",
+        "transcript",
+        "browserData",
+        "fileContent",
+        "filePath",
+        "environment",
+        "backendCoordinate",
+        "routeReference"
+      ],
+      "redactionFailureOutcome": "drop-emission-never-allow"
+    },
+    "crossScopeAccess": {
+      "stride": ["spoofing", "information-disclosure", "elevation-of-privilege"],
+      "scopeAuthority": "server-side-ResourceScopeResolver",
+      "clientScopeClaimsAuthoritative": false,
+      "authorizationOutcome": "explicit-allow-only",
+      "concealmentOutcome": "consistent-not-found-shaped",
+      "existenceLeakAllowed": false,
+      "idempotencyLookupKey": [
+        "principalId",
+        "scopeId",
+        "method",
+        "canonicalPath",
+        "idempotencyKey"
+      ],
+      "appliesTo": ["list", "get", "mutation", "connect", "watch", "confirmation", "error"]
+    },
+    "duplicateWriters": {
+      "stride": ["tampering", "denial-of-service", "elevation-of-privilege"],
+      "writerCapableProcessGroupsPerRuntimeMaximum": 1,
+      "writableOmpAuthoritiesPerSessionMaximum": 1,
+      "freshGenerationAfterPositiveFenceRequired": true,
+      "leaseAloneIsFenceProof": false,
+      "routeAndTicketPublication": "after-full-conjunction-only",
+      "fenceUncertainBlocks": [
+        "generationAdvance",
+        "route",
+        "ticket",
+        "credential",
+        "attachment",
+        "replacement",
+        "finalizerProgress",
+        "writerCapableStart"
+      ],
+      "fenceUncertainWriterCapableActivityAllowed": false
+    },
+    "runtimeIsolation": {
+      "stride": ["tampering", "information-disclosure", "denial-of-service", "elevation-of-privilege"],
+      "runtimeUser": "non-root",
+      "networkPolicy": "default-deny",
+      "runtimeToRuntimeTraffic": "deny",
+      "kubernetesApiAccess": "deny",
+      "egress": "allowlist-only",
+      "backendObjectAdmission": "strict-bounded-allowlist",
+      "backendObjectUnknownFields": "deny-before-side-effect",
+      "workspaceMountAuthorization": "server-derived-scope-and-ownership",
+      "workspaceRoot": "controller-generated",
+      "runtimeStateRoot": "controller-generated-generation-bound-exclusive",
+      "crossScopeStorageAttachment": "deny-before-side-effect",
+      "rawOmpRpcTransport": "stdio-only",
+      "rawOmpRpcNetworkExposureAllowed": false,
+      "cmuxSocketAndFilesystemLocks": "runtime-local",
+      "cdpBind": "runtime-loopback-only",
+      "cdpExternalReachability": "deny",
+      "browserProfileWriter": "single-generation-fenced",
+      "reusableProviderCredentialsPresent": false
+    },
+    "auditLeakage": {
+      "stride": ["repudiation", "information-disclosure"],
+      "schema": "bounded-allowlist-only",
+      "maximumRecordBytes": 16384,
+      "maximumStringBytes": 512,
+      "references": "pseudonymous",
+      "surfaces": ["logs", "metrics", "status", "events", "discovery", "traces"],
+      "excludedSameAsCredentialExposure": true,
+      "loggingFailureMayAllow": false,
+      "loggingFailureMayChangeDecision": false,
+      "persistenceClaimed": false
+    },
+    "negativeChecks": {
+      "ticketReplay": {
+        "mutations": ["reuse", "wrong-bearer", "wrong-generation", "wrong-purpose", "wrong-audience", "expiry", "gateway-replay"],
+        "outcome": "deny-before-side-effect"
+      },
+      "senderIdentity": {
+        "mutations": ["forged-header", "client-principal", "client-scope", "ambiguous-evidence", "authority-collapse"],
+        "outcome": "deny-before-side-effect"
+      },
+      "shellPathInjection": {
+        "mutations": ["arbitrary-ssh-command", "shell-string", "forwarding", "path-traversal", "absolute-path", "nul", "backslash", "image-override", "raw-secret"],
+        "outcome": "deny-before-side-effect"
+      },
+      "credentialExposure": {
+        "mutations": ["credential", "ticket", "header", "prompt", "terminal", "transcript", "browser", "file", "environment"],
+        "outcome": "drop-emission-never-allow"
+      },
+      "crossScopeAccess": {
+        "mutations": ["list", "get", "connect", "mutation", "watch", "confirmation", "error"],
+        "outcome": "consistent-not-found-shaped"
+      },
+      "duplicateWriters": {
+        "mutations": ["dual-process-group", "second-omp-authority", "generation-reuse", "lease-only-proof", "early-route", "FenceUncertain-start"],
+        "outcome": "block-writer-capable-activity"
+      },
+      "runtimeIsolation": {
+        "mutations": ["root-user", "runtime-peer", "kubernetes-api", "external-cdp", "non-allowlisted-egress", "raw-rpc-network", "reusable-credential", "hostile-backend-object", "cross-scope-workspace-attachment", "dual-runtime-state-attachment"],
+        "outcome": "deny-before-side-effect"
+      },
+      "auditLeakage": {
+        "mutations": ["unbounded-record", "raw-reference", "secret-field", "user-content", "logging-failure-allows", "logging-changes-decision"],
+        "outcome": "drop-emission-never-change-authorization"
+      }
+    },
+    "implementationBoundaries": {
+      "productNeutralEnforcement": ["P1"],
+      "localAndSingleHostProof": ["P1", "P6"],
+      "kubernetesIsolationAndFencing": ["P2", "P5"],
+      "runtimeBrowserCredentialIntegration": ["P3", "P5"],
+      "gatewayEnforcement": ["P4"],
+      "crossDriverConformance": ["P7"],
+      "currentImplementationClaim": false
+    }
+  },
+  "runtimeTopology": {
+    "decision": "host-owned-single-rpc-authority",
+    "documentation": "docs/adr/025-portable-runtime-single-authority.md",
+    "documentationSha256": "264fe8dd8d5b7196a1e8fc726c827a5940fb4221770ab17de0f4335556a8eeee",
+    "schedulingUnit": "top-level-runtime",
+    "cmuxMachinesPerRuntime": 1,
+    "writableOmpAuthoritiesPerSession": 1,
+    "authorityProcessOwner": "t4-host",
+    "authorityInvocation": "omp --mode rpc --session <runtime-owned-session-path>",
+    "authorityTransport": "stdio",
+    "applicationAttachProtocol": "omp-app/1",
+    "cmuxTerminalAttachProtocol": "omp-app/1",
+    "cmuxTerminalAttachMode": "client-to-existing-authority",
+    "interactiveWriterInvocationAllowed": false,
+    "rawRpcNetworkExposureAllowed": false,
+    "implementationAdmission": "requires-terminal-client-and-writer-proof",
+    "requiredWorkPackage": "P3-04"
+  },
+  "ompPinResolution": {
+    "repository": "https://github.com/wolfiesch/oh-my-pi",
+    "sourceCommit": "c4d3ecdc35234d1aa470c3e1101d9a4ca45b64c5",
+    "contractCommit": "d16c6168c86f40fc44f25118c2fd06fe160fcb93",
+    "contractAncestry": "descendant",
+    "provenance": "provenance/omp-runtime-v1.json",
+    "bridge": {
+      "protocol": "t4-omp-authority/1",
+      "methods": [
+        "host.info",
+        "authority.flush",
+        "authority.quiesce",
+        "session.create",
+        "session.fork",
+        "session.list",
+        "session.archive",
+        "session.restore",
+        "session.delete",
+        "discovery.load",
+        "discovery.page",
+        "project.rootForProject",
+        "project.rootForSession",
+        "lock.check",
+        "lock.status",
+        "operation.filesRead",
+        "operation.filesList",
+        "operation.filesDiff",
+        "operation.filesWrite",
+        "operation.filesPatch",
+        "operation.reviewRead",
+        "operation.reviewApply",
+        "operation.bashRun",
+        "operation.termOpen",
+        "operation.catalogGet",
+        "operation.settingsRead",
+        "operation.brokerStatus",
+        "operation.settingsWrite",
+        "operation.configWrite",
+        "terminal.input",
+        "terminal.resize",
+        "terminal.close",
+        "usage.read"
+      ],
+      "evidence": {
+        "sourceTests": [
+          "packages/coding-agent/test/appserver-bridge.test.ts",
+          "packages/coding-agent/test/appserver-bridge-smoke.test.ts"
+        ],
+        "hostGate": "pnpm verify:current-omp-bridge"
+      },
+      "compatibilityStatus": "admitted"
+    },
+    "strategy": "immutable-source-authority",
+    "portableRuntimeAdmission": "admitted",
+    "reason": "The owned OMP fork commit is descended from the reviewed d16c616 contract, exposes the complete t4-omp-authority/1 method set, and passed the source bridge plus real host lifecycle gates."
+  },
+  "compatibilitySetPolicy": {
+    "rollTogether": ["omperator-host", "omp-runtime", "cmux-runtime"],
+    "independentComponentRollsAllowed": false,
+    "privateProtocolForksAllowed": false
+  }
+}

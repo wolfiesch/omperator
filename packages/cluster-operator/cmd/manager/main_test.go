@@ -26,18 +26,18 @@ func TestManagerUsesLeaseLeaderElection(t *testing.T) {
 	}
 }
 
-func TestManagerConfiguresDedicatedSessionAndServerServiceAccounts(t *testing.T) {
-	t.Setenv("T4_SESSION_SERVICE_ACCOUNT", "release-session")
+func TestManagerConfiguresSessionReviewerRoleAndServerServiceAccount(t *testing.T) {
+	t.Setenv("T4_SESSION_TOKEN_REVIEWER_CLUSTER_ROLE", "release-session-token-reviewer")
 	t.Setenv("T4_CLUSTER_SERVER_SERVICE_ACCOUNT", "release-server")
-	session, server := sessionServiceAccountNames()
-	if session != "release-session" || server != "release-server" {
-		t.Fatalf("ServiceAccounts = %q/%q", session, server)
+	reviewerRole, server := sessionIdentityNames()
+	if reviewerRole != "release-session-token-reviewer" || server != "release-server" {
+		t.Fatalf("session identities = %q/%q", reviewerRole, server)
 	}
-	t.Setenv("T4_SESSION_SERVICE_ACCOUNT", "")
+	t.Setenv("T4_SESSION_TOKEN_REVIEWER_CLUSTER_ROLE", "")
 	t.Setenv("T4_CLUSTER_SERVER_SERVICE_ACCOUNT", "")
-	session, server = sessionServiceAccountNames()
-	if session != controllers.DefaultSessionServiceAccount || server != controllers.DefaultServerServiceAccount {
-		t.Fatalf("default ServiceAccounts = %q/%q", session, server)
+	reviewerRole, server = sessionIdentityNames()
+	if reviewerRole != controllers.DefaultSessionTokenReviewerClusterRole || server != controllers.DefaultServerServiceAccount {
+		t.Fatalf("default session identities = %q/%q", reviewerRole, server)
 	}
 }
 

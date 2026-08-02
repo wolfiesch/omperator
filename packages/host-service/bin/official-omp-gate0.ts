@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { projectId, sessionId } from "@t4-code/host-wire";
 import { BunRpcChildFactory, RpcChildSupervisor } from "../src/rpc-child.ts";
 import type { SessionRecord } from "../src/types.ts";
@@ -331,6 +331,7 @@ function launchRpc(
       cwd: workspace,
       env: {
         ...process.env,
+        HOME: dirname(sessionPath),
         PI_CODING_AGENT_DIR: profile,
         PI_NOTIFICATIONS: "off",
       },
@@ -584,7 +585,7 @@ async function runLargeRpcPayloadScenario(input: {
   const factory = new BunRpcChildFactory(
     { executable: input.runtime.path, prefixArgv: [] },
     undefined,
-    { PI_CODING_AGENT_DIR: input.profile, PI_NOTIFICATIONS: "off" },
+    { HOME: input.root, PI_CODING_AGENT_DIR: input.profile, PI_NOTIFICATIONS: "off" },
   );
   const completion = Promise.withResolvers<
     { readonly kind: "agent_end" } | { readonly kind: "crashed"; readonly error: Error }

@@ -1,0 +1,215 @@
+{{- if and .Values.enabled .Values.sshGateway.enabled }}
+{{- if empty .Values.images.sshGateway.digest }}
+{{- fail "images.sshGateway.digest is required when sshGateway.enabled=true" }}
+{{- end }}
+{{- if empty .Values.sshGateway.existingHostKeySecret }}
+{{- fail "sshGateway.existingHostKeySecret is required when sshGateway.enabled=true" }}
+{{- end }}
+{{- if empty .Values.sshGateway.existingAuthorizedKeysSecret }}
+{{- fail "sshGateway.existingAuthorizedKeysSecret is required when sshGateway.enabled=true" }}
+{{- end }}
+{{- if and (or .Values.sshGateway.commands.provider .Values.sshGateway.commands.relay .Values.sshGateway.commands.attach) (empty .Values.sshGateway.handlerModule) }}
+{{- fail "sshGateway.handlerModule is required when an SSH backend command is enabled" }}
+{{- end }}
+{{- if and .Values.sshGateway.commands.provider (empty .Values.sshGateway.existingProviderAssertionSecret) }}
+{{- fail "sshGateway provider command requires existingProviderAssertionSecret" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "ssh-gateway") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ssh-gateway
+spec:
+  replicas: {{ .Values.sshGateway.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "t4-cluster.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ssh-gateway
+  template:
+    metadata:
+      annotations:
+        cluster.t4.dev/pre-stop-method: marker
+        cluster.t4.dev/pre-stop-path: /run/sshd/draining
+      labels:
+        {{- include "t4-cluster.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: ssh-gateway
+        app.kubernetes.io/part-of: t4-cluster
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.sshGateway.terminationGracePeriodSeconds }}
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values: {{ toJson .Values.session.nodeExclude }}
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "t4-cluster.selectorLabels" . | nindent 20 }}
+                    app.kubernetes.io/component: ssh-gateway
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              {{- include "t4-cluster.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: ssh-gateway
+      containers:
+        - name: ssh-gateway
+          image: {{ include "t4-cluster.image" .Values.images.sshGateway | quote }}
+          imagePullPolicy: {{ .Values.images.sshGateway.pullPolicy | quote }}
+          env:
+            - {name: T4_SSH_GATEWAY_HANDLER_MODULE, value: {{ .Values.sshGateway.handlerModule | quote }}}
+            - {name: T4_SSH_GATEWAY_ENABLE_PROVIDER, value: {{ ternary "1" "0" .Values.sshGateway.commands.provider | quote }}}
+            - {name: T4_SSH_GATEWAY_ENABLE_RELAY, value: {{ ternary "1" "0" .Values.sshGateway.commands.relay | quote }}}
+            - {name: T4_SSH_GATEWAY_ENABLE_ATTACH, value: {{ ternary "1" "0" .Values.sshGateway.commands.attach | quote }}}
+            - {name: T4_SSH_GATEWAY_ENABLE_VERSION, value: {{ ternary "1" "0" .Values.sshGateway.commands.version | quote }}}
+            {{- if .Values.sshGateway.commands.provider }}
+            - {name: T4_PROVIDER_INTERNAL_WS_URL, value: {{ default (printf "ws://%s.%s.svc:8080/internal/provider" (include "t4-cluster.suffixedName" (dict "context" . "suffix" "server")) .Release.Namespace) .Values.sshGateway.providerInternalWebSocketURL | quote }}}
+            - {name: T4_PROVIDER_INTERNAL_HMAC_FILE, value: /var/run/secrets/t4-provider-assertion/keyring.json}
+            {{- end }}
+          ports:
+            - name: ssh
+              containerPort: 2222
+              protocol: TCP
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "touch /run/sshd/draining; sleep 10"]
+          startupProbe:
+            tcpSocket: {port: ssh}
+            failureThreshold: 30
+            periodSeconds: 2
+          readinessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "test ! -e /run/sshd/draining && kill -0 1"]
+            failureThreshold: 1
+            periodSeconds: 2
+          livenessProbe:
+            tcpSocket: {port: ssh}
+            failureThreshold: 3
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.sshGateway.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+              add: [CHOWN, SETGID, SETUID, SYS_CHROOT]
+          volumeMounts:
+            - {name: run, mountPath: /run/sshd}
+            - {name: temporary, mountPath: /tmp}
+            - {name: host-key, mountPath: /var/run/secrets/t4-ssh-host-key, readOnly: true}
+            - {name: authorized-keys, mountPath: /var/run/secrets/t4-ssh-authorized-keys, readOnly: true}
+            {{- if .Values.sshGateway.existingTrustedCASecret }}
+            - {name: trusted-ca, mountPath: /var/run/secrets/t4-ssh-trusted-ca, readOnly: true}
+            - {name: principals, mountPath: /var/run/secrets/t4-ssh-principals, readOnly: true}
+            {{- end }}
+            {{- if .Values.sshGateway.commands.provider }}
+            - {name: provider-assertion, mountPath: /var/run/secrets/t4-provider-assertion, readOnly: true}
+            {{- end }}
+      volumes:
+        - name: run
+          emptyDir: {sizeLimit: 16Mi}
+        - name: temporary
+          emptyDir: {sizeLimit: 16Mi}
+        - name: host-key
+          secret:
+            secretName: {{ .Values.sshGateway.existingHostKeySecret | quote }}
+            defaultMode: 0400
+            items:
+              - {key: {{ .Values.sshGateway.hostKeyKey | quote }}, path: ssh_host_ed25519_key}
+        - name: authorized-keys
+          secret:
+            secretName: {{ .Values.sshGateway.existingAuthorizedKeysSecret | quote }}
+            defaultMode: 0444
+            items:
+              - {key: {{ .Values.sshGateway.authorizedKeysKey | quote }}, path: authorized_keys}
+        {{- if .Values.sshGateway.existingTrustedCASecret }}
+        - name: trusted-ca
+          secret:
+            secretName: {{ .Values.sshGateway.existingTrustedCASecret | quote }}
+            defaultMode: 0444
+            items:
+              - {key: {{ .Values.sshGateway.trustedCAKey | quote }}, path: ca.pub}
+        - name: principals
+          secret:
+            secretName: {{ .Values.sshGateway.existingPrincipalsSecret | quote }}
+            defaultMode: 0444
+            items:
+              - {key: {{ .Values.sshGateway.principalsKey | quote }}, path: authorized_principals}
+        {{- end }}
+        {{- if .Values.sshGateway.commands.provider }}
+        - name: provider-assertion
+          secret:
+            secretName: {{ .Values.sshGateway.existingProviderAssertionSecret | quote }}
+            defaultMode: 0440
+            items:
+              - {key: {{ .Values.sshGateway.providerAssertionKeyringKey | quote }}, path: keyring.json}
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "ssh-gateway") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ssh-gateway
+  {{- with .Values.sshGateway.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.sshGateway.service.type }}
+  selector:
+    {{- include "t4-cluster.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: ssh-gateway
+  ports:
+    - name: ssh
+      port: {{ .Values.sshGateway.service.port }}
+      targetPort: ssh
+      protocol: TCP
+  {{- with .Values.sshGateway.service.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "ssh-gateway") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ssh-gateway
+spec:
+  minAvailable: {{ min 2 .Values.sshGateway.replicas }}
+  selector:
+    matchLabels:
+      {{- include "t4-cluster.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ssh-gateway
+{{- end }}

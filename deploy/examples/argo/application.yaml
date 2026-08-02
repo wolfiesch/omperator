@@ -1,0 +1,64 @@
+# Workload Application for the portable t4-cluster chart.
+#
+# Runs in the default sync wave 0, after the wave -1 CRD Application. Helm is
+# invoked with skipCrds so it never creates, upgrades, or deletes a CRD.
+#
+# Two sources are used because the values files live outside the chart path and
+# Argo CD refuses out-of-bounds valueFiles from a single source. Both sources
+# are pinned to the same exact commit.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: t4-cluster
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: t4-cluster
+  sources:
+    - repoURL: https://git.example.test/t4-code.git
+      # Pin an exact commit. A branch would let the chart, the CRDs, and the
+      # recorded image digest set drift apart between syncs.
+      targetRevision: "0000000000000000000000000000000000000000"
+      path: deploy/charts/t4-cluster
+      helm:
+        releaseName: t4-cluster
+        # Non-negotiable: CRDs are administered separately.
+        skipCrds: true
+        # values.schema.json must reject anything malformed rather than render it.
+        skipSchemaValidation: false
+        # The chart is default-off and this example adds no inline parameters.
+        # The adapter overlay is optional; remove the second entry to run the
+        # core install with no adapters at all.
+        valueFiles:
+          - $values/deploy/examples/values/minimal-values.yaml
+          - $values/deploy/examples/values/adapters-values.yaml
+    - repoURL: https://git.example.test/t4-code.git
+      targetRevision: "0000000000000000000000000000000000000000"
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: t4-system
+  syncPolicy:
+    # Manual sync. A control plane that owns live agent runtimes is not
+    # self-healed into a new digest set without an operator decision.
+    automated: null
+    syncOptions:
+      - ServerSideApply=true
+      - Validate=true
+      - CreateNamespace=false
+      # Retained PersistentVolumeClaims and remaining custom resources must
+      # never be pruned by a workload sync.
+      - Prune=false
+      - PruneLast=true
+      - RespectIgnoreDifferences=true
+    retry:
+      limit: 0
+  ignoreDifferences:
+    - group: autoscaling
+      kind: HorizontalPodAutoscaler
+      # The HPA controller rewrites resolved metric targets in place.
+      jsonPointers:
+        - /spec/metrics
+  revisionHistoryLimit: 20

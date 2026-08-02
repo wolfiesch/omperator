@@ -11,7 +11,9 @@ export interface SessionAuthorityRunnerOptions {
 
 interface AuthorityConnection {
 	readonly endpoint: PodHostEndpoint;
+	readonly identity: symbol;
 	readonly pending: Promise<PodHostConnection>;
+	upstreamSessionId?: string;
 }
 
 /** Reconstructs session truth from each pod's authenticated omp-app/1 inventory. */
@@ -48,45 +50,101 @@ export class SessionAuthorityRunner {
 		const endpoints = new Map(this.#options.projection.sessionEndpoints().map(endpoint => [endpoint.clusterSessionId, endpoint]));
 		for (const [session, existing] of this.#connections) {
 			const current = endpoints.get(session);
-			if (current?.url === existing.endpoint.url) continue;
+			if (current?.routeGeneration === existing.endpoint.routeGeneration) continue;
 			this.#connections.delete(session);
-			this.#options.projection.clearSessionAuthority(session);
-			void existing.pending.then(connection => connection.close(1001, "session endpoint changed"), () => undefined);
+			this.#options.projection.clearSessionAuthority(
+				session,
+				existing.endpoint.routeGeneration,
+				existing.upstreamSessionId,
+			);
+			void existing.pending.then(connection => connection.close(1001, "session endpoint generation changed"), () => undefined);
 		}
 		for (const [session, endpoint] of endpoints) {
 			if (this.#connections.has(session)) continue;
-			let pending: Promise<PodHostConnection>;
-			pending = this.#options.connector.connect(
+			const identity = Symbol(session);
+			const pending = this.#options.connector.connect(
 				endpoint,
-				frame => this.#projectFrame(endpoint, frame),
-				() => this.#disconnected(session, pending),
+				frame => this.#projectFrame(session, identity, frame),
+				() => this.#disconnected(session, identity),
 			);
-			this.#connections.set(session, { endpoint, pending });
+			const entry: AuthorityConnection = { endpoint, identity, pending };
+			this.#connections.set(session, entry);
 			pending.catch(error => {
-				if (this.#connections.get(session)?.pending !== pending) return;
+				if (this.#connections.get(session)?.identity !== identity) return;
 				this.#connections.delete(session);
-				this.#options.projection.clearSessionAuthority(session);
+				this.#options.projection.clearSessionAuthority(
+					session,
+					endpoint.routeGeneration,
+					entry.upstreamSessionId,
+				);
 				this.#options.onError?.(error);
 				this.#scheduleRetry();
 			});
 		}
 	}
 
-	#projectFrame(endpoint: PodHostEndpoint, frame: ServerFrame): void {
+	#projectFrame(session: string, identity: symbol, frame: ServerFrame): void {
+		const entry = this.#connections.get(session);
+		if (!entry || entry.identity !== identity) return;
 		if (frame.type === "sessions") {
-			if (frame.sessions.length !== 1) throw new Error("session pod must expose exactly one authoritative OMP session");
-			this.#options.projection.setSessionAuthority(endpoint.clusterSessionId, frame.sessions[0] as SessionRef);
+			if (frame.sessions.length !== 1) {
+				this.#invalidate(session, entry, "session pod must expose exactly one authoritative OMP session");
+				return;
+			}
+			const authority = frame.sessions[0] as SessionRef;
+			if (entry.upstreamSessionId !== undefined && entry.upstreamSessionId !== authority.sessionId) {
+				this.#invalidate(session, entry, "session pod authority changed without a new route generation");
+				return;
+			}
+			entry.upstreamSessionId = authority.sessionId;
+			if (!this.#options.projection.setSessionAuthority(session, authority, entry.endpoint.routeGeneration))
+				this.#invalidate(session, entry, "session route generation changed during authority snapshot");
 			return;
 		}
 		if (frame.type !== "session.delta") return;
-		if (frame.upsert) this.#options.projection.setSessionAuthority(endpoint.clusterSessionId, frame.upsert);
-		else if (frame.remove) this.#options.projection.clearSessionAuthority(endpoint.clusterSessionId);
+		if (entry.upstreamSessionId === undefined) {
+			this.#invalidate(session, entry, "session authority delta arrived before an exact snapshot");
+			return;
+		}
+		const deltaSessionId = frame.upsert?.sessionId ?? frame.remove;
+		if (deltaSessionId !== entry.upstreamSessionId) {
+			this.#invalidate(session, entry, "session authority delta did not match the bound upstream session");
+			return;
+		}
+		if (frame.upsert) {
+			if (!this.#options.projection.setSessionAuthority(session, frame.upsert, entry.endpoint.routeGeneration))
+				this.#invalidate(session, entry, "session route generation changed during authority delta");
+		} else {
+			this.#options.projection.clearSessionAuthority(
+				session,
+				entry.endpoint.routeGeneration,
+				entry.upstreamSessionId,
+			);
+		}
 	}
 
-	#disconnected(session: string, pending: Promise<PodHostConnection>): void {
-		if (this.#connections.get(session)?.pending !== pending) return;
+	#invalidate(session: string, entry: AuthorityConnection, message: string): void {
+		if (this.#connections.get(session)?.identity !== entry.identity) return;
 		this.#connections.delete(session);
-		this.#options.projection.clearSessionAuthority(session);
+		this.#options.projection.clearSessionAuthority(
+			session,
+			entry.endpoint.routeGeneration,
+			entry.upstreamSessionId,
+		);
+		void entry.pending.then(connection => connection.close(1008, message), () => undefined);
+		this.#options.onError?.(new Error(message));
+		this.#scheduleRetry();
+	}
+
+	#disconnected(session: string, identity: symbol): void {
+		const entry = this.#connections.get(session);
+		if (!entry || entry.identity !== identity) return;
+		this.#connections.delete(session);
+		this.#options.projection.clearSessionAuthority(
+			session,
+			entry.endpoint.routeGeneration,
+			entry.upstreamSessionId,
+		);
 		this.#scheduleRetry();
 	}
 

@@ -11,6 +11,8 @@ import { readClusterIdentityToken } from "./config.ts";
 
 export interface PodHostEndpoint {
 	readonly clusterSessionId: string;
+	readonly runtimeGeneration: string;
+	readonly routeGeneration: string;
 	readonly url: string;
 }
 export interface PodHostRoute extends PodHostEndpoint {
@@ -144,6 +146,27 @@ export function rewriteClientAddress(
 function rewriteEntry(entry: Record<string, unknown>, clusterHostId: string, clusterSessionId: string): Record<string, unknown> {
 	return { ...entry, hostId: clusterHostId, sessionId: clusterSessionId };
 }
+function rewriteResponseResult(
+	frame: Extract<ServerFrame, { type: "response" }>,
+	clusterHostId: string,
+	clusterSessionId: string,
+): unknown {
+	if (frame.command === "transcript.page") {
+		const result = frame.result as { readonly entries: readonly Record<string, unknown>[] };
+		return {
+			...(frame.result as Record<string, unknown>),
+			entries: result.entries.map(entry => rewriteEntry(entry, clusterHostId, clusterSessionId)),
+		};
+	}
+	if (frame.command === "session.create" || frame.command === "session.fork") {
+		const result = frame.result as { readonly session: Record<string, unknown> };
+		return {
+			...(frame.result as Record<string, unknown>),
+			session: { ...result.session, hostId: clusterHostId, sessionId: clusterSessionId },
+		};
+	}
+	return frame.result;
+}
 export function rewriteServerAddress(
 	frame: ServerFrame,
 	route: PodHostRoute,
@@ -158,5 +181,7 @@ export function rewriteServerAddress(
 	if (frame.type === "session.delta" && frame.upsert) output.upsert = { ...frame.upsert, hostId: clusterHostId, sessionId: route.clusterSessionId };
 	if (frame.type === "session.delta" && frame.remove) output.remove = route.clusterSessionId;
 	if (frame.type === "sessions") output.sessions = frame.sessions.map(ref => ({ ...ref, hostId: clusterHostId, sessionId: route.clusterSessionId }));
+	if (frame.type === "response" && frame.ok)
+		output.result = rewriteResponseResult(frame, clusterHostId, route.clusterSessionId);
 	return output as unknown as ServerFrame;
 }

@@ -821,6 +821,24 @@ export class TranscriptSearchIndex {
 			).count;
 	}
 
+	async checkpoint(): Promise<void> {
+		const db = this.#database();
+		db.run("PRAGMA synchronous = FULL");
+		db.run("PRAGMA wal_checkpoint(TRUNCATE)");
+		for (const path of [this.#databasePath, `${this.#databasePath}-wal`, `${this.#databasePath}-shm`]) {
+			const handle = await fs.open(path, "r").catch(error => {
+				if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+				throw error;
+			});
+			if (!handle) continue;
+			try { await handle.sync(); }
+			finally { await handle.close(); }
+		}
+		const parent = await fs.open(dirname(this.#databasePath), "r");
+		try { await parent.sync(); }
+		finally { await parent.close(); }
+	}
+
 	close(): void {
 		this.#db?.close();
 		this.#db = undefined;

@@ -1,0 +1,1 @@
+{"protocol":"cmux.machine-provider","version":1,"id":"request-close","method":"close_machine","params":{"connection_id":"connection_01"}}

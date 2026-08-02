@@ -9,8 +9,20 @@ import {
 	KubernetesTokenReviewer,
 	semanticResourceHash,
 } from "../src/kubernetes-client.ts";
+import { ClusterInfrastructureProjection, portableWorkspaceRevision, restResourceId, restResourceRevision, type KubernetesResource } from "../src/kubernetes-projection.ts";
+import { createClusterRestHandler } from "../src/rest-handler.ts";
+import type { RequestIdentity } from "../src/identity.ts";
 
 const PRINCIPAL = "owner@example.com";
+function requestIdentity(principalId: string): RequestIdentity {
+	return Object.freeze({
+		principalId,
+		authorizedScopes: Object.freeze([]),
+		adapter: Object.freeze({ id: "test", type: "tailscale" }),
+		policyRevision: "1",
+	});
+}
+const IDENTITY = requestIdentity(PRINCIPAL);
 
 function recordingFetch(responses: unknown[]) {
 	const requests: Array<{ url: string; init?: RequestInit }> = [];
@@ -134,7 +146,7 @@ describe("namespaced Kubernetes client", () => {
 			capacity: "20Gi",
 			repository: { repositoryId: "t4-code", ref: "refs/heads/main", commit: "abcdef0" },
 		};
-		await backend.createWorkspace("command-create-workspace", workspaceArgs, PRINCIPAL);
+		await backend.createWorkspace("command-create-workspace", workspaceArgs, PRINCIPAL, IDENTITY);
 		const workspaceBody = JSON.parse(String(values.requests[0]?.init?.body));
 		expect(values.requests[0]).toMatchObject({
 			url: "https://kubernetes.default.svc/apis/cluster.t4.dev/v1alpha1/namespaces/development/t4workspaces",
@@ -145,6 +157,7 @@ describe("namespaced Kubernetes client", () => {
 			kind: "T4Workspace",
 			metadata: {
 				name: expect.stringMatching(/^workspace-[a-f0-9]{16}$/),
+				finalizers: ["cluster.t4.dev/workspace-protection"],
 				annotations: {
 					"cluster.t4.dev/command-id": "command-create-workspace",
 					"cluster.t4.dev/principal-hash": semanticResourceHash(PRINCIPAL),
@@ -169,13 +182,13 @@ describe("namespaced Kubernetes client", () => {
 			runtimeProfile: "omp-17.0.5",
 			guiEnabled: true,
 			ci: { provider: "woodpecker", repositoryId: "t4-code", ref: "refs/heads/main", commit: "abcdef0" },
-		}, PRINCIPAL);
+		}, PRINCIPAL, IDENTITY);
 		const sessionBody = JSON.parse(String(values.requests[2]?.init?.body));
 		expect(sessionBody).toMatchObject({
 			apiVersion: "cluster.t4.dev/v1alpha1",
 			kind: "T4Session",
 			metadata: { name: expect.stringMatching(/^session-[a-f0-9]{16}$/) },
-			spec: { hostRef: "primary", workspaceRef: "workspace-one", title: "Task", runtimeProfile: "omp-17.0.5", guiEnabled: true },
+			spec: { hostRef: "primary", workspaceRef: "workspace-one", title: "Task", runtimeProfile: "omp-17.0.5", guiEnabled: true, browserPolicy: "Allowed" },
 		});
 	});
 
@@ -195,7 +208,7 @@ describe("namespaced Kubernetes client", () => {
 			client: new KubernetesApiClient({ baseUrl: "https://kubernetes.default.svc", namespace: "development", token: "token", fetch: exact.fetch }),
 			hostRef: "primary",
 		});
-		expect(await backend.createWorkspace("command-one", args, PRINCIPAL)).toEqual({ id: "workspace-existing", revision: "9" });
+		expect(await backend.createWorkspace("command-one", args, PRINCIPAL, IDENTITY)).toEqual({ id: "workspace-existing", revision: "9" });
 		expect(exact.requests.map(request => request.init?.method ?? "GET")).toEqual(["POST", "GET"]);
 
 		const conflicting = conflictFetch({ ...existing, metadata: { ...existing.metadata, annotations: { ...annotations, "cluster.t4.dev/semantic-hash": "wrong" } } });
@@ -203,7 +216,7 @@ describe("namespaced Kubernetes client", () => {
 			client: new KubernetesApiClient({ baseUrl: "https://kubernetes.default.svc", namespace: "development", token: "token", fetch: conflicting.fetch }),
 			hostRef: "primary",
 		});
-		await expect(conflictingBackend.createWorkspace("command-one", args, PRINCIPAL)).rejects.toThrow("idempotency conflict");
+		await expect(conflictingBackend.createWorkspace("command-one", args, PRINCIPAL, IDENTITY)).rejects.toThrow("idempotency conflict");
 	});
 
 	it("treats an already absent session as a successful idempotent delete", async () => {
@@ -212,7 +225,285 @@ describe("namespaced Kubernetes client", () => {
 			client: new KubernetesApiClient({ baseUrl: "https://kubernetes.default.svc", namespace: "development", token: "token", fetch }),
 			hostRef: "primary",
 		});
-		expect(await backend.deleteSession("command-delete", "session-gone", PRINCIPAL)).toEqual({ deleted: true });
+		expect(await backend.deleteSession("command-delete", "session-gone", PRINCIPAL, IDENTITY)).toEqual({ deleted: true });
+	});
+
+	describe("durable REST mutation authority", () => {
+		function kubernetesAuthority() {
+			const resources = new Map<string, KubernetesResource>();
+			const requests: Array<{ url: string; init?: RequestInit }> = [];
+			let version = 100;
+			let updates = 0;
+			const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+				const url = String(input);
+				requests.push({ url, init });
+				const match = /\/(t4workspaces|t4sessions)(?:\/([^?]+))?(?:\?.*)?$/u.exec(url);
+				if (!match) return Response.json({ reason: "NotFound" }, { status: 404 });
+				const collection = match[1]!;
+				const name = match[2] ? decodeURIComponent(match[2]) : undefined;
+				const method = init?.method ?? "GET";
+				if (method === "POST") {
+					const proposed = JSON.parse(String(init?.body)) as KubernetesResource;
+					const key = `${collection}/${proposed.metadata.name}`;
+					if (resources.has(key)) return Response.json({ reason: "AlreadyExists" }, { status: 409 });
+					const created = {
+						...proposed,
+						metadata: {
+							...proposed.metadata,
+							uid: `${proposed.metadata.name}-uid`,
+							resourceVersion: String(++version),
+							generation: 1,
+							creationTimestamp: "2026-07-29T12:00:00.000Z",
+						},
+						status: { phase: "Pending", observedGeneration: 0 },
+					};
+					resources.set(key, created);
+					return Response.json(created, { status: 201 });
+				}
+				if (!name) {
+					const items = [...resources.entries()].filter(([key]) => key.startsWith(`${collection}/`)).map(([, value]) => value);
+					return Response.json({ metadata: { resourceVersion: String(version) }, items });
+				}
+				const key = `${collection}/${name}`;
+				const current = resources.get(key);
+				if (!current) return Response.json({ reason: "NotFound" }, { status: 404 });
+				if (method === "PUT") {
+					const proposed = JSON.parse(String(init?.body)) as KubernetesResource;
+					if (proposed.metadata.uid !== current.metadata.uid || proposed.metadata.resourceVersion !== current.metadata.resourceVersion)
+						return Response.json({ reason: "Conflict" }, { status: 409 });
+					const updated = {
+						...proposed,
+						metadata: { ...proposed.metadata, resourceVersion: String(++version), generation: (current.metadata.generation ?? 0) + 1 },
+					};
+					resources.set(key, updated);
+					updates++;
+					return Response.json(updated);
+				}
+				if (method === "DELETE") {
+					const options = JSON.parse(String(init?.body)) as { preconditions: { uid: string; resourceVersion: string } };
+					if (options.preconditions.uid !== current.metadata.uid || options.preconditions.resourceVersion !== current.metadata.resourceVersion)
+						return Response.json({ reason: "Conflict" }, { status: 409 });
+					resources.delete(key);
+					return Response.json({ status: "Success" });
+				}
+				return Response.json(current);
+			}) as typeof globalThis.fetch;
+			const client = () => new KubernetesApiClient({
+				baseUrl: "https://kubernetes.default.svc",
+				namespace: "development",
+				token: "token",
+				fetch,
+			});
+			return { resources, requests, client, updates: () => updates };
+		}
+
+		it("maps public IDs privately and makes PUT exact-idempotent while rejecting incompatible reuse", async () => {
+			const authority = kubernetesAuthority();
+			const backend = new KubernetesGatewayMutationBackend({ client: authority.client(), hostRef: "primary" });
+			const input = {
+				scopeId: "scope_personal",
+				displayName: "Portable workspace",
+				capacityBytes: 1_073_741_824,
+				retention: "Retain" as const,
+			};
+			const created = await backend.putRestWorkspace("customer-choice", input, PRINCIPAL, IDENTITY);
+			expect(created.created).toBe(true);
+			expect(created.resource.metadata.name).toMatch(/^ws-[a-f0-9]{40}$/u);
+			expect(created.resource.metadata.name).not.toContain("customer-choice");
+			expect(created.resource.metadata.finalizers).toContain("cluster.t4.dev/workspace-protection");
+			expect(created.resource.spec).toMatchObject({ publicId: "customer-choice" });
+			expect(created.resource.metadata.annotations?.["cluster.t4.dev/scope-id"]).toBe(input.scopeId);
+			const retried = await backend.putRestWorkspace("customer-choice", input, PRINCIPAL, IDENTITY);
+			expect(retried.created).toBe(false);
+			expect(retried.resource.metadata.uid).toBe(created.resource.metadata.uid);
+			await expect(backend.putRestWorkspace("customer-choice", { ...input, displayName: "Changed create" }, PRINCIPAL, IDENTITY))
+				.rejects.toMatchObject({ code: "resource_conflict" });
+			await expect(backend.patchRestWorkspace("customer-choice", "rev_stale", { retention: "Delete" }, PRINCIPAL, IDENTITY))
+				.rejects.toMatchObject({ code: "revision_mismatch", currentRevision: portableWorkspaceRevision(restResourceRevision("workspace", created.resource), 0) });
+			const updated = await backend.patchRestWorkspace(
+				"customer-choice",
+				portableWorkspaceRevision(restResourceRevision("workspace", created.resource), 0),
+				{ retention: "Delete" },
+				PRINCIPAL,
+				IDENTITY,
+			);
+			expect(updated.resource.spec?.retentionPolicy).toBe("Delete");
+			await expect(backend.patchRestWorkspace("customer-choice", restResourceRevision("workspace", created.resource), { retention: "Delete" }, "other@example.com", requestIdentity("other@example.com")))
+				.rejects.toMatchObject({ code: "not_found" });
+		});
+
+
+		it("resolves legacy UID-derived public IDs, returns authoritative attachments, and accepts UTF-8 principals", async () => {
+			const authority = kubernetesAuthority();
+			const unicodePrincipal = "Δ owner@example.test";
+			const legacyWorkspace: KubernetesResource = {
+				apiVersion: "cluster.t4.dev/v1alpha1",
+				kind: "T4Workspace",
+				metadata: { name: "legacy-private-workspace", uid: "legacy-workspace-uid", resourceVersion: "70", generation: 1 },
+				spec: { hostRef: "primary", owner: unicodePrincipal, displayName: "Legacy", size: "2Gi", retentionPolicy: "Retain" },
+				status: { phase: "Ready", observedGeneration: 1 },
+			};
+			const legacyRuntime: KubernetesResource = {
+				apiVersion: "cluster.t4.dev/v1alpha1",
+				kind: "T4Session",
+				metadata: { name: "legacy-private-runtime", uid: "legacy-runtime-uid", resourceVersion: "71", generation: 1 },
+				spec: { hostRef: "primary", workspaceRef: legacyWorkspace.metadata.name, title: "Legacy runtime", runtimeProfile: "default" },
+				status: { phase: "Pending", observedGeneration: 1 },
+			};
+			const deletingRuntime: KubernetesResource = {
+				...legacyRuntime,
+				metadata: {
+					...legacyRuntime.metadata,
+					name: "legacy-deleting-runtime",
+					uid: "legacy-deleting-runtime-uid",
+					resourceVersion: "72",
+					deletionTimestamp: "2026-07-29T12:05:00.000Z",
+				},
+			};
+			authority.resources.set(`t4workspaces/${legacyWorkspace.metadata.name}`, legacyWorkspace);
+			authority.resources.set(`t4sessions/${legacyRuntime.metadata.name}`, legacyRuntime);
+			authority.resources.set(`t4sessions/${deletingRuntime.metadata.name}`, deletingRuntime);
+			const backend = new KubernetesGatewayMutationBackend({ client: authority.client(), hostRef: "primary" });
+			const workspaceId = restResourceId("ws", legacyWorkspace);
+			const runtimeId = restResourceId("rt", legacyRuntime);
+			const patchedWorkspace = await backend.patchRestWorkspace(
+				workspaceId, restResourceRevision("workspace", legacyWorkspace), { retention: "Delete" }, unicodePrincipal, requestIdentity(unicodePrincipal),
+			);
+			expect(patchedWorkspace.attachmentCount).toBe(2);
+			expect(patchedWorkspace.resource.metadata.name).toBe("legacy-private-workspace");
+			const patchedRuntime = await backend.patchRestRuntime(
+				runtimeId, restResourceRevision("runtime", legacyRuntime), { displayName: "Renamed" }, unicodePrincipal, requestIdentity(unicodePrincipal),
+			);
+			expect(patchedRuntime.resource.metadata.name).toBe("legacy-private-runtime");
+			await expect(backend.deleteRestWorkspace(
+				workspaceId, restResourceRevision("workspace", patchedWorkspace.resource), unicodePrincipal, requestIdentity(unicodePrincipal),
+			)).rejects.toMatchObject({ code: "workspace_attached" });
+		});
+		it("classifies Kubernetes 422 as a permanent typed policy rejection", async () => {
+			const fetch = (async (_input: string | URL | Request, init?: RequestInit) =>
+				init?.method === "POST"
+					? Response.json({ reason: "Invalid" }, { status: 422 })
+					: Response.json({ metadata: { resourceVersion: "1" }, items: [] })) as typeof globalThis.fetch;
+			const backend = new KubernetesGatewayMutationBackend({
+				client: new KubernetesApiClient({
+					baseUrl: "https://kubernetes.default.svc",
+					namespace: "development",
+					token: "token",
+					fetch,
+				}),
+				hostRef: "primary",
+			});
+			await expect(backend.putRestWorkspace("policy-rejected", {
+				scopeId: "scope_personal",
+				displayName: "Rejected",
+				capacityBytes: 1_073_741_824,
+				retention: "Retain",
+			}, PRINCIPAL, IDENTITY)).rejects.toMatchObject({ code: "invalid_resource" });
+		});
+
+		it("retains action replay across replicas and invokes one atomic mutation for concurrent duplicates", async () => {
+			const authority = kubernetesAuthority();
+			const first = new KubernetesGatewayMutationBackend({ client: authority.client(), hostRef: "primary" });
+			const second = new KubernetesGatewayMutationBackend({ client: authority.client(), hostRef: "primary" });
+			await first.putRestWorkspace("public-workspace", {
+				scopeId: "scope_personal", displayName: "Workspace", capacityBytes: 1_073_741_824, retention: "Retain",
+			}, PRINCIPAL, IDENTITY);
+			const runtime = await first.putRestRuntime("public-runtime", {
+				scopeId: "scope_personal",
+				displayName: "Runtime",
+				workspaceId: "public-workspace",
+				hostProfileId: "Team.Profile~One",
+				desiredState: "Running",
+				browserPolicy: "Disabled",
+			}, PRINCIPAL, IDENTITY);
+			expect(runtime.resource.spec).toMatchObject({
+				publicHostProfileId: "Team.Profile~One",
+				runtimeProfile: expect.stringMatching(/^rest-[a-f0-9]{24}$/u),
+			});
+			expect(runtime.resource.metadata.annotations?.["cluster.t4.dev/scope-id"]).toBe("scope_personal");
+			const expected = restResourceRevision("runtime", runtime.resource);
+			const projectedRuntime: KubernetesResource = {
+				...runtime.resource,
+				status: { ...runtime.resource.status, runtimeGeneration: "gen_controller_owned_test" },
+			};
+			const projection = new ClusterInfrastructureProjection({ epoch: "rest-replica", namespace: "development" });
+			projection.replace({
+				host: { kind: "T4ClusterHost", metadata: { name: "primary", uid: "host-uid", resourceVersion: "1" }, spec: {} },
+				workspaces: runtime.workspace ? [runtime.workspace] : [],
+				sessions: [projectedRuntime],
+				resourceVersion: "1",
+			});
+			const config = {
+				restBaseUrl: "https://public.example.test/v1",
+				ompAppWebSocketUrl: "wss://public.example.test/v1/ws",
+				build: { version: "test", revision: "test-revision", builtAt: "2026-07-29T12:00:00.000Z" },
+			};
+			const firstHandler = createClusterRestHandler({ projection, config, mutations: first });
+			const secondHandler = createClusterRestHandler({ projection, config, mutations: second });
+			const actionRequest = () => new Request("https://public.example.test/v1/runtimes/public-runtime:sleep", {
+				method: "POST",
+				headers: { "if-match": `"${expected}"`, "idempotency-key": "same-action-key-1" },
+			});
+			const [left, right] = await Promise.all([
+				firstHandler(actionRequest(), IDENTITY),
+				secondHandler(actionRequest(), IDENTITY),
+			]);
+			expect(left.status).toBe(202);
+			expect(right.status).toBe(202);
+			expect(authority.updates()).toBe(1);
+			expect(left.headers.get("etag")).toBe(right.headers.get("etag"));
+			expect(await left.json()).toEqual(await right.json());
+			const replay = await secondHandler(new Request("https://public.example.test/v1/runtimes/public-runtime:sleep", {
+				method: "POST",
+				headers: { "if-match": "\"rev_now_stale\"", "idempotency-key": "same-action-key-1" },
+			}), IDENTITY);
+			expect(replay.status).toBe(202);
+			expect(authority.updates()).toBe(1);
+			expect(replay.headers.get("etag")).toBe(left.headers.get("etag"));
+			const conflict = await secondHandler(new Request("https://public.example.test/v1/runtimes/public-runtime:wake", {
+				method: "POST",
+				headers: { "if-match": `"${expected}"`, "idempotency-key": "same-action-key-1" },
+			}), IDENTITY);
+			expect(conflict.status).toBe(409);
+			expect(await conflict.json()).toMatchObject({ code: "idempotency_conflict" });
+			const storedRuntime = [...authority.resources.values()].find(resource => resource.kind === "T4Session")!;
+			expect(storedRuntime.metadata.annotations?.["cluster.t4.dev/rest-idempotency"]).not.toContain(PRINCIPAL);
+			const updateRequest = authority.requests.find(request => request.init?.method === "PUT")!;
+			expect((JSON.parse(String(updateRequest.init?.body)) as KubernetesResource).metadata).toMatchObject({
+				uid: runtime.resource.metadata.uid,
+				resourceVersion: runtime.resource.metadata.resourceVersion,
+			});
+		});
+
+		it("uses UID/resourceVersion delete preconditions and rejects attached workspace deletion", async () => {
+			const authority = kubernetesAuthority();
+			const backend = new KubernetesGatewayMutationBackend({ client: authority.client(), hostRef: "primary" });
+			const workspace = await backend.putRestWorkspace("workspace-delete", {
+				scopeId: "scope_personal", displayName: "Workspace", capacityBytes: 1_073_741_824, retention: "Retain",
+			}, PRINCIPAL, IDENTITY);
+			const deletingWorkspace = await backend.putRestWorkspace("workspace-deleting", {
+				scopeId: "scope_personal", displayName: "Deleting", capacityBytes: 1_073_741_824, retention: "Retain",
+			}, PRINCIPAL, IDENTITY);
+			authority.resources.set(`t4workspaces/${deletingWorkspace.resource.metadata.name}`, {
+				...deletingWorkspace.resource,
+				metadata: { ...deletingWorkspace.resource.metadata, deletionTimestamp: "2026-07-29T12:10:00.000Z" },
+			});
+			await expect(backend.putRestRuntime("runtime-too-late", {
+				scopeId: "scope_personal", displayName: "Late runtime", workspaceId: "workspace-deleting", hostProfileId: "default",
+				desiredState: "Running", browserPolicy: "Disabled",
+			}, PRINCIPAL, IDENTITY)).rejects.toMatchObject({ code: "resource_conflict" });
+			const runtime = await backend.putRestRuntime("runtime-delete", {
+				scopeId: "scope_personal", displayName: "Runtime", workspaceId: "workspace-delete", hostProfileId: "default",
+				desiredState: "Running", browserPolicy: "Disabled",
+			}, PRINCIPAL, IDENTITY);
+			await expect(backend.deleteRestWorkspace("workspace-delete", restResourceRevision("workspace", workspace.resource), PRINCIPAL, IDENTITY))
+				.rejects.toMatchObject({ code: "workspace_attached" });
+			await backend.deleteRestRuntime("runtime-delete", restResourceRevision("runtime", runtime.resource), PRINCIPAL, IDENTITY);
+			const deletion = authority.requests.find(request => request.init?.method === "DELETE");
+			expect(JSON.parse(String(deletion?.init?.body))).toMatchObject({
+				preconditions: { uid: runtime.resource.metadata.uid, resourceVersion: runtime.resource.metadata.resourceVersion },
+			});
+		});
 	});
 });
 

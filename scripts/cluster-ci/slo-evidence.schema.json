@@ -1,0 +1,433 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://t4.dev/schemas/cluster-slo-evidence-v1.json",
+  "title": "T4 cluster startup and failover SLO evidence",
+  "description": "Separates declared targets from recorded observations. A target is a design decision and never proves anything. An observation is only 'measured' when it carries full source, build, image, live-environment, iteration, timeout, and raw-artifact metadata.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "source", "build", "images", "environments", "targets", "observations"],
+  "properties": {
+    "schemaVersion": { "const": "t4-cluster-slo-evidence/1" },
+    "note": { "$ref": "#/$defs/prose" },
+    "source": { "$ref": "#/$defs/source" },
+    "build": {
+      "description": "Exact build configuration under test. Null only while every observation is unmeasured.",
+      "oneOf": [{ "$ref": "#/$defs/build" }, { "type": "null" }]
+    },
+    "images": {
+      "description": "Image identities under test. Null digests are only valid while every observation is unmeasured.",
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": { "$ref": "#/$defs/image" },
+      "allOf": [
+        { "contains": { "properties": { "component": { "const": "controller" } }, "required": ["component"] }, "minContains": 1, "maxContains": 1 },
+        { "contains": { "properties": { "component": { "const": "cluster-server" } }, "required": ["component"] }, "minContains": 1, "maxContains": 1 },
+        { "contains": { "properties": { "component": { "const": "session-runtime" } }, "required": ["component"] }, "minContains": 1, "maxContains": 1 }
+      ]
+    },
+    "environments": {
+      "type": "array",
+      "maxItems": 8,
+      "items": { "$ref": "#/$defs/environment" }
+    },
+    "targets": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/target" }
+    },
+    "observations": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/observation" }
+    }
+  },
+  "$defs": {
+    "prose": { "type": "string", "minLength": 1, "maxLength": 2048 },
+    "runManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "files"],
+      "properties": {
+        "schemaVersion": { "const": "t4-cluster-slo-run/2" },
+        "files": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "bytes", "sha256"],
+            "properties": {
+              "name": { "type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?(?:/|$))[A-Za-z0-9][A-Za-z0-9._/-]{0,510}$" },
+              "bytes": { "type": "integer", "minimum": 1, "maximum": 67108864 },
+              "sha256": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        }
+      }
+    },
+    "runIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "scenario", "sourceCommit", "environmentId", "runToken", "startedAt", "completedAt", "timeoutSeconds", "iterations", "warmupIterations", "deadlines", "images", "executables", "source", "build", "ledger", "clusters", "environmentIterations"],
+      "properties": {
+        "schemaVersion": { "const": "t4-slo-identity/1" },
+        "scenario": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$" },
+        "sourceCommit": { "$ref": "#/$defs/commit" },
+        "environmentId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "runToken": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$" },
+        "startedAt": { "$ref": "#/$defs/timestamp" },
+        "completedAt": { "$ref": "#/$defs/timestamp" },
+        "timeoutSeconds": { "type": "number", "exclusiveMinimum": 0 },
+        "iterations": { "type": "integer", "minimum": 1 },
+        "warmupIterations": { "const": 0 },
+        "deadlines": { "type": "object" },
+        "images": { "type": "object" },
+        "executables": { "type": "object" },
+        "source": { "type": "object" },
+        "build": { "type": "object" },
+        "ledger": { "type": "object" },
+        "clusters": { "type": "array" },
+        "environmentIterations": { "type": "array" },
+        "chart": { "type": "object" },
+        "values": { "type": "object" },
+        "failureMechanism": { "type": "object" }
+      }
+    },
+    "commandRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "runToken", "scenario", "iteration", "eventSequence", "startedAt", "durationMs", "executable", "args", "exitCode", "signal", "stdout", "stderr", "overflow", "timedOut"],
+      "properties": {
+        "schemaVersion": { "const": "t4-slo-command/1" },
+        "runToken": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$" },
+        "scenario": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$" },
+        "iteration": { "type": "integer", "minimum": 0 },
+        "eventSequence": { "type": "integer", "minimum": 0 },
+        "startedAt": { "$ref": "#/$defs/timestamp" },
+        "durationMs": { "type": "number", "minimum": 0 },
+        "executable": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "args": { "type": "array", "maxItems": 128, "items": { "type": "string", "maxLength": 2048 } },
+        "exitCode": { "type": ["integer", "null"] },
+        "signal": { "type": ["string", "null"] },
+        "stdout": { "type": "string", "maxLength": 1048576 },
+        "stderr": { "type": "string", "maxLength": 1048576 },
+        "overflow": { "type": "boolean" },
+        "timedOut": { "type": "boolean" },
+        "recordTruncated": { "const": true }
+      }
+    },
+    "eventRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "runToken", "scenario", "iteration", "sequence", "timestamp", "monotonicOffsetMs", "kind", "payload"],
+      "properties": {
+        "schemaVersion": { "const": "t4-slo-event/1" },
+        "runToken": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$" },
+        "scenario": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$" },
+        "iteration": { "type": "integer", "minimum": 1 },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "timestamp": { "$ref": "#/$defs/timestamp" },
+        "monotonicOffsetMs": { "type": "integer", "minimum": 0 },
+        "kind": { "enum": ["boundary-start", "boundary-end", "proof", "cleanup"] },
+        "payload": { "type": "object" }
+      }
+    },
+    "identifier": { "type": "string", "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$", "maxLength": 63 },
+    "timestamp": { "type": "string", "format": "date-time", "maxLength": 40 },
+    "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "artifactPath": {
+      "type": "string",
+      "pattern": "^artifacts/cluster-slo/(?!.*(?:/\\.\\.?/|/\\.\\.?$))[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$",
+      "maxLength": 288
+    },
+    "unit": { "enum": ["seconds", "milliseconds", "count", "ratio"] },
+    "statistic": { "enum": ["min", "median", "mean", "p95", "p99", "max", "sum"] },
+    "comparator": { "enum": ["at-most", "at-least"] },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "commit", "chart"],
+      "properties": {
+        "repository": { "const": "usr-bin-roygbiv/t4-code" },
+        "commit": {
+          "description": "Exact source commit the measured artifacts were built from. Null only while every observation is unmeasured.",
+          "oneOf": [{ "$ref": "#/$defs/commit" }, { "type": "null" }]
+        },
+        "chart": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "version", "appVersion"],
+          "properties": {
+            "name": { "const": "t4-cluster" },
+            "version": { "type": "string", "maxLength": 32 },
+            "appVersion": { "type": "string", "maxLength": 32 }
+          }
+        }
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "flags", "provenanceMode", "platform", "architecture"],
+      "properties": {
+        "mode": { "enum": ["production", "release", "profiling", "ci", "local"] },
+        "flags": {
+          "type": "array",
+          "maxItems": 64,
+          "items": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "uniqueItems": true
+        },
+        "provenanceMode": { "const": "buildkit-content" },
+        "platform": { "const": "linux" },
+        "architecture": { "enum": ["amd64", "arm64"] }
+      }
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["component", "reference", "digest"],
+      "properties": {
+        "component": { "enum": ["controller", "cluster-server", "session-runtime"] },
+        "reference": {
+          "oneOf": [
+            { "type": "string", "pattern": "^[a-z0-9.-]+(?::[0-9]+)?/[a-z0-9._/-]+(?:@sha256:[0-9a-f]{64})?$", "maxLength": 340 },
+            { "type": "null" }
+          ]
+        },
+        "digest": { "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "reference": { "type": "null" } }, "required": ["reference"] },
+          "then": { "properties": { "digest": { "type": "null" } } },
+          "else": { "properties": { "digest": { "$ref": "#/$defs/digest" } } }
+        }
+      ]
+    },
+    "clusterFingerprint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kubernetesVersion", "clusterUid", "nodes", "storageClasses", "csiDrivers", "workspacePvcAccessModes", "runtimePvcAccessModes", "release"],
+      "properties": {
+        "kubernetesVersion": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "clusterUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "nodes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4096,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["uid", "name", "architecture", "allocatableCpu", "allocatableMemory"],
+            "properties": {
+              "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+              "name": { "type": "string", "minLength": 1, "maxLength": 253 },
+              "architecture": { "enum": ["amd64", "arm64"] },
+              "allocatableCpu": { "type": "string", "minLength": 1, "maxLength": 64 },
+              "allocatableMemory": { "type": "string", "minLength": 1, "maxLength": 64 }
+            }
+          }
+        },
+        "storageClasses": {
+          "type": "array",
+          "maxItems": 4096,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "provisioner"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1, "maxLength": 253 },
+              "provisioner": { "type": "string", "minLength": 1, "maxLength": 253 }
+            }
+          }
+        },
+        "csiDrivers": {
+          "type": "array",
+          "maxItems": 4096,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 253 }
+        },
+        "workspacePvcAccessModes": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+        },
+        "runtimePvcAccessModes": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+        },
+        "release": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "revision", "features", "imagePrePull"],
+          "properties": {
+            "name": { "$ref": "#/$defs/identifier" },
+            "revision": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
+            "features": {
+              "type": "object",
+              "maxProperties": 128,
+              "propertyNames": { "pattern": "^T4_FEATURE_[A-Z0-9_]{1,100}$" },
+              "additionalProperties": { "type": "string", "maxLength": 2048 }
+            },
+            "imagePrePull": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "environmentFingerprint": {
+      "oneOf": [
+        { "$ref": "#/$defs/clusterFingerprint" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["contexts"],
+          "properties": {
+            "contexts": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 10000,
+              "uniqueItems": true,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["context", "fingerprint"],
+                "properties": {
+                  "context": { "type": "string", "minLength": 1, "maxLength": 512 },
+                  "fingerprint": { "$ref": "#/$defs/clusterFingerprint" }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kubernetesVersion", "nodeCount", "nodeDescription", "storageDriver", "workspaceStorageClass", "runtimeStateStorageClass", "runtimeStateAccessMode", "imagePrePulled", "fingerprint"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "kubernetesVersion": { "type": "string", "maxLength": 32 },
+        "nodeCount": { "type": "integer", "minimum": 1, "maximum": 4096 },
+        "nodeDescription": { "$ref": "#/$defs/prose" },
+        "storageDriver": { "type": "string", "maxLength": 253 },
+        "workspaceStorageClass": { "type": "string", "maxLength": 253 },
+        "runtimeStateStorageClass": { "type": "string", "maxLength": 253 },
+        "runtimeStateAccessMode": { "enum": ["ReadWriteOncePod", "ReadWriteOnce"] },
+        "imagePrePulled": { "type": "boolean" },
+        "fingerprint": { "oneOf": [{ "$ref": "#/$defs/environmentFingerprint" }, { "type": "null" }] }
+      }
+    },
+    "target": {
+      "description": "A declared objective. value may be null while the objective has been named but no number has been agreed; that is not a failure, it is an unset target.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "scenario", "metric", "statistic", "comparator", "value", "unit", "status", "rationale"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "scenario": { "$ref": "#/$defs/prose" },
+        "metric": { "$ref": "#/$defs/prose" },
+        "statistic": { "$ref": "#/$defs/statistic" },
+        "comparator": { "$ref": "#/$defs/comparator" },
+        "value": { "oneOf": [{ "type": "number", "minimum": 0 }, { "type": "null" }] },
+        "unit": { "$ref": "#/$defs/unit" },
+        "status": { "enum": ["set", "unset"] },
+        "rationale": { "$ref": "#/$defs/prose" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "set" } }, "required": ["status"] },
+          "then": { "properties": { "value": { "type": "number" } } },
+          "else": { "properties": { "value": { "type": "null" } } }
+        },
+        {
+          "if": { "properties": { "unit": { "const": "count" } }, "required": ["unit"] },
+          "then": { "properties": { "statistic": { "const": "sum" } } },
+          "else": { "properties": { "value": { "oneOf": [{ "type": "number", "exclusiveMinimum": 0 }, { "type": "null" }] } } }
+        }
+      ]
+    },
+    "observation": {
+      "description": "What actually happened. 'unmeasured' is the honest default and forbids every result field.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetId", "status", "harness"],
+      "properties": {
+        "targetId": { "$ref": "#/$defs/identifier" },
+        "status": { "enum": ["measured", "unmeasured"] },
+        "harness": { "type": "string", "maxLength": 256 },
+        "reason": { "$ref": "#/$defs/prose" },
+        "blockedBy": { "type": "string", "maxLength": 64 },
+        "environmentId": { "$ref": "#/$defs/identifier" },
+        "observedAt": { "$ref": "#/$defs/timestamp" },
+        "iterations": { "type": "integer", "minimum": 5, "maximum": 10000 },
+        "timeoutSeconds": { "type": "number", "exclusiveMinimum": 0, "maximum": 86400 },
+        "statistic": { "$ref": "#/$defs/statistic" },
+        "value": { "type": "number", "minimum": 0 },
+        "unit": { "$ref": "#/$defs/unit" },
+        "failures": { "const": 0 },
+        "rawArtifact": {
+          "description": "Cryptographic identity of run-manifest.json, whose exact file set binds samples.tsv, identity.json, and commands.jsonl from one canonical run directory.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256", "bytes"],
+          "properties": {
+            "path": {
+              "allOf": [
+                { "$ref": "#/$defs/artifactPath" },
+                { "pattern": "/run-manifest\\.json$" }
+              ]
+            },
+            "sha256": { "$ref": "#/$defs/sha256" },
+            "bytes": { "type": "integer", "minimum": 1, "maximum": 67108864 }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "measured" } }, "required": ["status"] },
+          "then": {
+            "required": [
+              "environmentId",
+              "observedAt",
+              "iterations",
+              "timeoutSeconds",
+              "statistic",
+              "value",
+              "unit",
+              "failures",
+              "rawArtifact"
+            ]
+          },
+          "else": {
+            "required": ["reason", "blockedBy"],
+            "not": {
+              "anyOf": [
+                { "required": ["value"] },
+                { "required": ["observedAt"] },
+                { "required": ["iterations"] },
+                { "required": ["statistic"] },
+                { "required": ["rawArtifact"] },
+                { "required": ["environmentId"] },
+                { "required": ["timeoutSeconds"] },
+                { "required": ["unit"] },
+                { "required": ["failures"] }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

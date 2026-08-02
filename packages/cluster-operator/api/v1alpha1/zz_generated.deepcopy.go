@@ -47,8 +47,52 @@ func (in *T4ClusterHostList) DeepCopy() *T4ClusterHostList {
 
 func (in *T4ClusterHostList) DeepCopyObject() runtime.Object { return in.DeepCopy() }
 
+func (in *StorageCapabilities) DeepCopyInto(out *StorageCapabilities) {
+	*out = *in
+	in.ObservedAt.DeepCopyInto(&out.ObservedAt)
+}
+
+func (in *StorageCapabilities) DeepCopy() *StorageCapabilities {
+	if in == nil {
+		return nil
+	}
+	out := new(StorageCapabilities)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *RuntimeStateStorageProfile) DeepCopyInto(out *RuntimeStateStorageProfile) {
+	*out = *in
+	out.Size = in.Size.DeepCopy()
+}
+
+func (in *RuntimeStateStorageProfile) DeepCopy() *RuntimeStateStorageProfile {
+	if in == nil {
+		return nil
+	}
+	out := new(RuntimeStateStorageProfile)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *VolumeSnapshotReference) DeepCopyInto(out *VolumeSnapshotReference) {
+	*out = *in
+}
+
+func (in *VolumeSnapshotReference) DeepCopy() *VolumeSnapshotReference {
+	if in == nil {
+		return nil
+	}
+	out := new(VolumeSnapshotReference)
+	in.DeepCopyInto(out)
+	return out
+}
+
 func (in *T4ClusterHostSpec) DeepCopyInto(out *T4ClusterHostSpec) {
 	*out = *in
+	if in.RuntimeStateStorageProfile != nil {
+		out.RuntimeStateStorageProfile = in.RuntimeStateStorageProfile.DeepCopy()
+	}
 	if in.RuntimeProfiles != nil {
 		out.RuntimeProfiles = append([]string(nil), in.RuntimeProfiles...)
 	}
@@ -66,6 +110,9 @@ func (in *T4ClusterHostSpec) DeepCopyInto(out *T4ClusterHostSpec) {
 
 func (in *T4ClusterHostStatus) DeepCopyInto(out *T4ClusterHostStatus) {
 	*out = *in
+	if in.StorageCapabilities != nil {
+		out.StorageCapabilities = in.StorageCapabilities.DeepCopy()
+	}
 	if in.Conditions != nil {
 		out.Conditions = append([]metav1.Condition(nil), in.Conditions...)
 	}
@@ -116,12 +163,22 @@ func (in *T4WorkspaceSpec) DeepCopyInto(out *T4WorkspaceSpec) {
 	if in.Repository != nil {
 		out.Repository = &RepositoryMetadata{RepositoryID: in.Repository.RepositoryID, Ref: in.Repository.Ref, Commit: in.Repository.Commit}
 	}
+	if in.RestoreSnapshotRef != nil {
+		out.RestoreSnapshotRef = in.RestoreSnapshotRef.DeepCopy()
+	}
 	out.Size = in.Size.DeepCopy()
 }
 
 func (in *T4WorkspaceStatus) DeepCopyInto(out *T4WorkspaceStatus) {
 	*out = *in
 	out.Capacity = in.Capacity.DeepCopy()
+	if in.AttachmentCount != nil {
+		value := *in.AttachmentCount
+		out.AttachmentCount = &value
+	}
+	if in.SnapshotRef != nil {
+		out.SnapshotRef = in.SnapshotRef.DeepCopy()
+	}
 	if in.Conditions != nil {
 		out.Conditions = append([]metav1.Condition(nil), in.Conditions...)
 	}
@@ -167,8 +224,35 @@ func (in *T4SessionList) DeepCopy() *T4SessionList {
 
 func (in *T4SessionList) DeepCopyObject() runtime.Object { return in.DeepCopy() }
 
+func (in *IdlePolicy) DeepCopyInto(out *IdlePolicy) {
+	*out = *in
+	if in.IdleSeconds != nil {
+		value := *in.IdleSeconds
+		out.IdleSeconds = &value
+	}
+}
+
+func (in *IdlePolicy) DeepCopy() *IdlePolicy {
+	if in == nil {
+		return nil
+	}
+	out := new(IdlePolicy)
+	in.DeepCopyInto(out)
+	return out
+}
+
 func (in *T4SessionSpec) DeepCopyInto(out *T4SessionSpec) {
 	*out = *in
+	if in.IdlePolicy != nil {
+		out.IdlePolicy = in.IdlePolicy.DeepCopy()
+	}
+	if in.RuntimeStateRestoreSnapshotRef != nil {
+		out.RuntimeStateRestoreSnapshotRef = in.RuntimeStateRestoreSnapshotRef.DeepCopy()
+	}
+	if in.Checkpoint != nil {
+		copy := *in.Checkpoint
+		out.Checkpoint = &copy
+	}
 	if in.InitialPromptSecretRef != nil {
 		copy := *in.InitialPromptSecretRef
 		out.InitialPromptSecretRef = &copy
@@ -180,6 +264,26 @@ func (in *T4SessionSpec) DeepCopyInto(out *T4SessionSpec) {
 
 func (in *T4SessionStatus) DeepCopyInto(out *T4SessionStatus) {
 	*out = *in
+	if in.RuntimeStateCapacity != nil {
+		value := in.RuntimeStateCapacity.DeepCopy()
+		out.RuntimeStateCapacity = &value
+	}
+	if in.RuntimeStateSnapshotRef != nil {
+		out.RuntimeStateSnapshotRef = in.RuntimeStateSnapshotRef.DeepCopy()
+	}
+	if in.Checkpoint != nil {
+		out.Checkpoint = new(CheckpointStatus)
+		*out.Checkpoint = *in.Checkpoint
+		if in.Checkpoint.WorkspaceSnapshotRef != nil {
+			out.Checkpoint.WorkspaceSnapshotRef = in.Checkpoint.WorkspaceSnapshotRef.DeepCopy()
+		}
+		if in.Checkpoint.RuntimeStateSnapshotRef != nil {
+			out.Checkpoint.RuntimeStateSnapshotRef = in.Checkpoint.RuntimeStateSnapshotRef.DeepCopy()
+		}
+		if in.Checkpoint.CompletedAt != nil {
+			out.Checkpoint.CompletedAt = in.Checkpoint.CompletedAt.DeepCopy()
+		}
+	}
 	if in.Conditions != nil {
 		out.Conditions = append([]metav1.Condition(nil), in.Conditions...)
 	}

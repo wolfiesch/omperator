@@ -1,0 +1,1 @@
+{"protocol":"cmux.machine-provider","version":1,"id":"request-hello","capabilities":["machine-lifecycle-v1","workspace-lifecycle-v1","workspace-mirror-authority-v1","durable-notices-v1","connect-external-machine-v1","client-capability-negotiation-v1"],"result":{"provider_id":"omperator","provider_name":"Omperator","negotiated_version":1}}

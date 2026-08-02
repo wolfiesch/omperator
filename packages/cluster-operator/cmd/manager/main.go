@@ -2,7 +2,9 @@ package main
 
 import (
 	"flag"
+	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -75,15 +77,16 @@ func main() {
 		os.Exit(1)
 	}
 	excludedNodes := splitNonempty(os.Getenv("T4_SESSION_EXCLUDED_NODES"))
-	sessionServiceAccount, serverServiceAccount := sessionServiceAccountNames()
+	sessionTokenReviewerRole, serverServiceAccount := sessionIdentityNames()
 	if err := (&controllers.SessionReconciler{
-		Client: manager.GetClient(), APIReader: manager.GetAPIReader(), Scheme: manager.GetScheme(),
-		RuntimeImage:              os.Getenv("T4_SESSION_RUNTIME_IMAGE"),
-		SessionServiceAccountName: sessionServiceAccount,
-		ServerServiceAccountName:  serverServiceAccount,
-		KubernetesAPIAudience:     envOr("T4_KUBERNETES_API_AUDIENCE", controllers.DefaultKubernetesAPIAudience),
-		OMPConfig:                 sessionOMPConfigFromEnv(),
-		ExcludedNodeNames:         excludedNodes,
+		RuntimeLifecycle: &controllers.KubernetesRuntimeLifecycleClient{Reader: manager.GetAPIReader(), Store: manager.GetClient(), HTTP: &http.Client{Timeout: 5 * time.Second}},
+		Client:           manager.GetClient(), APIReader: manager.GetAPIReader(), Scheme: manager.GetScheme(),
+		RuntimeImage:                        os.Getenv("T4_SESSION_RUNTIME_IMAGE"),
+		SessionTokenReviewerClusterRoleName: sessionTokenReviewerRole,
+		ServerServiceAccountName:            serverServiceAccount,
+		KubernetesAPIAudience:               envOr("T4_KUBERNETES_API_AUDIENCE", controllers.DefaultKubernetesAPIAudience),
+		OMPConfig:                           sessionOMPConfigFromEnv(),
+		ExcludedNodeNames:                   excludedNodes,
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
 				corev1.ResourceCPU:    apiresource.MustParse(envOr("T4_SESSION_REQUEST_CPU", "500m")),
@@ -94,8 +97,9 @@ func main() {
 				corev1.ResourceMemory: apiresource.MustParse(envOr("T4_SESSION_LIMIT_MEMORY", "8Gi")),
 			},
 		},
-		SharedMemorySize: apiresource.MustParse(envOr("T4_SESSION_SHM_SIZE", "1Gi")),
-		TemporarySize:    apiresource.MustParse(envOr("T4_SESSION_TEMPORARY_SIZE", "2Gi")),
+		SharedMemorySize:            apiresource.MustParse(envOr("T4_SESSION_SHM_SIZE", "1Gi")),
+		TemporarySize:               apiresource.MustParse(envOr("T4_SESSION_TEMPORARY_SIZE", "2Gi")),
+		RuntimeActivityPollInterval: envSeconds("T4_RUNTIME_ACTIVITY_POLL_SECONDS", 5, 1, 30),
 	}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register T4Session controller")
 		os.Exit(1)
@@ -112,6 +116,14 @@ func main() {
 		ctrl.Log.Error(err, "controller manager stopped")
 		os.Exit(1)
 	}
+}
+
+func envSeconds(name string, fallback, minimum, maximum int) time.Duration {
+	value, err := strconv.Atoi(strings.TrimSpace(os.Getenv(name)))
+	if err != nil || value < minimum || value > maximum {
+		value = fallback
+	}
+	return time.Duration(value) * time.Second
 }
 
 func splitNonempty(value string) []string {
@@ -132,8 +144,8 @@ func sessionOMPConfigFromEnv() controllers.SessionOMPConfig {
 	}
 }
 
-func sessionServiceAccountNames() (string, string) {
-	return envOr("T4_SESSION_SERVICE_ACCOUNT", controllers.DefaultSessionServiceAccount),
+func sessionIdentityNames() (string, string) {
+	return envOr("T4_SESSION_TOKEN_REVIEWER_CLUSTER_ROLE", controllers.DefaultSessionTokenReviewerClusterRole),
 		envOr("T4_CLUSTER_SERVER_SERVICE_ACCOUNT", controllers.DefaultServerServiceAccount)
 }
 

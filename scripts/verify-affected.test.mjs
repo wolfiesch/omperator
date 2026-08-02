@@ -33,8 +33,10 @@ test("selects native proofs for shared host authority changes", () => {
     "official-lifecycle",
     "official-packaged",
     "bridge-continuity",
+    "current-bridge-continuity",
   ]);
-  assert.deepEqual(plan.commands.at(-1)?.requiredEnvironment, ["T4_OMP_SOURCE_DIR"]);
+  assert.deepEqual(plan.commands.at(-2)?.requiredEnvironment, ["T4_OMP_SOURCE_DIR"]);
+  assert.deepEqual(plan.commands.at(-1)?.requiredEnvironment, ["T4_CURRENT_OMP_SOURCE_DIR"]);
 });
 
 test("unknown paths fail closed to the full suite", () => {
@@ -48,6 +50,7 @@ test("unknown paths fail closed to the full suite", () => {
     "official-lifecycle",
     "official-packaged",
     "bridge-continuity",
+    "current-bridge-continuity",
     "ios",
     "android-debug",
     "full-test",
@@ -58,6 +61,8 @@ test("empty changes select no work and formatted plans explain requirements", ()
   assert.deepEqual(ids([]), []);
   const output = formatAffectedPlan(planAffectedVerification(["packages/client/src/index.ts"]));
   assert.match(output, /pnpm test:legacy-bridge-continuity \[requires T4_OMP_SOURCE_DIR\]/u);
+  assert.match(output, /pnpm verify:current-omp-bridge \[requires T4_CURRENT_OMP_SOURCE_DIR\]/u);
+  assert.match(output, /current OMP authority bridge inputs changed/u);
   assert.match(output, /bridge continuity inputs changed/u);
 });
 

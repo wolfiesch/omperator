@@ -236,7 +236,8 @@ export function operationCapabilities(authority: DesktopOperationsAuthority | un
 	if (!authority) return result;
 	for (const [command, method] of Object.entries(OPERATION_METHOD_BY_COMMAND)) {
 		if (command === "term.open") continue;
-		if (typeof authority[method] === "function") result.add(CAPABILITY_BY_COMMAND[command]);
+		const capability = CAPABILITY_BY_COMMAND[command];
+		if (capability && typeof authority[method] === "function") result.add(capability);
 	}
 	if (hasTerminalLifecycle(authority)) {
 		result.add("term.open");
@@ -359,14 +360,24 @@ export class TerminalOwnerRegistry {
 	}
 }
 export class DesktopOperationDispatcher implements OperationCommandHandler {
+	private readonly authority: DesktopOperationsAuthority;
+	private readonly terminalOwners: TerminalOwnerRegistry;
+	private readonly output: ((frame: unknown, owner: TerminalOwner) => void) | undefined;
+	private readonly trace: HostTraceSink | undefined;
+
 	constructor(
-		private readonly authority: DesktopOperationsAuthority,
-		private readonly terminalOwners = new TerminalOwnerRegistry(),
-		private readonly output?: (frame: unknown, owner: TerminalOwner) => void,
-		private readonly trace: HostTraceSink | undefined = process.env.T4_TRACE_COMMANDS === "1"
+		authority: DesktopOperationsAuthority,
+		terminalOwners = new TerminalOwnerRegistry(),
+		output?: (frame: unknown, owner: TerminalOwner) => void,
+		trace: HostTraceSink | undefined = process.env.T4_TRACE_COMMANDS === "1"
 			? line => console.error(line)
 			: undefined,
-	) {}
+	) {
+		this.authority = authority;
+		this.terminalOwners = terminalOwners;
+		this.output = output;
+		this.trace = trace;
+	}
 	hasCommand(command: string): boolean {
 		return commandIsRoutable(this.authority, command);
 	}
@@ -428,12 +439,13 @@ export class DesktopOperationDispatcher implements OperationCommandHandler {
 		const pendingTerminalFrames: unknown[] = [];
 		const operationContext: OperationContext = {
 			...context,
-			expectedRevision: command.expectedRevision,
 			emitTerminalOutput: frame => {
 				if (owner) this.publishTerminalOutput(frame, owner);
 				else pendingTerminalFrames.push(frame);
 			},
 		};
+		if (command.expectedRevision === undefined) delete operationContext.expectedRevision;
+		else operationContext.expectedRevision = command.expectedRevision;
 		try {
 			// `authority-invoke` with no matching `authority-ok` means the command
 			// reached the host and stalled inside the authority, which is the case
@@ -517,14 +529,15 @@ export class DesktopOperationDispatcher implements OperationCommandHandler {
 		connectionId: string,
 		context: Omit<OperationContext, "connectionId" | "sessionId"> & { sessionId: SessionId },
 	): Promise<void> {
-		return this.disconnectConnection(connectionId, {
+		const disconnectedContext: Omit<OperationContext, "connectionId" | "sessionId"> = {
 			hostId: context.hostId,
 			deviceId: context.deviceId,
 			capabilities: context.capabilities,
-			currentRevision: context.currentRevision,
-			expectedRevision: context.expectedRevision,
 			abortSignal: context.abortSignal,
-		});
+		};
+		if (context.currentRevision !== undefined) disconnectedContext.currentRevision = context.currentRevision;
+		if (context.expectedRevision !== undefined) disconnectedContext.expectedRevision = context.expectedRevision;
+		return this.disconnectConnection(connectionId, disconnectedContext);
 	}
 
 	async disconnectConnection(

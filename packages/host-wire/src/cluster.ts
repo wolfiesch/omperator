@@ -190,7 +190,7 @@ function commit(value: unknown, path: string): string {
 }
 function quantity(value: unknown, path: string): string {
 	const result = nonEmptyText(value, path, 32);
-	if (!/^[1-9][0-9]*(?:Ei|Pi|Ti|Gi|Mi|Ki|E|P|T|G|M|K)$/u.test(result)) fail("INVALID_FRAME", "invalid positive Kubernetes storage quantity", path);
+	if (!/^[1-9][0-9]*(?:Ei|Pi|Ti|Gi|Mi|Ki|E|P|T|G|M|K)?$/u.test(result)) fail("INVALID_FRAME", "invalid positive Kubernetes storage quantity", path);
 	return result;
 }
 function canonicalTimestamp(value: unknown, path: string): string {

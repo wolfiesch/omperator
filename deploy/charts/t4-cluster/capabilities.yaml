@@ -1,0 +1,353 @@
+# Chart-advertised capability inventory for the portable t4-cluster chart.
+#
+# This file is the single source of truth for "what does this chart claim to
+# do". Nothing here is a measurement or a performance claim; it is a rendering
+# and lifecycle contract. Every entry names the exact values gates that switch
+# it on and the release-lifecycle scenarios that prove it end to end.
+#
+# Fields:
+#   id            stable kebab-case identifier, also used in scenario evidence
+#   summary       one sentence, no performance or availability claim
+#   optional      false when a working install always has it
+#   adapter       true when it integrates an external system; implies optional
+#   enablingGate  the single values path that switches the capability on, or
+#                 null when the capability is not values-gated. Adapter gates
+#                 must default to a disabled value in values.yaml
+#   valuesGates   every values path that configures the capability
+#   renders       Kubernetes kinds the chart emits for it
+#   scenarios     release-lifecycle scenarios that prove it
+#
+# scripts/cluster-ci/chart-capabilities.mjs fails closed when a capability
+# names a values path the chart does not define, when an adapter defaults to
+# enabled, when a rendered kind appears in no template, when a capability has
+# no proving scenario, or when a declared scenario proves no capability.
+# scripts/cluster-ci/release-lifecycle.sh executes those scenarios.
+schemaVersion: t4-cluster-capabilities/1
+chart: t4-cluster
+
+# Scenario identifiers implemented by scripts/cluster-ci/release-lifecycle.sh.
+scenarios:
+  - id: crd-separate-order
+    summary: CRDs are administered before Helm by the lifecycle runner and every Helm call passes --skip-crds.
+  - id: fresh-install
+    summary: Install into an empty namespace with no prior release, custom resources, or retained storage.
+  - id: additive-upgrade
+    summary: Upgrade an installed release with an additive CRD schema and a new digest set.
+  - id: rollback
+    summary: Roll workloads back to the previous Helm revision while CRDs and custom resources stay installed.
+  - id: retained-state-reinstall
+    summary: Uninstall the release, keep Retain workspaces and CRDs, then reinstall and re-adopt retained storage.
+  - id: clean-uninstall
+    summary: Delete sessions, honour each workspace retention policy, uninstall the release, and account for every remaining object.
+  - id: optional-adapters
+    summary: Prove each optional adapter renders only when explicitly enabled and that the core install never requires it.
+  - id: capability-render-matrix
+    summary: Render every capability's on and off state from the packaged chart and assert the advertised objects.
+
+capabilities:
+  - id: default-off
+    summary: Default values render no controller, gateway, session workload, RBAC, Secret, or network policy.
+    optional: false
+    adapter: false
+    enablingGate: enabled
+    valuesGates: [enabled]
+    renders: []
+    scenarios: [fresh-install, capability-render-matrix]
+
+  - id: separately-ordered-crds
+    summary: The three namespaced CRDs ship in crds/ and are applied, validated, and converged before Helm runs.
+    optional: false
+    adapter: false
+    enablingGate: null
+    valuesGates: []
+    renders: [CustomResourceDefinition]
+    scenarios: [crd-separate-order, fresh-install, additive-upgrade, retained-state-reinstall, clean-uninstall]
+
+  - id: control-plane-workloads
+    summary: Enabled installs render the HA controller and stateless server Deployments with restricted pod security.
+    optional: false
+    adapter: false
+    enablingGate: enabled
+    valuesGates: [enabled, controller.replicas, server.replicas, server.terminationGracePeriodSeconds]
+    renders: [Deployment, Service, PodDisruptionBudget, ServiceAccount, Role, RoleBinding, ClusterRole, ClusterRoleBinding]
+    scenarios: [fresh-install, additive-upgrade, rollback, capability-render-matrix]
+
+  - id: cluster-host-declaration
+    summary: The chart declares one T4ClusterHost naming the reviewed storage classes, runtime profiles, and origins.
+    optional: false
+    adapter: false
+    enablingGate: enabled
+    valuesGates: [enabled, clusterHost.name, clusterHost.runtimeProfiles, clusterHost.allowedOrigins]
+    renders: [T4ClusterHost]
+    scenarios: [fresh-install, retained-state-reinstall, capability-render-matrix]
+
+  - id: image-digest-pinning
+    summary: Every workload image is referenced by immutable digest; a missing digest fails template rendering.
+    optional: false
+    adapter: false
+    enablingGate: null
+    valuesGates:
+      - images.controller.digest
+      - images.server.digest
+      - images.sessionRuntime.digest
+      - images.sshGateway.digest
+      - images.modelGateway.digest
+    renders: []
+    scenarios: [fresh-install, additive-upgrade, rollback, capability-render-matrix]
+
+  - id: image-pull-secrets
+    summary: Existing pull secrets are referenced only when the administrator supplies them; the chart creates none.
+    optional: true
+    adapter: false
+    enablingGate: imagePullSecrets
+    valuesGates: [imagePullSecrets]
+    renders: []
+    scenarios: [optional-adapters, capability-render-matrix]
+
+  - id: kubernetes-api-audience
+    summary: One configurable API audience is used for controller, server, and session-host projected credentials.
+    optional: false
+    adapter: false
+    enablingGate: null
+    valuesGates: [kubernetes.apiAudience]
+    renders: []
+    scenarios: [fresh-install, capability-render-matrix]
+
+  - id: storage-class-selection
+    summary: A backend-neutral administrator-owned RWX workspace class is selected, never provisioned by this chart.
+    optional: false
+    adapter: false
+    enablingGate: null
+    valuesGates: [storage.adminRWXStorageClass]
+    renders: []
+    scenarios: [fresh-install, retained-state-reinstall, capability-render-matrix]
+
+  - id: runtime-state-fencing
+    summary: Runtime authority state uses a separate independently fenced class and an explicit access mode.
+    optional: false
+    adapter: false
+    enablingGate: null
+    valuesGates: [storage.runtimeStateStorageClass, storage.runtimeStateSize, storage.runtimeStateAccessMode]
+    renders: []
+    scenarios: [fresh-install, retained-state-reinstall, capability-render-matrix]
+
+  - id: snapshot-backup-restore
+    summary: A driver-compatible VolumeSnapshotClass enables the quiesced checkpoint and restore procedure.
+    optional: false
+    adapter: false
+    enablingGate: null
+    valuesGates: [storage.volumeSnapshotClass]
+    renders: []
+    scenarios: [retained-state-reinstall, capability-render-matrix]
+
+  - id: admission-limits
+    summary: Bounded active/retained runtime, capacity, resource, GPU, browser, and creation-rate admission limits.
+    optional: false
+    adapter: false
+    enablingGate: null
+    valuesGates:
+      - server.admission.maxActiveRuntimes
+      - server.admission.maxRetainedRuntimes
+      - server.admission.maxWorkspaceCapacityBytes
+      - server.admission.maxCpuMillis
+      - server.admission.maxMemoryBytes
+      - server.admission.maxGpuUnits
+      - server.admission.browserEnabled
+      - server.admission.creationRate.windowSeconds
+      - server.admission.creationRate.burst
+      - server.admission.creationRate.maximumRetryAfterSeconds
+    renders: []
+    scenarios: [fresh-install, additive-upgrade, capability-render-matrix]
+
+  - id: identity-adapters
+    summary: Trusted Tailscale header identity by default, or referenced OIDC/mTLS adapter configuration; never both.
+    optional: false
+    adapter: false
+    enablingGate: null
+    valuesGates:
+      - server.identity.adapters
+      - server.identity.configMapRef.name
+      - server.identity.secretRef.name
+      - server.trustedProxyAddresses
+      - server.trustedProxyCIDRs
+    renders: []
+    scenarios: [fresh-install, additive-upgrade, capability-render-matrix]
+
+  - id: public-api-identity
+    summary: Public REST and omp-app WebSocket identities are explicit values, never inferred from a request.
+    optional: false
+    adapter: false
+    enablingGate: null
+    valuesGates:
+      - server.publicApi.restBaseURL
+      - server.publicApi.ompAppWebSocketURL
+      - server.publicApi.build.version
+      - server.publicApi.build.revision
+      - server.publicApi.build.builtAt
+    renders: []
+    scenarios: [fresh-install, additive-upgrade, capability-render-matrix]
+
+  - id: server-autoscaling
+    summary: Server HorizontalPodAutoscaler bounded by explicit minimum and maximum replicas.
+    optional: true
+    adapter: false
+    enablingGate: server.autoscaling.enabled
+    valuesGates:
+      - server.autoscaling.enabled
+      - server.autoscaling.minReplicas
+      - server.autoscaling.maxReplicas
+      - server.autoscaling.targetCPUUtilizationPercentage
+      - server.autoscaling.targetMemoryUtilizationPercentage
+    renders: [HorizontalPodAutoscaler]
+    scenarios: [optional-adapters, capability-render-matrix]
+
+  - id: session-runtime-configuration
+    summary: Session pods project one administrator-owned credential-free OMP ConfigMap and honour node exclusions.
+    optional: false
+    adapter: false
+    enablingGate: null
+    valuesGates:
+      - session.omp.configMap
+      - session.omp.modelsKey
+      - session.omp.settingsKey
+      - session.nodeExclude
+      - session.sharedMemorySize
+      - session.temporarySize
+    renders: []
+    scenarios: [fresh-install, additive-upgrade, capability-render-matrix]
+
+  - id: network-policy-fail-closed
+    summary: Default-deny NetworkPolicies whose empty destination lists fail closed for every enabled component.
+    optional: true
+    adapter: false
+    enablingGate: networkPolicy.enabled
+    valuesGates:
+      - networkPolicy.enabled
+      - networkPolicy.kubernetesApiCIDRs
+      - networkPolicy.identityProviderCIDRs
+      - networkPolicy.sshIngressCIDRs
+      - networkPolicy.sshBackendCIDRs
+      - networkPolicy.modelRouteCIDRs
+      - networkPolicy.modelGatewayUpstreamCIDRs
+      - networkPolicy.ciProviderCIDRs
+      - networkPolicy.dns.namespaceSelector
+      - networkPolicy.gatewayIngress.namespaceSelector
+      - networkPolicy.observability.namespaceSelector
+    renders: [NetworkPolicy]
+    scenarios: [fresh-install, optional-adapters, capability-render-matrix]
+
+  - id: ssh-gateway
+    summary: Optional SSH front door adapter with existing host-key and authorized-keys Secrets and a drain marker.
+    optional: true
+    adapter: true
+    enablingGate: sshGateway.enabled
+    valuesGates:
+      - sshGateway.enabled
+      - sshGateway.replicas
+      - sshGateway.existingHostKeySecret
+      - sshGateway.existingAuthorizedKeysSecret
+      - sshGateway.existingTrustedCASecret
+      - sshGateway.existingPrincipalsSecret
+      - sshGateway.service.type
+      - sshGateway.service.port
+    renders: [Deployment, Service, PodDisruptionBudget]
+    scenarios: [optional-adapters, capability-render-matrix]
+
+  - id: ssh-gateway-command-handlers
+    summary: Optional provider, relay, attach, and version SSH commands gated on an existing handler module.
+    optional: true
+    adapter: true
+    enablingGate: sshGateway.commands.provider
+    valuesGates:
+      - sshGateway.commands.provider
+      - sshGateway.commands.relay
+      - sshGateway.commands.attach
+      - sshGateway.commands.version
+      - sshGateway.handlerModule
+      - sshGateway.existingProviderAssertionSecret
+      - sshGateway.providerInternalWebSocketURL
+    renders: [NetworkPolicy]
+    scenarios: [optional-adapters, capability-render-matrix]
+
+  - id: ssh-gateway-autoscaling
+    summary: Optional SSH gateway HorizontalPodAutoscaler bounded by explicit minimum and maximum replicas.
+    optional: true
+    adapter: true
+    enablingGate: sshGateway.enabled
+    valuesGates:
+      - sshGateway.enabled
+      - sshGateway.autoscaling.enabled
+      - sshGateway.autoscaling.minReplicas
+      - sshGateway.autoscaling.maxReplicas
+    renders: [HorizontalPodAutoscaler]
+    scenarios: [optional-adapters, capability-render-matrix]
+
+  - id: model-gateway
+    summary: Optional provider-neutral credential boundary; the only chart-managed pod that mounts a provider Secret.
+    optional: true
+    adapter: true
+    enablingGate: modelGateway.enabled
+    valuesGates:
+      - modelGateway.enabled
+      - modelGateway.replicas
+      - modelGateway.upstreamOrigin
+      - modelGateway.allowedPaths
+      - modelGateway.existingSecret
+      - modelGateway.credentialKey
+      - modelGateway.credentialHeader
+      - modelGateway.maxRequestBodyBytes
+      - modelGateway.timeoutMs
+    renders: [Deployment, Service, ServiceAccount, PodDisruptionBudget, NetworkPolicy]
+    scenarios: [optional-adapters, capability-render-matrix]
+
+  - id: image-pre-pull
+    summary: Optional DaemonSet that warms the pinned session-runtime digest on eligible nodes.
+    optional: true
+    adapter: true
+    enablingGate: imagePrePull.enabled
+    valuesGates: [imagePrePull.enabled]
+    renders: [DaemonSet]
+    scenarios: [optional-adapters, capability-render-matrix]
+
+  - id: ingress-tailscale
+    summary: Optional chart-managed Ingress restricted to the tailscale class with an operator-provisioned certificate.
+    optional: true
+    adapter: true
+    enablingGate: ingress.enabled
+    valuesGates: [ingress.enabled, ingress.className, ingress.host, ingress.tls.enabled, ingress.tls.secretName]
+    renders: [Ingress]
+    scenarios: [optional-adapters, capability-render-matrix]
+
+  - id: observability-service-monitor
+    summary: Optional Prometheus Operator ServiceMonitor for controller and server metrics endpoints.
+    optional: true
+    adapter: true
+    enablingGate: observability.serviceMonitor.enabled
+    valuesGates: [observability.serviceMonitor.enabled, observability.serviceMonitor.interval, observability.serviceMonitor.labels]
+    renders: [ServiceMonitor]
+    scenarios: [optional-adapters, capability-render-matrix]
+
+  - id: observability-prometheus-rule
+    summary: Optional Prometheus Operator PrometheusRule carrying the chart's alerting contract.
+    optional: true
+    adapter: true
+    enablingGate: observability.prometheusRule.enabled
+    valuesGates: [observability.prometheusRule.enabled, observability.prometheusRule.labels]
+    renders: [PrometheusRule]
+    scenarios: [optional-adapters, capability-render-matrix]
+
+  - id: ci-provider-reference
+    summary: Optional CI provider reference by existing Secret or short-lived projected audience; no CI system is bundled.
+    optional: true
+    adapter: true
+    enablingGate: woodpecker.configMap
+    valuesGates:
+      - woodpecker.configMap
+      - woodpecker.existingSecret
+      - woodpecker.serviceAccountAudience
+      - woodpecker.tokenExpirationSeconds
+      - woodpecker.baseURLKey
+      - woodpecker.webBaseURLKey
+      - woodpecker.repositoriesKey
+    renders: []
+    scenarios: [optional-adapters, capability-render-matrix]

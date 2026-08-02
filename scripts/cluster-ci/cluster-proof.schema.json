@@ -105,20 +105,39 @@
       }
     },
     "provenanceEvidence": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["path", "sha256", "mode", "signatureVerified"],
-      "properties": {
-        "path": { "$ref": "#/$defs/artifactPath" },
-        "sha256": { "$ref": "#/$defs/sha256" },
-        "mode": { "enum": ["buildkit-content", "cosign-keyless"] },
-        "signatureVerified": { "type": "boolean" }
-      },
-      "allOf": [
+      "oneOf": [
         {
-          "if": { "properties": { "mode": { "const": "cosign-keyless" } } },
-          "then": { "properties": { "signatureVerified": { "const": true } } },
-          "else": { "properties": { "signatureVerified": { "const": false } } }
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256", "mode"],
+          "properties": {
+            "path": { "$ref": "#/$defs/artifactPath" },
+            "sha256": { "$ref": "#/$defs/sha256" },
+            "mode": { "const": "buildkit-content" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256", "mode", "bundle", "certificateIdentity", "certificateIdentityType", "certificateIssuer"],
+          "properties": {
+            "path": { "$ref": "#/$defs/artifactPath" },
+            "sha256": { "$ref": "#/$defs/sha256" },
+            "mode": { "const": "cosign-keyless" },
+            "bundle": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256", "bytes"],
+              "properties": {
+                "path": { "$ref": "#/$defs/artifactPath" },
+                "sha256": { "$ref": "#/$defs/sha256" },
+                "bytes": { "type": "integer", "minimum": 1, "maximum": 67108864 }
+              }
+            },
+            "certificateIdentity": { "const": "https://github.com/wolfiesch/omperator/.github/workflows/ci.yml@refs/heads/main" },
+            "certificateIdentityType": { "const": "uri" },
+            "certificateIssuer": { "const": "https://token.actions.githubusercontent.com" }
+          }
         }
       ]
     },

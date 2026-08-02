@@ -176,7 +176,7 @@ test("upgrade validates proposed schemas, proves served convergence, verifies st
   const servedChecks = log.map((line, index) => ({ line, index })).filter(({ line }) => line.startsWith("validator\tserved\t"));
   const admissionPreflight = findCommand(log, (line) => line.includes("apply") && line.includes("--dry-run=server") && line.includes("testdata/compat"), "converged admission preflight");
   const storageChecks = log.map((line, index) => ({ line, index })).filter(({ line }) => line.startsWith("kubectl\tget\tcrd/") && line.includes("status.storedVersions"));
-  assert.deepEqual(storageChecks.length, 3);
+  assert.deepEqual(storageChecks.length, 6);
   assert.equal(servedChecks.length, 3);
   assert.equal(crdReads.length, 3);
   assert.equal(liveLists.length, 3);
@@ -186,12 +186,15 @@ test("upgrade validates proposed schemas, proves served convergence, verifies st
   assert.ok(proposedPreflight < crdPreflight);
   assert.ok(proposedPreflight < crdReads[0].index);
   assert.ok(crdReads[0].index < liveLists[0].index);
+  assert.ok(crdReads[0].index < storageChecks[0].index && storageChecks[0].index < liveLists[0].index);
   assert.ok(liveLists[0].index < liveValidations[0].index);
   assert.ok(liveValidations[0].index < crdReads[1].index);
   assert.ok(crdReads[1].index < liveLists[1].index);
+  assert.ok(crdReads[1].index < storageChecks[1].index && storageChecks[1].index < liveLists[1].index);
   assert.ok(liveLists[1].index < liveValidations[1].index);
   assert.ok(liveValidations[1].index < crdReads[2].index);
   assert.ok(crdReads[2].index < liveLists[2].index);
+  assert.ok(crdReads[2].index < storageChecks[2].index && storageChecks[2].index < liveLists[2].index);
   assert.ok(liveLists[2].index < liveValidations[2].index);
   assert.ok(liveValidations[2].index < structuralCompatibility);
   assert.ok(structuralCompatibility < patchGeneration[0].index);
@@ -200,8 +203,8 @@ test("upgrade validates proposed schemas, proves served convergence, verifies st
   assert.ok(crdApply < established);
   assert.ok(established < servedChecks[0].index);
   assert.ok(servedChecks.at(-1).index < admissionPreflight);
-  assert.ok(admissionPreflight < storageChecks[0].index);
-  assert.ok(storageChecks.every(({ index }) => index < workload));
+  assert.ok(admissionPreflight < storageChecks[3].index);
+  assert.ok(storageChecks.slice(3).every(({ index }) => index < workload));
   const crdPatches = log.filter((line) => line.startsWith("kubectl\tpatch\tcrd/"));
   assert.equal(crdPatches.length, 6, log.join("\n"));
   assert.ok(crdPatches.every((line) => line.includes("--type=merge") && line.includes("--field-manager=t4-crd-lifecycle") && line.includes("--patch-file=")), log.join("\n"));
@@ -393,6 +396,7 @@ test("an unexpected stored version stops workload rollout", async () => {
   const log = await commands(value.log);
   assert.ok(log.some((line) => line.includes("status.storedVersions")));
   assert.ok(log.every((line) => !line.startsWith("helm\t")), log.join("\n"));
+  assert.ok(log.every((line) => !isClusterMutation(line)), log.join("\n"));
 });
 
 test("force replacement and implicit Helm CRD handling are rejected before cluster access", async () => {

@@ -46,6 +46,9 @@ Do not reach for the full repository gates while iterating. `pnpm check` and
 - Reserve `pnpm test:e2e`, `pnpm test:maintainer`, and the bridge continuity
   gates for changes that touch their subject. They cost minutes and CI already
   selects them from the changed paths.
+- Use `pnpm build:cluster:runtime-local` for local session-runtime images. It
+  reuses exact-head ARM64 images and serializes the expensive Docker build
+  across concurrent agent tasks.
 
 ## Boundaries that still apply
 

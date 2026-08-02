@@ -34,13 +34,18 @@ const (
 	workspacePVCWorkspaceLabel = "cluster.t4.dev/workspace"
 	hostStorageClassIndexField = "t4.workspace.host.storageClassName"
 	workspaceHostRefIndexField = "t4.workspace.spec.hostRef"
+	workspaceSessionRefIndexField = "t4.workspace.session.spec.workspaceRef"
 )
 
 func (r *WorkspaceReconciler) Reconcile(ctx context.Context, request ctrl.Request) (result ctrl.Result, err error) {
+	startedAt := time.Now()
 	var workspace clusterv1alpha1.T4Workspace
 	found := false
 	defer func() {
-		observeReconcile(metricKindWorkspace, request.NamespacedName, workspace.Status.Conditions, conditionObjectPresent(&workspace, found, err), err)
+		observeReconcile(metricKindWorkspace, request.NamespacedName, string(workspace.Status.Phase), conditionObjectPresent(&workspace, found, err), err, startedAt)
+		if found {
+			observeStorageOperation("write", err, workspace.Status.Phase == clusterv1alpha1.InfrastructureFailed, startedAt)
+		}
 	}()
 	if err := r.Get(ctx, request.NamespacedName, &workspace); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
@@ -63,6 +68,12 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, request ctrl.Reques
 		return ctrl.Result{}, err
 	}
 	storageClassName := host.Spec.StorageClassName
+	if workspace.Spec.StorageClassName != "" {
+		if workspace.Spec.StorageClassName != host.Spec.StorageClassName {
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", ReasonStorageClassMismatch, "workspace StorageClass selection is outside the referenced host storage bound")
+		}
+		storageClassName = workspace.Spec.StorageClassName
+	}
 	var storageClass storagev1.StorageClass
 	if err := r.Get(ctx, types.NamespacedName{Name: storageClassName}, &storageClass); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -72,6 +83,23 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, request ctrl.Reques
 	}
 	if !storageClassAllowsRWX(storageClass.Annotations) {
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", ReasonStorageClassNotRWX, fmt.Sprintf("StorageClass %q is not administrator-declared ReadWriteMany", storageClassName))
+	}
+
+	var restoreDataSource *corev1.TypedLocalObjectReference
+	if snapshot := workspace.Spec.RestoreSnapshotRef; snapshot != nil {
+		if host.Spec.RuntimeStateStorageProfile == nil || host.Spec.RuntimeStateStorageProfile.VolumeSnapshotClassName == "" {
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", "SnapshotClassMissing", "workspace restore requires the host VolumeSnapshotClass")
+		}
+		snapshotObject, validateErr := ValidateRestoreSnapshot(ctx, r.Client, workspace.Namespace, snapshot, SnapshotSourceWorkspace, storageClassName, host.Spec.RuntimeStateStorageProfile.VolumeSnapshotClassName, workspace.Spec.AllowCrashConsistentRestore)
+		if validateErr != nil {
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", "RestoreSnapshotInvalid", validateErr.Error())
+		}
+		if validateErr := ValidateWorkspaceRestorePublicID(&workspace, snapshotObject); validateErr != nil {
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", "RestorePublicIDInvalid", validateErr.Error())
+		}
+		restoreDataSource = &corev1.TypedLocalObjectReference{
+			APIGroup: ptr("snapshot.storage.k8s.io"), Kind: "VolumeSnapshot", Name: snapshot.Name,
+		}
 	}
 
 	pvcName := WorkspacePVCName(&workspace)
@@ -94,6 +122,7 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, request ctrl.Reques
 				StorageClassName: &storageClassName,
 				VolumeMode:       &volumeMode,
 				Resources:        corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: workspace.Spec.Size.DeepCopy()}},
+				DataSource:       restoreDataSource,
 			},
 		}
 		if workspace.Spec.RetentionPolicy == clusterv1alpha1.RetentionPolicyDelete {
@@ -122,6 +151,8 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, request ctrl.Reques
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", "PVCNotRWX", "workspace PVC does not request ReadWriteMany")
 	} else if pvcStorageClassName(&pvc) != storageClassName {
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", ReasonStorageClassMismatch, fmt.Sprintf("workspace PVC uses StorageClass %q instead of host-selected %q; data-bearing PVCs are never recreated automatically", pvcStorageClassName(&pvc), storageClassName))
+	} else if !reflect.DeepEqual(pvc.Spec.DataSource, restoreDataSource) {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", "PVCDataSourceMismatch", "workspace PVC snapshot data source differs from the immutable restore request")
 	} else if workspace.Spec.RetentionPolicy == clusterv1alpha1.RetentionPolicyRetain && metav1.IsControlledBy(&pvc, &workspace) {
 		before := pvc.DeepCopy()
 		pvc.OwnerReferences = removeWorkspaceOwnerReference(pvc.OwnerReferences, workspace.UID)
@@ -158,6 +189,11 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, request ctrl.Reques
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", "PVCLost", "workspace PVC lost its volume")
 	}
 
+	attachmentCount, err := r.workspaceAttachmentCount(ctx, &workspace)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
 	original := workspace.Status
 	original.Capacity = workspace.Status.Capacity.DeepCopy()
 	if workspace.Status.Conditions != nil {
@@ -168,6 +204,9 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, request ctrl.Reques
 	workspace.Status.PVCPhase = pvc.Status.Phase
 	capacity := pvc.Status.Capacity[corev1.ResourceStorage]
 	workspace.Status.Capacity = capacity.DeepCopy()
+	workspace.Status.SelectedStorageClassName = storageClassName
+	workspace.Status.FilesystemRoot = WorkspaceFilesystemRoot(&workspace)
+	workspace.Status.AttachmentCount = &attachmentCount
 	meta.SetStatusCondition(&workspace.Status.Conditions, condition("HostReady", metav1.ConditionTrue, "HostResolved", "referenced T4ClusterHost is available", workspace.Generation))
 	meta.SetStatusCondition(&workspace.Status.Conditions, condition("StorageReady", metav1.ConditionTrue, ReasonStorageReady, "RWX StorageClass and workspace PVC are accepted", workspace.Generation))
 	switch pvc.Status.Phase {
@@ -315,10 +354,17 @@ func (r *WorkspaceReconciler) updateWorkspaceFailure(ctx context.Context, worksp
 	if workspace.Status.Conditions != nil {
 		original.Conditions = append([]metav1.Condition(nil), workspace.Status.Conditions...)
 	}
+	attachmentCount, err := r.workspaceAttachmentCount(ctx, workspace)
+	if err != nil {
+		return err
+	}
+	workspace.Status.FilesystemRoot = WorkspaceFilesystemRoot(workspace)
+	workspace.Status.AttachmentCount = &attachmentCount
 	workspace.Status.ObservedGeneration = workspace.Generation
 	workspace.Status.PVCName = ""
 	workspace.Status.PVCPhase = ""
 	workspace.Status.Capacity = apiresource.Quantity{}
+	workspace.Status.SelectedStorageClassName = ""
 	workspace.Status.Phase = clusterv1alpha1.InfrastructureFailed
 	if conditionType == "HostReady" {
 		meta.SetStatusCondition(&workspace.Status.Conditions, condition("HostReady", metav1.ConditionFalse, reason, message, workspace.Generation))
@@ -332,6 +378,40 @@ func (r *WorkspaceReconciler) updateWorkspaceFailure(ctx context.Context, worksp
 		return nil
 	}
 	return r.Status().Update(ctx, workspace)
+}
+
+func WorkspaceFilesystemRoot(workspace *clusterv1alpha1.T4Workspace) string {
+	return stableName("workspace-", workspace.Name, workspace.UID)
+}
+
+func (r *WorkspaceReconciler) workspaceAttachmentCount(ctx context.Context, workspace *clusterv1alpha1.T4Workspace) (int32, error) {
+	var sessions clusterv1alpha1.T4SessionList
+	if err := r.List(ctx, &sessions, client.InNamespace(workspace.Namespace), client.MatchingFields{workspaceSessionRefIndexField: workspace.Name}); err != nil {
+		return 0, err
+	}
+	var count int32
+	for i := range sessions.Items {
+		if sessions.Items[i].DeletionTimestamp.IsZero() {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func workspaceRequestForSession(_ context.Context, object client.Object) []ctrl.Request {
+	session, ok := object.(*clusterv1alpha1.T4Session)
+	if !ok || session.Namespace == "" || session.Spec.WorkspaceRef == "" {
+		return nil
+	}
+	return []ctrl.Request{{NamespacedName: types.NamespacedName{Namespace: session.Namespace, Name: session.Spec.WorkspaceRef}}}
+}
+
+func indexWorkspaceSessionByWorkspaceRef(object client.Object) []string {
+	session, ok := object.(*clusterv1alpha1.T4Session)
+	if !ok || session.Spec.WorkspaceRef == "" {
+		return nil
+	}
+	return []string{session.Spec.WorkspaceRef}
 }
 
 func workspaceRequestsForPVC(_ context.Context, object client.Object) []ctrl.Request {
@@ -416,9 +496,13 @@ func (r *WorkspaceReconciler) SetupWithManager(manager ctrl.Manager) error {
 	if err := manager.GetFieldIndexer().IndexField(context.Background(), &clusterv1alpha1.T4Workspace{}, workspaceHostRefIndexField, indexWorkspaceByHostRef); err != nil {
 		return fmt.Errorf("index T4Workspace by host reference: %w", err)
 	}
+	if err := manager.GetFieldIndexer().IndexField(context.Background(), &clusterv1alpha1.T4Session{}, workspaceSessionRefIndexField, indexWorkspaceSessionByWorkspaceRef); err != nil {
+		return fmt.Errorf("index T4Session by workspace reference for attachment counts: %w", err)
+	}
 	return ctrl.NewControllerManagedBy(manager).
 		For(&clusterv1alpha1.T4Workspace{}).
 		Watches(&clusterv1alpha1.T4ClusterHost{}, handler.EnqueueRequestsFromMapFunc(r.workspaceRequestsForHost)).
+		Watches(&clusterv1alpha1.T4Session{}, handler.EnqueueRequestsFromMapFunc(workspaceRequestForSession)).
 		Watches(&corev1.PersistentVolumeClaim{}, handler.EnqueueRequestsFromMapFunc(workspaceRequestsForPVC)).
 		Watches(&storagev1.StorageClass{}, handler.EnqueueRequestsFromMapFunc(r.workspaceRequestsForStorageClass)).
 		Complete(r)

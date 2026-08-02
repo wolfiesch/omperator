@@ -1,0 +1,53 @@
+# Separately ordered CRDs for Argo CD.
+#
+# Sync wave -1 puts every CustomResourceDefinition ahead of the workload
+# Application, which runs in the default wave 0. The workload Application sets
+# `skipCrds: true`, so Helm never manages a CRD in this topology.
+#
+# This Application performs no additive-compatibility preflight, no live
+# custom-resource enumeration, and no served-schema convergence check. Run
+# `scripts/cluster-ci/crd-lifecycle.sh upgrade -- helm upgrade ... --skip-crds`
+# against the same revision before advancing it for any CRD change.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: t4-cluster-crds
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers: []
+spec:
+  project: t4-cluster
+  source:
+    repoURL: https://git.example.test/t4-code.git
+    # Pin an exact commit. A branch would let the chart, the CRDs, and the
+    # recorded image digest set drift apart between syncs.
+    targetRevision: "0000000000000000000000000000000000000000"
+    path: deploy/charts/t4-cluster/crds
+    directory:
+      recurse: false
+      include: "*.yaml"
+  destination:
+    server: https://kubernetes.default.svc
+    # CRDs are cluster scoped; the namespace only anchors the destination.
+    namespace: t4-system
+  syncPolicy:
+    # Manual sync. Deleting a CRD deletes every T4ClusterHost, T4Workspace, and
+    # T4Session regardless of retention intent, so no automation prunes here.
+    automated: null
+    syncOptions:
+      - ServerSideApply=true
+      - Validate=true
+      - CreateNamespace=false
+      - Prune=false
+      - RespectIgnoreDifferences=true
+    retry:
+      limit: 0
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      # The API server defaults these; reconciling them would fight the cluster.
+      jsonPointers:
+        - /spec/conversion
+        - /status

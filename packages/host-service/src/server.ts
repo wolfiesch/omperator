@@ -97,6 +97,7 @@ import {
 	operationCapabilities,
 	operationFeatures,
 } from "./operations/dispatcher.ts";
+import { previewOperationEvents } from "./operations/preview-events.ts";
 import {
 	ensureSecureSocketDirectory,
 	markerIdentity,
@@ -141,6 +142,9 @@ import { TranscriptSearchError } from "./transcript-search-index.ts";
 import type {
 	AppserverDrainBusy,
 	AppserverDrainResult,
+	AppserverReopenResult,
+	RuntimeActivitySnapshot,
+	RuntimeExternalActivity,
 	AppserverHandle,
 	AppserverOptions,
 	AppserverTestControl,
@@ -866,6 +870,8 @@ export class LocalAppserver implements AppserverHandle {
 		return this.#connections.clients;
 	}
 	#draining = false;
+	#drainPromise?: Promise<AppserverDrainResult>;
+	#explicitQuiescing = false;
 	#inflightMessages = 0;
 	#inflightLifecycleMutations = 0;
 	get #hello() {
@@ -932,6 +938,12 @@ export class LocalAppserver implements AppserverHandle {
 	#logger?: HostLogger;
 	#onOwnerAcquired?: AppserverOptions["onOwnerAcquired"];
 	#trace?: HostTraceSink;
+	#runtimeIdentity: Readonly<{ uid: string; generation: string }>;
+
+	#runtimeActivity?: () => RuntimeExternalActivity;
+	#durableFlush?: () => Promise<void>;
+	#runtimeIngress?: AppserverOptions["runtimeIngress"];
+
 	constructor(options: AppserverOptions = {}) {
 		if (options.testControl && (options.remoteEndpoint || options.remoteListener)) {
 			throw new Error("appserver test control is local-only");
@@ -960,6 +972,10 @@ export class LocalAppserver implements AppserverHandle {
 		this.#remotePolicy = options.remotePolicy;
 		this.#remoteEndpoint = options.remoteEndpoint;
 		this.#remoteResolver = options.remoteResolver;
+		this.#runtimeActivity = options.runtimeActivity;
+		this.#durableFlush = options.durableFlush;
+		this.#runtimeIngress = options.runtimeIngress;
+		this.#runtimeIdentity = options.runtimeIdentity ?? { uid: String(this.hostId), generation: this.epoch };
 		this.#remoteListener = options.remoteListener;
 		this.#remoteEndpointTls = options.remoteEndpointTls;
 		this.#clock = options.clock ?? clock;
@@ -1144,8 +1160,13 @@ export class LocalAppserver implements AppserverHandle {
 			}),
 			unavailable: () => this.#draining || this.#stopping,
 			stopping: () => this.#stopping,
-			tryDrainIfIdle: (expectedHostId, expectedEpoch) =>
-				this.#tryDrainIfIdle(expectedHostId, expectedEpoch),
+			tryDrainIfIdle: (expectedRuntimeUid, expectedGeneration) => {
+				const activity = this.runtimeActivitySnapshot();
+				return expectedRuntimeUid === this.#runtimeIdentity.uid &&
+					expectedGeneration === this.#runtimeIdentity.generation
+					? { state: "busy", activity }
+					: { state: "identity_mismatch", activity };
+			},
 			runLifecycleMutation: async operation => {
 				this.#inflightLifecycleMutations += 1;
 				try {
@@ -1680,6 +1701,20 @@ export class LocalAppserver implements AppserverHandle {
 	}
 	childFor(sessionId: SessionId): ChildHandle | undefined {
 		return this.#supervisors.get(sessionId)?.child();
+	}
+	runtimeActivity(expectedRuntimeUid: string, expectedGeneration: string): RuntimeActivitySnapshot | undefined {
+		if (expectedRuntimeUid !== this.#runtimeIdentity.uid || expectedGeneration !== this.#runtimeIdentity.generation)
+			return undefined;
+		return this.runtimeActivitySnapshot();
+	}
+	drainIfIdle(expectedRuntimeUid: string, expectedGeneration: string): Promise<AppserverDrainResult> {
+		return this.tryDrainIfIdle(expectedRuntimeUid, expectedGeneration);
+	}
+	quiesce(expectedRuntimeUid: string, expectedGeneration: string): Promise<AppserverDrainResult> {
+		return this.tryDrain(expectedRuntimeUid, expectedGeneration, "explicit");
+	}
+	reopen(expectedRuntimeUid: string, expectedGeneration: string): Promise<AppserverReopenResult> {
+		return this.reopenDrain(expectedRuntimeUid, expectedGeneration);
 	}
 	async #command(command: CommandFrame, ws?: AppWs, approved = false): Promise<CommandOutcome> {
 		if (!this.#trace) return this.#commandInner(command, ws, approved);
@@ -2387,7 +2422,10 @@ export class LocalAppserver implements AppserverHandle {
 							operations,
 						}),
 					};
-				} else outcome = { frame: response(this.hostId, command, true, result) };
+				} else outcome = {
+					frame: response(this.hostId, command, true, result),
+					operationEvents: previewOperationEvents(command, result),
+				};
 			} else
 				outcome = {
 					frame: response(this.hostId, command, false, undefined, {
@@ -3572,6 +3610,7 @@ export class LocalAppserver implements AppserverHandle {
 		if (!idempotency) return outcome;
 		const cached: CommandOutcome = { ...outcome };
 		delete cached.attachOutput;
+		delete cached.operationEvents;
 		idempotency.complete(command.commandId, command, cached);
 		return outcome;
 	}
@@ -4068,7 +4107,9 @@ export class LocalAppserver implements AppserverHandle {
 				return;
 			}
 			if (frame.type === "confirm") {
-				await this.#sendFrame(ws, (await this.confirm(ws, frame)).frame);
+				const outcome = await this.confirm(ws, frame);
+				await this.#sendFrame(ws, outcome.frame);
+				await Promise.all((outcome.operationEvents ?? []).map(output => this.#sendFrame(ws, output)));
 				return;
 			}
 			if (frame.type === "terminal.input" || frame.type === "terminal.resize" || frame.type === "terminal.close") {
@@ -4186,6 +4227,7 @@ export class LocalAppserver implements AppserverHandle {
 			}
 			const outcome = await this.#command(frame, ws);
 			const outputFrames = [outcome.frame];
+			outputFrames.push(...(outcome.operationEvents ?? []));
 			if (
 				frame.command === "session.attach" &&
 				frame.sessionId &&
@@ -5058,7 +5100,7 @@ export class LocalAppserver implements AppserverHandle {
 		}
 		await Promise.all(sends);
 	}
-	#emptyDrainBusy(): AppserverDrainBusy {
+	#emptyLegacyDrainBusy(): AppserverDrainBusy {
 		return {
 			connections: 0,
 			inflightMessages: 0,
@@ -5073,7 +5115,7 @@ export class LocalAppserver implements AppserverHandle {
 			outboundSends: 0,
 		};
 	}
-	#drainBusy(): AppserverDrainBusy {
+	#legacyDrainBusy(): AppserverDrainBusy {
 		const now = Date.now();
 		for (const [confirmationId, pending] of this.#challenges)
 			if (pending.expiresAt < now || !this.#clients.has(pending.ws)) this.#challenges.delete(confirmationId);
@@ -5101,23 +5143,167 @@ export class LocalAppserver implements AppserverHandle {
 			outboundSends: this.#outboundTails.size,
 		};
 	}
-	#tryDrainIfIdle(expectedHostId: string, expectedEpoch: string): AppserverDrainResult {
+	#tryLegacyDrainIfIdle(expectedHostId: string, expectedEpoch: string) {
 		const health = { ok: true as const, hostId: this.hostId, epoch: this.epoch };
 		if (expectedHostId !== this.hostId || expectedEpoch !== this.epoch)
-			return { state: "identity_mismatch", health, busy: this.#drainBusy() };
-		if (this.#draining) return { state: "draining", health, busy: this.#emptyDrainBusy() };
+			return { state: "identity_mismatch" as const, health, busy: this.#legacyDrainBusy() };
+		if (this.#draining) return { state: "draining" as const, health, busy: this.#emptyLegacyDrainBusy() };
 		this.#draining = true;
-		const busy = this.#drainBusy();
+		const busy = this.#legacyDrainBusy();
 		if (Object.values(busy).some(count => count > 0)) {
 			this.#draining = false;
-			return { state: "busy", health, busy };
+			return { state: "busy" as const, health, busy };
 		}
-		return { state: "draining", health, busy };
+		return { state: "draining" as const, health, busy };
+	}
+	private runtimeActivitySnapshot(): RuntimeActivitySnapshot {
+		const external = this.#runtimeActivity?.() ?? {};
+		const count = (value: unknown): number =>
+			typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000 ? value : 0;
+		let ompTurns = 0;
+		let ompRetries = 0;
+		let ompCompactions = 0;
+		let jobs = this.#startPromises.size + this.#lifecycleMutations.size + this.#inflightLifecycleMutations + this.#inflightMessages + this.#outboundTails.size;
+		let tasks = 0;
+		let approvals = 0;
+		let uiPending = this.#challenges.size;
+		let bashCommands = 0;
+		let terminalLeases = count(external.terminalLeases);
+		for (const sessionId of this.#records.keys()) {
+			const ref = this.#projections.get(sessionId)?.value.ref;
+			const live = ref?.liveState as Record<string, unknown> | undefined;
+			if (ref?.status === "active" || live?.isStreaming === true) ompTurns += 1;
+			if (live?.isRetrying === true || live?.retrying === true) ompRetries += 1;
+			if (live?.isCompacting === true) ompCompactions += 1;
+			if (this.#supervisors.get(sessionId)?.hasPendingCalls() === true) jobs += 1;
+			tasks += this.#subagents.get(sessionId)?.activeCount() ?? 0;
+			if (ref?.pendingApproval === true || live?.pendingApproval === true) approvals += 1;
+			uiPending += this.#transcripts.get(sessionId)?.pendingUiRequests().length ?? 0;
+			if (this.#operations?.hasOpenTerminals(sessionId)) terminalLeases += 1;
+		}
+		for (const value of this.#inflightSessionOperations.values()) bashCommands += value;
+		const signals = {
+			clients: this.#clients.size,
+			ompTurns,
+			ompRetries,
+			ompCompactions,
+			bashCommands,
+			jobs,
+			tasks,
+			approvals,
+			uiPending,
+			terminalConnections: count(external.terminalConnections),
+			terminalLeases,
+			browserPreviews: count(external.browserPreviews),
+			browserLeases: count(external.browserLeases),
+			gatewayUpstreams: count(external.gatewayUpstreams),
+		};
+		const keepalive = this.#explicitQuiescing ? false : external.keepalive === true;
+		const policy = this.#explicitQuiescing ? "allow-idle-sleep" as const : external.policy === "keep-awake" ? "keep-awake" as const : "allow-idle-sleep" as const;
+		return {
+			schemaVersion: 1,
+			active: keepalive || policy === "keep-awake" || Object.values(signals).some(value => value > 0),
+			keepalive,
+			policy,
+			signals,
+		};
+	}
+	private async tryDrainIfIdle(expectedRuntimeUid: string, expectedGeneration: string): Promise<AppserverDrainResult> {
+		return this.tryDrain(expectedRuntimeUid, expectedGeneration, "idle");
+	}
+	private async tryDrain(expectedRuntimeUid: string, expectedGeneration: string, mode: "idle" | "explicit"): Promise<AppserverDrainResult> {
+		const before = this.runtimeActivitySnapshot();
+		if (expectedRuntimeUid !== this.#runtimeIdentity.uid || expectedGeneration !== this.#runtimeIdentity.generation)
+			return { state: "identity_mismatch", activity: before };
+		if (this.#drainPromise) return await this.#drainPromise;
+		const drain = this.performDrain(mode);
+		this.#drainPromise = drain;
+		const result = await drain;
+		if (result.state !== "drained") {
+			this.#drainPromise = undefined;
+		}
+		return result;
+	}
+	private async reopenDrain(expectedRuntimeUid: string, expectedGeneration: string): Promise<AppserverReopenResult> {
+		const generation = this.#runtimeIdentity.generation;
+		if (expectedRuntimeUid !== this.#runtimeIdentity.uid || expectedGeneration !== generation)
+			return { state: "identity_mismatch", generation };
+		const drain = this.#drainPromise;
+		if (!drain) return { state: "already_reopened", generation };
+		const result = await drain;
+		if (result.state !== "drained" || this.#drainPromise !== drain)
+			return { state: "not_drained", generation };
+		this.#drainPromise = undefined;
+		this.rollbackDrain();
+		return { state: "reopened", generation };
+	}
+	private rollbackDrain(): void {
+		this.#runtimeIngress?.rollbackDrain();
+		this.#explicitQuiescing = false;
+		this.#draining = false;
+	}
+	private async quiesceRuntime(): Promise<void> {
+		this.#challenges.clear();
+		await Promise.all([...this.#clients].map(async ws => {
+			for (const controller of this.#abortControllers.get(ws) ?? []) controller.abort();
+			await this.disconnectClient(ws);
+			ws.close(1001, "runtime quiescing");
+		}));
+		await this.#runtimeIngress?.quiesce();
+		for (const sessionId of this.#records.keys())
+			if (!(await this.quiesceSessionRuntime(sessionId))) throw new Error("session runtime did not quiesce");
+		const deadline = Date.now() + this.#lifecycleQuiesceTimeoutMs;
+		while (this.runtimeActivitySnapshot().active && Date.now() < deadline)
+			await Bun.sleep(10);
+	}
+	private async performDrain(mode: "idle" | "explicit"): Promise<AppserverDrainResult> {
+		this.#draining = true;
+		this.#explicitQuiescing = mode === "explicit";
+		try {
+			this.#runtimeIngress?.beginDrain(mode);
+		} catch {
+			this.rollbackDrain();
+			return { state: "flush_failed", activity: this.runtimeActivitySnapshot() };
+		}
+		if (mode === "explicit") {
+			try {
+				await this.quiesceRuntime();
+			} catch {
+				this.rollbackDrain();
+				return { state: "busy", activity: this.runtimeActivitySnapshot() };
+			}
+		}
+		const activity = this.runtimeActivitySnapshot();
+		if (activity.active) {
+			this.rollbackDrain();
+			return { state: "busy", activity };
+		}
+		try {
+			await this.#durableFlush?.();
+		} catch {
+			this.rollbackDrain();
+			return { state: "flush_failed", activity: this.runtimeActivitySnapshot() };
+		}
+		const finalActivity = this.runtimeActivitySnapshot();
+		if (finalActivity.active) {
+			this.rollbackDrain();
+			return { state: "busy", activity: finalActivity };
+		}
+		return {
+			state: "drained",
+			activity: finalActivity,
+			shutdownAck: { schemaVersion: 1, generation: this.#runtimeIdentity.generation, durable: true },
+		};
 	}
 	private async fetch(request: Request, server: Bun.Server<ServerWebSocketData>): Promise<Response | undefined> {
+		const url = new URL(request.url);
+		if (url.pathname === "/admin/drain-if-idle") return this.#adminDrainIfIdle(request);
+		if (url.pathname === "/admin/runtime-activity") return this.adminRuntimeActivity(request);
+		if (url.pathname === "/admin/quiesce") return this.#adminQuiesce(request);
+		if (url.pathname === "/admin/reopen") return this.#adminReopen(request);
 		const routed = await this.#adminRouter.route(request);
 		if (routed) return routed;
-		const url = new URL(request.url);
+
 		if (
 			url.pathname !== "/ws" ||
 			request.method !== "GET" ||
@@ -5127,6 +5313,110 @@ export class LocalAppserver implements AppserverHandle {
 		if (this.#draining || this.#stopping) return new Response("Service Unavailable", { status: 503 });
 		if (server.upgrade(request, { data: { socket: {} } })) return undefined;
 		return new Response("Upgrade Required", { status: 426 });
+	}
+	private adminError(status = 400): Response {
+		return Response.json({ error: "invalid admin request" }, { status });
+	}
+	private async adminJson(request: Request, keys: readonly string[]): Promise<Record<string, unknown> | Response> {
+		if (request.method !== "POST" || request.headers.get("content-type") !== "application/json")
+			return this.adminError(405);
+		const length = request.headers.get("content-length");
+		if (length !== null && (!/^\d+$/u.test(length) || Number(length) > 16_384)) return this.adminError(413);
+		let bytes: ArrayBuffer;
+		try {
+			bytes = await request.arrayBuffer();
+		} catch {
+			return this.adminError();
+		}
+		if (bytes.byteLength > 16_384) return this.adminError(413);
+		let value: unknown;
+		try {
+			value = JSON.parse(new TextDecoder().decode(bytes));
+		} catch {
+			return this.adminError();
+		}
+		if (!value || typeof value !== "object" || Array.isArray(value)) return this.adminError();
+		const body = value as Record<string, unknown>;
+		if (Object.keys(body).some(key => !keys.includes(key))) return this.adminError();
+		return body;
+	}
+	async #adminDrainIfIdle(request: Request): Promise<Response> {
+		if (this.#stopping) return this.adminError(503);
+		const body = await this.adminJson(request, [
+			"expectedRuntimeUid",
+			"expectedGeneration",
+			"expectedHostId",
+			"expectedEpoch",
+		]);
+		if (body instanceof Response) return body;
+		if (this.#stopping) return this.adminError(503);
+		if (body.expectedHostId !== undefined || body.expectedEpoch !== undefined) {
+			if (
+				body.expectedRuntimeUid !== undefined ||
+				body.expectedGeneration !== undefined ||
+				typeof body.expectedHostId !== "string" ||
+				body.expectedHostId.length === 0 ||
+				body.expectedHostId.length > 1024 ||
+				typeof body.expectedEpoch !== "string" ||
+				body.expectedEpoch.length === 0 ||
+				body.expectedEpoch.length > 1024
+			)
+				return this.adminError();
+			return Response.json(this.#tryLegacyDrainIfIdle(body.expectedHostId, body.expectedEpoch));
+		}
+		if (
+			typeof body.expectedRuntimeUid !== "string" ||
+			body.expectedRuntimeUid.length === 0 ||
+			body.expectedRuntimeUid.length > 256 ||
+			typeof body.expectedGeneration !== "string" ||
+			body.expectedGeneration.length === 0 ||
+			body.expectedGeneration.length > 128
+		)
+			return this.adminError();
+		return Response.json(await this.tryDrainIfIdle(body.expectedRuntimeUid, body.expectedGeneration));
+	}
+	private async adminRuntimeActivity(request: Request): Promise<Response> {
+		if (this.#stopping) return this.adminError(503);
+		const body = await this.adminJson(request, ["expectedRuntimeUid", "expectedGeneration"]);
+		if (body instanceof Response) return body;
+		if (
+			typeof body.expectedRuntimeUid !== "string" ||
+			typeof body.expectedGeneration !== "string" ||
+			body.expectedRuntimeUid !== this.#runtimeIdentity.uid ||
+			body.expectedGeneration !== this.#runtimeIdentity.generation
+		)
+			return this.adminError(403);
+		return Response.json(this.runtimeActivitySnapshot());
+	}
+	async #adminQuiesce(request: Request): Promise<Response> {
+		if (this.#stopping) return this.adminError(503);
+		const body = await this.adminJson(request, ["expectedRuntimeUid", "expectedGeneration"]);
+		if (body instanceof Response) return body;
+		if (
+			typeof body.expectedRuntimeUid !== "string" ||
+			body.expectedRuntimeUid.length === 0 ||
+			body.expectedRuntimeUid.length > 256 ||
+			typeof body.expectedGeneration !== "string" ||
+			body.expectedGeneration.length === 0 ||
+			body.expectedGeneration.length > 128
+		)
+			return this.adminError();
+		return Response.json(await this.tryDrain(body.expectedRuntimeUid, body.expectedGeneration, "explicit"));
+	}
+	async #adminReopen(request: Request): Promise<Response> {
+		if (this.#stopping) return this.adminError(503);
+		const body = await this.adminJson(request, ["expectedRuntimeUid", "expectedGeneration"]);
+		if (body instanceof Response) return body;
+		if (
+			typeof body.expectedRuntimeUid !== "string" ||
+			body.expectedRuntimeUid.length === 0 ||
+			body.expectedRuntimeUid.length > 256 ||
+			typeof body.expectedGeneration !== "string" ||
+			body.expectedGeneration.length === 0 ||
+			body.expectedGeneration.length > 128
+		)
+			return this.adminError();
+		return Response.json(await this.reopenDrain(body.expectedRuntimeUid, body.expectedGeneration));
 	}
 	async #quiesceTestSessions(control: AppserverTestControl, runId: string): Promise<void> {
 		for (const id of await control.sessionIds(runId)) {

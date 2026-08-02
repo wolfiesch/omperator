@@ -2679,8 +2679,8 @@ validate_absolute_roots() {
 }
 
 main() {
-  validate_absolute_roots
   require_date_command
+  validate_absolute_roots
   require_command flock
   require_command "$GH"
   require_command "$CURL"

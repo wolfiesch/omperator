@@ -1,0 +1,1 @@
+{"protocol":"cmux.machine-provider","version":1,"id":"request-hello","method":"hello","params":{"token":"fixture-provider-generation-token","client":{"name":"cmux-tui","version":"fixture","supported_versions":[1]}}}

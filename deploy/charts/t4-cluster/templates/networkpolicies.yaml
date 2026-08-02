@@ -45,6 +45,13 @@ spec:
       app.kubernetes.io/component: controller
   policyTypes: [Egress]
   egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: t4-session-runtime
+              app.kubernetes.io/part-of: t4-cluster
+      ports:
+        - {protocol: TCP, port: 8788}
     {{- range .Values.networkPolicy.kubernetesApiCIDRs }}
     - to:
         - ipBlock: {cidr: {{ . | quote }}}
@@ -73,12 +80,19 @@ spec:
               app.kubernetes.io/part-of: t4-cluster
       ports:
         - {protocol: TCP, port: 8787}
+        - {protocol: TCP, port: 8788}
     {{- range .Values.networkPolicy.kubernetesApiCIDRs }}
     - to:
         - ipBlock: {cidr: {{ . | quote }}}
       ports:
         - {protocol: TCP, port: 443}
         - {protocol: TCP, port: 6443}
+    {{- end }}
+    {{- range .Values.networkPolicy.identityProviderCIDRs }}
+    - to:
+        - ipBlock: {cidr: {{ . | quote }}}
+      ports:
+        - {protocol: TCP, port: 443}
     {{- end }}
     {{- if .Values.networkPolicy.ciProviderPorts }}
     {{- range .Values.networkPolicy.ciProviderCIDRs }}
@@ -105,6 +119,70 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "ssh-ingress") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "t4-cluster.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ssh-gateway
+  policyTypes: [Ingress]
+  ingress:
+    {{- range .Values.networkPolicy.sshIngressCIDRs }}
+    - from:
+        - ipBlock: {cidr: {{ . | quote }}}
+      ports:
+        - {protocol: TCP, port: 2222}
+    {{- end }}
+---
+{{- if and .Values.sshGateway.enabled (or .Values.sshGateway.commands.provider .Values.sshGateway.commands.relay .Values.sshGateway.commands.attach) }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "ssh-egress") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "t4-cluster.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ssh-gateway
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "t4-cluster.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: server
+      ports:
+        - {protocol: TCP, port: 8080}
+    {{- if .Values.networkPolicy.sshBackendPorts }}
+    {{- range .Values.networkPolicy.sshBackendCIDRs }}
+    - to:
+        - ipBlock: {cidr: {{ . | quote }}}
+      ports:
+        {{- range $.Values.networkPolicy.sshBackendPorts }}
+        - {protocol: TCP, port: {{ . }}}
+        {{- end }}
+    {{- end }}
+    {{- if and (not (empty .Values.networkPolicy.sshBackend.namespaceSelector)) (not (empty .Values.networkPolicy.sshBackend.podSelector)) }}
+    - to:
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.sshBackend.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml .Values.networkPolicy.sshBackend.podSelector | nindent 12 }}
+      ports:
+        {{- range .Values.networkPolicy.sshBackendPorts }}
+        - {protocol: TCP, port: {{ . }}}
+        {{- end }}
+    {{- end }}
+    {{- end }}
+{{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
   name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "session-host") | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
@@ -122,6 +200,14 @@ spec:
               app.kubernetes.io/component: server
       ports:
         - {protocol: TCP, port: 8787}
+        - {protocol: TCP, port: 8788}
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "t4-cluster.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: controller
+      ports:
+        - {protocol: TCP, port: 8788}
   egress:
     {{- range .Values.networkPolicy.kubernetesApiCIDRs }}
     - to:
@@ -205,8 +291,8 @@ spec:
       {{- include "t4-cluster.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: server
   policyTypes: [Ingress]
-  {{- if and (not (empty .Values.networkPolicy.gatewayIngress.namespaceSelector)) (not (empty .Values.networkPolicy.gatewayIngress.podSelector)) }}
   ingress:
+    {{- if and (not (empty .Values.networkPolicy.gatewayIngress.namespaceSelector)) (not (empty .Values.networkPolicy.gatewayIngress.podSelector)) }}
     - from:
         - namespaceSelector:
             {{- toYaml .Values.networkPolicy.gatewayIngress.namespaceSelector | nindent 12 }}
@@ -214,9 +300,19 @@ spec:
             {{- toYaml .Values.networkPolicy.gatewayIngress.podSelector | nindent 12 }}
       ports:
         - {protocol: TCP, port: 8080}
-  {{- else }}
-  ingress: []
-  {{- end }}
+    {{- end }}
+    {{- if and .Values.sshGateway.enabled (or .Values.sshGateway.commands.provider .Values.sshGateway.commands.relay .Values.sshGateway.commands.attach) }}
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "t4-cluster.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: ssh-gateway
+      ports:
+        - {protocol: TCP, port: 8080}
+    {{- end }}
+    {{- if and (or (not .Values.sshGateway.enabled) (not (or .Values.sshGateway.commands.provider .Values.sshGateway.commands.relay .Values.sshGateway.commands.attach))) (or (empty .Values.networkPolicy.gatewayIngress.namespaceSelector) (empty .Values.networkPolicy.gatewayIngress.podSelector)) }}
+    []
+    {{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

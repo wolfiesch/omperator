@@ -234,9 +234,11 @@ func TestSessionNamesProduceSafeRuntimeIdentities(t *testing.T) {
 			for _, env := range pod.Spec.Containers[0].Env {
 				values[env.Name] = env.Value
 			}
-			stateID := strings.TrimPrefix(pod.Name, "t4-session-")
-			if len(stateID) > 63 || len(utilvalidation.IsDNS1123Label(stateID)) != 0 || values["T4_SESSION_NAME"] != stateID || values["T4_SESSION_STATE_ID"] != stateID {
-				t.Fatalf("runtime identity = name %q state %q, want safe state ID %q", values["T4_SESSION_NAME"], values["T4_SESSION_STATE_ID"], stateID)
+			cmuxName := controllers.SessionCmuxName(session)
+			stateID := controllers.RuntimeStateFilesystemRoot(session)
+			if len(stateID) > 63 || len(utilvalidation.IsDNS1123Label(stateID)) != 0 ||
+				values["T4_SESSION_NAME"] != cmuxName || values["T4_RUNTIME_ID"] != stateID || values["T4_SESSION_STATE_ID"] != stateID {
+				t.Fatalf("runtime identity = name %q runtime %q state %q, want cmux %q and safe state ID %q", values["T4_SESSION_NAME"], values["T4_RUNTIME_ID"], values["T4_SESSION_STATE_ID"], cmuxName, stateID)
 			}
 		})
 	}
@@ -287,32 +289,54 @@ func TestSessionWaitsForBoundRWXThenCreatesExactlyOnePodAndService(t *testing.T)
 	if pod.Spec.AutomountServiceAccountToken == nil || *pod.Spec.AutomountServiceAccountToken {
 		t.Fatal("session pod must disable automatic ServiceAccount token mounting")
 	}
-	if pod.Spec.Containers[0].Image != r.RuntimeImage {
-		t.Fatalf("controller did not use administrator-owned runtime image: %q", pod.Spec.Containers[0].Image)
+	if len(pod.Spec.Containers) != 3 {
+		t.Fatalf("session pod containers = %d, want authority, shell, and credential broker", len(pod.Spec.Containers))
 	}
-	if pod.Spec.Containers[0].SecurityContext == nil || pod.Spec.Containers[0].SecurityContext.Privileged != nil && *pod.Spec.Containers[0].SecurityContext.Privileged {
-		t.Fatal("session runtime is not restricted")
+	authority := pod.Spec.Containers[0]
+	shell := pod.Spec.Containers[1]
+	credential := pod.Spec.Containers[2]
+	if authority.Image != r.RuntimeImage || shell.Image != r.RuntimeImage || credential.Image != r.RuntimeImage {
+		t.Fatalf("controller did not use administrator-owned runtime image: %#v", pod.Spec.Containers)
 	}
-	if !hasMount(pod.Spec.Containers[0].VolumeMounts, "workspace", "/workspace") ||
-		!hasMount(pod.Spec.Containers[0].VolumeMounts, "shared-memory", "/dev/shm") ||
-		!hasReadOnlyMount(pod.Spec.Containers[0].VolumeMounts, "omp-config-source", "/run/t4-omp-config-source") {
-		t.Fatalf("session mounts = %#v", pod.Spec.Containers[0].VolumeMounts)
+	if authority.SecurityContext == nil || authority.SecurityContext.Privileged != nil && *authority.SecurityContext.Privileged {
+		t.Fatal("session authority is not restricted")
 	}
-	if pod.Spec.ServiceAccountName != controllers.DefaultSessionServiceAccount {
+	if !hasMount(authority.VolumeMounts, "workspace", "/workspace") ||
+		!hasMount(authority.VolumeMounts, "runtime-state", "/runtime-state") ||
+		!hasMount(authority.VolumeMounts, "credential-broker", "/run/t4-credential") ||
+		!hasReadOnlyMount(authority.VolumeMounts, "omp-config-source", "/run/t4-omp-config-source") {
+		t.Fatalf("session authority mounts = %#v", authority.VolumeMounts)
+	}
+	if !hasMount(shell.VolumeMounts, "workspace", "/workspace") ||
+		!hasMount(shell.VolumeMounts, "runtime-state", "/runtime-state") ||
+		!hasMount(shell.VolumeMounts, "shared-memory", "/dev/shm") {
+		t.Fatalf("session shell mounts = %#v", shell.VolumeMounts)
+	}
+	if !hasMount(credential.VolumeMounts, "credential-broker", "/run/t4-credential") ||
+		!hasReadOnlyMount(credential.VolumeMounts, "kubernetes-api-access", "/var/run/secrets/kubernetes.io/serviceaccount") ||
+		!hasReadOnlyMount(credential.VolumeMounts, "generation-auth", "/run/t4-generation-auth") {
+		t.Fatalf("session credential broker mounts = %#v", credential.VolumeMounts)
+	}
+	if pod.Spec.ServiceAccountName != controllers.SessionServiceAccountName(session) {
 		t.Fatalf("session ServiceAccount = %q", pod.Spec.ServiceAccountName)
 	}
 	serverIdentity := ""
 	configSource := ""
-	for i := range pod.Spec.Containers[0].Env {
-		env := &pod.Spec.Containers[0].Env[i]
-		if env.Name == "T4_CLUSTER_SERVER_SERVICE_ACCOUNT" {
-			serverIdentity = env.Value
+	for containerIndex := range pod.Spec.Containers {
+		for envIndex := range pod.Spec.Containers[containerIndex].Env {
+			env := &pod.Spec.Containers[containerIndex].Env[envIndex]
+			if env.Name == "T4_CLUSTER_SERVER_SERVICE_ACCOUNT" {
+				serverIdentity = env.Value
+			}
+			if env.Name == "T4_OMP_CONFIG_SOURCE_DIR" {
+				configSource = env.Value
+			}
+			if env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil {
+				t.Fatalf("session container retained a Secret environment reference: %#v", env)
+			}
 		}
-		if env.Name == "T4_OMP_CONFIG_SOURCE_DIR" {
-			configSource = env.Value
-		}
-		if env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil {
-			t.Fatalf("session runtime retained a Secret environment reference: %#v", env)
+		if len(pod.Spec.Containers[containerIndex].Args) != 0 {
+			t.Fatalf("session container received credential arguments: %#v", pod.Spec.Containers[containerIndex].Args)
 		}
 	}
 	if serverIdentity != controllers.DefaultServerServiceAccount {
@@ -320,21 +344,6 @@ func TestSessionWaitsForBoundRWXThenCreatesExactlyOnePodAndService(t *testing.T)
 	}
 	if configSource != "/run/t4-omp-config-source" {
 		t.Fatalf("OMP preflight source = %q", configSource)
-	}
-	if len(pod.Spec.Containers[0].Args) != 0 {
-		t.Fatalf("session runtime received credential arguments: %#v", pod.Spec.Containers[0].Args)
-	}
-	apiAudience := ""
-	for _, env := range pod.Spec.Containers[0].Env {
-		if env.Name == "T4_KUBERNETES_API_AUDIENCE" {
-			apiAudience = env.Value
-		}
-	}
-	if apiAudience != r.KubernetesAPIAudience {
-		t.Fatalf("reviewer API audience environment = %q", apiAudience)
-	}
-	if !hasMount(pod.Spec.Containers[0].VolumeMounts, "kubernetes-api-access", "/var/run/secrets/kubernetes.io/serviceaccount") {
-		t.Fatal("explicit Kubernetes reviewer projection is not mounted")
 	}
 	var projection *corev1.ProjectedVolumeSource
 	for _, volume := range pod.Spec.Volumes {
@@ -400,7 +409,8 @@ func TestSessionOMPModeOmitsCredentialReferences(t *testing.T) {
 		if len(pod.Spec.Containers[0].Args) != 0 || env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil {
 			t.Fatalf("OMP mode retained a credential reference: %#v", env)
 		}
-		if env.Name == "T4_OMP_ALLOW_UNAUTHENTICATED" || strings.Contains(env.Name, "CREDENTIAL") {
+		if env.Name == "T4_OMP_ALLOW_UNAUTHENTICATED" ||
+			strings.Contains(env.Name, "CREDENTIAL") && env.Name != "T4_CREDENTIAL_BROKER_SOCKET" {
 			t.Fatalf("OMP mode retained a legacy credential mode sentinel: %#v", env)
 		}
 	}
@@ -465,6 +475,7 @@ func TestSessionRecreatesPodWhenImmutableDesiredStateChanges(t *testing.T) {
 	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "team", Name: controllers.SessionPodName(session)}, &original); err != nil {
 		t.Fatal(err)
 	}
+	bindRuntimeStateVolume(t, c, session)
 	originalHash := original.Annotations[clusterv1alpha1.SessionPodSpecHashAnnotation]
 	r.RuntimeImage = otherTestRuntimeImage
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
@@ -474,7 +485,11 @@ func TestSessionRecreatesPodWhenImmutableDesiredStateChanges(t *testing.T) {
 	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "team", Name: controllers.SessionPodName(session)}, &deleted); !apierrors.IsNotFound(err) {
 		t.Fatalf("outdated pod remains after immutable desired state changed: %v", err)
 	}
-	reconcileMany(t, 2, func() error {
+	reconcileMany(t, 3, func() error {
+		_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)})
+		return err
+	})
+	reconcileMany(t, 5, func() error {
 		_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)})
 		return err
 	})
@@ -602,6 +617,12 @@ func TestSessionRuntimeReferenceRevocationStopsAuthority(t *testing.T) {
 				WithStatusSubresource(&clusterv1alpha1.T4Session{}, &corev1.PersistentVolumeClaim{}, &corev1.Pod{}).
 				WithObjects(testHost(), workspace, pvc, session).Build()
 			r := configuredSessionReconciler(c, scheme)
+			reconcileMany(t, 3, func() error {
+				_, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)})
+				return err
+			})
+			bindRuntimeStateVolume(t, c, session)
+			markSessionCompositeReady(t, c, session)
 			reconcileMany(t, 2, func() error {
 				_, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)})
 				return err
