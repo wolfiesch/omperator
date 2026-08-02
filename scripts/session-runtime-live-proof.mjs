@@ -299,7 +299,7 @@ async function main() {
 			...envArguments(common), "--entrypoint", "/usr/bin/tini", image, "--", "/usr/local/bin/t4-session-shell",
 		);
 
-		await poll("authority health", async () => docker("exec", containers.authority, "/usr/local/bin/bun", "/opt/t4/packages/cluster-server/src/session-authority-health.ts"), () => true);
+		await poll("authority health", async () => docker("exec", containers.authority, "/usr/local/bin/bun", "/usr/local/lib/t4/session-authority-health.js"), () => true);
 		await poll("shell readiness", async () => docker("exec", containers.shell, "/usr/local/bin/bun", "/usr/local/lib/t4/session-runtime-readiness.js", "readiness", "shell"), () => true);
 		const identity = JSON.parse((await docker("exec", containers.shell, "/usr/local/bin/cmux-tui", "identify", "--socket", `/run/t4/${RUNTIME_ID}/c.sock`, "--json")).stdout);
 		assert.equal(identity.protocol, 10);

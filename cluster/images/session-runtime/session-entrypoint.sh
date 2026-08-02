@@ -332,7 +332,7 @@ forward_supervisor_signal() {
 }
 
 run_runtime_supervisor() {
-  /usr/local/bin/bun /opt/t4/packages/cluster-server/src/session-host-main.ts
+  /usr/local/bin/bun /usr/local/lib/t4/session-host-main/session-host-main.js
 }
 
 runtime_before_supervisor_launch() {
@@ -440,7 +440,7 @@ main() {
     sync -f "${PI_CODING_AGENT_DIR}" || runtime_error "runtime_state_not_durable"
   models_private=""
   settings_private=""
-  /usr/local/bin/bun /opt/t4/cluster/images/session-runtime/assert-omp-credentials-absent.ts "${PI_CODING_AGENT_DIR}" "${HOME}" || runtime_error "omp_credential_state_present"
+  /usr/local/bin/bun /usr/local/lib/t4/assert-omp-credentials-absent.js "${PI_CODING_AGENT_DIR}" "${HOME}" || runtime_error "omp_credential_state_present"
 
   export DISPLAY="${DISPLAY:-:99}"
   [[ "${DISPLAY}" =~ ^:([0-9]{1,3})$ ]] || runtime_error "display"

@@ -75,6 +75,7 @@ describe("session runtime image build contract", () => {
 		expect(dockerfile).toContain('git fetch --depth=1 origin "${omp_commit}"');
 		expect(dockerfile).toContain(`git rev-parse 'FETCH_HEAD^{commit}'`);
 		expect(dockerfile).toContain('test "$(git rev-parse HEAD)" = "${omp_commit}"');
+		expect(dockerfile).toContain("rm -rf .git target packages/natives/native/.build");
 		expect(dockerfile).toContain("COPY --chmod=0644 provenance/omp-runtime-v1.json /usr/share/t4/provenance/omp-runtime-v1.json");
 		expect(dockerfile).toContain(`T4_OMP_BUILD=${provenance.source.commit}`);
 		expect(dockerfile).toContain(`io.t4.omp.revision="${provenance.source.commit}"`);
@@ -146,7 +147,10 @@ describe("session runtime image build contract", () => {
 	});
 
 	test("separates shell and writer artifacts behind distinct OS principals", async () => {
-		const dockerfile = await readRepositoryFile("cluster/images/session-runtime/Dockerfile");
+		const [dockerfile, entrypoint] = await Promise.all([
+			readRepositoryFile("cluster/images/session-runtime/Dockerfile"),
+			readRepositoryFile("cluster/images/session-runtime/session-entrypoint.sh"),
+		]);
 		const finalStage = dockerfile.slice(dockerfile.lastIndexOf("\nFROM "));
 		expect(finalStage).toContain("useradd --uid 10001 --gid 20001");
 		expect(finalStage).toContain("useradd --uid 10002 --gid 20001");
@@ -161,6 +165,11 @@ describe("session runtime image build contract", () => {
 		expect(finalStage).not.toContain("ENV PI_ROOT=/opt/omp");
 		expect(finalStage).not.toContain("ENV T4_OMP_EXECUTABLE=");
 		expect(finalStage).not.toMatch(/ENV PATH=.*libexec/u);
+		expect(finalStage).not.toContain("COPY --from=t4-build /opt/t4 /opt/t4");
+		expect(finalStage).toContain("/usr/local/lib/t4/session-host-main");
+		expect(entrypoint).toContain("/usr/local/lib/t4/session-host-main/session-host-main.js");
+		expect(finalStage).toContain("/usr/local/lib/t4/session-authority-health.js");
+		expect(finalStage).toContain("/usr/local/lib/t4/assert-omp-credentials-absent.js");
 	});
 	test("shell entrypoint executes hostile authority-artifact and raw-socket boundary checks", async () => {
 		const shellEntrypoint = await readRepositoryFile("cluster/images/session-runtime/session-shell-entrypoint.sh");

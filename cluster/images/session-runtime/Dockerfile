@@ -27,7 +27,7 @@ RUN bun install --frozen-lockfile --ignore-scripts \
     && bun --cwd=packages/coding-agent run gen:tool-views
 RUN test "$(bun --cwd=packages/coding-agent -e 'import { OMP_AUTHORITY_BRIDGE_PROTOCOL } from "@oh-my-pi/appserver"; process.stdout.write(OMP_AUTHORITY_BRIDGE_PROTOCOL)')" = 't4-omp-authority/1' \
     && test "$(bun --cwd=packages/coding-agent -e 'import { OMP_AUTHORITY_BRIDGE_METHODS } from "@oh-my-pi/appserver"; process.stdout.write(JSON.stringify(OMP_AUTHORITY_BRIDGE_METHODS))')" = "$(bun -p 'JSON.stringify(require("/opt/provenance/omp-runtime-v1.json").bridge.methods)')" \
-    && rm -rf .git
+    && rm -rf .git target packages/natives/native/.build
 
 FROM --platform=$BUILDPLATFORM docker.io/library/node:24.13.1-bookworm@sha256:00e9195ebd49985a6da8921f419978d85dfe354589755192dc090425ce4da2f7 AS cmux-node
 
@@ -95,7 +95,10 @@ RUN mkdir -p /out \
     && bun build packages/cluster-server/src/terminal-attach-client.ts --target=bun --outfile=/out/terminal-attach-client.js \
     && bun build packages/cluster-server/src/session-runtime-supervisor.ts --target=bun --outfile=/out/session-runtime-supervisor.js \
     && bun build packages/cluster-server/src/session-credential-broker.ts --target=bun --outfile=/out/session-credential-broker.js \
-    && bun build packages/cluster-server/src/session-runtime-readiness.ts --target=bun --outfile=/out/session-runtime-readiness.js
+    && bun build packages/cluster-server/src/session-runtime-readiness.ts --target=bun --outfile=/out/session-runtime-readiness.js \
+    && bun build packages/cluster-server/src/session-host-main.ts --target=bun --outdir=/out/session-host-main \
+    && bun build packages/cluster-server/src/session-authority-health.ts --target=bun --outfile=/out/session-authority-health.js \
+    && bun build cluster/images/session-runtime/assert-omp-credentials-absent.ts --target=bun --outfile=/out/assert-omp-credentials-absent.js
 
 FROM docker.io/library/node:24.13.1-bookworm@sha256:00e9195ebd49985a6da8921f419978d85dfe354589755192dc090425ce4da2f7
 USER root
@@ -124,11 +127,13 @@ COPY --chmod=0644 provenance/omp-runtime-v1.json /usr/share/t4/provenance/omp-ru
 COPY --chmod=0644 licenses/CMUX-TUI-MIT-NOTICE.txt /usr/share/licenses/cmux/CMUX-TUI-MIT-NOTICE.txt
 COPY --chmod=0644 licenses/CMUX-UPSTREAM-LICENSE.txt /usr/share/licenses/cmux/CMUX-UPSTREAM-LICENSE.txt
 COPY --from=omp-build /opt/omp /opt/omp
-COPY --from=t4-build /opt/t4 /opt/t4
 COPY --from=t4-build --chmod=0555 /out/terminal-attach-client.js /usr/local/lib/t4/terminal-attach-client.js
 COPY --from=t4-build --chmod=0555 /out/session-runtime-supervisor.js /usr/local/lib/t4/session-runtime-supervisor.js
 COPY --from=t4-build --chmod=0555 /out/session-credential-broker.js /usr/local/lib/t4/session-credential-broker.js
 COPY --from=t4-build --chmod=0555 /out/session-runtime-readiness.js /usr/local/lib/t4/session-runtime-readiness.js
+COPY --from=t4-build /out/session-host-main /usr/local/lib/t4/session-host-main
+COPY --from=t4-build --chmod=0555 /out/session-authority-health.js /usr/local/lib/t4/session-authority-health.js
+COPY --from=t4-build --chmod=0555 /out/assert-omp-credentials-absent.js /usr/local/lib/t4/assert-omp-credentials-absent.js
 COPY cluster/images/session-runtime/session-entrypoint.sh /opt/t4/bin/session-entrypoint
 COPY cluster/images/session-runtime/session-shell-entrypoint.sh /usr/local/bin/t4-session-shell
 RUN printf '%s\n' \
@@ -146,7 +151,7 @@ RUN printf '%s\n' \
     && chmod 0555 /usr/local/bin/omp /usr/local/bin/t4-session-shell \
     && chown -R 10001:20001 /opt/t4 /opt/omp \
     && chmod -R go-rwx /opt/t4 /opt/omp \
-    && chown root:root /usr/local/bin/omp /usr/local/bin/t4-session-shell /usr/local/lib/t4/terminal-attach-client.js /usr/local/lib/t4/session-runtime-supervisor.js /usr/local/lib/t4/session-credential-broker.js /usr/local/lib/t4/session-runtime-readiness.js
+    && chown root:root /usr/local/bin/omp /usr/local/bin/t4-session-shell /usr/local/lib/t4/*.js
 ENV T4_WORKSPACE_ROOT=/workspace \
     T4_HOST_PORT=8787 \
     T4_OMP_BUILD=b86f6116e6223ebb2d747748dc1dc14ddcb35428 \
