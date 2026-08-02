@@ -81,7 +81,6 @@ RUN cmux_repository="$(node -p 'require("/opt/provenance/cmux-runtime-v1.json").
     && git -C /src/cmux checkout --detach FETCH_HEAD \
     && PATH="/opt/zig:${PATH}" node /opt/scripts/build-pinned-cmux.mjs \
        --source /src/cmux --out /out --target "$(cat /tmp/rust-target)" \
-    && mv "/out/cmux-tui-$(cat /tmp/rust-target)" /out/cmux-tui \
     && mv "/out/cmux-tui-$(cat /tmp/rust-target).manifest.json" /out/cmux-tui.manifest.json \
     && rm -rf /src/cmux
 
@@ -101,6 +100,7 @@ RUN mkdir -p /out \
     && bun build cluster/images/session-runtime/assert-omp-credentials-absent.ts --target=bun --outfile=/out/assert-omp-credentials-absent.js
 
 FROM docker.io/library/node:24.13.1-bookworm@sha256:00e9195ebd49985a6da8921f419978d85dfe354589755192dc090425ce4da2f7
+ARG TARGETARCH
 USER root
 COPY --from=docker.io/oven/bun:1.3.14-debian@sha256:9dba1a1b43ce28c9d7931bfc4eb00feb63b0114720a0277a8f939ae4dfc9db6f /usr/local/bin/bun /usr/local/bin/bun
 RUN rm -f /etc/apt/sources.list.d/* \
@@ -120,7 +120,7 @@ RUN rm -f /etc/apt/sources.list.d/* \
     && chmod 0755 /usr/share/t4 /usr/share/t4/provenance /usr/share/licenses /usr/share/licenses/cmux /usr/local/lib/t4 \
     && chown -R 10001:20001 /workspace /run/t4 \
     && chmod 0711 /run/t4
-COPY --from=cmux-build --chmod=0755 /out/cmux-tui /usr/local/bin/cmux-tui
+COPY --from=cmux-build --chmod=0755 /out/cmux-tui-* /usr/local/lib/t4/cmux/
 COPY --from=cmux-build --chmod=0644 /out/cmux-tui.manifest.json /usr/share/t4/provenance/cmux-tui.manifest.json
 COPY --chmod=0644 provenance/cmux-runtime-v1.json /usr/share/t4/provenance/cmux-runtime-v1.json
 COPY --chmod=0644 provenance/omp-runtime-v1.json /usr/share/t4/provenance/omp-runtime-v1.json
@@ -136,7 +136,13 @@ COPY --from=t4-build --chmod=0555 /out/session-authority-health.js /usr/local/li
 COPY --from=t4-build --chmod=0555 /out/assert-omp-credentials-absent.js /usr/local/lib/t4/assert-omp-credentials-absent.js
 COPY cluster/images/session-runtime/session-entrypoint.sh /opt/t4/bin/session-entrypoint
 COPY cluster/images/session-runtime/session-shell-entrypoint.sh /usr/local/bin/t4-session-shell
-RUN printf '%s\n' \
+RUN case "${TARGETARCH}" in \
+      amd64) cmux_target=x86_64-unknown-linux-gnu ;; \
+      arm64) cmux_target=aarch64-unknown-linux-gnu ;; \
+      *) echo "unsupported TARGETARCH=${TARGETARCH}; expected amd64 or arm64" >&2; exit 64 ;; \
+    esac \
+    && ln -s "/usr/local/lib/t4/cmux/cmux-tui-${cmux_target}" /usr/local/bin/cmux-tui \
+    && printf '%s\n' \
       '#!/usr/bin/env bash' \
       'set -euo pipefail' \
       'export PI_ROOT=/opt/omp' \
@@ -161,7 +167,6 @@ ENV T4_WORKSPACE_ROOT=/workspace \
 ARG SOURCE_REPOSITORY=https://github.com/wolfiesch/omperator
 ARG SOURCE_COMMIT
 ARG IMAGE_VERSION=portable-agent-platform-v1
-ARG TARGETARCH
 RUN printf '%s' "${SOURCE_COMMIT}" | grep -Eq '^[0-9a-f]{40}$'
 LABEL org.opencontainers.image.source="${SOURCE_REPOSITORY}" \
       org.opencontainers.image.revision="${SOURCE_COMMIT}" \

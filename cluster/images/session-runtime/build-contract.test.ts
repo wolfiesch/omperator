@@ -137,6 +137,9 @@ describe("session runtime image build contract", () => {
 		expect(finalStage).toContain("chmod 0711 /run/t4");
 		expect(finalStage).not.toContain("HOME=/workspace");
 		expect(dockerfile).toContain("/usr/share/t4/provenance/cmux-tui.manifest.json");
+		expect(dockerfile).not.toContain('mv "/out/cmux-tui-$(cat /tmp/rust-target)" /out/cmux-tui');
+		expect(finalStage).toContain("COPY --from=cmux-build --chmod=0755 /out/cmux-tui-* /usr/local/lib/t4/cmux/");
+		expect(finalStage).toContain('ln -s "/usr/local/lib/t4/cmux/cmux-tui-${cmux_target}" /usr/local/bin/cmux-tui');
 		expect(finalStage).toContain("chmod 0755 /usr/share/t4 /usr/share/t4/provenance /usr/share/licenses /usr/share/licenses/cmux /usr/local/lib/t4");
 		expect(dockerfile).toContain("COPY --chmod=0644 licenses/CMUX-TUI-MIT-NOTICE.txt");
 		expect(dockerfile).toContain("COPY --chmod=0644 licenses/CMUX-UPSTREAM-LICENSE.txt");
