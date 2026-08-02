@@ -251,6 +251,7 @@ async function main() {
 			T4_HOST_RUNTIME_DIR: `/run/t4/${RUNTIME_ID}`,
 			T4_CMUX_SOCKET_PATH: `/run/t4/${RUNTIME_ID}/c.sock`,
 			T4_SESSION_HOST_READY_PATH: `/run/t4/${RUNTIME_ID}/host.ready`,
+			T4_AUTHORITY_HEALTH_SOCKET: `/run/t4/${RUNTIME_ID}/authority-health.sock`,
 			T4_CMUX_SOCKET_MODE: "0660",
 			T4_GUI_ENABLED: "true",
 		};
@@ -346,6 +347,12 @@ async function main() {
 				.then(({ stdout, stderr }) => [stdout, stderr].filter(Boolean).join("\n"))
 				.catch((logError) => `logs unavailable: ${errorSummary(logError)}`);
 			await writeFile(join(artifactRoot, `${role}.log`), `${logs}\n`);
+			const diagnostics = await docker(
+				"exec", name, "/bin/bash", "-c",
+				"find /run/t4 /run/t4-credential -maxdepth 3 -printf '%M %u:%g %p\\n' 2>/dev/null; ps -eo pid,ppid,stat,comm,args",
+			).then(({ stdout, stderr }) => [stdout, stderr].filter(Boolean).join("\n"))
+				.catch((diagnosticError) => `diagnostics unavailable: ${errorSummary(diagnosticError)}`);
+			await writeFile(join(artifactRoot, `${role}-diagnostics.log`), `${diagnostics}\n`);
 		}
 		await writeFile(join(artifactRoot, "failure.json"), `${JSON.stringify({
 			schemaVersion: 1,
