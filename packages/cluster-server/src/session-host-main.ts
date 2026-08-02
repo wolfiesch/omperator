@@ -20,7 +20,7 @@ import { SessionCredentialClient } from "./session-credential-client.ts";
 import { startSessionAuthorityHealth, type SessionAuthorityHealthHandle } from "./session-authority-health.ts";
 
 const OMP_VERSION = "17.0.5";
-const OMP_COMMIT = "923ea217b0c3613e5fe3c58811d1b0cb5be6b539";
+const OMP_COMMIT = "c4d3ecdc35234d1aa470c3e1101d9a4ca45b64c5";
 
 export async function claimDedicatedSessionOwnership(
 	ownershipPath: string,

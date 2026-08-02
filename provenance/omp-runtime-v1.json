@@ -4,7 +4,7 @@
   "compatibilitySet": "portable-agent-platform-v1",
   "source": {
     "repository": "https://github.com/wolfiesch/oh-my-pi",
-    "commit": "923ea217b0c3613e5fe3c58811d1b0cb5be6b539",
+    "commit": "c4d3ecdc35234d1aa470c3e1101d9a4ca45b64c5",
     "contractCommit": "d16c6168c86f40fc44f25118c2fd06fe160fcb93",
     "contractAncestry": "descendant"
   },

@@ -558,7 +558,7 @@ export class ClusterGateway {
 				));
 				client.send({
 					v: "omp-app/1", type: "welcome", selectedProtocol: "omp-app/1", hostId: this.#projection.hostId,
-					ompVersion: "17.0.5", ompBuild: "923ea217b0c3613e5fe3c58811d1b0cb5be6b539",
+					ompVersion: "17.0.5", ompBuild: "c4d3ecdc35234d1aa470c3e1101d9a4ca45b64c5",
 					appserverVersion: this.#version, appserverBuild: this.#build, epoch: this.#projection.epoch,
 					grantedCapabilities: [...grantedCapabilities], grantedFeatures: [...grantedFeatures],
 					negotiatedLimits: { maxPayloadLength: 1_048_576, maxWorkspaces: 256, maxSessions: 1_000, workspaceReplayFrames: 512 },

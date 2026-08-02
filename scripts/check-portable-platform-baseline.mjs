@@ -29,7 +29,7 @@ const expected = Object.freeze({
   ompRepository: "https://github.com/can1357/oh-my-pi",
   ompBaseline: "d16c6168c86f40fc44f25118c2fd06fe160fcb93",
   portableOmpRepository: "https://github.com/wolfiesch/oh-my-pi",
-  portableOmpCommit: "923ea217b0c3613e5fe3c58811d1b0cb5be6b539",
+  portableOmpCommit: "c4d3ecdc35234d1aa470c3e1101d9a4ca45b64c5",
   portableOmpProvenance: "provenance/omp-runtime-v1.json",
   implementationStart: "48b1ba7b94f468154ed0e0998118d01f7dbffbd0",
   packagedOmpRepository: "https://github.com/wolfiesch/oh-my-pi",
