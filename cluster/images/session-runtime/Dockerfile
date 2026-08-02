@@ -22,7 +22,8 @@ RUN omp_repository="$(bun -p 'require("/opt/provenance/omp-runtime-v1.json").sou
     && test "$(git rev-parse 'FETCH_HEAD^{commit}')" = "${omp_commit}" \
     && git checkout --detach FETCH_HEAD \
     && test "$(git rev-parse HEAD)" = "${omp_commit}"
-RUN bun install --frozen-lockfile --ignore-scripts \
+RUN --mount=type=cache,id=t4-omp-bun-cache,target=/root/.bun/install/cache,sharing=locked \
+    bun install --frozen-lockfile --ignore-scripts \
     && bun --cwd=packages/natives run build \
     && bun --cwd=packages/coding-agent run gen:tool-views
 RUN test "$(bun --cwd=packages/coding-agent -e 'import { OMP_AUTHORITY_BRIDGE_PROTOCOL } from "@oh-my-pi/appserver"; process.stdout.write(OMP_AUTHORITY_BRIDGE_PROTOCOL)')" = 't4-omp-authority/1' \
@@ -35,7 +36,9 @@ FROM --platform=$BUILDPLATFORM docker.io/library/rust:1.86-slim-bookworm@sha256:
 ARG BUILDARCH
 ARG TARGETARCH
 ENV SOURCE_DATE_EPOCH=0 \
-    CARGO_INCREMENTAL=0
+    CARGO_INCREMENTAL=0 \
+    CARGO_BUILD_JOBS=2 \
+    T4_CMUX_CARGO_TARGET_DIR=/var/cache/t4-cmux-target
 RUN rm -f /etc/apt/sources.list.d/* \
     && printf '%s\n' \
        'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20250721T000000Z bookworm main' \
@@ -71,7 +74,8 @@ RUN zig_version="$(node -p 'require("/opt/provenance/cmux-runtime-v1.json").buil
     && test "$(/opt/zig/zig version)" = "${zig_version}" \
     && printf '%s' "${rust_target}" > /tmp/rust-target \
     && rm /tmp/zig.tar.xz
-RUN cmux_repository="$(node -p 'require("/opt/provenance/cmux-runtime-v1.json").source.repository')" \
+RUN --mount=type=cache,id=t4-cmux-cargo-target,target=/var/cache/t4-cmux-target,sharing=locked \
+    cmux_repository="$(node -p 'require("/opt/provenance/cmux-runtime-v1.json").source.repository')" \
     && cmux_commit="$(node -p 'require("/opt/provenance/cmux-runtime-v1.json").source.commit')" \
     && mkdir -p /src/cmux \
     && git -C /src/cmux init \
@@ -87,9 +91,38 @@ RUN cmux_repository="$(node -p 'require("/opt/provenance/cmux-runtime-v1.json").
 FROM docker.io/library/node:24.13.1-bookworm@sha256:00e9195ebd49985a6da8921f419978d85dfe354589755192dc090425ce4da2f7 AS t4-build
 COPY --from=docker.io/oven/bun:1.3.14-debian@sha256:9dba1a1b43ce28c9d7931bfc4eb00feb63b0114720a0277a8f939ae4dfc9db6f /usr/local/bin/bun /usr/local/bin/bun
 WORKDIR /opt/t4
-COPY . /opt/t4
-RUN corepack enable \
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches ./patches
+COPY apps/desktop/package.json ./apps/desktop/package.json
+COPY apps/mobile/package.json ./apps/mobile/package.json
+COPY apps/site/package.json ./apps/site/package.json
+COPY apps/web/package.json ./apps/web/package.json
+COPY packages/client/package.json ./packages/client/package.json
+COPY packages/cluster-server/package.json ./packages/cluster-server/package.json
+COPY packages/cmux-runtime/package.json ./packages/cmux-runtime/package.json
+COPY packages/fixture-server/package.json ./packages/fixture-server/package.json
+COPY packages/host-daemon/package.json ./packages/host-daemon/package.json
+COPY packages/host-service/package.json ./packages/host-service/package.json
+COPY packages/host-wire/package.json ./packages/host-wire/package.json
+COPY packages/model-gateway/package.json ./packages/model-gateway/package.json
+COPY packages/p1-07-scenario/package.json ./packages/p1-07-scenario/package.json
+COPY packages/portable-control-store/package.json ./packages/portable-control-store/package.json
+COPY packages/portable-core/package.json ./packages/portable-core/package.json
+COPY packages/portable-driver/package.json ./packages/portable-driver/package.json
+COPY packages/protocol/package.json ./packages/protocol/package.json
+COPY packages/provider-adapter/package.json ./packages/provider-adapter/package.json
+COPY packages/provider-engine/package.json ./packages/provider-engine/package.json
+COPY packages/remote/package.json ./packages/remote/package.json
+COPY packages/service-manager/package.json ./packages/service-manager/package.json
+COPY packages/ssh-gateway/package.json ./packages/ssh-gateway/package.json
+COPY packages/t4-api-client/package.json ./packages/t4-api-client/package.json
+COPY packages/t4-api-contract/package.json ./packages/t4-api-contract/package.json
+COPY packages/t4-cli/package.json ./packages/t4-cli/package.json
+COPY packages/ui/package.json ./packages/ui/package.json
+RUN --mount=type=cache,id=t4-pnpm-store,target=/root/.local/share/pnpm/store,sharing=locked \
+    corepack enable \
     && pnpm install --frozen-lockfile --ignore-scripts
+COPY . /opt/t4
 RUN mkdir -p /out \
     && bun build packages/cluster-server/src/terminal-attach-client.ts --target=bun --outfile=/out/terminal-attach-client.js \
     && bun build packages/cluster-server/src/session-runtime-supervisor.ts --target=bun --outfile=/out/session-runtime-supervisor.js \

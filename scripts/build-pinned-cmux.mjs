@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { copyFile, chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -91,7 +91,11 @@ try {
   requireIdentity(command(zig, ["version"]), provenance.build.zigToolchain, "Zig toolchain");
   command("rustup", ["toolchain", "install", provenance.build.rustToolchain, "--profile", "minimal"]);
   command("rustup", ["target", "add", "--toolchain", provenance.build.rustToolchain, args.target]);
-  const cargoTargetDirectory = join(buildRoot, "cargo");
+  const configuredCargoTargetDirectory = process.env.T4_CMUX_CARGO_TARGET_DIR;
+  if (configuredCargoTargetDirectory && !isAbsolute(configuredCargoTargetDirectory)) {
+    fail("T4_CMUX_CARGO_TARGET_DIR must be absolute");
+  }
+  const cargoTargetDirectory = configuredCargoTargetDirectory ?? join(buildRoot, "cargo");
   const cargoTargetLinker =
     args.target === "x86_64-unknown-linux-gnu"
       ? ["CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER", "x86_64-linux-gnu-gcc"]
