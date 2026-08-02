@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import assert from "node:assert/strict";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
@@ -167,7 +167,7 @@ async function startProofServices(root, generationAuth) {
 		void (async () => {
 			if (requests.modelTraffic.length < 16) requests.modelTraffic.push({ method: request.method, url: request.url });
 			if (request.method === "GET" && request.url === "/proof") {
-				const body = Buffer.from("<!doctype html><title>Runtime live proof</title><input id=proof-input>");
+				const body = Buffer.from('<!doctype html><title>Runtime live proof</title><input id="proof-input" oninput="document.title=`Filled: ${this.value}`">');
 				response.writeHead(200, { "content-type": "text/html", "content-length": body.length });
 				response.end(body);
 				return;
@@ -210,7 +210,7 @@ function transcriptText(entries) {
 	return JSON.stringify(entries);
 }
 
-async function exerciseSharedSession(authorityPort, shellContainer, identityTokenFile) {
+async function exerciseSharedSession(authorityPort, shellContainer, identityTokenFile, browserUrl) {
 	const transcript = [];
 	const pending = new Map();
 	let sequence = 0;
@@ -229,12 +229,27 @@ async function exerciseSharedSession(authorityPort, shellContainer, identityToke
 			return socket;
 		},
 	});
-	const connection = await connector.connect({
+	let connection;
+	connection = await connector.connect({
 		clusterSessionId: SESSION_NAME,
 		runtimeGeneration: GENERATION,
 		routeGeneration: GENERATION,
 		url: `ws://127.0.0.1:${authorityPort}/v1/ws`,
 	}, (frame) => {
+		if (frame.type === "confirmation") {
+			assert.equal(frame.summary === "preview.launch", true, `unexpected live-proof confirmation: ${frame.summary}`);
+			connection.send({
+				v: "omp-app/1",
+				type: "confirm",
+				requestId: `live-confirm-${++sequence}`,
+				confirmationId: frame.confirmationId,
+				commandId: frame.commandId,
+				hostId: frame.hostId,
+				...(frame.sessionId ? { sessionId: frame.sessionId } : {}),
+				decision: "approve",
+			});
+			return;
+		}
 		if (frame.type === "response") {
 			const waiter = pending.get(frame.requestId);
 			if (waiter) {
@@ -250,6 +265,8 @@ async function exerciseSharedSession(authorityPort, shellContainer, identityToke
 	assert.ok(connection.hostId);
 	const welcome = await negotiated.promise;
 	assert.equal(welcome.authentication, "paired");
+	for (const capability of ["preview.read", "preview.control", "preview.input"])
+		assert.ok(welcome.grantedCapabilities.includes(capability), `missing ${capability}`);
 	const commandApp = (commandName, args = {}, sessionId, expectedRevision) => {
 		const requestId = `live-${++sequence}`;
 		const response = Promise.withResolvers();
@@ -301,12 +318,50 @@ async function exerciseSharedSession(authorityPort, shellContainer, identityToke
 		assert.match(terminal.stdout, /Runtime proof response 1/u);
 		await poll("terminal prompt transcript", async () => transcriptText(transcript), (text) => text.includes("Terminal live proof prompt") && text.includes("Runtime proof response 2"))
 			.catch((error) => { throw new Error(`terminal output was ${JSON.stringify(terminal)} and app transcript was ${transcriptText(transcript)}`, { cause: error }); });
+
+		const launched = await commandApp("preview.launch", { url: browserUrl }, session.sessionId);
+		const previewId = launched.preview?.previewId;
+		assert.ok(previewId);
+		assert.equal(launched.preview.url, browserUrl);
+		const lease = await commandApp("preview.lease.acquire", { previewId, ttlMs: 30_000 }, session.sessionId);
+		assert.ok(lease.leaseId);
+		const inputText = "Browser preview live proof";
+		const filled = await commandApp("preview.fill", { previewId, leaseId: lease.leaseId, selector: "#proof-input", text: inputText }, session.sessionId);
+		assert.equal(filled.preview?.title, `Filled: ${inputText}`);
+		const captured = await commandApp("preview.capture", { previewId, leaseId: lease.leaseId }, session.sessionId);
+		const capture = captured.preview?.capture;
+		assert.ok(capture?.captureId);
+		assert.ok(capture.size > 0);
+		const chunks = [];
+		let offset = 0;
+		do {
+			const chunk = await commandApp("preview.capture.read", { previewId, captureId: capture.captureId, offset }, session.sessionId);
+			chunks.push(Buffer.from(chunk.content, "base64"));
+			offset = chunk.nextOffset;
+			assert.equal(chunk.size, capture.size);
+			if (chunk.complete) break;
+		} while (offset < capture.size);
+		const captureBytes = Buffer.concat(chunks);
+		assert.equal(captureBytes.byteLength, capture.size);
+		assert.equal(captureBytes.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
+		assert.equal(createHash("sha256").update(captureBytes).digest("hex"), capture.sha256);
+		const state = await commandApp("preview.state", { previewId }, session.sessionId);
+		assert.equal(state.previews?.[0]?.title, `Filled: ${inputText}`);
+		await commandApp("preview.lease.release", { previewId, leaseId: lease.leaseId }, session.sessionId);
 		return {
 			hostId: connection.hostId,
 			sessionId: session.sessionId,
 			appPromptObservedByTerminal: true,
 			terminalPromptObservedByApp: true,
 			sharedSessionHistory: true,
+			appBrowserPreview: {
+				previewId,
+				url: browserUrl,
+				inputObserved: true,
+				captureId: capture.captureId,
+				captureBytes: capture.size,
+				captureSha256: capture.sha256,
+			},
 		};
 	} finally {
 		connection.close(1000, "live proof complete");
@@ -433,7 +488,12 @@ async function main() {
 		const credentialIdentity = JSON.parse((await docker("exec", containers.credential, "/usr/local/bin/cmux-tui", "identify", "--socket", `/run/t4-runtime-shared/t4/${RUNTIME_ID}/cmux/c.sock`, "--json")).stdout);
 		assert.equal(credentialIdentity.pid, identity.pid);
 		const authorityPort = Number((await docker("port", containers.authority, "8787/tcp")).stdout.split(":").at(-1));
-		const sharedSession = await exerciseSharedSession(authorityPort, containers.shell, join(temporaryRoot, "server-identity-token"));
+		const sharedSession = await exerciseSharedSession(
+			authorityPort,
+			containers.shell,
+			join(temporaryRoot, "server-identity-token"),
+			`http://host.docker.internal:${services.modelPort}/proof`,
+		);
 		const activityPort = Number((await docker("port", containers.authority, "8788/tcp")).stdout.split(":").at(-1));
 		const activity = await fetch(`http://127.0.0.1:${activityPort}/internal/runtime/activity`, {
 			method: "POST",
@@ -450,7 +510,7 @@ async function main() {
 			passed: true,
 			image: { reference: image, architecture: inspected.Architecture, revision: imageRevision },
 			runtime: { runtimeId: RUNTIME_ID, runtimeUid: RUNTIME_UID, generation: GENERATION, cmux: identity, socketMode, sharedSession },
-			boundaries: { authorityHealth: true, shellReadiness: true, credentialCmuxAccess: true, sharedSessionHistory: true, activityRuntimeUid: true, writerLeaseHeld: true },
+			boundaries: { authorityHealth: true, shellReadiness: true, credentialCmuxAccess: true, sharedSessionHistory: true, appBrowserPreview: true, activityRuntimeUid: true, writerLeaseHeld: true },
 			requests: services.requests,
 		};
 		await writeFile(join(artifactRoot, "proof.json"), `${JSON.stringify(evidence, null, 2)}\n`);

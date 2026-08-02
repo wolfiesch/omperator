@@ -217,4 +217,14 @@ describe("session runtime image build contract", () => {
 		expect(proof).toContain("/usr/local/bin/omp");
 		expect(proof).toContain("sharedSessionHistory");
 	});
+	test("live proof controls and captures a real packaged browser preview", async () => {
+		const proof = await readRepositoryFile("scripts/session-runtime-live-proof.mjs");
+		expect(proof).toContain('frame.type === "confirmation"');
+		expect(proof).toContain('frame.summary === "preview.launch"');
+		expect(proof).toContain('commandApp("preview.lease.acquire"');
+		expect(proof).toContain('commandApp("preview.fill"');
+		expect(proof).toContain('commandApp("preview.capture"');
+		expect(proof).toContain('commandApp("preview.capture.read"');
+		expect(proof).toContain("appBrowserPreview");
+	});
 });

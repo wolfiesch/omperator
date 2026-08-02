@@ -12,6 +12,7 @@ const MAX_CDP_METADATA_BYTES = 64 * 1024;
 const MAX_CDP_MESSAGE_BYTES = 12 * 1024 * 1024;
 const MAX_PENDING_CDP_COMMANDS = 64;
 const DEFAULT_VIEWPORT = Object.freeze({ width: 1280, height: 720, deviceScaleFactor: 1 });
+const DEFAULT_DEVICE_METRICS = Object.freeze({ ...DEFAULT_VIEWPORT, mobile: false });
 const MAX_PREVIEWS = 4;
 const MAX_CAPTURE_MEMORY_BYTES = 16 * 1024 * 1024;
 const MAX_PREVIEW_UPLOAD_BYTES = 8 * 1024 * 1024;
@@ -243,7 +244,7 @@ export class LoopbackCdpTransport implements CdpTargetTransport {
 			await Promise.all([
 				this.command(created.targetId, "Page.enable"),
 				this.command(created.targetId, "Runtime.enable"),
-				this.command(created.targetId, "Emulation.setDeviceMetricsOverride", DEFAULT_VIEWPORT),
+				this.command(created.targetId, "Emulation.setDeviceMetricsOverride", DEFAULT_DEVICE_METRICS),
 			]);
 			return created.targetId;
 		} catch (error) {

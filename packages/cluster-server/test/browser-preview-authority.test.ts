@@ -331,6 +331,10 @@ describe("loopback CDP transport lifecycle", () => {
 		try {
 			await transport.createTarget("https://example.test/one");
 			expect(transport.generation).toBe(1);
+			expect(fixture.frames).toContainEqual({
+				method: "Emulation.setDeviceMetricsOverride",
+				params: { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false },
+			});
 			const lost = Promise.withResolvers<number>();
 			const unsubscribe = transport.onGenerationLoss(lost.resolve);
 			fixture.closeSockets();
