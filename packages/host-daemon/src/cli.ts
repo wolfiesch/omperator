@@ -450,6 +450,7 @@ export async function runHostDaemon(
     );
     const filesAuthority = new FilesAuthority({ projectRootForSession });
     const filesOperations = filesAuthority.operations();
+    const turnSnapshotFilesDiff = operationsAuthority.filesDiff;
     const testControl = config.testControl
       ? new SeedingTestControl({
           token: requiredTestControlToken(),
@@ -473,12 +474,16 @@ export async function runHostDaemon(
       operationsAuthority: {
         ...operationsAuthority,
         ...projectFileSearchAuthority.operations(),
-        // The bridge forwards files.list/read to the OMP RPC when the runtime
-        // advertises them; the T4-owned standalone host serves them directly
-        // from the session cwd so remote clients get the files pane either way.
+        // The bridge owns immutable turn-review snapshots. Ordinary
+        // working-tree diffs stay with the T4-owned authority so they use the
+        // same resolved session cwd as files.list/read and do not depend on a
+        // fork-specific bridge response.
         ...(operationsAuthority.filesList ? {} : { filesList: filesOperations.filesList }),
         ...(operationsAuthority.filesRead ? {} : { filesRead: filesOperations.filesRead }),
-        ...(operationsAuthority.filesDiff ? {} : { filesDiff: filesOperations.filesDiff }),
+        filesDiff: (args, context) =>
+          args.turnId !== undefined && turnSnapshotFilesDiff
+            ? turnSnapshotFilesDiff(args, context)
+            : filesAuthority.filesDiff(args, context),
       },
       ...(usageAuthority ? { usageAuthority } : {}),
       transcriptSearchAuthority,
