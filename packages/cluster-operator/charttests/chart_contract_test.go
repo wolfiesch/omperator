@@ -927,7 +927,7 @@ func TestImageContractsArePinnedAndAuthorityCompatible(t *testing.T) {
 		"chromium",
 		"Xvfb",
 	)
-	assertContains(t, entrypoint, "packages/cluster-server/src/session-host-main.ts")
+	assertContains(t, entrypoint, "/usr/local/lib/t4/session-host-main/session-host-main.js")
 	for name, content := range map[string]string{"server": server, "session": session, "model gateway": modelGateway} {
 		assertContains(t, content, "pnpm install --frozen-lockfile")
 		if strings.Contains(content, "bun install --ignore-scripts --lockfile-only") {
@@ -967,7 +967,7 @@ func TestImageContractsArePinnedAndAuthorityCompatible(t *testing.T) {
 		`install -m 0600 "${settings_source}"`,
 		`"${PI_CODING_AGENT_DIR}/models.yml"`,
 		`"${PI_CODING_AGENT_DIR}/config.yml"`,
-		`/usr/local/bin/bun /opt/t4/cluster/images/session-runtime/assert-omp-credentials-absent.ts`,
+		`/usr/local/bin/bun /usr/local/lib/t4/assert-omp-credentials-absent.js`,
 		"omp_credential_state_present",
 	)
 }

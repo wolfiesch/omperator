@@ -440,7 +440,7 @@ main() {
     sync -f "${PI_CODING_AGENT_DIR}" || runtime_error "runtime_state_not_durable"
   models_private=""
   settings_private=""
-  /usr/local/bin/bun /usr/local/lib/t4/assert-omp-credentials-absent.js "${PI_CODING_AGENT_DIR}" "${HOME}" || runtime_error "omp_credential_state_present"
+  /usr/local/bin/bun /usr/local/lib/t4/assert-omp-credentials-absent.js "${PI_CODING_AGENT_DIR}" "${HOME}" "${T4_SESSION_STATE_ROOT}" || runtime_error "omp_credential_state_present"
 
   export DISPLAY="${DISPLAY:-:99}"
   [[ "${DISPLAY}" =~ ^:([0-9]{1,3})$ ]] || runtime_error "display"

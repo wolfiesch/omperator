@@ -50,18 +50,18 @@ async function requireDirectory(directoryPath: string): Promise<void> {
 	}
 }
 
-async function requireDirectoryChain(home: string, agentDir: string): Promise<void> {
-	await requireDirectory(home);
-	const relativeAgentDir = path.relative(home, agentDir);
+async function requireDirectoryChain(root: string, child: string): Promise<void> {
+	await requireDirectory(root);
+	const relativeChild = path.relative(root, child);
 	if (
-		relativeAgentDir === "" ||
-		relativeAgentDir.startsWith(`..${path.sep}`) ||
-		path.isAbsolute(relativeAgentDir)
+		relativeChild === "" ||
+		relativeChild.startsWith(`..${path.sep}`) ||
+		path.isAbsolute(relativeChild)
 	) {
-		throw new Error("OMP credential check paths are outside the profile home");
+		throw new Error("OMP credential check paths are outside the runtime root");
 	}
-	let current = home;
-	for (const segment of relativeAgentDir.split(path.sep)) {
+	let current = root;
+	for (const segment of relativeChild.split(path.sep)) {
 		current = path.join(current, segment);
 		await requireDirectory(current);
 	}
@@ -80,17 +80,18 @@ async function requireAbsent(filePath: string): Promise<void> {
 export async function assertOMPProfileCredentialsAbsent(input: {
 	readonly agentDir: string;
 	readonly home: string;
+	readonly runtimeRoot: string;
 }): Promise<void> {
-	if (!path.isAbsolute(input.agentDir) || !path.isAbsolute(input.home)) {
+	if (!path.isAbsolute(input.agentDir) || !path.isAbsolute(input.home) || !path.isAbsolute(input.runtimeRoot)) {
 		throw new Error("OMP credential check paths must be absolute");
 	}
 	const agentDir = path.resolve(input.agentDir);
 	const home = path.resolve(input.home);
-	const expectedProfilesRoot = path.join(home, ".omp", "profiles") + path.sep;
-	if (!agentDir.startsWith(expectedProfilesRoot)) {
-		throw new Error("OMP credential check paths are outside the profile home");
+	const runtimeRoot = path.resolve(input.runtimeRoot);
+	if (home !== path.join(runtimeRoot, "home") || agentDir !== path.join(runtimeRoot, "authority", "agent")) {
+		throw new Error("OMP credential check paths do not match the runtime profile layout");
 	}
-	await requireDirectoryChain(home, agentDir);
+	await Promise.all([requireDirectoryChain(runtimeRoot, home), requireDirectoryChain(runtimeRoot, agentDir)]);
 
 	const databasePath = path.join(agentDir, "agent.db");
 	const tokenPath = path.join(home, ".omp", "auth-broker.token");
@@ -145,8 +146,8 @@ export async function assertOMPProfileCredentialsAbsent(input: {
 }
 
 if (import.meta.main) {
-	const [agentDir, home] = process.argv.slice(2);
-	if (!agentDir || !home) throw new Error("usage: assert-omp-credentials-absent <agent-dir> <home>");
-	await assertOMPProfileCredentialsAbsent({ agentDir, home });
+	const [agentDir, home, runtimeRoot] = process.argv.slice(2);
+	if (!agentDir || !home || !runtimeRoot) throw new Error("usage: assert-omp-credentials-absent <agent-dir> <home> <runtime-root>");
+	await assertOMPProfileCredentialsAbsent({ agentDir, home, runtimeRoot });
 	process.stdout.write(JSON.stringify({ component: "session-runtime", result: "credential_state_absent" }) + "\n");
 }
