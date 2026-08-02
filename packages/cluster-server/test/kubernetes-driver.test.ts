@@ -722,9 +722,17 @@ describe("KubernetesDriver", () => {
 		};
 		const awaitRuntime = (driver: ResourceDriver, prepare?: (runtimeId: string) => void) => async (runtimeId: string, desiredState: Runtime["desiredState"], phase: Runtime["phase"]): Promise<Runtime> => {
 			if (desiredState === "Running" && phase === "Ready") prepare?.(runtimeId);
-			const found = driver.getRuntime(runtimeId);
-			if (found.outcome === "found" && found.resource.desiredState === desiredState && found.resource.phase === phase) return found.resource;
-			throw new Error(`runtime ${runtimeId} did not converge to ${desiredState}/${phase}`);
+			const deadline = Date.now() + 5_000;
+			let found = driver.getRuntime(runtimeId);
+			while (found.outcome !== "found" || found.resource.desiredState !== desiredState || found.resource.phase !== phase) {
+				if (Date.now() >= deadline) {
+					const observed = found.outcome === "found" ? `${found.resource.desiredState}/${found.resource.phase}` : found.outcome;
+					throw new Error(`runtime ${runtimeId} did not converge to ${desiredState}/${phase}; observed ${observed}`);
+				}
+				await new Promise(resolve => setTimeout(resolve, 5));
+				found = driver.getRuntime(runtimeId);
+			}
+			return found.resource;
 		};
 		try {
 			const results = await runCrossDriverConformance({
