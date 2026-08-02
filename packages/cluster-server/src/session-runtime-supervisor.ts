@@ -137,7 +137,7 @@ export function sessionRuntimeSupervisorConfigFromEnv(env: NodeJS.ProcessEnv): S
 		chromium: {
 			executable: "/usr/bin/chromium",
 			argv: [
-				"--disable-setuid-sandbox", "--disable-background-networking", "--disable-breakpad",
+				"--no-sandbox", "--disable-background-networking", "--disable-breakpad",
 				"--disable-component-update", "--disable-default-apps", "--disable-sync", "--metrics-recording-only",
 				"--no-first-run", "--password-store=basic", "--remote-debugging-address=127.0.0.1",
 				"--remote-debugging-port=9222", `--user-data-dir=${browserStateDirectory}`, "about:blank",

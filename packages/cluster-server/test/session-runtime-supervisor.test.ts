@@ -128,7 +128,9 @@ describe("session shell fail-closed supervisor", () => {
 			CMUX_SOCKET_PATH: "/run/t4/runtime-config-test/cmux/c.sock", CMUX_SESSION: "config-test",
 			T4_SESSION_HOST_READY_PATH: "/run/t4/runtime-config-test/host.ready",
 		};
-		expect(sessionRuntimeSupervisorConfigFromEnv(env).browserEnabled).toBe(false);
+		const config = sessionRuntimeSupervisorConfigFromEnv(env);
+		expect(config.browserEnabled).toBe(false);
+		expect(config.chromium.argv).toContain("--no-sandbox");
 		expect(() => sessionRuntimeSupervisorConfigFromEnv({ ...env, T4_GENERATION_AUTH_PATH: "/run/t4-generation-auth/key" })).toThrow("must not receive");
 		expect(() => sessionRuntimeSupervisorConfigFromEnv({ ...env, T4_GUI_ENABLED: "1" })).toThrow("true or false");
 	});
