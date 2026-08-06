@@ -24,13 +24,6 @@ import Crypto
 import os
 #endif
 
-#if canImport(os)
-let t4log = Logger(subsystem: "sh.t4code.ios", category: "store")
-#else
-/// OSLog-compatible message on Linux: the store's callsites use
-/// `\(value, privacy: .public)` interpolation, which only typechecks
-/// against an interpolation type that accepts a privacy label.
-enum T4Privacy { case `public`, `private`, auto }
 
 /// Frame pacing for the streaming reveal loops. On Linux each reveal tick can
 /// change text height, which ripples a full SwiftCrossUI layout recompute up
@@ -45,6 +38,14 @@ enum T4StorePacing {
     static let sleepNs: UInt64 = 16_666_667
     #endif
 }
+
+#if canImport(os)
+let t4log = Logger(subsystem: "sh.t4code.ios", category: "store")
+#else
+/// OSLog-compatible message on Linux: the store's callsites use
+/// `\(value, privacy: .public)` interpolation, which only typechecks
+/// against an interpolation type that accepts a privacy label.
+enum T4Privacy { case `public`, `private`, auto }
 
 struct T4LogMessage: ExpressibleByStringInterpolation {
     struct StringInterpolation: StringInterpolationProtocol {
