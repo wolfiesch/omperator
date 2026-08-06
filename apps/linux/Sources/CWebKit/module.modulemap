@@ -1,0 +1,6 @@
+module CWebKit [system] {
+    header "shim.h"
+    link "webkitgtk-6.0"
+    link "javascriptcoregtk-6.0"
+    export *
+}

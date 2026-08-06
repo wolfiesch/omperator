@@ -1,0 +1,5 @@
+module CVTE [system] {
+    header "shim.h"
+    link "vte-2.91-gtk4"
+    export *
+}

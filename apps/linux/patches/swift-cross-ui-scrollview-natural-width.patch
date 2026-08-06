@@ -1,0 +1,15 @@
+--- a/Sources/GtkBackend/GtkBackend.swift
++++ b/Sources/GtkBackend/GtkBackend.swift
+@@ -714,6 +714,12 @@
+         // an infinite size_allocate → queue_resize loop that pegs the main
+         // thread whenever content hovers at the visibility threshold.
+         gtk_scrolled_window_set_overlay_scrolling(scrollView.opaquePointer, 1)
++        // Omperator: never propagate the content's natural width. Wrapped
++        // text reports its unwrapped one-line width as natural, which
++        // inflates every ancestor's natural width until a container that
++        // honors naturals (the split paned) allocates the detail wider than
++        // the window and the overflow clips off the right edge.
++        gtk_scrolled_window_set_propagate_natural_width(scrollView.opaquePointer, 0)
+         scrollView.setChild(child)
+         return scrollView
+     }

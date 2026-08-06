@@ -28,3 +28,4 @@ test-results/
 /output/playwright/
 *.log
 .todos/
+apps/linux/.build/

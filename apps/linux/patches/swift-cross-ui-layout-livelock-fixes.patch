@@ -1,0 +1,156 @@
+--- a/Sources/GtkBackend/GtkBackend.swift
++++ b/Sources/GtkBackend/GtkBackend.swift
+@@ -865,6 +865,23 @@ public final class GtkBackend:
+         }
+     }
+ 
++    /// Cache key for ``size(of:whenDisplayedIn:proposedWidth:proposedHeight:environment:)``.
++    /// Omperator: every layout pass re-measures every Text view, and each
++    /// measurement builds a fresh Pango context (fontconfig work) — the
++    /// dominant per-pass cost on dense views. Text measurements are stable
++    /// for the same widget/font/content/proposal, so memoize them.
++    private struct TextSizeCacheKey: Hashable {
++        let widget: ObjectIdentifier
++        let text: String
++        let proposedWidth: Int?
++        let proposedHeight: Int?
++        let ellipsizing: Bool
++        let font: Font
++        let lineLimit: LineLimit?
++    }
++
++    private var textSizeCache: [TextSizeCacheKey: SIMD2<Int>] = [:]
++
+     public func size(
+         of text: String,
+         whenDisplayedIn widget: Widget,
+@@ -885,6 +902,24 @@ public final class GtkBackend:
+             ellipsize = .none
+         }
+ 
++        // Omperator: cache hit — content, font, and proposal unchanged since
++        // the last pass, so reuse the measured size. Every layout pass
++        // re-measures every Text view, and each measurement builds a fresh
++        // Pango context (fontconfig work) — the dominant per-pass cost on
++        // dense views.
++        let cacheKey = TextSizeCacheKey(
++            widget: ObjectIdentifier(widget),
++            text: text,
++            proposedWidth: proposedWidth,
++            proposedHeight: proposedHeight,
++            ellipsizing: proposedHeight != nil && ellipsize != .none,
++            font: environment.font,
++            lineLimit: environment.lineLimitSettings
++        )
++        if let cached = textSizeCache[cacheKey] {
++            return cached
++        }
++
+         let pango = Pango(for: widget)
+         let (width, height) = pango.getTextSize(
+             text,
+@@ -918,7 +953,14 @@ public final class GtkBackend:
+             }
+         }
+ 
+-        return SIMD2(width, imposedHeight)
++        let measured = SIMD2(width, imposedHeight)
++        // Cap the table: streaming transcripts churn through many distinct
++        // text values, so without a bound the cache would grow unboundedly.
++        if textSizeCache.count > 2048 {
++            textSizeCache.removeAll(keepingCapacity: true)
++        }
++        textSizeCache[cacheKey] = measured
++        return measured
+     }
+ 
+     public func createImageView() -> Widget {
+@@ -1050,8 +1092,18 @@ public final class GtkBackend:
+         button.sensitive = environment.isEnabled
+         button.label = label
+         button.clicked = { _ in action() }
+-        button.css.clear()
+-        button.css.set(properties: Self.cssProperties(for: environment, isControl: true))
++        // Omperator: apply CSS only on a real change (same pattern as
++        // updateTextView). clear()+set() mutate the live CSSBlock, so didSet
++        // fires and gtk_css_provider_load_from_data parses twice per layout
++        // pass per button; each parse synchronously emits style signals that
++        // re-trigger SCUI updates — an infinite layout loop on connected
++        // session views (main thread pegged, window never repaints).
++        var newCss = button.css
++        newCss.clear()
++        newCss.set(properties: Self.cssProperties(for: environment, isControl: true))
++        if newCss != button.css {
++            button.css = newCss
++        }
+     }
+ 
+     public func createToggle() -> Widget {
+@@ -1070,10 +1122,15 @@ public final class GtkBackend:
+         toggle.toggled = { widget in
+             onChange(widget.active)
+         }
+-        toggle.css.clear()
++        // Omperator: apply CSS only on a real change (see updateButton).
++        var newCss = toggle.css
++        newCss.clear()
+         // This is a control, but we set isControl to false anyway because isControl overrides
+         // the button background and makes the on and off states of the toggle look identical.
+-        toggle.css.set(properties: Self.cssProperties(for: environment, isControl: false))
++        newCss.set(properties: Self.cssProperties(for: environment, isControl: false))
++        if newCss != toggle.css {
++            toggle.css = newCss
++        }
+     }
+ 
+     public func setState(ofToggle toggle: Widget, to state: Bool) {
+@@ -1185,8 +1242,13 @@ public final class GtkBackend:
+             onSubmit()
+         }
+ 
+-        textField.css.clear()
+-        textField.css.set(properties: Self.cssProperties(for: environment, isControl: true))
++        // Omperator: apply CSS only on a real change (see updateButton).
++        var newCss = textField.css
++        newCss.clear()
++        newCss.set(properties: Self.cssProperties(for: environment, isControl: true))
++        if newCss != textField.css {
++            textField.css = newCss
++        }
+     }
+ 
+     public func setContent(ofTextField textField: Widget, to content: String) {
+@@ -1246,9 +1308,14 @@ public final class GtkBackend:
+             onChange(buffer.text)
+         }
+ 
+-        textEditor.css.clear()
+-        textEditor.css.set(properties: Self.cssProperties(for: environment, isControl: false))
+-        textEditor.css.set(property: CSSProperty(key: "background", value: "none"))
++        // Omperator: apply CSS only on a real change (see updateButton).
++        var newCss = textEditor.css
++        newCss.clear()
++        newCss.set(properties: Self.cssProperties(for: environment, isControl: false))
++        newCss.set(property: CSSProperty(key: "background", value: "none"))
++        if newCss != textEditor.css {
++            textEditor.css = newCss
++        }
+     }
+ 
+     public func setContent(ofTextEditor textEditor: Widget, to content: String) {
+@@ -1889,8 +1956,13 @@ public final class GtkBackend:
+             onChange(date)
+         }
+         calendarWidget.sensitive = environment.isEnabled
+-        calendarWidget.css.clear()
+-        calendarWidget.css.set(properties: Self.cssProperties(for: environment, isControl: true))
++        // Omperator: apply CSS only on a real change (see updateButton).
++        var newCss = calendarWidget.css
++        newCss.clear()
++        newCss.set(properties: Self.cssProperties(for: environment, isControl: true))
++        if newCss != calendarWidget.css {
++            calendarWidget.css = newCss
++        }
+     }
+ 
+     // MARK: Helpers

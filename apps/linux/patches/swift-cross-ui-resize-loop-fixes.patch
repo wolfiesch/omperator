@@ -1,0 +1,163 @@
+diff --git a/Sources/Gtk/Widgets/Fixed.swift b/Sources/Gtk/Widgets/Fixed.swift
+index 3f104c66..86fe6e9c 100644
+--- a/Sources/Gtk/Widgets/Fixed.swift
++++ b/Sources/Gtk/Widgets/Fixed.swift
+@@ -39,6 +39,9 @@ import CGtk
+ /// widget. But you should be aware of the tradeoffs.
+ open class Fixed: Widget {
+     public var children: [Widget] = []
++    /// Omperator: last layout position per child, so the backend can skip
++    /// no-op gtk_fixed_move calls (each one queues a resize).
++    public var lastPositions: [ObjectIdentifier: SIMD2<Int>] = [:]
+ 
+     /// Creates a new `GtkFixed`.
+     public init() {
+@@ -65,6 +68,7 @@ open class Fixed: Widget {
+         if let index = children.firstIndex(where: { $0 === child }) {
+             gtk_fixed_remove(castedPointer(), child.widgetPointer)
+             children.remove(at: index)
++            lastPositions[ObjectIdentifier(child)] = nil
+             child.parentWidget = nil
+         }
+     }
+@@ -75,5 +79,6 @@ open class Fixed: Widget {
+             child.parentWidget = nil
+         }
+         children = []
++        lastPositions = [:]
+     }
+ }
+diff --git a/Sources/GtkBackend/GtkBackend.swift b/Sources/GtkBackend/GtkBackend.swift
+index 685d4256..1ac1b3b9 100644
+--- a/Sources/GtkBackend/GtkBackend.swift
++++ b/Sources/GtkBackend/GtkBackend.swift
+@@ -583,7 +583,16 @@ public final class GtkBackend:
+ 
+     public func setPosition(ofChildAt index: Int, in container: Widget, to position: SIMD2<Int>) {
+         let container = container as! Fixed
+-        container.move(container.children[index], x: Double(position.x), y: Double(position.y))
++        let child = container.children[index]
++        // Omperator: gtk_fixed_move calls gtk_widget_queue_resize, and during
++        // size_allocate that re-triggers allocation — an infinite loop when a
++        // layout oscillates by a pixel. Skip no-op and sub-pixel moves.
++        let key = ObjectIdentifier(child)
++        if let last = container.lastPositions[key], abs(last.x - position.x) <= 1, abs(last.y - position.y) <= 1 {
++            return
++        }
++        container.lastPositions[key] = position
++        container.move(child, x: Double(position.x), y: Double(position.y))
+     }
+ 
+     public func remove(childAt index: Int, from container: Widget) {
+@@ -622,14 +631,37 @@ public final class GtkBackend:
+     }
+ 
+     public func naturalSize(of widget: Widget) -> SIMD2<Int> {
++        // Omperator: memoize per-widget natural size keyed on the current size
++        // request. The naive implementation resets the request to (-1,-1) and
++        // restores it on every measure, and gtk_widget_set_size_request queues
++        // a resize each time — so every layout pass dirties every widget and
++        // GTK re-runs allocation forever (the infinite layout loop that pegs
++        // the main thread). A widget's natural size only changes with its
++        // content, and content changes land together with a new request, so
++        // the request is a sound cache key.
+         let currentSize = widget.getSizeRequest()
++        let key = ObjectIdentifier(widget)
++        if let cached = naturalSizeCache[key],
++           cached.requestWidth == currentSize.width, cached.requestHeight == currentSize.height {
++            return cached.size
++        }
+         widget.setSizeRequest(width: -1, height: -1)
+         let (width, height) = widget.getNaturalSize()
+         widget.setSizeRequest(width: currentSize.width, height: currentSize.height)
+-        return SIMD2(width, height)
++        let size = SIMD2(width, height)
++        naturalSizeCache[key] = (currentSize.width, currentSize.height, size)
++        return size
+     }
+ 
++    private var naturalSizeCache: [ObjectIdentifier: (requestWidth: Int, requestHeight: Int, size: SIMD2<Int>)] = [:]
++
+     public func setSize(of widget: Widget, to size: SIMD2<Int>) {
++        // Omperator: gtk_widget_set_size_request calls gtk_widget_queue_resize
++        // unconditionally, so re-applying the same size every layout pass
++        // re-triggers allocation forever (GTK warns "queue_resize() during
++        // size_allocate()" and the main thread pegs). Skip no-op sets.
++        let current = widget.getSizeRequest()
++        guard current.width != size.x || current.height != size.y else { return }
+         widget.setSizeRequest(width: size.x, height: size.y)
+     }
+ 
+@@ -676,6 +708,12 @@ public final class GtkBackend:
+ 
+     public func createScrollContainer(for child: Widget) -> Widget {
+         let scrollView = ScrolledWindow()
++        // Omperator: overlay scrollbars. With policy AUTOMATIC and in-content
++        // scrollbars, the scrollbar's appearance changes the content width,
++        // which changes the content height, which re-toggles the scrollbar —
++        // an infinite size_allocate → queue_resize loop that pegs the main
++        // thread whenever content hovers at the visibility threshold.
++        gtk_scrolled_window_set_overlay_scrolling(scrollView.opaquePointer, 1)
+         scrollView.setChild(child)
+         return scrollView
+     }
+@@ -814,8 +852,17 @@ public final class GtkBackend:
+             }
+ 
+         textView.selectable = environment.isTextSelectionEnabled
+-        textView.css.clear()
+-        textView.css.set(properties: Self.cssProperties(for: environment))
++        // Omperator: apply CSS only on a real change. The previous
++        // clear()+set() pair forced two gtk_css_provider_load_from_data
++        // parses per text update, and every parse invalidates the widget's
++        // style — on dense views (hundreds of text nodes) the resulting
++        // style/layout signal cascade pegs the main thread at ~100% CPU.
++        var newCss = textView.css
++        newCss.clear()
++        newCss.set(properties: Self.cssProperties(for: environment))
++        if newCss != textView.css {
++            textView.css = newCss
++        }
+     }
+ 
+     public func size(
+@@ -2045,7 +2092,17 @@ class CustomListBox: ListBox {
+ /// `Label`s only display a single line of text when ellipsizing is enabled
+ /// because they don't pass their size request to their underlying Pango layout.
+ class CustomLabel: Label {
++    private var lastRequestedWidth = -1
++    private var lastRequestedHeight = -1
++
+     override func setSizeRequest(width: Int, height: Int) {
++        // Omperator: skip no-op re-requests. gtk_widget_set_size_request calls
++        // gtk_widget_queue_resize unconditionally, so issuing the same request
++        // every layout pass keeps the widget resizing forever (GTK warns
++        // "queue_resize() during size_allocate()" and the main thread pegs).
++        guard width != lastRequestedWidth || height != lastRequestedHeight else { return }
++        lastRequestedWidth = width
++        lastRequestedHeight = height
+         super.setSizeRequest(width: width, height: height)
+ 
+         // Override the label's layout height. We do this so that the label grows
+diff --git a/Sources/SwiftCrossUI/ViewGraph/ViewGraphNode.swift b/Sources/SwiftCrossUI/ViewGraph/ViewGraphNode.swift
+index a779c618..f6925bb2 100644
+--- a/Sources/SwiftCrossUI/ViewGraph/ViewGraphNode.swift
++++ b/Sources/SwiftCrossUI/ViewGraph/ViewGraphNode.swift
+@@ -146,7 +146,16 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
+         )
+ 
+         self.currentLayout = newLayout
+-        if newLayout.size != currentSize {
++        // Omperator: 1px hysteresis. Pango measurements are not idempotent
++        // (the same text can measure a pixel wider or narrower between
++        // passes), and without tolerance the ±1px churn keeps propagating
++        // resizes through the whole tree — gtk_fixed_move re-queues
++        // allocation every pass and the main thread pegs at 100%.
++        let sizeChanged =
++            currentSize == nil
++            || abs(newLayout.size.width - currentSize!.width) > 1
++            || abs(newLayout.size.height - currentSize!.height) > 1
++        if sizeChanged {
+             resultCache[lastProposedSize] = newLayout
+             parentEnvironment.onResize(newLayout.size)
+         } else {

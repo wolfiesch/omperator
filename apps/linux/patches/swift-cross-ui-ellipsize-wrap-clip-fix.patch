@@ -1,0 +1,43 @@
+--- a/Sources/GtkBackend/GtkBackend.swift
++++ b/Sources/GtkBackend/GtkBackend.swift
+@@ -830,7 +830,16 @@
+         textView.horizontalAlignment = .start
+         textView.wrap = true
+         textView.lineWrapMode = .wordCharacter
+-        textView.ellipsize = .end
++        // Omperator: do NOT ellipsize by default. Ellipsizing a wrapped label
++        // makes Pango lay the text out wider than the allocation (GTK then
++        // draws the oversized layout centered, clipping the left edge).
++        // Ellipsize only when a line limit is set (see updateTextView).
++        textView.ellipsize = .none
++        // Omperator: draw the text block from the label's left edge. The
++        // default xalign of 0.5 centers the Pango layout within the label;
++        // if the layout is ever wider than the allocation (stale reflow),
++        // centering clips text off the LEFT edge of the viewport.
++        textView.xalign = 0.0
+         textView.yalign = 0.0
+         return textView
+     }
+@@ -853,6 +862,9 @@
+             }
+ 
+         textView.selectable = environment.isTextSelectionEnabled
++        // Omperator: ellipsize only for line-limited text (single-line
++        // headlines etc.); body text must wrap, never ellipsize-clip.
++        textView.ellipsize = environment.lineLimitSettings != nil ? .end : .none
+         // Omperator: apply CSS only on a real change. The previous
+         // clear()+set() pair forced two gtk_css_provider_load_from_data
+         // parses per text update, and every parse invalidates the widget's
+@@ -2178,6 +2190,12 @@
+         lastRequestedHeight = height
+         super.setSizeRequest(width: width, height: height)
+ 
++        // Omperator: the layout-height override exists solely for ellipsized
++        // (line-limited) labels. Applied to a plain wrapping label it leaves
++        // Pango holding a stale line layout wider than the allocation, which
++        // GTK then draws centered — clipping text off the left edge.
++        guard ellipsize != .none else { return }
++
+         // Override the label's layout height. We do this so that the label grows
+         // vertically to fill available space even though we have ellipsizing
+         // enabled (which generally causes labels to limit themselves to a single line).
