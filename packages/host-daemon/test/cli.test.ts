@@ -3,6 +3,7 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  assessOfficialRuntime,
   hostDaemonPaths,
   OFFICIAL_OMP_BUILD,
   OFFICIAL_OMP_VERSION,
@@ -384,7 +385,7 @@ describe("T4 host daemon CLI", () => {
     expect(authorityCloses).toBe(1);
   });
 
-  test("official runtime probe fails closed on version drift", async () => {
+  test("official runtime probe accepts proven builds and rejects below the window", async () => {
     const root = await mkdtemp(join(tmpdir(), "t4-official-version-"));
     const exact = join(root, "exact-omp");
     const drifted = join(root, "drifted-omp");
@@ -393,10 +394,63 @@ describe("T4 host daemon CLI", () => {
       writeFile(drifted, "#!/bin/sh\nprintf 'omp/17.0.7\\n'\n"),
     ]);
     await Promise.all([chmod(exact, 0o700), chmod(drifted, 0o700)]);
-    expect(await verifyOfficialRuntime(exact)).toEqual({
+    expect(await verifyOfficialRuntime(exact)).toMatchObject({
       ompVersion: OFFICIAL_OMP_VERSION,
       ompBuild: OFFICIAL_OMP_BUILD,
+      dialect: "official-17.0.9",
     });
-    await expect(verifyOfficialRuntime(drifted)).rejects.toThrow(`omp/${OFFICIAL_OMP_VERSION}`);
+    await expect(verifyOfficialRuntime(drifted)).rejects.toThrow("outside the supported window");
+  });
+
+  test("official runtime probe accepts a newer stock version with an advisory", async () => {
+    const root = await mkdtemp(join(tmpdir(), "t4-official-newer-"));
+    const newer = join(root, "newer-omp");
+    await writeFile(newer, "#!/bin/sh\nprintf 'omp/17.2.9\\n'\n");
+    await chmod(newer, 0o700);
+    const verified = await verifyOfficialRuntime(newer);
+    expect(verified).toMatchObject({
+      ompVersion: "17.2.9",
+      ompBuild: OFFICIAL_OMP_BUILD,
+      dialect: "official-17.0.9",
+    });
+    expect(verified.warning).toContain("17.2.9");
+    expect(verified.warning).toContain("gate-proven");
+  });
+
+  test("official runtime probe resolves env-shebang runtimes (stock OMP ships as a bun script)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "t4-official-shebang-"));
+    const script = join(root, "omp-script");
+    await writeFile(script, "#!/usr/bin/env sh\nprintf 'omp/17.1.3\\n'\n");
+    await chmod(script, 0o700);
+    const verified = await verifyOfficialRuntime(script);
+    expect(verified).toMatchObject({
+      ompVersion: "17.1.3",
+      dialect: "official-17.0.9",
+    });
+  });
+
+  test("assessOfficialRuntime tiers stock OMP versions without spawning", () => {
+    expect(assessOfficialRuntime(`omp/${OFFICIAL_OMP_VERSION}`)).toEqual({
+      decision: "known-good",
+      version: OFFICIAL_OMP_VERSION,
+      build: OFFICIAL_OMP_BUILD,
+      dialect: "official-17.0.9",
+    });
+    const compatible = assessOfficialRuntime("omp/17.2.9");
+    expect(compatible).toMatchObject({
+      decision: "compatible",
+      version: "17.2.9",
+      dialect: "official-17.0.9",
+    });
+    if (compatible.decision !== "compatible") throw new Error("expected compatible");
+    expect(compatible.warning).toContain("official-omp-gate0");
+    // Numeric compare: 17.10.0 is newer than 17.0.9 despite "10" < "2" lexically.
+    expect(assessOfficialRuntime("omp/17.10.0").decision).toBe("compatible");
+    expect(assessOfficialRuntime("omp/16.9.9").decision).toBe("too-old");
+    expect(assessOfficialRuntime("omp/18.0.0").decision).toBe("too-old");
+    expect(assessOfficialRuntime("omp/17.2.9", true).decision).toBe("unsupported");
+    expect(assessOfficialRuntime(`omp/${OFFICIAL_OMP_VERSION}`, true).decision).toBe("known-good");
+    expect(assessOfficialRuntime("not-a-version").decision).toBe("unparseable");
+    expect(assessOfficialRuntime("").decision).toBe("unparseable");
   });
 });

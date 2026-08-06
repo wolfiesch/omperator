@@ -28,8 +28,41 @@ import { COMMAND_DESCRIPTORS, type ProjectId, type SessionId } from "@t4-code/pr
 import { parsePairArgs, runPairAction } from "./pair.ts";
 
 export const T4_HOST_VERSION = "0.2.1";
+// Stock OMP runtime gate. The host never assumes a build: versions proven by
+// the compatibility gates (compat/official-omp-gate0.json) are accepted
+// silently; newer versions inside the supported window are accepted with an
+// advisory warning; anything outside the window fails with an actionable
+// message. OMP_T4_STRICT_RUNTIME=1 (for packaged builds that ship the exact
+// runtime) keeps the byte-exact pin.
 export const OFFICIAL_OMP_VERSION = "17.0.9";
 export const OFFICIAL_OMP_BUILD = "639bac596d94b5993349f3f6696176cb2bf9b5d3";
+export const OFFICIAL_OMP_MIN_VERSION = "17.0.9";
+export const OFFICIAL_OMP_MAX_MAJOR = 17;
+
+export interface OfficialOmpMatrixRow {
+  /** Exact stock OMP version that passed the behavior gates. */
+  readonly version: string;
+  /** Commit the gates ran against (compat/official-omp-gate0.json runtime). */
+  readonly build: string;
+  /** RPC dialect the host dispatches on (server.ts #rpcDialect branches). */
+  readonly dialect: "fork" | "official-17.0.9";
+  /** The compat gate file that proves this row. */
+  readonly gates: string;
+  readonly platforms: readonly string[];
+}
+
+// Keep in sync with compat/official-omp-gate0.json. When a new stock OMP
+// version passes the maintainer gates, append a row here — the window widens
+// with a data change, not a host code change.
+const OFFICIAL_OMP_MATRIX: readonly OfficialOmpMatrixRow[] = Object.freeze([
+  Object.freeze({
+    version: OFFICIAL_OMP_VERSION,
+    build: OFFICIAL_OMP_BUILD,
+    dialect: "official-17.0.9" as const,
+    gates: "official-omp-gate0",
+    platforms: Object.freeze(["darwin-arm64", "linux-x64", "linux-arm64"]),
+  }),
+]);
 const PROFILE = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
 const ORIGIN_LIMIT = 32;
 const VERSION_OUTPUT_BYTES = 4 * 1024;
@@ -258,7 +291,14 @@ export interface HostDaemonDependencies {
   readonly createTranscriptSearch?: (path: string) => TranscriptSearchIndex;
   readonly createLocal?: (options: AppserverOptions) => AppserverHandle;
   readonly createRemote?: typeof createRemoteAppserver;
-  readonly verifyOfficialRuntime?: (executable: string) => Promise<Pick<AppserverOptions, "ompVersion" | "ompBuild">>;
+  readonly verifyOfficialRuntime?: (
+    executable: string,
+  ) => Promise<
+    Pick<AppserverOptions, "ompVersion" | "ompBuild"> & {
+      readonly dialect?: OfficialOmpMatrixRow["dialect"];
+      readonly warning?: string;
+    }
+  >;
   readonly onSignal?: (signal: "SIGINT" | "SIGTERM", listener: () => void) => void;
   readonly removeSignal?: (signal: "SIGINT" | "SIGTERM", listener: () => void) => void;
   /** Structured host logger for boot reaping and appserver events; constructed from profileStateRoot when omitted. */
@@ -329,14 +369,114 @@ async function boundedProcessOutput(stream: ReadableStream<Uint8Array>, maxBytes
   return new TextDecoder("utf-8", { fatal: true }).decode(output);
 }
 
+const OMP_VERSION_PATTERN = /^omp\/(\d+)\.(\d+)\.(\d+)(?:-([0-9a-f]+))?$/u;
+
+/** Numeric component-wise compare for `major.minor.patch` strings. */
+function compareOmpVersions(a: string, b: string): number {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i += 1) {
+    if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) < (pb[i] ?? 0) ? -1 : 1;
+  }
+  return 0;
+}
+
+export type OfficialRuntimeAssessment =
+  | {
+      readonly decision: "known-good";
+      readonly version: string;
+      readonly build: string;
+      readonly dialect: OfficialOmpMatrixRow["dialect"];
+    }
+  | {
+      readonly decision: "compatible";
+      readonly version: string;
+      readonly build?: string;
+      readonly dialect: OfficialOmpMatrixRow["dialect"];
+      readonly warning: string;
+    }
+  | { readonly decision: "too-old" | "unsupported" | "unparseable"; readonly reason: string };
+
+/**
+ * Decide whether a stock OMP version may serve official authority. Pure:
+ * no process, no env reads beyond the strict flag — unit-testable without
+ * spawning. The host accepts what the compatibility matrix proves and what
+ * falls inside the supported window; it refuses only old or unparsable
+ * runtimes (and, under OMP_T4_STRICT_RUNTIME, anything outside the matrix).
+ */
+export function assessOfficialRuntime(
+  versionText: string,
+  strict = process.env.OMP_T4_STRICT_RUNTIME === "1",
+): OfficialRuntimeAssessment {
+  const match = OMP_VERSION_PATTERN.exec(versionText.trim());
+  if (match === null) {
+    return {
+      decision: "unparseable",
+      reason: `OMP version probe is not omp/<major>.<minor>.<patch>: ${JSON.stringify(versionText.trim())}`,
+    };
+  }
+  const version = `${match[1]}.${match[2]}.${match[3]}`;
+  const build = match[4];
+  const known = OFFICIAL_OMP_MATRIX.find(
+    row => row.version === version && (build === undefined || row.build === build),
+  );
+  if (known) {
+    return { decision: "known-good", version, build: known.build, dialect: known.dialect };
+  }
+  if (strict) {
+    return {
+      decision: "unsupported",
+      reason:
+        `strict runtime mode accepts only the gate-proven builds ` +
+        `(${OFFICIAL_OMP_MATRIX.map(row => `${row.version} (${row.build})`).join(", ")}); ` +
+        `found omp/${version}${build ? `-${build}` : ""}`,
+    };
+  }
+  const newest = OFFICIAL_OMP_MATRIX[0];
+  if (newest === undefined) {
+    return { decision: "unsupported", reason: "no gate-proven OMP runtime rows are configured" };
+  }
+  if (
+    Number(match[1]) > OFFICIAL_OMP_MAX_MAJOR ||
+    compareOmpVersions(version, OFFICIAL_OMP_MIN_VERSION) < 0
+  ) {
+    return {
+      decision: "too-old",
+      reason:
+        `OMP ${version} is outside the supported window ` +
+        `(${OFFICIAL_OMP_MIN_VERSION}..${OFFICIAL_OMP_MAX_MAJOR}.x); upgrade OMP or ` +
+        `point --omp at a gate-proven runtime (${newest.version})`,
+    };
+  }
+  return {
+    decision: "compatible",
+    version,
+    ...(build === undefined ? {} : { build }),
+    dialect: newest.dialect,
+    warning:
+      `OMP ${version} is newer than the gate-proven ${newest.version} (${newest.gates}); ` +
+      `behavior gates have not run against it — proceeding with the ${newest.dialect} dialect`,
+  };
+}
+
 export async function verifyOfficialRuntime(
   executable: string,
-): Promise<Pick<AppserverOptions, "ompVersion" | "ompBuild">> {
+): Promise<
+  Pick<AppserverOptions, "ompVersion" | "ompBuild"> & {
+    readonly dialect: OfficialOmpMatrixRow["dialect"];
+    readonly warning?: string;
+  }
+> {
   const child = Bun.spawn([executable, "--version"], {
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
-    env: {},
+    // Isolated env (deterministic probe), except PATH: the stock OMP on
+    // Linux ships as a `#!/usr/bin/env bun` script, so a probe with no PATH
+    // dies with exit 126 before printing anything. --version is read-only;
+    // the ambient-executable boundary (cli.test.ts "without ambient
+    // executable lookup") governs which runtime RUNS, not the probe.
+    env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
   });
   const timer = setTimeout(() => child.kill(), VERSION_TIMEOUT_MS);
   try {
@@ -346,9 +486,27 @@ export async function verifyOfficialRuntime(
       child.exited,
     ]);
     if (exitCode !== 0) throw new Error(`official OMP version probe failed (${exitCode}): ${stderr.trim()}`);
-    if (stdout.trim() !== `omp/${OFFICIAL_OMP_VERSION}`)
-      throw new Error(`official OMP runtime must report omp/${OFFICIAL_OMP_VERSION}`);
-    return { ompVersion: OFFICIAL_OMP_VERSION, ompBuild: OFFICIAL_OMP_BUILD };
+    const assessment = assessOfficialRuntime(stdout);
+    switch (assessment.decision) {
+      case "known-good":
+        return {
+          ompVersion: assessment.version,
+          ompBuild: assessment.build,
+          dialect: assessment.dialect,
+        };
+      case "compatible":
+        return {
+          ompVersion: assessment.version,
+          ompBuild: assessment.build ?? OFFICIAL_OMP_BUILD,
+          dialect: assessment.dialect,
+          warning: assessment.warning,
+        };
+      case "too-old":
+      case "unsupported":
+      case "unparseable":
+        throw new Error(assessment.reason);
+    }
+    throw new Error("unreachable: unhandled official runtime assessment");
   } finally {
     clearTimeout(timer);
     if (child.exitCode === null) child.kill();
@@ -380,12 +538,21 @@ export async function runHostDaemon(
   let usageAuthority: AppserverOptions["usageAuthority"];
   let transcriptImageRoot: string | undefined;
   let identity: Pick<AppserverOptions, "ompVersion" | "ompBuild"> = {};
+  let officialDialect: OfficialOmpMatrixRow["dialect"] | undefined;
   let projectRootForProject: (projectId: ProjectId) => Promise<string> | string;
   let projectRootForSession: (sessionId: SessionId) => Promise<string>;
   let lockCheck: NonNullable<AppserverOptions["lockCheck"]>;
   let lockStatus: NonNullable<AppserverOptions["lockStatus"]>;
   if (config.authorityMode === "official") {
-    identity = await (dependencies.verifyOfficialRuntime ?? verifyOfficialRuntime)(config.ompExecutable);
+    const verified = await (dependencies.verifyOfficialRuntime ?? verifyOfficialRuntime)(config.ompExecutable);
+    identity = { ompVersion: verified.ompVersion, ompBuild: verified.ompBuild };
+    officialDialect = verified.dialect ?? "official-17.0.9";
+    if (verified.warning !== undefined) {
+      hostLogger.log("runtime.advisory", {
+        ompVersion: verified.ompVersion,
+        warning: verified.warning,
+      });
+    }
     const official =
       dependencies.createOfficialAuthority?.(config, paths) ??
       new OfficialOmpProfileAuthority({
@@ -497,7 +664,9 @@ export async function runHostDaemon(
       rpcChildInvocation: { executable: config.ompExecutable, prefixArgv: [] },
       rpcChildEnvironment: { OMP_PROFILE: config.profileId },
       rpcChildRegistryPath,
-      ...(config.authorityMode === "official" ? { rpcDialect: "official-17.0.9" as const } : {}),
+      ...(config.authorityMode === "official"
+        ? { rpcDialect: officialDialect ?? ("official-17.0.9" as const) }
+        : {}),
       ...(process.platform === "darwin"
         ? {
             projectRevealer: async (root: string): Promise<boolean> => {
