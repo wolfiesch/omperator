@@ -17,6 +17,12 @@ export interface FixtureWebSocketOptions {
   path?: string;
   scheduler?: VirtualScheduler;
   port?: number;
+  /**
+   * Advance the virtual scheduler with wall-clock time (50ms ticks). Off by
+   * default so tests keep deterministic manual advanceBy() control; the
+   * standalone host runner opts in so streamed scenarios play live.
+   */
+  realTime?: boolean;
 }
 export class FixtureWebSocketServer {
   readonly engine: FixtureEngine;
@@ -28,6 +34,8 @@ export class FixtureWebSocketServer {
   private readonly socketClients = new Map<WebSocket, string>();
   private readonly closingSockets = new Set<WebSocket>();
   private readonly requestedPort: number;
+  private readonly realTime: boolean;
+  private realTimeTimer: NodeJS.Timeout | undefined;
   private running = false;
   private nextClient = 1;
   private boundPort = 0;
@@ -42,6 +50,7 @@ export class FixtureWebSocketServer {
     if (!/^\/[A-Za-z0-9/_-]+$/u.test(this.path))
       throw new Error("fixture websocket path must be an absolute simple path");
     this.requestedPort = options.port ?? 0;
+    this.realTime = options.realTime ?? false;
     if (
       !Number.isInteger(this.requestedPort) ||
       this.requestedPort < 0 ||
@@ -102,6 +111,10 @@ export class FixtureWebSocketServer {
         const address = this.httpServer.address() as AddressInfo;
         this.boundPort = address.port;
         this.running = true;
+        if (this.realTime) {
+          this.realTimeTimer = setInterval(() => this.advanceBy(50), 50);
+          this.realTimeTimer.unref();
+        }
         resolve();
       };
       this.httpServer.once("error", onError);
@@ -111,6 +124,10 @@ export class FixtureWebSocketServer {
     return this.address;
   }
   async stop(): Promise<void> {
+    if (this.realTimeTimer !== undefined) {
+      clearInterval(this.realTimeTimer);
+      this.realTimeTimer = undefined;
+    }
     const sockets = [...this.sockets];
     for (const socket of sockets) this.closeSocket(socket, 1000, "fixture stopped");
     await Promise.all(
@@ -195,6 +212,10 @@ export class FixtureWebSocketServer {
         return;
       }
       try {
+        if (process.env.FIXTURE_LOG_FRAMES === "1") {
+          const parsed = JSON.parse(String(data)) as { type?: string; command?: string };
+          console.log(`[fixture] recv ${parsed.type ?? "?"}${parsed.command ? ` ${parsed.command}` : ""}`);
+        }
         const frames = this.engine.receive(clientId, data as string | Uint8Array);
         this.sendFrames(socket, frames);
         this.flushAll();

@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>mochi's corner ✦ a tiny home on the internet</title>
+<style>
+  :root {
+    --bg: #fff6ec;
+    --card: #fffdf8;
+    --ink: #5c5470;
+    --muted: #9893a5;
+    --gold: #ea9d34;
+    --foam: #56949f;
+    --iris: #907aa9;
+    --rose: #d7827e;
+    --pine: #286983;
+    --line: #f0e5d8;
+    --shadow: 0 10px 30px rgba(160, 120, 80, 0.10);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background:
+      radial-gradient(circle at 15% 10%, rgba(234, 157, 52, 0.12), transparent 34%),
+      radial-gradient(circle at 85% 20%, rgba(86, 148, 159, 0.14), transparent 36%),
+      radial-gradient(circle at 70% 85%, rgba(144, 122, 169, 0.12), transparent 40%),
+      var(--bg);
+    color: var(--ink);
+    font-family: "Comic Sans MS", "Segoe UI", system-ui, sans-serif;
+    min-height: 100vh;
+    padding: 32px 16px 64px;
+  }
+  .marquee {
+    overflow: hidden;
+    white-space: nowrap;
+    font-size: 13px;
+    letter-spacing: 2px;
+    color: var(--muted);
+    padding: 10px 0 22px;
+  }
+  .marquee span { display: inline-block; padding-left: 100%; animation: slide 22s linear infinite; }
+  @keyframes slide { to { transform: translateX(-100%); } }
+
+  .frame { max-width: 560px; margin: 0 auto; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 26px;
+    box-shadow: var(--shadow);
+    padding: 28px;
+    margin-bottom: 22px;
+  }
+  .sparkles { font-size: 18px; color: var(--gold); letter-spacing: 8px; text-align: center; padding-bottom: 10px; }
+
+  .cat {
+    width: 120px; height: 104px; margin: 0 auto 14px; position: relative;
+  }
+  .cat .head {
+    position: absolute; left: 18px; top: 18px; width: 84px; height: 74px;
+    background: var(--gold); border-radius: 46% 46% 44% 44% / 50% 50% 46% 46%;
+  }
+  .cat .ear { position: absolute; top: 0; width: 0; height: 0; border-left: 18px solid transparent; border-right: 18px solid transparent; border-bottom: 26px solid var(--gold); }
+  .cat .ear.l { left: 16px; transform: rotate(-12deg); }
+  .cat .ear.r { right: 16px; transform: rotate(12deg); }
+  .cat .ear .inner { position: absolute; top: 10px; left: -9px; width: 0; height: 0; border-left: 9px solid transparent; border-right: 9px solid transparent; border-bottom: 14px solid #fff3d6; }
+  .cat .eye { position: absolute; top: 38px; width: 9px; height: 12px; background: var(--ink); border-radius: 50%; animation: blink 4.2s infinite; }
+  .cat .eye.l { left: 34px; } .cat .eye.r { right: 34px; }
+  @keyframes blink { 0%, 92%, 100% { transform: scaleY(1); } 95% { transform: scaleY(0.08); } }
+  .cat .nose { position: absolute; top: 56px; left: 50%; transform: translateX(-50%); width: 10px; height: 7px; background: var(--rose); border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%; }
+  .cat .mouth { position: absolute; top: 62px; left: 50%; transform: translateX(-50%); width: 16px; height: 8px; border-bottom: 2px solid var(--ink); border-radius: 0 0 16px 16px; }
+  .cat .cheek { position: absolute; top: 52px; width: 14px; height: 8px; background: rgba(215, 130, 126, 0.35); border-radius: 50%; }
+  .cat .cheek.l { left: 20px; } .cat .cheek.r { right: 20px; }
+
+  h1 { font-size: 27px; text-align: center; color: var(--ink); letter-spacing: 0.5px; }
+  .sub { text-align: center; color: var(--muted); font-size: 14px; margin-top: 8px; }
+  h2 { font-size: 16px; color: var(--pine); letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 14px; }
+  p { font-size: 15px; line-height: 1.7; }
+  ul { list-style: none; }
+  li { padding: 7px 0; font-size: 15px; border-bottom: 1px dashed var(--line); }
+  li:last-child { border-bottom: none; }
+  li b { color: var(--foam); font-weight: 600; }
+  .now li::before { content: "✦ "; color: var(--gold); }
+
+  .links { display: flex; flex-wrap: wrap; gap: 10px; }
+  .links a {
+    text-decoration: none; color: var(--card); background: var(--iris);
+    border-radius: 999px; padding: 8px 16px; font-size: 14px;
+    transition: transform 0.15s ease;
+  }
+  .links a:nth-child(2n) { background: var(--foam); }
+  .links a:hover { transform: translateY(-2px) rotate(-1deg); }
+
+  .guestbook form { display: flex; gap: 10px; margin: 14px 0; }
+  .guestbook input {
+    flex: 1; border: 1.5px solid var(--line); border-radius: 14px;
+    padding: 10px 14px; font-size: 14px; font-family: inherit; background: #fff;
+    color: var(--ink); outline: none;
+  }
+  .guestbook input:focus { border-color: var(--gold); }
+  .guestbook button {
+    border: none; background: var(--gold); color: #fff; font-family: inherit;
+    font-size: 14px; border-radius: 14px; padding: 0 18px; cursor: pointer;
+  }
+  .entry { font-size: 14px; color: var(--muted); padding: 8px 0; border-bottom: 1px dashed var(--line); }
+  .entry:last-child { border-bottom: none; }
+  .entry b { color: var(--rose); }
+
+  footer { text-align: center; color: var(--muted); font-size: 12.5px; padding-top: 10px; letter-spacing: 0.5px; }
+  .visitor { text-align: center; font-size: 13px; color: var(--gold); padding-top: 14px; }
+</style>
+</head>
+<body>
+  <div class="marquee"><span>✦ welcome to my corner ✦ you are visitor #0042 ✦ the stars are listening ✦ be kind to yourself ✦</span></div>
+  <div class="frame">
+    <div class="card">
+      <div class="sparkles">✦ ✧ ✦</div>
+      <div class="cat" aria-hidden="true">
+        <div class="ear l"><div class="inner"></div></div>
+        <div class="ear r"><div class="inner"></div></div>
+        <div class="head">
+          <div class="eye l"></div><div class="eye r"></div>
+          <div class="nose"></div><div class="mouth"></div>
+          <div class="cheek l"></div><div class="cheek r"></div>
+        </div>
+      </div>
+      <h1>mochi's corner</h1>
+      <p class="sub">a tiny home on the internet — sit a while ✦</p>
+    </div>
+
+    <div class="card">
+      <h2>hi, i'm mochi</h2>
+      <p>i live on this little page with my human, fern. we grow things: plants, ideas, and
+      occasionally a very small garden of bugs. everything here is hand-rolled — the cat is pure css,
+      the stars are gradients, and the guestbook below really does keep what you write.</p>
+    </div>
+
+    <div class="card now">
+      <h2>right now</h2>
+      <ul>
+        <li><b>reading</b> — a book about clouds and the people who name them</li>
+        <li><b>growing</b> — basil on the windowsill (it's thriving, mostly)</li>
+        <li><b>learning</b> — how to make the internet feel like a room again</li>
+        <li><b>sipping</b> — jasmine tea, slightly too hot, worth it</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>little favorites</h2>
+      <div class="links">
+        <a href="#">✦ the library</a>
+        <a href="#">✦ the greenhouse</a>
+        <a href="#">✦ the record shop</a>
+        <a href="#">✦ the star chart</a>
+      </div>
+    </div>
+
+    <div class="card guestbook">
+      <h2>the guestbook</h2>
+      <p style="font-size:14px;color:var(--muted)">leave a note — it stays here, tucked between the stars.</p>
+      <form id="form">
+        <input id="note" type="text" maxlength="120" placeholder="your kindest words…" autocomplete="off" />
+        <button type="submit">sign</button>
+      </form>
+      <div id="entries"></div>
+    </div>
+
+    <p class="visitor">✦ the stars are listening ✦</p>
+    <footer>made with love, tea, and a lot of css — mochi & fern</footer>
+  </div>
+<script>
+  const KEY = "mochi-guestbook-v1";
+  const entries = document.getElementById("entries");
+  const render = () => {
+    const saved = JSON.parse(localStorage.getItem(KEY) || "[]");
+    entries.innerHTML = saved.map(note =>
+      `<div class="entry"><b>✎ a visitor</b> — ${note.replace(/[<>&"]/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;",'"':"&quot;"}[c]))}</div>`
+    ).join("");
+  };
+  render();
+  document.getElementById("form").addEventListener("submit", e => {
+    e.preventDefault();
+    const input = document.getElementById("note");
+    const text = input.value.trim();
+    if (!text) return;
+    const saved = JSON.parse(localStorage.getItem(KEY) || "[]");
+    saved.push(text);
+    localStorage.setItem(KEY, JSON.stringify(saved.slice(-12)));
+    input.value = "";
+    render();
+  });
+</script>
+</body>
+</html>

@@ -13,6 +13,7 @@ export default defineConfig({
       input: {
         index: page("index.html"),
         docs: page("docs/index.html"),
+        linux: page("linux.html"),
         notFound: page("404.html"),
       },
     },
