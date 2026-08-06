@@ -1,7 +1,18 @@
 import Foundation
+#if canImport(os)
 import os
+#endif
 
+#if canImport(os)
 private let t4wireLog = Logger(subsystem: "sh.t4code.ios", category: "wire")
+#else
+/// Linux has no `os.Logger`; keep the `t4wireLog.error(...)` callsite shape.
+private enum WireLog {
+    static func error(_ message: String) { FileHandle.standardError.write(Data("[t4wire] \(message)\n".utf8)) }
+    static func info(_ message: String) { FileHandle.standardError.write(Data("[t4wire] \(message)\n".utf8)) }
+}
+private let t4wireLog = WireLog.self
+#endif
 
 /// Host-wire client runtime: WebSocket connect, hello/welcome handshake,
 /// heartbeat, command dispatch with request/response correlation, inbound

@@ -1,7 +1,13 @@
-import CryptoKit
 import Foundation
 import HostWire
+#if canImport(SwiftUI)
 import SwiftUI
+#endif
+#if canImport(CryptoKit)
+import CryptoKit
+#else
+import Crypto
+#endif
 
 @MainActor
 extension T4SessionStore {

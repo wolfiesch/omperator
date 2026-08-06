@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// Transport seam for the host-wire client. Decouples the protocol logic (and
 /// its unit tests) from the concrete socket. `URLSessionHostWireTransport` is

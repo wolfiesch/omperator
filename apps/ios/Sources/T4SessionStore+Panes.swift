@@ -99,6 +99,10 @@ extension T4SessionStore {
     @discardableResult
     func settingsRead() async -> [String: JSONValue]? {
         guard let client, connected, !hostId.isEmpty else {
+            if Self.demoMode {
+                settingsSnapshot = Self.sampleSettings
+                return Self.sampleSettings
+            }
             lastError = "Not connected to a host."
             return nil
         }
@@ -123,6 +127,14 @@ extension T4SessionStore {
     @discardableResult
     func settingsWrite(patch: [String: JSONValue]) async -> Bool {
         guard let client, connected, !hostId.isEmpty else {
+            if Self.demoMode {
+                // Offline demo: apply the patch locally so pane pickers don't
+                // surface a write failure banner in captures.
+                var merged = settingsSnapshot ?? [:]
+                for (key, value) in patch { merged[key] = value }
+                settingsSnapshot = merged
+                return true
+            }
             lastError = "Not connected to a host."
             return false
         }
@@ -178,4 +190,28 @@ extension T4SessionStore {
         }
         return artifacts
     }
+}
+
+
+// MARK: - Demo settings (offline captures)
+
+extension T4SessionStore {
+    /// Settings snapshot for the demo settings pane: model roles, thinking
+    /// level, approval mode, and masked provider keys.
+    static let sampleSettings: [String: JSONValue] = [
+        "modelRoles": .object([
+            "default": .string("kimi-code/k3"),
+            "smol": .string("deepseek-v4-flash"),
+            "slow": .string("gpt-5.2"),
+            "designer": .string("gpt-5.2"),
+            "task": .string("devin/swe-1-7"),
+        ]),
+        "defaultThinkingLevel": .string("medium"),
+        "tools.approvalMode": .string("write"),
+        "providerKeys": .object([
+            "deepseek": .string("sk-…77e0"),
+            "kimi-code": .string("sk-…9f2c"),
+            "openai": .string("sk-…41bd"),
+        ]),
+    ]
 }

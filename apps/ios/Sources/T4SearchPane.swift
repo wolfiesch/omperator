@@ -21,39 +21,9 @@
 import SwiftUI
 import HostWire
 
-// MARK: - Wire result models
-
-/// One files.search match (host-wire/src/project-file-search.ts
-/// `ProjectFileSearchMatch`). The wire shape carries only `path`.
-struct FilesSearchMatch: Identifiable, Equatable {
-    let path: String
-    var id: String { path }
-}
-
-/// files.search result body: `{ matches: [{path}], truncated }`.
-struct FilesSearchResult: Equatable {
-    let matches: [FilesSearchMatch]
-    let truncated: Bool
-}
-
-/// One row of a turn review snapshot's `changes` array
-/// (host-wire/src/files-review.ts `TurnFileChange`).
-struct TurnFileChange: Identifiable, Equatable {
-    let path: String
-    let status: String   // added|modified|deleted|renamed|copied|untracked
-    let kind: String     // text|binary|huge|missing
-    let additions: Int
-    let deletions: Int
-    var id: String { path }
-}
-
-/// files.diff result. `patchText` is the unified diff (from the `{diff}`
-/// shape, or read from the turn snapshot's patch artifact). `changes` is the
-/// turn review snapshot's change list (empty for the `{diff}` shape).
-struct FilesDiffResult: Equatable {
-    let patchText: String?
-    let changes: [TurnFileChange]
-}
+// Wire result models (FilesSearchMatch/Result, TurnFileChange,
+// FilesDiffResult) now live in FilesResultModels.swift — shared with the
+// Linux store layer.
 
 // MARK: - Pane
 

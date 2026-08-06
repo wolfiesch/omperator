@@ -14,9 +14,32 @@ struct T4TranscriptView: View {
     var liveTools: LiveToolProjection
     let theme: Theme
 
+    /// Render window: only the most recent `visibleLimit` entries are drawn.
+    /// Long transcripts re-render every row — markdown bodies included — on
+    /// each paced streaming delta, which pegs the main thread on live
+    /// sessions. The window keeps live updates cheap; the button pages
+    /// older entries forward.
+    @State private var visibleLimit = 40
+
+    private var visibleEntries: ArraySlice<TranscriptEntry> {
+        entries.suffix(visibleLimit)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            ForEach(entries, id: \.id) { entry in
+            if entries.count > visibleEntries.count {
+                HStack {
+                    Spacer()
+                    Button("Show \(min(40, entries.count - visibleEntries.count)) earlier of \(entries.count - visibleEntries.count)") {
+                        visibleLimit += 40
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.txtMuted)
+                    .buttonStyle(.plain)
+                    Spacer()
+                }
+            }
+            ForEach(visibleEntries, id: \.id) { entry in
                 switch entry.kind {
                 case .message where entry.role == "user":
                     T4UserBubble(entry: entry, theme: theme)

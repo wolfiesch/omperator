@@ -6,18 +6,8 @@
 
 import SwiftUI
 
-struct PlanTask: Identifiable, Equatable {
-    let content: String
-    let status: String   // pending / in_progress / completed
-    var id: String { content }
-}
-
-struct PlanPhase: Identifiable, Equatable {
-    let name: String
-    let tasks: [PlanTask]
-    var id: String { name }
-    var doneCount: Int { tasks.filter { $0.status == "completed" }.count }
-}
+// PlanTask/PlanPhase now live in PlanModels.swift — shared with the Linux
+// store layer.
 
 struct T4PlanStrip: View {
     let phases: [PlanPhase]

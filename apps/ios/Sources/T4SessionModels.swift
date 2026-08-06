@@ -1,5 +1,12 @@
-import SwiftUI
 import HostWire
+#if canImport(SwiftUI)
+import SwiftUI
+#endif
+#if canImport(Combine)
+import Combine
+#else
+import OpenCombine
+#endif
 
 @MainActor
 final class T4ConnectionInventoryModel: ObservableObject {
@@ -61,8 +68,35 @@ final class T4FilesReviewModel: ObservableObject {
 
 @MainActor
 final class T4CatalogSettingsModel: ObservableObject {
-    @Published var catalog: [CatalogItem] = []
+    @Published var catalog: [CatalogItem] = [] {
+        didSet {
+            // The model menu renders these on every workspace re-render; with
+            // a ~550-model host catalog, a locale-collated sort + provider
+            // grouping per render pass costs ~100ms and pegs the main thread
+            // (the app freezes on live sessions). Compute once per catalog.
+            sortedSupportedModels = catalog
+                .filter { $0.kind == .model && $0.supported != false }
+                .sorted { $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending }
+            var byProvider: [String: [CatalogItem]] = [:]
+            for item in sortedSupportedModels {
+                let provider = splitModelSelector(item.id).provider ?? "other"
+                byProvider[provider, default: []].append(item)
+            }
+            providerGroups = byProvider.keys.sorted().map {
+                T4ProviderGroup(name: $0, models: byProvider[$0] ?? [])
+            }
+        }
+    }
+    @Published private(set) var sortedSupportedModels: [CatalogItem] = []
+    @Published private(set) var providerGroups: [T4ProviderGroup] = []
     @Published var usageSnapshot: UsageReadResult?
     @Published var settingsSnapshot: [String: JSONValue]?
     @Published var settingsRevision: String?
+}
+
+/// Models grouped under one provider section in the model menu.
+struct T4ProviderGroup: Identifiable {
+    let name: String
+    let models: [CatalogItem]
+    var id: String { name }
 }

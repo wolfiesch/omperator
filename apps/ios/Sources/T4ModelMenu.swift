@@ -10,21 +10,6 @@ import HostWire
 
 private let t4ThinkingLevels = ["auto", "off", "minimal", "low", "medium", "high", "xhigh", "max"]
 
-struct T4ProviderGroup: Identifiable {
-    let name: String
-    let models: [CatalogItem]
-    var id: String { name }
-}
-
-private func groupByProvider(_ items: [CatalogItem]) -> [T4ProviderGroup] {
-    var byProvider: [String: [CatalogItem]] = [:]
-    for item in items {
-        let provider = splitModelSelector(item.id).provider ?? "other"
-        byProvider[provider, default: []].append(item)
-    }
-    return byProvider.keys.sorted().map { T4ProviderGroup(name: $0, models: byProvider[$0] ?? []) }
-}
-
 struct T4ModelMenuButton<Content: View>: View {
     let session: SessionRef
     @ObservedObject var store: T4SessionStore
@@ -50,12 +35,10 @@ struct T4ModelMenuButton<Content: View>: View {
     }
 
     private var catalogModels: [CatalogItem] {
-        catalogModel.catalog
-            .filter { $0.kind == .model && $0.supported != false }
-            .sorted { $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending }
+        catalogModel.sortedSupportedModels
     }
 
-    private var providers: [T4ProviderGroup] { groupByProvider(catalogModels) }
+    private var providers: [T4ProviderGroup] { catalogModel.providerGroups }
 
     var body: some View {
         Menu {

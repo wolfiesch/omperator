@@ -5,13 +5,70 @@
 //  a HostClient connection. Seeded with sample data so the rail renders in the
 //  simulator without a live host; connect(endpoint:) swaps in a real t4-host.
 
-import SwiftUI
+import Foundation
 import HostWire
-import CryptoKit
+#if canImport(SwiftUI)
+import SwiftUI
+#endif
+#if canImport(Combine)
 import Combine
+#else
+import OpenCombine
+#endif
+#if canImport(CryptoKit)
+import CryptoKit
+#else
+import Crypto
+#endif
+#if canImport(os)
 import os
+#endif
 
+#if canImport(os)
 let t4log = Logger(subsystem: "sh.t4code.ios", category: "store")
+#else
+/// OSLog-compatible message on Linux: the store's callsites use
+/// `\(value, privacy: .public)` interpolation, which only typechecks
+/// against an interpolation type that accepts a privacy label.
+enum T4Privacy { case `public`, `private`, auto }
+
+/// Frame pacing for the streaming reveal loops. On Linux each reveal tick can
+/// change text height, which ripples a full SwiftCrossUI layout recompute up
+/// the tree (bottomUpUpdate → root), so 60fps pacing costs ~60 full-tree
+/// layout passes per second on a live session and pegs the main thread. Linux
+/// paces at 4fps (250ms) — still fluid to the eye — which keeps those passes
+/// at ~4Hz. macOS keeps the original 60fps pacing.
+enum T4StorePacing {
+    #if os(Linux)
+    static let sleepNs: UInt64 = 250_000_000
+    #else
+    static let sleepNs: UInt64 = 16_666_667
+    #endif
+}
+
+struct T4LogMessage: ExpressibleByStringInterpolation {
+    struct StringInterpolation: StringInterpolationProtocol {
+        var text = ""
+        init(literalCapacity: Int, interpolationCount: Int) {}
+        mutating func appendLiteral(_ literal: String) { text += literal }
+        mutating func appendInterpolation<T>(_ value: T) { text += String(describing: value) }
+        mutating func appendInterpolation<T>(_ value: T, privacy: T4Privacy) { text += String(describing: value) }
+    }
+    let text: String
+    init(stringInterpolation: StringInterpolation) { text = stringInterpolation.text }
+    init(stringLiteral value: String) { text = value }
+}
+
+enum T4LogShim {
+    static func error(_ message: T4LogMessage) {
+        FileHandle.standardError.write(Data("[t4store] \(message.text)\n".utf8))
+    }
+    static func notice(_ message: T4LogMessage) {
+        FileHandle.standardError.write(Data("[t4store] \(message.text)\n".utf8))
+    }
+}
+let t4log = T4LogShim.self
+#endif
 
 struct PendingTranscriptQueue {
     private(set) var entries: [TranscriptEntry] = []
@@ -271,7 +328,9 @@ final class T4SessionStore: ObservableObject {
 
     /// Todo phases for a session (live when connected, empty otherwise).
     func todoPhases(for sessionId: String) -> [PlanPhase] {
-        todoPhasesBySession[sessionId] ?? []
+        if let phases = todoPhasesBySession[sessionId] { return phases }
+        if Self.demoMode, sessionId == "s1" { return Self.samplePlanPhases }
+        return []
     }
 
     /// Pull session.state.get and mirror todoPhases for the plan strip.
@@ -466,8 +525,7 @@ final class T4SessionStore: ObservableObject {
 
     /// Models from the catalog, in display order (supported first).
     var catalogModels: [CatalogItem] {
-        catalog.filter { $0.kind == .model && $0.supported != false }
-            .sorted { $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending }
+        catalogSettingsModel.sortedSupportedModels
     }
 
     var client: HostClient?
@@ -513,13 +571,13 @@ final class T4SessionStore: ObservableObject {
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             while !Task.isCancelled, var next = self.streamingMessages[sessionId] {
-                let hasMore = next.advance()
+                let hasMore = next.advance(maxCatchUpFrames: 2)
                 self.streamingMessages[sessionId] = next
                 if !hasMore {
                     self.finishPendingAssistantEntry(sessionId: sessionId)
                     break
                 }
-                try? await Task.sleep(nanoseconds: 16_666_667)
+                try? await Task.sleep(nanoseconds: T4StorePacing.sleepNs)
             }
             if !Task.isCancelled { self.streamingTasks[sessionId] = nil }
         }
@@ -655,11 +713,11 @@ final class T4SessionStore: ObservableObject {
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             while !Task.isCancelled, var next = self.liveTurns[sessionId] {
-                let hasMore = next.advance()
+                let hasMore = next.advance(maxCatchUpFrames: 2)
                 self.liveTurns[sessionId] = next
                 self.finishPendingLiveTurnEntries(sessionId: sessionId)
                 if !hasMore { break }
-                try? await Task.sleep(nanoseconds: 16_666_667)
+                try? await Task.sleep(nanoseconds: T4StorePacing.sleepNs)
             }
             if !Task.isCancelled { self.liveTurnTasks[sessionId] = nil }
         }
@@ -728,7 +786,7 @@ final class T4SessionStore: ObservableObject {
                     self.finishPendingToolEntries(sessionId: sessionId)
                     break
                 }
-                try? await Task.sleep(nanoseconds: 16_666_667)
+                try? await Task.sleep(nanoseconds: T4StorePacing.sleepNs)
             }
             if !Task.isCancelled { self.toolStreamingTasks[sessionId] = nil }
         }
@@ -862,9 +920,33 @@ final class T4SessionStore: ObservableObject {
             )
             return
         }
+        // Linux QA seam: -T4OpenEndpoint=<ws://…> connects to an open host
+        // without device credentials (welcome.authentication == .local) — the
+        // raw-endpoint connect-sheet path for open hosts. The Tailnet
+        // gateway's local transport rejects device authentication, so this is
+        // how the Linux client reaches a gateway-backed host from the CLI.
+        #if os(Linux)
+        if let openSeam = arguments.first(where: { $0.hasPrefix("-T4OpenEndpoint=") }),
+           let endpoint = URL(string: String(openSeam.dropFirst("-T4OpenEndpoint=".count))),
+           !connected, !connecting {
+            await connect(
+                endpoint: endpoint,
+                identity: ClientIdentity(
+                    name: platformClientName,
+                    version: "0.1",
+                    build: "dev",
+                    platform: platformClientPlatform
+                ),
+                authentication: nil
+            )
+            return
+        }
+        #endif
+
         // UI-test seam: -T4NoRestore forces the offline sample inventory only
         // when no complete in-memory connection profile was supplied.
         if Self.shouldSkipRestore(arguments: arguments) { return }
+
         // UI-test seam: -T4ForgetCreds wipes saved connection credentials so
         // the boot lands on real onboarding (fresh-install path).
         if ProcessInfo.processInfo.arguments.contains("-T4ForgetCreds") {
@@ -882,6 +964,9 @@ final class T4SessionStore: ObservableObject {
         guard !connected, !connecting,
               let endpointString = Keychain.get(Self.savedEndpointKey),
               let endpoint = URL(string: endpointString) else { return }
+        #if os(Linux)
+        T4Perf.mark("restore-keychain-read")
+        #endif
         let deviceId = Keychain.get(Self.savedDeviceIdKey) ?? ""
         let token = Keychain.get(Self.savedDeviceTokenKey) ?? ""
         let auth: DeviceAuthentication? = (!deviceId.isEmpty && !token.isEmpty)
@@ -917,20 +1002,64 @@ final class T4SessionStore: ObservableObject {
         if connected, let session { Task { await attach(sessionId: session.sessionId) } }
     }
 
+    /// Demo stream driver (-T4DemoStream): replays a live turn into the hero
+    /// session — user bubble, typewriter assistant reply, a tool call, and
+    /// the settled summary — so captures and videos can show streaming with
+    /// the bottom anchor engaged. Offline demo mode only.
+    func startDemoStreamIfNeeded() {
+        guard Self.demoMode,
+              ProcessInfo.processInfo.arguments.contains("-T4DemoStream") else { return }
+        let sessionId = "s1"
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            let userEntry = try! TranscriptEntry.decode(Data(#"{"id":"ds-user","parentId":null,"hostId":"studio-mac","sessionId":"s1","kind":"message","timestamp":"2026-08-05T11:50:00Z","data":{"role":"user","text":"nice. can you also make long prose paragraphs stop clipping off the left edge?"}}"#.utf8))
+            liveEntries[sessionId, default: []].append(userEntry)
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            let reply = "Good catch — that's the ellipsized-label bug. Every `Text` was created with `ellipsize = .end`, and Pango lays ellipsized text out wider than the allocation, which GTK then draws centered — so long paragraphs lost a slice off the left.\n\nThe fix is three small pieces: default to no ellipsize, ellipsize only line-limited labels, and left-align the text block (`xalign = 0`) so an oversized layout can never clip the leading edge. The layout-height override in `CustomLabel` also only runs for ellipsized labels now — applied to plain wrapping text it left Pango holding a stale, wider line layout.\n\nVerified on the long opencode session: every paragraph starts flush at the detail edge in both themes."
+            receiveStreamingMessage(sessionId: sessionId, text: reply, reasoning: "")
+            // Wait for the pacing task to finish the typewriter effect.
+            while streamingMessages[sessionId] != nil {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+            let settledText = reply.replacingOccurrences(of: "\n", with: "\\n")
+            let toolEntry = try! TranscriptEntry.decode(Data(#"{"id":"ds-tool","parentId":"ds-user","hostId":"studio-mac","sessionId":"s1","kind":"tool-use","timestamp":"2026-08-05T11:50:30Z","data":{"tool":"bash","title":"swift test","result":{"output":"✔ Suite \"Anchor behavior\" passed after 0.802 seconds.\n✔ Test run with 13 tests in 5 suites passed after 16.121 seconds."},"ok":true}}"#.utf8))
+            let settled = try! TranscriptEntry.decode(Data(("{\"id\":\"ds-done\",\"parentId\":\"ds-tool\",\"hostId\":\"studio-mac\",\"sessionId\":\"s1\",\"kind\":\"message\",\"timestamp\":\"2026-08-05T11:50:36Z\",\"data\":{\"text\":\"" + settledText + "\"}}").utf8))
+            liveEntries[sessionId, default: []].append(toolEntry)
+            liveEntries[sessionId, default: []].append(settled)
+        }
+    }
+
     func selectDefaultVisibleSessionIfNeeded() {
         guard selectedSession == nil else { return }
+        // Capture seam: -T4Select=<sessionId> pins the demo selection.
+        if let raw = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("-T4Select=") }),
+           let target = sessions.first(where: { $0.sessionId == String(raw.dropFirst("-T4Select=".count)) }) {
+            select(target)
+            return
+        }
         reconcileSelectionForVisibleList()
     }
+
+    /// Session attach is idempotent per connection: the host replays the full
+    /// transcript snapshot on every session.attach, so repeated attaches
+    /// (select + detail task + attachSelectedIfNeeded all racing) each pay a
+    /// full snapshot — on large transcripts that's seconds of main-thread
+    /// parse/render per click. Track attached sessions and skip repeats.
+    private var attachedSessions = Set<String>()
 
     /// Attach to a session's transcript stream. The host replies with a
     /// snapshot frame (full log at a cursor) and then live entry frames;
     /// `observe()` routes both into `liveEntries`. Safe to repeat.
     func attach(sessionId: String) async {
         guard let client, connected, !hostId.isEmpty else { return }
+        guard !attachedSessions.contains(sessionId) else { return }
+        attachedSessions.insert(sessionId)
         do {
             _ = try await client.sendCommand(CommandIntent(
                 hostId: hostId, command: "session.attach", sessionId: sessionId))
         } catch {
+            attachedSessions.remove(sessionId)
             t4log.error("attach failed: \(error)")
             lastError = "\(error)"
         }
@@ -1401,9 +1530,18 @@ final class T4SessionStore: ObservableObject {
         }
         Self.migrateCredentialsToKeychainIfNeeded()
         connectionModel.sessions = Self.demoMode ? Self.sample : []
+        if Self.demoMode {
+            // Offline captures: the usage and settings panes only have live
+            // data paths otherwise and render their empty states in shots.
+            catalogSettingsModel.usageSnapshot = Self.sampleUsageSnapshot
+            catalogSettingsModel.settingsSnapshot = Self.sampleSettings
+            catalogSettingsModel.catalog = Self.sampleCatalog
+        }
         connectionModel.objectWillChange
+            .merge(with: transcriptModel.objectWillChange)
             .merge(with: promptModel.objectWillChange)
             .merge(with: agentModel.objectWillChange)
+            .merge(with: terminalModel.objectWillChange)
             .merge(with: previewModel.objectWillChange)
             .merge(with: filesReviewModel.objectWillChange)
             .merge(with: catalogSettingsModel.objectWillChange)
@@ -1511,8 +1649,50 @@ final class T4SessionStore: ObservableObject {
         }
     }
 
+    /// Fingerprint of everything `groups` derives from, memoized so the
+    /// rail's per-render recomputation (filter + O(n log n) sort, with
+    /// per-comparison @Published reads) runs only when an input actually
+    /// changes. Without this, every layout pass re-derives the rail and
+    /// re-emits, which on a live session pins the main thread (the app
+    /// freezes on connected session views).
+    @MainActor private struct RailFingerprint: Hashable {
+        var sessions: [String]
+        var query: String
+        var railFilter: T4RailFilter
+        var sessionListView: T4SessionListView
+        var railOrganization: T4RailOrganization
+        var railSort: T4RailSort
+        var projectManualOrder: [String]
+        var sessionManualOrderByScope: [String: [String]]
+
+        init(store: T4SessionStore) {
+            sessions = store.sessions.map {
+                "\($0.sessionId)|\($0.status)|\($0.updatedAt)|\($0.model ?? "")|\($0.archivedAt ?? "")|\($0.pendingApproval == true ? 1 : 0)\($0.pendingUserInput == true ? 1 : 0)\($0.proposedPlan == nil ? 0 : 1)|\($0.mode ?? "")"
+            }
+            query = store.query
+            railFilter = store.railFilter
+            sessionListView = store.sessionListView
+            railOrganization = store.railOrganization
+            railSort = store.railSort
+            projectManualOrder = store.projectManualOrder
+            sessionManualOrderByScope = store.sessionManualOrderByScope
+        }
+    }
+
+    private var groupsCache: (fingerprint: RailFingerprint, groups: [Group])?
+
     /// Filtered + organized view of the inventory (the rail model).
     var groups: [Group] {
+        let fingerprint = RailFingerprint(store: self)
+        if let cached = groupsCache, cached.fingerprint == fingerprint {
+            return cached.groups
+        }
+        let computed = computeGroups()
+        groupsCache = (fingerprint, computed)
+        return computed
+    }
+
+    private func computeGroups() -> [Group] {
         let filtered = filteredSessions
         if railOrganization == .flat {
             return [
@@ -1618,6 +1798,10 @@ final class T4SessionStore: ObservableObject {
            (selectedSession.archivedAt != nil) == (sessionListView == .archived) {
             return
         }
+        // T4_NO_SELECT=1 (perf-bisect seam): skip auto-select/attach so the
+        // app renders the rail only — isolates inventory render cost from
+        // live-transcript render cost on Linux.
+        if ProcessInfo.processInfo.environment["T4_NO_SELECT"] == "1" { return }
         select(sessions.first {
             ($0.archivedAt != nil) == (sessionListView == .archived)
         })
@@ -1659,24 +1843,81 @@ final class T4SessionStore: ObservableObject {
     /// sample rows otherwise (rail preview without a host).
     func transcript(for sessionId: String) -> [TranscriptEntry] {
         if connected { return liveEntries[sessionId] ?? [] }
-        return Self.demoMode ? sampleTranscript(for: sessionId) : []
+        if Self.demoMode {
+            // The demo-stream driver (-T4DemoStream) appends to liveEntries;
+            // those entries ride on top of the static sample.
+            return sampleTranscript(for: sessionId) + (liveEntries[sessionId] ?? [])
+        }
+        return []
     }
 
     /// Sample transcript — offline preview only.
     private func sampleTranscript(for sessionId: String) -> [TranscriptEntry] {
         let host = hostId.isEmpty ? "local" : hostId
-        let json = """
-        [
-        {"id":"e1","parentId":null,"hostId":"\(host)","sessionId":"\(sessionId)","kind":"message","timestamp":"2026-07-24T09:00:00Z","data":{"role":"user","text":"audit the reconnect backoff"}},
-        {"id":"e2","parentId":"e1","hostId":"\(host)","sessionId":"\(sessionId)","kind":"message","timestamp":"2026-07-24T09:00:05Z","data":{"text":"Looking at HostClient reconnect now."}},
-        {"id":"e3","parentId":"e2","hostId":"\(host)","sessionId":"\(sessionId)","kind":"tool-use","timestamp":"2026-07-24T09:00:10Z","data":{"tool":"read","title":"read HostClient.swift"}},
-        {"id":"e4","parentId":"e3","hostId":"\(host)","sessionId":"\(sessionId)","kind":"tool-result","timestamp":"2026-07-24T09:00:11Z","data":{"tool":"read","ok":true}},
-        {"id":"e5","parentId":"e4","hostId":"\(host)","sessionId":"\(sessionId)","kind":"message","timestamp":"2026-07-24T09:00:20Z","data":{"text":"Backoff is 0.5–30s exponential with cursor resume — correct."}}
-        ]
-        """
+        let body: String
+        switch sessionId {
+        case "s1": body = Self.sampleTranscriptAnchor
+        case "s2": body = Self.sampleTranscriptSite
+        case "s5": body = Self.sampleTranscriptEval
+        default: body = Self.sampleTranscriptDefault
+        }
+        let json = body.replacingOccurrences(of: "__HOST__", with: host)
+            .replacingOccurrences(of: "__SESSION__", with: sessionId)
         let entries = (try? JSONDecoder().decode([DurableEntry].self, from: Data(json.utf8))) ?? []
         return entries.map { TranscriptEntry(from: $0) }
     }
+
+    /// Hero transcript (s1): a full coding arc — prompt, plan, reads, a diff
+    /// edit, a failing test, the fix, green run, and a markdown summary with
+    /// a table. Doubles as the wrap/markdown rendering showcase.
+    private static let sampleTranscriptAnchor = #"""
+    [
+    {"id":"e1","parentId":null,"hostId":"__HOST__","sessionId":"__SESSION__","kind":"message","timestamp":"2026-08-05T09:14:00Z","data":{"role":"user","text":"the linux transcript jumps around while streaming. keep it pinned to the bottom when i'm already there, but don't fight me when i scroll up"}},
+    {"id":"e2","parentId":"e1","hostId":"__HOST__","sessionId":"__SESSION__","kind":"message","timestamp":"2026-08-05T09:14:06Z","data":{"reasoning":"The jump is the scrolled window keeping its `value` while `upper` grows — the viewport stays at an absolute offset instead of following the newest entry. SwiftCrossUI has no scroll API, so this belongs in the Gtk backend: watch the vertical adjustment's `changed` signal, and when content grows, snap `value = upper - pageSize` — but only if the pre-growth geometry was already at the bottom. **Scrolling up must release the pin**, and scrolling back near the bottom should re-engage it on the next growth. A 120px slack band reads well at 15pt body text."}},
+    {"id":"e3","parentId":"e2","hostId":"__HOST__","sessionId":"__SESSION__","kind":"tool-use","timestamp":"2026-08-05T09:14:10Z","data":{"tool":"todo","title":"plan","result":{"output":"Investigate\n  Locate the scroll container wiring ✓\n  Confirm adjustment signal order ✓\nImplement\n  Add stick-to-bottom anchor to ScrolledWindow ◐\n  Gate it behind an environment flag ◐\nVerify\n  Streaming pin + scroll-up release on Xvfb ○"},"ok":true}},
+    {"id":"e4","parentId":"e3","hostId":"__HOST__","sessionId":"__SESSION__","kind":"tool-use","timestamp":"2026-08-05T09:14:16Z","data":{"tool":"read","title":"read ScrolledWindow.swift","result":{"output":"public class ScrolledWindow: Widget {\n    var child: Widget?\n\n    public convenience init() {\n        self.init(gtk_scrolled_window_new())\n    }\n\n    public func setScrollBarPresence(hasVerticalScrollBar: Bool, hasHorizontalScrollBar: Bool) {\n        gtk_scrolled_window_set_policy(\n            opaquePointer,\n            hasHorizontalScrollBar ? GTK_POLICY_AUTOMATIC : GTK_POLICY_NEVER,\n            hasVerticalScrollBar ? GTK_POLICY_AUTOMATIC : GTK_POLICY_NEVER\n        )\n    }\n}"},"ok":true}},
+    {"id":"e5","parentId":"e4","hostId":"__HOST__","sessionId":"__SESSION__","kind":"message","timestamp":"2026-08-05T09:14:24Z","data":{"text":"The plan: track `lastUpper`, and on every adjustment `changed` recompute whether the user *was* at the bottom before the growth. That single comparison handles all three cases — initial open, streaming growth, and user scroll-away — without a sticky state machine:\n\n```swift\nlet wasAtBottom = value + pageSize >= lastUpper - Self.bottomSlack\nlastUpper = upper\nguard anchorsToBottom, wasAtBottom, upper > pageSize else { return }\ngtk_adjustment_set_value(adjustment, upper - pageSize)\n```\n\nWiring it behind `scrollAnchorsToBottom` so only the transcript opts in — the rail and pane lists keep their normal behavior."}},
+    {"id":"e6","parentId":"e5","hostId":"__HOST__","sessionId":"__SESSION__","kind":"tool-use","timestamp":"2026-08-05T09:15:02Z","data":{"tool":"edit","title":"edit ScrolledWindow.swift","result":{"output":"diff --git a/Sources/Gtk/Widgets/ScrolledWindow.swift b/Sources/Gtk/Widgets/ScrolledWindow.swift\n--- a/Sources/Gtk/Widgets/ScrolledWindow.swift\n+++ b/Sources/Gtk/Widgets/ScrolledWindow.swift\n@@ -3,6 +3,28 @@\n public class ScrolledWindow: Widget {\n     var child: Widget?\n \n+    /// Stick-to-bottom anchoring for streaming transcripts.\n+    public var anchorsToBottom = false {\n+        didSet { installBottomAnchor() }\n+    }\n+    private var lastUpper = 0.0\n+\n+    private func snapToBottomIfAnchored() {\n+        guard let adjustment = gtk_scrolled_window_get_vadjustment(opaquePointer) else { return }\n+        let value = gtk_adjustment_get_value(adjustment)\n+        let pageSize = gtk_adjustment_get_page_size(adjustment)\n+        let upper = gtk_adjustment_get_upper(adjustment)\n+        let wasAtBottom = value + pageSize >= lastUpper - Self.bottomSlack\n+        lastUpper = upper\n+        guard anchorsToBottom, wasAtBottom, upper > pageSize else { return }\n+        gtk_adjustment_set_value(adjustment, upper - pageSize)\n+    }\n+\n     public func setScrollBarPresence("},"ok":true}},
+    {"id":"e7","parentId":"e6","hostId":"__HOST__","sessionId":"__SESSION__","kind":"tool-use","timestamp":"2026-08-05T09:15:21Z","data":{"tool":"bash","title":"swift build","result":{"output":"Fetching dependencies… done\nCompiling Gtk Widgets/ScrolledWindow.swift\nCompiling GtkBackend GtkBackend.swift\nCompiling T4CodeLinuxLib Views/T4SessionDetailView.swift\nBuild complete! (21.37s)"},"ok":true}},
+    {"id":"e8","parentId":"e7","hostId":"__HOST__","sessionId":"__SESSION__","kind":"tool-use","timestamp":"2026-08-05T09:15:47Z","data":{"tool":"bash","title":"swift test --filter AnchorTests","result":{"output":"✔ opensPinnedToBottom (0.412s)\n✘ anchorReleasesOnScrollUp — expected value to stay 480.0, got 960.0 (snapped)\n✔ anchorReengagesNearBottom (0.388s)\n✘ run with 3 tests: 1 failure"},"ok":false}},
+    {"id":"e9","parentId":"e8","hostId":"__HOST__","sessionId":"__SESSION__","kind":"message","timestamp":"2026-08-05T09:15:55Z","data":{"reasoning":"The release test fails because I update `lastUpper` **before** reading the pre-change geometry when GTK coalesces two growths into one signal — the second `changed` sees a `lastUpper` that already includes the first growth, so a scrolled-up user looks \"at bottom\" and gets yanked down. Read the geometry first, then update."}},
+    {"id":"e10","parentId":"e9","hostId":"__HOST__","sessionId":"__SESSION__","kind":"tool-use","timestamp":"2026-08-05T09:16:03Z","data":{"tool":"edit","title":"edit ScrolledWindow.swift (read-before-write)","result":{"output":"@@ -14,8 +14,8 @@\n-        lastUpper = upper\n-        let wasAtBottom = value + pageSize >= lastUpper - Self.bottomSlack\n+        let wasAtBottom = value + pageSize >= lastUpper - Self.bottomSlack\n+        lastUpper = upper"},"ok":true}},
+    {"id":"e11","parentId":"e10","hostId":"__HOST__","sessionId":"__SESSION__","kind":"tool-use","timestamp":"2026-08-05T09:16:19Z","data":{"tool":"bash","title":"swift test","result":{"output":"✔ Suite \"Anchor behavior\" passed after 0.802 seconds.\n✔ Suite \"Store prompt flow\" passed after 0.531 seconds.\n✔ Suite \"Fixture wire integration\" passed after 15.104 seconds.\n✔ Test run with 13 tests in 5 suites passed after 16.121 seconds."},"ok":true}},
+    {"id":"e12","parentId":"e11","hostId":"__HOST__","sessionId":"__SESSION__","kind":"message","timestamp":"2026-08-05T09:16:40Z","data":{"text":"Done — the transcript now anchors to the newest content exactly when it should. The behavior matrix:\n\n| Situation | Result |\n|---|---|\n| Open a long session | lands on the latest entries |\n| Streaming while at bottom | follows every delta |\n| Scrolled up while streaming | stays put — no fighting |\n| Back within 120px of bottom | re-engages on the next delta |\n| Load earlier messages | shows the entries you just loaded |\n\nThe pin lives in `ScrolledWindow` itself, gated by a `scrollAnchorsToBottom` environment flag, so every surface keeps its old behavior unless it opts in. Verified on Xvfb against a live host: pinned open, follow-stream, and release-without-drift all pass. The full flow is covered by the new `AnchorTests` suite."}},
+    {"id":"e13","parentId":"e12","hostId":"__HOST__","sessionId":"__SESSION__","kind":"message","timestamp":"2026-08-05T09:16:44Z","data":{"text":"Captured the verification run for the release notes.","artifacts":[{"artifactId":"art-anchor-moon","kind":"image","mediaType":"image/png","size":204113,"sha256":"9f2c1ab7","name":"linux-anchor-pinned-moon.png","disposition":"inline"},{"artifactId":"art-anchor-dawn","kind":"image","mediaType":"image/png","size":198764,"sha256":"41bd77e0","name":"linux-anchor-pinned-dawn.png","disposition":"inline"}]}}
+    ]
+    """#
+
+    /// Site-refresh transcript (s2): pairs with the browser pane — the
+    /// assistant checks the freshly built site while screenshots retake.
+    private static let sampleTranscriptSite = #"""
+    [
+    {"id":"e1","parentId":null,"hostId":"__HOST__","sessionId":"__SESSION__","kind":"message","timestamp":"2026-08-05T10:02:00Z","data":{"role":"user","text":"retake the linux site screenshots in both themes — and the usage pane is empty in the current set, fix that too"}},
+    {"id":"e2","parentId":"e1","hostId":"__HOST__","sessionId":"__SESSION__","kind":"message","timestamp":"2026-08-05T10:02:09Z","data":{"text":"On it. The empty usage pane was a demo-data gap, not a render bug — the pane only had a live path. Seeding a sample `UsageReadResult` for captures, then retaking all 28 stills at 1920×1080 in **dawn** and **moon**."}},
+    {"id":"e3","parentId":"e2","hostId":"__HOST__","sessionId":"__SESSION__","kind":"tool-use","timestamp":"2026-08-05T10:02:31Z","data":{"tool":"bash","title":"pnpm --filter @t4-code/site build","result":{"output":"vite v7.1.2 building for production...\n✓ 214 modules transformed.\ndist/index.html            12.4 kB\ndist/linux.html            18.9 kB\ndist/assets/site-B7x2kQ.css  41.2 kB\n✓ built in 3.41s"},"ok":true}},
+    {"id":"e4","parentId":"e3","hostId":"__HOST__","sessionId":"__SESSION__","kind":"message","timestamp":"2026-08-05T10:02:44Z","data":{"text":"Site build is clean. Loading it in the browser pane now to check the new screenshot grid before the capture sweep — the hero shot should lead with the anchored transcript, and every feature still gets both themes."}},
+    {"id":"e5","parentId":"e4","hostId":"__HOST__","sessionId":"__SESSION__","kind":"tool-use","timestamp":"2026-08-05T10:03:12Z","data":{"tool":"read","title":"read linux.html","result":{"output":"<section id=\"screenshots\">\n  <figure data-theme-pair>\n    <img data-theme=\"dawn\" src=\"screenshots/linux-dawn.png\">\n    <img data-theme=\"moon\" src=\"screenshots/linux-moon.png\">\n  </figure>\n  …\n</section>"},"ok":true}}
+    ]
+    """#
+
+    /// Eval transcript (s5): a closed-out benchmark run with a results table.
+    private static let sampleTranscriptEval = #"""
+    [
+    {"id":"e1","parentId":null,"hostId":"__HOST__","sessionId":"__SESSION__","kind":"message","timestamp":"2026-08-04T16:02:00Z","data":{"role":"user","text":"run the hidden eval for muse-spark-1.2-contributor and give me the congregate breakdown"}},
+    {"id":"e2","parentId":"e1","hostId":"__HOST__","sessionId":"__SESSION__","kind":"tool-use","timestamp":"2026-08-04T16:02:20Z","data":{"tool":"bash","title":"muse eval --hidden --candidate 1.2-contributor","result":{"output":"running 51 hidden fixtures…\nT1–T5 51/51 · T6 5/7 · RVC 1/1\npolicy: 0 crashes · 0 hangs · 0 determinism violations\ncongregate components written to bench_out/muse-1.2.json"},"ok":true}},
+    {"id":"e3","parentId":"e2","hostId":"__HOST__","sessionId":"__SESSION__","kind":"message","timestamp":"2026-08-04T16:02:44Z","data":{"text":"Clean run. Congregate breakdown for `muse-spark-1.2-contributor`:\n\n| Component | Score | Weight |\n|---|---|---|\n| mechanical | 91.4 | 0.4 |\n| designer | 71.4 | 0.3 |\n| speed | 83.0 | 0.2 |\n| elegance | 96.2 | 0.1 |\n\n**Congregate: 84.1** — lands right after gpt-luna, above grok/gpt-sol/glm-5.2. The two T6 misses are the same adversarial fixtures v4-flash fails (`deep_nesting`, `memo_cycle`); both are clean refusals, so no policy deduction."}}
+    ]
+    """#
+
+    /// Default short transcript for the remaining sample sessions.
+    private static let sampleTranscriptDefault = #"""
+    [
+    {"id":"e1","parentId":null,"hostId":"__HOST__","sessionId":"__SESSION__","kind":"message","timestamp":"2026-08-04T09:00:00Z","data":{"role":"user","text":"audit the reconnect backoff"}},
+    {"id":"e2","parentId":"e1","hostId":"__HOST__","sessionId":"__SESSION__","kind":"message","timestamp":"2026-08-04T09:00:05Z","data":{"text":"Looking at HostClient reconnect now."}},
+    {"id":"e3","parentId":"e2","hostId":"__HOST__","sessionId":"__SESSION__","kind":"tool-use","timestamp":"2026-08-04T09:00:10Z","data":{"tool":"read","title":"read HostClient.swift","result":{"output":"public actor HostClient {\n    private var backoff: ExponentialBackoff\n    …"},"ok":true}},
+    {"id":"e4","parentId":"e3","hostId":"__HOST__","sessionId":"__SESSION__","kind":"message","timestamp":"2026-08-04T09:00:20Z","data":{"text":"Backoff is 0.5–30s exponential with cursor resume — correct."}}
+    ]
+    """#
 
     /// Features negotiated in every hello: the HostWire defaults plus the
     /// command-gating feature names for the panes (preview, search, watch).
@@ -1690,7 +1931,10 @@ final class T4SessionStore: ObservableObject {
 
     /// Transport for an endpoint. `wss://` gets a pinning session (TOFU leaf
     /// fingerprint in the Keychain); everything else uses the shared session.
-    private func makeTransport(endpoint: URL) -> URLSessionHostWireTransport {
+    /// On platforms without Security (Linux), plain transport only — cert
+    /// pinning is a wave-2 concern there.
+    private func makeTransport(endpoint: URL) -> any HostWireTransport {
+        #if canImport(Security)
         guard endpoint.scheme == "wss",
               let host = endpoint.host
         else { return URLSessionHostWireTransport(endpoint: endpoint) }
@@ -1701,6 +1945,12 @@ final class T4SessionStore: ObservableObject {
             delegateQueue: nil
         )
         return URLSessionHostWireTransport(endpoint: endpoint, session: session)
+        #else
+        // Linux: URLSession's WebSocket path requires libcurl built with
+        // WebSockets (distro curl lacks it); use the native RFC 6455
+        // transport from Seams/LinuxWebSocketTransport.swift.
+        return LinuxWebSocketTransport(endpoint: endpoint)
+        #endif
     }
 
     /// A later healthy connection supersedes any earlier endpoint failure.
@@ -1712,13 +1962,22 @@ final class T4SessionStore: ObservableObject {
 
     /// Connect to a t4-host over host-wire, handshake, and load the inventory.
     func connect(endpoint: URL, identity: ClientIdentity, authentication: DeviceAuthentication? = nil) async {
+        #if os(Linux)
+        T4Perf.mark("connect-start")
+        #endif
         connecting = true
+        // New connection, new attach state — the previous connection's
+        // session.attach registrations don't carry over.
+        attachedSessions.removeAll()
         defer { connecting = false }
         let transport = makeTransport(endpoint: endpoint)
         let c = HostClient(transport: transport, config: HostClient.Config(identity: identity, authentication: authentication, requestedFeatures: Self.clientFeatures))
         client = c
         do {
             let welcome = try await c.connect()
+            #if os(Linux)
+            T4Perf.mark("connect-welcome")
+            #endif
             hostId = welcome.hostId
             hostInfo = HostInfo(hostId: welcome.hostId, ompVersion: welcome.ompVersion, appserverVersion: welcome.appserverVersion)
             grantedCapabilities = welcome.grantedCapabilities
@@ -1728,8 +1987,21 @@ final class T4SessionStore: ObservableObject {
                 pairedEndpoint = endpoint.absoluteString
                 persist(endpoint: endpoint, authentication: authentication)
                 clearErrorAfterSuccessfulConnection()
-                await refresh()
-                await loadCatalog()
+                // Don't hold the first frame hostage to a busy host:
+                // session.list and catalog.get can take many seconds (the
+                // appserver serializes external usage fetches into catalog
+                // builds). Flip to the live workspace immediately and
+                // populate the rail + model menu asynchronously.
+                Task {
+                    await refresh()
+                    #if os(Linux)
+                    T4Perf.mark("connect-refresh")
+                    #endif
+                    await loadCatalog()
+                    #if os(Linux)
+                    T4Perf.mark("connect-catalog")
+                    #endif
+                }
                 Task { await observe() }
             } else {
                 t4log.error("connect: auth not accepted (\(welcome.authentication.rawValue, privacy: .public))")
@@ -2065,6 +2337,7 @@ final class T4SessionStore: ObservableObject {
         await client?.close()
         client = nil
         connected = false
+        attachedSessions.removeAll()
         grantedCapabilities = []
         grantedFeatures = []
         pairedEndpoint = nil
@@ -2095,30 +2368,95 @@ final class T4SessionStore: ObservableObject {
     private static let sample: [SessionRef] = {
         let json = """
         [
-        {"hostId":"studio-mac","sessionId":"s1","project":{"projectId":"t4code","name":"T4 Code"},"revision":"r1","title":"iOS session rail","status":"active","updatedAt":"2026-07-24T11:00:00Z","model":"gpt-5.2","pendingUserInput":true,"contextUsage":{"used":7,"limit":200}},
-        {"hostId":"studio-mac","sessionId":"s2","project":{"projectId":"t4code","name":"T4 Code"},"revision":"r2","title":"Host-wire Swift port","status":"closed","updatedAt":"2026-07-20T08:00:00Z","model":"gpt-5.2"},
-        {"hostId":"studio-mac","sessionId":"s3","project":{"projectId":"t4code","name":"T4 Code"},"revision":"r3","title":"Agent view","status":"idle","updatedAt":"2026-07-24T08:30:00Z","model":"devin/swe-1-7","contextUsage":{"used":88,"limit":200}},
-        {"hostId":"studio-mac","sessionId":"s4","project":{"projectId":"t4code","name":"T4 Code"},"revision":"r4","title":"Hosts & usage","status":"active","updatedAt":"2026-07-24T12:10:00Z","model":"gpt-5.2","pendingApproval":true,"contextUsage":{"used":33,"limit":200}},
-        {"hostId":"studio-mac","sessionId":"s5","project":{"projectId":"archive","name":"Archived work"},"revision":"r5","title":"Finished release audit","status":"closed","updatedAt":"2026-07-18T17:00:00Z","archivedAt":"2026-07-19T09:00:00.000Z","model":"gpt-5.2"}
+        {"hostId":"studio-mac","sessionId":"s1","project":{"projectId":"omperator","name":"Omperator"},"revision":"r1","title":"Pin streaming transcript to bottom","status":"active","updatedAt":"2026-08-05T11:42:00Z","model":"kimi-code/k3","pendingUserInput":true,"contextUsage":{"used":64,"limit":200}},
+        {"hostId":"studio-mac","sessionId":"s2","project":{"projectId":"omperator","name":"Omperator"},"revision":"r2","title":"Site screenshot refresh","status":"active","updatedAt":"2026-08-05T10:18:00Z","model":"gpt-5.2","contextUsage":{"used":41,"limit":200}},
+        {"hostId":"studio-mac","sessionId":"s3","project":{"projectId":"omperator","name":"Omperator"},"revision":"r3","title":"Palette command audit","status":"idle","updatedAt":"2026-08-04T19:55:00Z","model":"devin/swe-1-7","contextUsage":{"used":88,"limit":200}},
+        {"hostId":"studio-mac","sessionId":"s4","project":{"projectId":"omperator","name":"Omperator"},"revision":"r4","title":"Fixture streaming proofs","status":"active","updatedAt":"2026-08-05T09:02:00Z","model":"gpt-5.2","pendingApproval":true,"contextUsage":{"used":33,"limit":200}},
+        {"hostId":"studio-mac","sessionId":"s5","project":{"projectId":"muse-spark","name":"muse-spark"},"revision":"r5","title":"Hidden eval 1.2-contributor","status":"idle","updatedAt":"2026-08-04T16:40:00Z","model":"deepseek-v4-flash","contextUsage":{"used":142,"limit":200}},
+        {"hostId":"studio-mac","sessionId":"s6","project":{"projectId":"muse-spark","name":"muse-spark"},"revision":"r6","title":"Congregate score ranking","status":"closed","updatedAt":"2026-08-03T14:12:00Z","model":"glm-5.2"},
+        {"hostId":"studio-mac","sessionId":"s7","project":{"projectId":"archive","name":"Archived work"},"revision":"r7","title":"Release audit 0.2.0","status":"closed","updatedAt":"2026-07-18T17:00:00Z","archivedAt":"2026-07-19T09:00:00.000Z","model":"gpt-5.2"}
         ]
         """
         let decoder = JSONDecoder()
         return (try? decoder.decode([SessionRef].self, from: Data(json.utf8))) ?? []
     }()
 
-    /// Sample subagents — offline preview for the agents pane (one running,
-    /// one completed) so the sheet renders without a live host.
+    /// Sample subagents — offline preview for the agents pane so the sheet
+    /// renders without a live host: one running, one completed, one queued,
+    /// one failed.
     private static let sampleAgents: [AgentState] = [
-        AgentState(agentId: "agent-scout", state: "running", progress: 0.62, detail: "Mapping the reconnect backoff"),
-        AgentState(agentId: "agent-worker", state: "completed", progress: 1.0, detail: "Ported the lease acquire loop"),
+        AgentState(agentId: "scout/backoff-map", state: "running", progress: 0.62, detail: "Mapping reconnect backoff across transport resets"),
+        AgentState(agentId: "worker/anchor-patch", state: "running", progress: 0.31, detail: "Porting the scroll anchor to Gtk3 backend"),
+        AgentState(agentId: "reviewer/clip-audit", state: "completed", progress: 1.0, detail: "Audited 214 transcript rows for edge clipping"),
+        AgentState(agentId: "sonic/shot-list", state: "failed", progress: 0.18, detail: "Screenshot manifest lint — stale hero dimensions"),
     ]
 
-    /// Sample code reviews — offline preview for the review pane (one
-    /// pending review with a warning finding) so the sheet renders without
-    /// a live host. Built by decoding a minimal `review` frame.
+    /// Sample code reviews — offline preview for the review pane. Built by
+    /// decoding a minimal `review` frame.
+    /// Sample model catalog — populates the settings pane's Models section
+    /// and the composer model menu in demo mode.
+    private static let sampleCatalog: [CatalogItem] = {
+        let json = """
+        [
+        {"id":"kimi-code/k3","kind":"model","name":"k3","description":"Kimi Code — fast daily driver","supported":true},
+        {"id":"gpt-5.2","kind":"model","name":"GPT-5.2","description":"OpenAI flagship","supported":true},
+        {"id":"deepseek-v4-flash","kind":"model","name":"v4 flash","description":"DeepSeek fast tier","supported":true},
+        {"id":"devin/swe-1-7","kind":"model","name":"swe-1-7","description":"Devin SWE agent","supported":true},
+        {"id":"glm-5.2","kind":"model","name":"GLM-5.2","description":"Zhipu flagship","supported":true}
+        ]
+        """
+        return (try? JSONDecoder().decode([CatalogItem].self, from: Data(json.utf8))) ?? []
+    }()
+
+    /// Sample plan phases — offline plan strip for the hero session (s1).
+    private static let samplePlanPhases: [PlanPhase] = [
+        PlanPhase(name: "Investigate", tasks: [
+            PlanTask(content: "Locate the scroll container wiring", status: "completed"),
+            PlanTask(content: "Confirm adjustment signal order", status: "completed"),
+        ]),
+        PlanPhase(name: "Implement", tasks: [
+            PlanTask(content: "Add stick-to-bottom anchor to ScrolledWindow", status: "completed"),
+            PlanTask(content: "Gate it behind an environment flag", status: "completed"),
+        ]),
+        PlanPhase(name: "Verify", tasks: [
+            PlanTask(content: "Streaming pin + scroll-up release on Xvfb", status: "in_progress"),
+            PlanTask(content: "Retake dawn/moon captures", status: "pending"),
+        ]),
+    ]
+
+    /// Sample usage snapshot — offline usage pane for captures. Mirrors a
+    /// `usage.read` result: per-provider limits, capacity, one idle account.
+    private static let sampleUsageSnapshot: UsageReadResult? = {
+        let json = """
+        {"generatedAt":1785963900,"reports":[
+          {"provider":"kimi-code","fetchedAt":1785963840,"limits":[
+            {"id":"session","label":"Session","scope":{"provider":"kimi-code"},"window":{"id":"5h","label":"5-hour","durationMs":18000000,"resetsAt":1785971100},"amount":{"used":34,"limit":100,"usedFraction":0.34,"unit":"percent"},"status":"ok"},
+            {"id":"weekly","label":"Weekly","scope":{"provider":"kimi-code"},"window":{"id":"7d","label":"Weekly","durationMs":604800000,"resetsAt":1786366000},"amount":{"used":61,"limit":100,"usedFraction":0.61,"unit":"percent"},"status":"warning"}
+          ]},
+          {"provider":"gpt-5.2","fetchedAt":1785963820,"limits":[
+            {"id":"session","label":"Session","scope":{"provider":"gpt-5.2"},"window":{"id":"5h","label":"5-hour","durationMs":18000000,"resetsAt":1785969000},"amount":{"used":72,"limit":100,"usedFraction":0.72,"unit":"percent"},"status":"warning"},
+            {"id":"weekly","label":"Weekly","scope":{"provider":"gpt-5.2"},"window":{"id":"7d","label":"Weekly","durationMs":604800000,"resetsAt":1786366000},"amount":{"used":38,"limit":100,"usedFraction":0.38,"unit":"percent"},"status":"ok"}
+          ],"notes":["Capacity pool shared across 3 seats"]},
+          {"provider":"deepseek","fetchedAt":1785963810,"limits":[
+            {"id":"daily","label":"Daily tokens","scope":{"provider":"deepseek"},"window":{"id":"1d","label":"Daily","durationMs":86400000,"resetsAt":1786000000},"amount":{"used":1840000,"limit":15000000,"usedFraction":0.12,"unit":"tokens"},"status":"ok"}
+          ]}
+        ],"accountsWithoutUsage":[
+          {"provider":"openrouter","type":"api_key","email":"dogfood@omperator.dev"}
+        ],"capacity":{
+          "kimi-code":[{"window":"5h","durationMs":18000000,"accounts":3,"usedAccounts":1.0,"remainingAccounts":2.0}],
+          "gpt-5.2":[{"window":"5h","durationMs":18000000,"accounts":2,"usedAccounts":2.0,"remainingAccounts":0.0}]
+        }}
+        """
+        return try? JSONDecoder().decode(UsageReadResult.self, from: Data(json.utf8))
+    }()
+
     static let sampleReviews: [ReviewFrame] = {
         let json = """
-        {"v":"omp-app/1","type":"review","hostId":"studio-mac","sessionId":"s1","reviewId":"review-sample","status":"pending","path":"src/fixture.ts","findings":[{"severity":"warning","message":"Fixture review finding for the mobile application flow.","line":12}]}
+        {"v":"omp-app/1","type":"review","hostId":"studio-mac","sessionId":"s1","reviewId":"review-anchor","status":"pending","path":"Sources/Gtk/Widgets/ScrolledWindow.swift","findings":[
+          {"severity":"warning","message":"snapToBottomIfAnchored runs on the GTK main thread; keep the handler allocation-free.","line":41},
+          {"severity":"info","message":"bottomSlack of 120px reads well at 15pt body text; revisit if the composer grows.","line":64},
+          {"severity":"warning","message":"The retained signal box is never released — one per scroll container, bounded, but note it upstream.","line":33}
+        ]}
         """
         return (try? JSONDecoder().decode(ReviewFrame.self, from: Data(json.utf8)))
             .map { [$0] } ?? []
