@@ -312,6 +312,21 @@ function useTheme(): [Theme, () => void] {
 
 export function LinuxLanding() {
   const [theme, toggle] = useTheme();
+  const [expanded, setExpanded] = useState<(typeof SHOTS)[number] | null>(null);
+
+  // Lightbox: Esc closes, body scroll locks while open.
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setExpanded(null);
+    };
+    window.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = "";
+    };
+  }, [expanded]);
   const hero = SHOTS[0]!;
   return (
     <>
@@ -390,10 +405,20 @@ export function LinuxLanding() {
         </div>
         <div className="gallery">
           {SHOTS.map((s) => (
-            <figure key={String(s.caption)} className={`shot ${s.wide ? "wide" : ""}`}>
+            <figure
+              key={String(s.caption)}
+              className={`shot ${s.wide ? "wide" : ""}`}
+              role="button"
+              tabIndex={0}
+              onClick={() => setExpanded(s)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") setExpanded(s);
+              }}
+            >
               <div className="imgwrap">
                 <img src={s.src[theme]} alt={typeof s.caption === "string" ? s.caption : "t4 linux surface"} loading="lazy" />
               </div>
+              <span className="expand-tag">[+] expand</span>
               <figcaption>{s.caption}</figcaption>
             </figure>
           ))}
@@ -473,6 +498,21 @@ export function LinuxLanding() {
           ))}
         </div>
       </section>
+
+      {expanded && (
+        <div className="lightbox" role="dialog" aria-modal="true" onClick={() => setExpanded(null)}>
+          <figure className="lightbox-frame" onClick={(e) => e.stopPropagation()}>
+            <div className="lightbox-bar">
+              <span className="lightbox-title">preview.png — viewer</span>
+              <button className="lightbox-close" onClick={() => setExpanded(null)}>
+                [ x ] close
+              </button>
+            </div>
+            <img src={expanded.src[theme]} alt="expanded t4 linux surface" />
+            <figcaption>{expanded.caption}</figcaption>
+          </figure>
+        </div>
+      )}
 
       <footer>
         <p className="status">
