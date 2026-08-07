@@ -33,11 +33,12 @@ import os
 /// at ~4Hz. macOS keeps the original 60fps pacing.
 enum T4StorePacing {
     #if os(Linux)
-    /// 250ms (4fps) was set when every reveal tick paid a full-tree layout;
-    /// with measurement/resize/CSS memoization a tick is single-digit-ms CPU
-    /// on dense views, so Linux can afford ~15fps — the difference between
-    /// visible jump-cuts and a continuous typewriter.
-    static let sleepNs: UInt64 = 66_000_000
+    /// Measured on a dense transcript during an active stream (Xvfb,
+    /// software GL): CPU is flat across 250ms / 66ms / 33ms / 16.7ms ticks —
+    /// the cost is per content-change, not per tick — so the old 250ms
+    /// throttle bought nothing and only made reveals choppy. Linux uses the
+    /// same 60fps cadence as macOS.
+    static let sleepNs: UInt64 = 16_666_667
     #else
     static let sleepNs: UInt64 = 16_666_667
     #endif
