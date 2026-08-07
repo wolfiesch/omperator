@@ -1,6 +1,25 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 type Theme = "dawn" | "moon";
+
+/** Muted looping video that only decodes while on screen. */
+function AutoVideo({ src, poster, theme }: { src: string; poster: string; theme: Theme }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) void el.play().catch(() => {});
+        else el.pause();
+      },
+      { rootMargin: "120px" }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [theme]);
+  return <video ref={ref} key={theme} src={src} poster={poster} muted loop playsInline preload="metadata" />;
+}
 
 /** Screenshot pairs — every surface the Linux client ships. */
 const SHOTS: { src: Record<Theme, string>; caption: ReactNode; wide?: boolean }[] = [
@@ -394,6 +413,27 @@ export function LinuxLanding() {
         </div>
       </div>
 
+      <section id="watch">
+        <div className="section-head">
+          <p className="kicker">watch it move</p>
+          <h2>Not a slide deck.</h2>
+          <p>Recorded on the actual client against a real host — streaming, palette, and the little website in the browser pane.</p>
+        </div>
+        <div className="rows">
+          {VIDEOS.map((v, i) => (
+            <div key={String(v.caption)} className={`prow ${i % 2 ? "flip" : ""}`}>
+              <div className="prow-text">
+                <span className="prow-index">vid</span>
+                <div className="prow-caption">{v.caption}</div>
+              </div>
+              <figure className="prow-media">
+                <AutoVideo theme={theme} src={v.src[theme]} poster={v.poster[theme]} />
+              </figure>
+            </div>
+          ))}
+        </div>
+      </section>
+
       <section id="gallery">
         <div className="section-head">
           <p className="kicker">every surface</p>
@@ -405,7 +445,7 @@ export function LinuxLanding() {
         </div>
         <div className="rows">
           {SHOTS.map((s, i) => (
-            <div key={String(s.caption)} className={`prow ${i % 2 ? "flip" : ""}`}>
+            <div key={String(s.caption)} className={`prow ${(VIDEOS.length + i) % 2 ? "flip" : ""}`}>
               <div className="prow-text">
                 <span className="prow-index">{String(i + 1).padStart(2, "0")}</span>
                 <div className="prow-caption">{s.caption}</div>
@@ -421,27 +461,6 @@ export function LinuxLanding() {
               >
                 <img src={s.src[theme]} alt={typeof s.caption === "string" ? s.caption : "t4 linux surface"} loading="lazy" />
                 <span className="expand-tag">[+] expand</span>
-              </figure>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section id="watch">
-        <div className="section-head">
-          <p className="kicker">watch it move</p>
-          <h2>Not a slide deck.</h2>
-          <p>Recorded on the actual client against a real host — streaming, palette, and the little website in the browser pane.</p>
-        </div>
-        <div className="rows">
-          {VIDEOS.map((v, i) => (
-            <div key={String(v.caption)} className={`prow ${(SHOTS.length + i) % 2 ? "flip" : ""}`}>
-              <div className="prow-text">
-                <span className="prow-index">vid</span>
-                <div className="prow-caption">{v.caption}</div>
-              </div>
-              <figure className="prow-media">
-                <video key={theme} src={v.src[theme]} poster={v.poster[theme]} controls preload="none" playsInline />
               </figure>
             </div>
           ))}
