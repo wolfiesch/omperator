@@ -5,7 +5,7 @@ type Theme = "dawn" | "moon";
 /** Screenshot pairs — every surface the Linux client ships. */
 const SHOTS: { src: Record<Theme, string>; caption: ReactNode; wide?: boolean }[] = [
   {
-    src: { dawn: "/screenshots/linux-workspace-dawn.png", moon: "/screenshots/linux-workspace-moon.png" },
+    src: { dawn: "screenshots/linux-workspace-dawn.png", moon: "screenshots/linux-workspace-moon.png" },
     caption: (
       <>
         <b>The workspace.</b> Sessions rail, streaming transcript, composer — one host wire, zero Electron.
@@ -14,7 +14,7 @@ const SHOTS: { src: Record<Theme, string>; caption: ReactNode; wide?: boolean }[
     wide: true,
   },
   {
-    src: { dawn: "/screenshots/linux-palette-dawn.png", moon: "/screenshots/linux-palette-moon.png" },
+    src: { dawn: "screenshots/linux-palette-dawn.png", moon: "screenshots/linux-palette-moon.png" },
     caption: (
       <>
         <b>The palette.</b> Every session and action, one keystroke away — ⌕ in the header.
@@ -22,7 +22,7 @@ const SHOTS: { src: Record<Theme, string>; caption: ReactNode; wide?: boolean }[
     ),
   },
   {
-    src: { dawn: "/screenshots/linux-ask-dawn.png", moon: "/screenshots/linux-ask-moon.png" },
+    src: { dawn: "screenshots/linux-ask-dawn.png", moon: "screenshots/linux-ask-moon.png" },
     caption: (
       <>
         <b>Plan review.</b> The agent proposes; you decide — nothing runs without your word.
@@ -30,7 +30,7 @@ const SHOTS: { src: Record<Theme, string>; caption: ReactNode; wide?: boolean }[
     ),
   },
   {
-    src: { dawn: "/screenshots/linux-files-dawn.png", moon: "/screenshots/linux-files-moon.png" },
+    src: { dawn: "screenshots/linux-files-dawn.png", moon: "screenshots/linux-files-moon.png" },
     caption: (
       <>
         <b>Files.</b> The session's workspace, browsed from an in-window sidebar — folders, sizes, breadcrumbs.
@@ -38,7 +38,7 @@ const SHOTS: { src: Record<Theme, string>; caption: ReactNode; wide?: boolean }[
     ),
   },
   {
-    src: { dawn: "/screenshots/linux-agents-dawn.png", moon: "/screenshots/linux-agents-moon.png" },
+    src: { dawn: "screenshots/linux-agents-dawn.png", moon: "screenshots/linux-agents-moon.png" },
     caption: (
       <>
         <b>Subagents.</b> Every child of a turn, with progress and lifecycle state.
@@ -46,16 +46,16 @@ const SHOTS: { src: Record<Theme, string>; caption: ReactNode; wide?: boolean }[
     ),
   },
   {
-    src: { dawn: "/screenshots/linux-browser-dawn.png", moon: "/screenshots/linux-browser-moon.png" },
+    src: { dawn: "screenshots/linux-browser-dawn.png", moon: "screenshots/linux-browser-moon.png" },
     caption: (
       <>
         <b>A real browser pane.</b> WebKitGTK in a sidebar. This very page lives at{" "}
-        <a href="/browser-demo/" style={{ color: "var(--gold)" }}>mochi's corner</a>.
+        <a href="browser-demo/" style={{ color: "var(--gold)" }}>mochi's corner</a>.
       </>
     ),
   },
   {
-    src: { dawn: "/screenshots/linux-terminal-dawn.png", moon: "/screenshots/linux-terminal-moon.png" },
+    src: { dawn: "screenshots/linux-terminal-dawn.png", moon: "screenshots/linux-terminal-moon.png" },
     caption: (
       <>
         <b>Terminal drawer.</b> A real VTE pty docked under the transcript, in VT323.
@@ -63,7 +63,7 @@ const SHOTS: { src: Record<Theme, string>; caption: ReactNode; wide?: boolean }[
     ),
   },
   {
-    src: { dawn: "/screenshots/linux-plan-dawn.png", moon: "/screenshots/linux-plan-moon.png" },
+    src: { dawn: "screenshots/linux-plan-dawn.png", moon: "screenshots/linux-plan-moon.png" },
     caption: (
       <>
         <b>Plan strip.</b> The todo board rides along — phases, tasks, done counts.
@@ -71,7 +71,7 @@ const SHOTS: { src: Record<Theme, string>; caption: ReactNode; wide?: boolean }[
     ),
   },
   {
-    src: { dawn: "/screenshots/linux-inbox-dawn.png", moon: "/screenshots/linux-inbox-moon.png" },
+    src: { dawn: "screenshots/linux-inbox-dawn.png", moon: "screenshots/linux-inbox-moon.png" },
     caption: (
       <>
         <b>Inbox.</b> Attention, surfacing: approvals, inputs, and plan reviews across every session.
@@ -79,7 +79,7 @@ const SHOTS: { src: Record<Theme, string>; caption: ReactNode; wide?: boolean }[
     ),
   },
   {
-    src: { dawn: "/screenshots/linux-search-dawn.png", moon: "/screenshots/linux-search-moon.png" },
+    src: { dawn: "screenshots/linux-search-dawn.png", moon: "screenshots/linux-search-moon.png" },
     caption: (
       <>
         <b>Search &amp; diff.</b> Find files by name, review what changed, before anything runs.
@@ -87,7 +87,7 @@ const SHOTS: { src: Record<Theme, string>; caption: ReactNode; wide?: boolean }[
     ),
   },
   {
-    src: { dawn: "/screenshots/linux-review-dawn.png", moon: "/screenshots/linux-review-moon.png" },
+    src: { dawn: "screenshots/linux-review-dawn.png", moon: "screenshots/linux-review-moon.png" },
     caption: (
       <>
         <b>Reviews.</b> Findings surface inline with severity — warnings are hard to miss.
@@ -95,7 +95,7 @@ const SHOTS: { src: Record<Theme, string>; caption: ReactNode; wide?: boolean }[
     ),
   },
   {
-    src: { dawn: "/screenshots/linux-usage-dawn.png", moon: "/screenshots/linux-usage-moon.png" },
+    src: { dawn: "screenshots/linux-usage-dawn.png", moon: "screenshots/linux-usage-moon.png" },
     caption: (
       <>
         <b>Usage.</b> Context and cost at a glance, straight from the host.
@@ -103,7 +103,7 @@ const SHOTS: { src: Record<Theme, string>; caption: ReactNode; wide?: boolean }[
     ),
   },
   {
-    src: { dawn: "/screenshots/linux-artifacts-dawn.png", moon: "/screenshots/linux-artifacts-moon.png" },
+    src: { dawn: "screenshots/linux-artifacts-dawn.png", moon: "screenshots/linux-artifacts-moon.png" },
     caption: (
       <>
         <b>Artifacts.</b> The session's produced files, reachable without leaving the rail.
@@ -114,8 +114,8 @@ const SHOTS: { src: Record<Theme, string>; caption: ReactNode; wide?: boolean }[
 
 const VIDEOS: { src: Record<Theme, string>; poster: Record<Theme, string>; caption: ReactNode }[] = [
   {
-    src: { dawn: "/screenshots/linux-live-dawn.mp4", moon: "/screenshots/linux-live-moon.mp4" },
-    poster: { dawn: "/screenshots/linux-workspace-dawn.png", moon: "/screenshots/linux-workspace-moon.png" },
+    src: { dawn: "screenshots/linux-live-dawn.mp4", moon: "screenshots/linux-live-moon.mp4" },
+    poster: { dawn: "screenshots/linux-workspace-dawn.png", moon: "screenshots/linux-workspace-moon.png" },
     caption: (
       <>
         <b>Live.</b> Transcript entries paint as they stream — and the tail pins to the bottom while you watch.
@@ -123,8 +123,8 @@ const VIDEOS: { src: Record<Theme, string>; poster: Record<Theme, string>; capti
     ),
   },
   {
-    src: { dawn: "/screenshots/linux-palette-dawn.mp4", moon: "/screenshots/linux-palette-moon.mp4" },
-    poster: { dawn: "/screenshots/linux-palette-dawn.png", moon: "/screenshots/linux-palette-moon.png" },
+    src: { dawn: "screenshots/linux-palette-dawn.mp4", moon: "screenshots/linux-palette-moon.mp4" },
+    poster: { dawn: "screenshots/linux-palette-dawn.png", moon: "screenshots/linux-palette-moon.png" },
     caption: (
       <>
         <b>The palette, in motion.</b> Open, type, go — themes flip mid-flight.
@@ -132,8 +132,8 @@ const VIDEOS: { src: Record<Theme, string>; poster: Record<Theme, string>; capti
     ),
   },
   {
-    src: { dawn: "/screenshots/linux-browser-dawn.mp4", moon: "/screenshots/linux-browser-moon.mp4" },
-    poster: { dawn: "/screenshots/linux-browser-dawn.png", moon: "/screenshots/linux-browser-moon.png" },
+    src: { dawn: "screenshots/linux-browser-dawn.mp4", moon: "screenshots/linux-browser-moon.mp4" },
+    poster: { dawn: "screenshots/linux-browser-dawn.png", moon: "screenshots/linux-browser-moon.png" },
     caption: (
       <>
         <b>Browser pane.</b> A genuine little website, loaded inside the app — back, forward, reload, URL field.
@@ -278,7 +278,7 @@ export function LinuxLanding() {
         </span>
         <nav>
           <a href="/">Omperator</a>
-          <a href="/docs/">Docs</a>
+          <a href="docs/">Docs</a>
           <button className="theme-toggle" onClick={toggle} aria-label="toggle theme">
             <span className={`tt-opt ${theme === "dawn" ? "on" : ""}`}>dawn</span>
             <span className={`tt-opt ${theme === "moon" ? "on" : ""}`}>moon</span>
@@ -379,19 +379,19 @@ export function LinuxLanding() {
             <p>
               The browser pane is WebKitGTK — back, forward, reload, URL field
               and all. To show it off, we made{" "}
-              <a href="/browser-demo/" style={{ color: "var(--gold)", fontWeight: 700 }}>
+              <a href="browser-demo/" style={{ color: "var(--gold)", fontWeight: 700 }}>
                 mochi's corner
               </a>
               : a tiny home on the internet with a CSS cat, a growing list of
               right-nows, and a guestbook that really keeps what you write.
               Open it in the app, or right here.
             </p>
-            <a className="btn gold" href="/browser-demo/">
+            <a className="btn gold" href="browser-demo/">
               Visit mochi's corner ✦
             </a>
           </div>
-          <a className="mini" href="/browser-demo/">
-            <img src="/screenshots/linux-browser-moon.png" alt="mochi's corner inside the browser pane" loading="lazy" />
+          <a className="mini" href="browser-demo/">
+            <img src="screenshots/linux-browser-moon.png" alt="mochi's corner inside the browser pane" loading="lazy" />
           </a>
         </div>
       </section>
@@ -430,6 +430,9 @@ export function LinuxLanding() {
       </section>
 
       <footer>
+        <p className="status">
+          sys.status: <b>online</b> // uptime: continuous // renderer: native
+        </p>
         <p>
           <span className="wordmark">
             t4<span className="gold">·</span>linux
