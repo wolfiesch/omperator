@@ -570,7 +570,7 @@ footer .status b { color: var(--foam); font-weight: 400; }
   .hero { grid-template-columns: 1fr; gap: 40px; }
   .features { grid-template-columns: repeat(2, 1fr); }
   .demo-callout { grid-template-columns: 1fr; }
-  .prow { grid-template-columns: minmax(0, 1fr); gap: 22px; padding: 34px 0; }
+  .prow, .prow.flip { grid-template-columns: minmax(0, 1fr); gap: 22px; padding: 34px 0; }
   .prow.flip .prow-text { order: 1; }
   .prow.flip .prow-media { order: 2; }
 }
