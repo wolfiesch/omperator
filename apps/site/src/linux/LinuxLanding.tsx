@@ -403,24 +403,26 @@ export function LinuxLanding() {
             demo rail. Click nothing, believe everything.
           </p>
         </div>
-        <div className="gallery">
-          {SHOTS.map((s) => (
-            <figure
-              key={String(s.caption)}
-              className={`shot ${s.wide ? "wide" : ""}`}
-              role="button"
-              tabIndex={0}
-              onClick={() => setExpanded(s)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") setExpanded(s);
-              }}
-            >
-              <div className="imgwrap">
-                <img src={s.src[theme]} alt={typeof s.caption === "string" ? s.caption : "t4 linux surface"} loading="lazy" />
+        <div className="rows">
+          {SHOTS.map((s, i) => (
+            <div key={String(s.caption)} className={`prow ${i % 2 ? "flip" : ""}`}>
+              <div className="prow-text">
+                <span className="prow-index">{String(i + 1).padStart(2, "0")}</span>
+                <div className="prow-caption">{s.caption}</div>
               </div>
-              <span className="expand-tag">[+] expand</span>
-              <figcaption>{s.caption}</figcaption>
-            </figure>
+              <figure
+                className="prow-media"
+                role="button"
+                tabIndex={0}
+                onClick={() => setExpanded(s)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") setExpanded(s);
+                }}
+              >
+                <img src={s.src[theme]} alt={typeof s.caption === "string" ? s.caption : "t4 linux surface"} loading="lazy" />
+                <span className="expand-tag">[+] expand</span>
+              </figure>
+            </div>
           ))}
         </div>
       </section>
@@ -431,12 +433,17 @@ export function LinuxLanding() {
           <h2>Not a slide deck.</h2>
           <p>Recorded on the actual client against a real host — streaming, palette, and the little website in the browser pane.</p>
         </div>
-        <div className="videos">
-          {VIDEOS.map((v) => (
-            <figure key={String(v.caption)} className="video-card">
-              <video key={theme} src={v.src[theme]} poster={v.poster[theme]} controls preload="none" playsInline />
-              <figcaption>{v.caption}</figcaption>
-            </figure>
+        <div className="rows">
+          {VIDEOS.map((v, i) => (
+            <div key={String(v.caption)} className={`prow ${(SHOTS.length + i) % 2 ? "flip" : ""}`}>
+              <div className="prow-text">
+                <span className="prow-index">vid</span>
+                <div className="prow-caption">{v.caption}</div>
+              </div>
+              <figure className="prow-media">
+                <video key={theme} src={v.src[theme]} poster={v.poster[theme]} controls preload="none" playsInline />
+              </figure>
+            </div>
           ))}
         </div>
       </section>
