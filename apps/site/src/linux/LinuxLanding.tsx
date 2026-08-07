@@ -17,7 +17,7 @@ const SHOTS: { src: Record<Theme, string>; caption: ReactNode; wide?: boolean }[
     src: { dawn: "screenshots/linux-palette-dawn.png", moon: "screenshots/linux-palette-moon.png" },
     caption: (
       <>
-        <b>The palette.</b> Every session and action, one keystroke away — ⌕ in the header.
+        <b>The omni search.</b> Every session and action, one keystroke away — by title, by model, by verb — ⌕ in the header.
       </>
     ),
   },
@@ -127,7 +127,7 @@ const VIDEOS: { src: Record<Theme, string>; poster: Record<Theme, string>; capti
     poster: { dawn: "screenshots/linux-palette-dawn.png", moon: "screenshots/linux-palette-moon.png" },
     caption: (
       <>
-        <b>The palette, in motion.</b> Open, type, go — themes flip mid-flight.
+        <b>The omni search, in motion.</b> Find a session by title, find one by model, run an action — themes flip mid-flight.
       </>
     ),
   },
