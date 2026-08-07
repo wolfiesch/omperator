@@ -285,7 +285,7 @@ body {
   display: inline-flex;
   gap: 34px;
   white-space: nowrap;
-  animation: scroll 26s linear infinite;
+  animation: scroll 75s linear infinite;
   font-family: "VT323", monospace;
   font-size: 17px;
   letter-spacing: 2.5px;
