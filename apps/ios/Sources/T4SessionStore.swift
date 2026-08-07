@@ -1016,13 +1016,23 @@ final class T4SessionStore: ObservableObject {
     /// fully-formed reply in a few giant catch-up chunks, which reads as a
     /// jump-cut rather than a live stream on video. Offline demo mode only.
     func startDemoStreamIfNeeded() {
-        guard Self.demoMode,
-              ProcessInfo.processInfo.arguments.contains("-T4DemoStream") else { return }
-        let sessionId = "s1"
+        guard Self.demoMode else { return }
+        let args = ProcessInfo.processInfo.arguments
+        // -T4DemoStreamLight streams into s3 (4-entry transcript) instead of
+        // the s1 hero (13 dense entries): per-paint layout cost scales with
+        // transcript length, and on software-GL capture boxes the s1 stream
+        // paints ~0.4Hz (2.5s jump cuts) while s3 stays near the paint floor.
+        let light = args.contains("-T4DemoStreamLight")
+        guard args.contains("-T4DemoStream") || light else { return }
+        let sessionId = light ? "s3" : "s1"
         Task { @MainActor [weak self] in
             guard let self else { return }
+            if light { select(sessions.first { $0.sessionId == sessionId }) }
             try? await Task.sleep(nanoseconds: 1_500_000_000)
-            let userEntry = try! TranscriptEntry.decode(Data(#"{"id":"ds-user","parentId":null,"hostId":"studio-mac","sessionId":"s1","kind":"message","timestamp":"2026-08-05T11:50:00Z","data":{"role":"user","text":"nice. can you also make long prose paragraphs stop clipping off the left edge?"}}"#.utf8))
+            let entry = { (json: String) -> TranscriptEntry in
+                try! TranscriptEntry.decode(Data(json.replacingOccurrences(of: "\"sessionId\":\"s1\"", with: "\"sessionId\":\"\(sessionId)\"").utf8))
+            }
+            let userEntry = entry(#"{"id":"ds-user","parentId":null,"hostId":"studio-mac","sessionId":"s1","kind":"message","timestamp":"2026-08-05T11:50:00Z","data":{"role":"user","text":"nice. can you also make long prose paragraphs stop clipping off the left edge?"}}"#)
             liveEntries[sessionId, default: []].append(userEntry)
             try? await Task.sleep(nanoseconds: 1_200_000_000)
 
@@ -1044,8 +1054,8 @@ final class T4SessionStore: ObservableObject {
             }
 
             let settledText = reply.replacingOccurrences(of: "\n", with: "\\n")
-            let toolEntry = try! TranscriptEntry.decode(Data(#"{"id":"ds-tool","parentId":"ds-user","hostId":"studio-mac","sessionId":"s1","kind":"tool-use","timestamp":"2026-08-05T11:50:30Z","data":{"tool":"bash","title":"swift test","result":{"output":"✔ Suite \"Anchor behavior\" passed after 0.802 seconds.\n✔ Test run with 13 tests in 5 suites passed after 16.121 seconds."},"ok":true}}"#.utf8))
-            let settled = try! TranscriptEntry.decode(Data(("{\"id\":\"ds-done\",\"parentId\":\"ds-tool\",\"hostId\":\"studio-mac\",\"sessionId\":\"s1\",\"kind\":\"message\",\"timestamp\":\"2026-08-05T11:50:36Z\",\"data\":{\"text\":\"" + settledText + "\"}}").utf8))
+            let toolEntry = entry(#"{"id":"ds-tool","parentId":"ds-user","hostId":"studio-mac","sessionId":"s1","kind":"tool-use","timestamp":"2026-08-05T11:50:30Z","data":{"tool":"bash","title":"swift test","result":{"output":"✔ Suite \"Anchor behavior\" passed after 0.802 seconds.\n✔ Test run with 13 tests in 5 suites passed after 16.121 seconds."},"ok":true}}"#)
+            let settled = entry("{\"id\":\"ds-done\",\"parentId\":\"ds-tool\",\"hostId\":\"studio-mac\",\"sessionId\":\"s1\",\"kind\":\"message\",\"timestamp\":\"2026-08-05T11:50:36Z\",\"data\":{\"text\":\"" + settledText + "\"}}")
             liveEntries[sessionId, default: []].append(toolEntry)
             try? await Task.sleep(nanoseconds: 700_000_000)
             liveEntries[sessionId, default: []].append(settled)

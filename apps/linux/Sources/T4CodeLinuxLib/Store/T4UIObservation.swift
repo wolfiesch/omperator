@@ -35,16 +35,16 @@ private final class Forwarder {
     private var keep: AnyCancellable?
     private let label: String
 
-    /// Quiet window (seconds) per model, measured from the last SEND.
-    /// Emissions inside the window are dropped: the send's UI pass runs
-    /// synchronously right after it, and the pass itself re-enters GTK
-    /// machinery that re-publishes observed models (verified against a live
-    /// session: the layout's own emissions schedule the next pass, and the
-    /// main thread livelocks — the app "freezes" on connected session
-    /// views). Dropping is safe because the running pass reads the models
-    /// live, and every real change (host frame, interaction) re-publishes
-    /// once the window lapses. The window grows to cover the pass's actual
-    /// duration (bounded) so long passes cannot outrun it.
+    /// Quiet window per model, measured from the last SEND. Emissions inside
+    /// the window are dropped: the send's UI pass runs synchronously right
+    /// after it, and the pass itself re-enters GTK machinery that re-publishes
+    /// observed models (verified against a live session: the layout's own
+    /// emissions schedule the next pass, and the main thread livelocks — the
+    /// app "freezes" on connected session views). Dropping is safe because the
+    /// running pass reads the models live, and every real change (host frame,
+    /// interaction) re-publishes once the window lapses. The window tracks the
+    /// pass's MEASURED duration (see the send block), so fast hardware paints
+    /// at the floor and slow passes cover themselves — no heuristic growth.
     private static var quietWindow: [String: Duration] = [:]
     private static var lastSendAt: [String: ContinuousClock.Instant] = [:]
     private static let quietWindowCap: Duration = .seconds(2)
@@ -62,12 +62,11 @@ private final class Forwarder {
     /// and without a ceiling every stream event triggers a full workspace
     /// re-layout, which is what makes scrolling a slideshow.
     private func schedule() {
-        // 400ms base for every model: a full-tree SwiftCrossUI pass on the
-        // workspace costs ~250ms, so a 250ms window lets the pass's own
-        // end-of-pass emissions escape and re-schedule it. 400ms keeps the
-        // pass's emissions inside the window while live hosts still get
-        // ~2.5Hz updates (streaming stays fluid).
-        let minimum: Duration = .milliseconds(400)
+        // 100ms floor: when passes are cheap (real hardware) streaming paints
+        // at ~10Hz and reads as continuous flow. When a pass is slower than
+        // the floor the measured send cost below widens the window to match,
+        // so a pass's own re-entrant emissions always land inside it.
+        let minimum: Duration = .milliseconds(100)
         let now = ContinuousClock.now
         let window = Self.quietWindow[label] ?? minimum
         let last = Self.lastSendAt[label] ?? (now - window)
@@ -75,19 +74,14 @@ private final class Forwarder {
 
         guard elapsed >= window else {
             // Emission inside the quiet window: the previous send's UI pass
-            // is (likely) still running, and the pass itself re-enters GTK
-            // machinery that re-publishes observed models. Dropping is safe —
-            // the running pass reads the models live — and it is what breaks
-            // the self-sustaining layout loop that otherwise pegs the main
-            // thread (the app "freezes" on connected session views).
-            // Grow the window when drops keep landing at its edge: that means
-            // the pass is longer than the window, and its emissions would
-            // otherwise escape and re-schedule it forever.
+            // is (likely) still running, or a real stream burst is mid-flight.
+            // Either way the next pass reads the models live — dropping loses
+            // nothing. No growth here: growing on edge drops spirals to the
+            // 2s cap within a second of any continuous stream (drops at
+            // 16-50ms intervals always land near the edge eventually), which
+            // turned live transcripts into 2-second jump cuts.
             if T4Perf.measure {
                 FileHandle.standardError.write(Data("[fwd] \(label) DROP \(elapsed) win=\(window)\n".utf8))
-            }
-            if elapsed * 5 >= window * 4 {
-                Self.quietWindow[label] = min(max(window, elapsed * 2), Self.quietWindowCap)
             }
             return
         }
@@ -96,9 +90,27 @@ private final class Forwarder {
             FileHandle.standardError.write(Data("[fwd] \(label) SEND win=\(window)\n".utf8))
         }
         Self.lastSendAt[label] = now
+        let dispatchedAt = now
         DispatchQueue.main.async(qos: .userInitiated) { [weak self] in
             guard let self else { return }
+            // The pass itself is deferred (pub.send() returns in µs; the
+            // SwiftCrossUI update + GTK layout run later on the main loop),
+            // so size the window from the main-thread BACKLOG instead: the
+            // dispatch→run delay of this block. Idle main thread (real GPUs)
+            // → delay ≈ 0 → the 100ms floor paints streams at ~10Hz. A
+            // saturated main thread (software GL) → delay tracks the real
+            // pass cost → the window widens to match and leaves GTK room to
+            // draw, instead of queueing updates faster than they drain.
+            let queueDelay = ContinuousClock.now - dispatchedAt
             self.pub.send()
+            let fitted = min(
+                max(queueDelay + queueDelay / 2, .milliseconds(100)),
+                Self.quietWindowCap
+            )
+            Self.quietWindow[self.label] = fitted
+            if T4Perf.measure {
+                FileHandle.standardError.write(Data("[fwd] \(self.label) PASS delay=\(queueDelay) win=\(fitted)\n".utf8))
+            }
         }
     }
 }
