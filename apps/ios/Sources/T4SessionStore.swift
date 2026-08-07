@@ -33,7 +33,11 @@ import os
 /// at ~4Hz. macOS keeps the original 60fps pacing.
 enum T4StorePacing {
     #if os(Linux)
-    static let sleepNs: UInt64 = 250_000_000
+    /// 250ms (4fps) was set when every reveal tick paid a full-tree layout;
+    /// with measurement/resize/CSS memoization a tick is single-digit-ms CPU
+    /// on dense views, so Linux can afford ~15fps — the difference between
+    /// visible jump-cuts and a continuous typewriter.
+    static let sleepNs: UInt64 = 66_000_000
     #else
     static let sleepNs: UInt64 = 16_666_667
     #endif
@@ -1023,19 +1027,20 @@ final class T4SessionStore: ObservableObject {
 
             let reply = "Good catch — that's the ellipsized-label bug. Every `Text` was created with `ellipsize = .end`, and Pango lays ellipsized text out wider than the allocation, which GTK then draws centered — so long paragraphs lost a slice off the left.\n\nThe fix is three small pieces: default to no ellipsize, ellipsize only line-limited labels, and left-align the text block (`xalign = 0`) so an oversized layout can never clip the leading edge. The layout-height override in `CustomLabel` also only runs for ellipsized labels now — applied to plain wrapping text it left Pango holding a stale, wider line layout.\n\nVerified on the long opencode session: every paragraph starts flush at the detail edge in both themes, tool cards still ellipsize their headlines, and the pinned tail keeps tracking while new entries land.\n\nRunning the suite to close it out."
 
-            // Character drip: extend the visible text a few graphemes at a
-            // time so the transcript visibly types — and, with the anchor
-            // pinned, visibly scrolls.
-            var buffer = StreamingAssistantBuffer()
-            var revealed = 0
+            // Feed the production pacing path the way a live host does:
+            // accumulated snapshots in small increments. The paced reveal
+            // (T4StorePacing) turns those into continuous typing — and, with
+            // the anchor pinned, a visible scroll.
+            var fed = 0
             let graphemes = Array(reply)
-            while revealed < graphemes.count {
-                revealed = min(revealed + 3, graphemes.count)
-                buffer = StreamingAssistantBuffer(text: String(graphemes[0..<revealed]), reasoning: "")
-                streamingMessages[sessionId] = buffer
-                try? await Task.sleep(nanoseconds: 55_000_000)
+            while fed < graphemes.count {
+                fed = min(fed + 4, graphemes.count)
+                receiveStreamingMessage(sessionId: sessionId, text: String(graphemes[0..<fed]), reasoning: "")
+                try? await Task.sleep(nanoseconds: 45_000_000)
             }
-            streamingMessages.removeValue(forKey: sessionId)
+            while streamingMessages[sessionId] != nil {
+                try? await Task.sleep(nanoseconds: 400_000_000)
+            }
 
             let settledText = reply.replacingOccurrences(of: "\n", with: "\\n")
             let toolEntry = try! TranscriptEntry.decode(Data(#"{"id":"ds-tool","parentId":"ds-user","hostId":"studio-mac","sessionId":"s1","kind":"tool-use","timestamp":"2026-08-05T11:50:30Z","data":{"tool":"bash","title":"swift test","result":{"output":"✔ Suite \"Anchor behavior\" passed after 0.802 seconds.\n✔ Test run with 13 tests in 5 suites passed after 16.121 seconds."},"ok":true}}"#.utf8))
