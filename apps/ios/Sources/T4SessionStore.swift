@@ -1004,29 +1004,44 @@ final class T4SessionStore: ObservableObject {
     }
 
     /// Demo stream driver (-T4DemoStream): replays a live turn into the hero
-    /// session — user bubble, typewriter assistant reply, a tool call, and
-    /// the settled summary — so captures and videos can show streaming with
-    /// the bottom anchor engaged. Offline demo mode only.
+    /// session — user bubble, a smooth character-drip assistant reply, a tool
+    /// call settling at the end — so captures and videos show streaming with
+    /// the bottom anchor engaged. The drip drives the streaming buffer
+    /// directly at ~55 chars/sec: the frame-paced reveal alone would dump a
+    /// fully-formed reply in a few giant catch-up chunks, which reads as a
+    /// jump-cut rather than a live stream on video. Offline demo mode only.
     func startDemoStreamIfNeeded() {
         guard Self.demoMode,
               ProcessInfo.processInfo.arguments.contains("-T4DemoStream") else { return }
         let sessionId = "s1"
         Task { @MainActor [weak self] in
             guard let self else { return }
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
             let userEntry = try! TranscriptEntry.decode(Data(#"{"id":"ds-user","parentId":null,"hostId":"studio-mac","sessionId":"s1","kind":"message","timestamp":"2026-08-05T11:50:00Z","data":{"role":"user","text":"nice. can you also make long prose paragraphs stop clipping off the left edge?"}}"#.utf8))
             liveEntries[sessionId, default: []].append(userEntry)
             try? await Task.sleep(nanoseconds: 1_200_000_000)
-            let reply = "Good catch — that's the ellipsized-label bug. Every `Text` was created with `ellipsize = .end`, and Pango lays ellipsized text out wider than the allocation, which GTK then draws centered — so long paragraphs lost a slice off the left.\n\nThe fix is three small pieces: default to no ellipsize, ellipsize only line-limited labels, and left-align the text block (`xalign = 0`) so an oversized layout can never clip the leading edge. The layout-height override in `CustomLabel` also only runs for ellipsized labels now — applied to plain wrapping text it left Pango holding a stale, wider line layout.\n\nVerified on the long opencode session: every paragraph starts flush at the detail edge in both themes."
-            receiveStreamingMessage(sessionId: sessionId, text: reply, reasoning: "")
-            // Wait for the pacing task to finish the typewriter effect.
-            while streamingMessages[sessionId] != nil {
-                try? await Task.sleep(nanoseconds: 500_000_000)
+
+            let reply = "Good catch — that's the ellipsized-label bug. Every `Text` was created with `ellipsize = .end`, and Pango lays ellipsized text out wider than the allocation, which GTK then draws centered — so long paragraphs lost a slice off the left.\n\nThe fix is three small pieces: default to no ellipsize, ellipsize only line-limited labels, and left-align the text block (`xalign = 0`) so an oversized layout can never clip the leading edge. The layout-height override in `CustomLabel` also only runs for ellipsized labels now — applied to plain wrapping text it left Pango holding a stale, wider line layout.\n\nVerified on the long opencode session: every paragraph starts flush at the detail edge in both themes, tool cards still ellipsize their headlines, and the pinned tail keeps tracking while new entries land.\n\nRunning the suite to close it out."
+
+            // Character drip: extend the visible text a few graphemes at a
+            // time so the transcript visibly types — and, with the anchor
+            // pinned, visibly scrolls.
+            var buffer = StreamingAssistantBuffer()
+            var revealed = 0
+            let graphemes = Array(reply)
+            while revealed < graphemes.count {
+                revealed = min(revealed + 3, graphemes.count)
+                buffer = StreamingAssistantBuffer(text: String(graphemes[0..<revealed]), reasoning: "")
+                streamingMessages[sessionId] = buffer
+                try? await Task.sleep(nanoseconds: 55_000_000)
             }
+            streamingMessages.removeValue(forKey: sessionId)
+
             let settledText = reply.replacingOccurrences(of: "\n", with: "\\n")
             let toolEntry = try! TranscriptEntry.decode(Data(#"{"id":"ds-tool","parentId":"ds-user","hostId":"studio-mac","sessionId":"s1","kind":"tool-use","timestamp":"2026-08-05T11:50:30Z","data":{"tool":"bash","title":"swift test","result":{"output":"✔ Suite \"Anchor behavior\" passed after 0.802 seconds.\n✔ Test run with 13 tests in 5 suites passed after 16.121 seconds."},"ok":true}}"#.utf8))
             let settled = try! TranscriptEntry.decode(Data(("{\"id\":\"ds-done\",\"parentId\":\"ds-tool\",\"hostId\":\"studio-mac\",\"sessionId\":\"s1\",\"kind\":\"message\",\"timestamp\":\"2026-08-05T11:50:36Z\",\"data\":{\"text\":\"" + settledText + "\"}}").utf8))
             liveEntries[sessionId, default: []].append(toolEntry)
+            try? await Task.sleep(nanoseconds: 700_000_000)
             liveEntries[sessionId, default: []].append(settled)
         }
     }
