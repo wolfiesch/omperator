@@ -389,6 +389,7 @@ section { max-width: 1160px; margin: 0 auto; padding: 84px 28px 0; }
   border-top: 2px solid var(--line);
 }
 .prow:first-child { border-top: none; padding-top: 8px; }
+.prow.flip { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
 .prow.flip .prow-text { order: 2; }
 .prow.flip .prow-media { order: 1; }
 .prow-index {
