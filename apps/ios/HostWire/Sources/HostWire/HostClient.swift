@@ -212,6 +212,11 @@ public actor HostClient {
         heartbeatTask?.cancel(); heartbeatTask = nil
         heartbeatTimeoutTask?.cancel(); heartbeatTimeoutTask = nil
         transport.close()
+        // Fault the handshake continuations too: a socket that dies
+        // mid-welcome/mid-pair would otherwise leak those callers forever
+        // (failAllPending only covers command continuations).
+        resumeWelcome(with: .failure(HostClientError.transport(reason)))
+        resumePair(with: .failure(HostClientError.transport(reason)))
         failAllPending(HostClientError.transport(reason))
         attempt += 1
         let delay = min(config.reconnectBase * pow(2.0, Double(attempt - 1)), config.reconnectMax)

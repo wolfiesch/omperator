@@ -478,19 +478,23 @@ export class TailscaleRemotePolicy implements RemoteConnectionPolicy {
 		}
 	}
 	authorize(connection: RemoteConnection, frame: ClientFrame, context: RemoteAuthorizationContext): boolean {
+		const deny = (reason: string): false => {
+			console.error(`remote policy denied: ${reason} command=${frame.type === "command" ? frame.command : frame.type} conn=${connection.connectionId}`);
+			return false;
+		};
 		const state = this.#states.get(connection.connectionId);
-		if (!state) return false;
+		if (!state) return deny("no_connection_state");
 		if (frame.type === "ping") return true;
 		const principal = this.#livePrincipal(state);
-		if (!principal || state.justPaired) return false;
+		if (!principal || state.justPaired) return deny(state.justPaired ? "just_paired_socket" : "no_principal");
 		const feature = frameFeature(frame);
-		if (feature !== undefined && !state.features.includes(feature)) return false;
+		if (feature !== undefined && !state.features.includes(feature)) return deny(`feature_not_granted:${feature}`);
 		const capability = frameCapability(frame);
 		if (frame.type === "confirm") return this.#authorizeConfirm(state, frame, principal);
-		if (!capability || !state.capabilities.includes(capability)) return false;
+		if (!capability || !state.capabilities.includes(capability)) return deny(`capability_not_granted:${capability}`);
 		if (frame.type !== "command") return true;
 		const descriptor = COMMAND_DESCRIPTORS[frame.command];
-		if (!descriptor) return false;
+		if (!descriptor) return deny("unknown_descriptor");
 		let fingerprint: string;
 		try {
 			fingerprint = commandFingerprint(frame);
@@ -539,7 +543,11 @@ export class TailscaleRemotePolicy implements RemoteConnectionPolicy {
 					frame.expectedRevision,
 				);
 			} catch {
-				return false;
+				// Contention is transient, not an attack: another connection
+				// (often the client's own previous one) holds the lease until
+				// it releases or expires. Soft-fail so the client can wait
+				// and retry instead of having its socket killed.
+				return cacheResponse(leaseErrorResponse(frame, "lease_busy", "session is busy"));
 			}
 		} else if (
 			frame.command === "controller.lease.renew" ||
@@ -560,7 +568,7 @@ export class TailscaleRemotePolicy implements RemoteConnectionPolicy {
 					frame.expectedRevision,
 				)
 			)
-				return false;
+				return deny("lease_verify_failed");
 			if (frame.command.endsWith("renew")) {
 				try {
 					leaseResult = this.#leases.renew(

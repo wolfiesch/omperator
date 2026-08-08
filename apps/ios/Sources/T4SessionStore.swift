@@ -1166,7 +1166,7 @@ final class T4SessionStore: ObservableObject {
 
     private func acquireLease(sessionId: String, kind: LeaseKind = .prompt) async -> String? {
         guard let client, connected, !hostId.isEmpty, var revision = revision(of: sessionId) else { return nil }
-        for attempt in 0...1 {
+        for attempt in 0..<6 {
             do {
                 let result = try await client.sendCommand(CommandIntent(
                     hostId: hostId, command: "\(kind.rawValue).acquire",
@@ -1174,9 +1174,18 @@ final class T4SessionStore: ObservableObject {
                     sessionId: sessionId, expectedRevision: revision))
                 return try result.leaseResult()
             } catch {
+                let code = (error as? HostClientError).map { "\($0)" } ?? ""
+                // lease_busy: another connection (often our own previous
+                // one, whose send died after acquiring) holds the lease for
+                // up to 30s. Wait it out instead of failing the send.
+                if code.contains("lease_busy") {
+                    try? await Task.sleep(nanoseconds: 1_200_000_000)
+                    if let fresh = try? await refreshRevision(of: sessionId) { revision = fresh }
+                    continue
+                }
                 // Revision churn is normal (attach/list bumps it): refresh once
                 // and retry with the current revision before giving up.
-                if attempt == 0, let fresh = try? await refreshRevision(of: sessionId) {
+                if code.contains("stale_revision"), let fresh = try? await refreshRevision(of: sessionId) {
                     revision = fresh
                     continue
                 }
@@ -1185,6 +1194,7 @@ final class T4SessionStore: ObservableObject {
                 return nil
             }
         }
+        lastError = "session is busy — try again in a few seconds"
         return nil
     }
 

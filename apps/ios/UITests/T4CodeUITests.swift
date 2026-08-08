@@ -146,4 +146,27 @@ final class T4CodeUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(thinkingFrames.count, 3)
         XCTAssertGreaterThanOrEqual(writeFrames.count, 3)
     }
+
+    // MARK: - Plan strip
+
+    @MainActor
+    func testPlanStripExpandsAndCollapsesOnTap() throws {
+        let app = launch()
+        // Demo mode selects the most recent sample session (s1), which carries
+        // the sample plan phases.
+        let pill = app.buttons["plan-strip-pill"]
+        XCTAssertTrue(pill.waitForExistence(timeout: 6), "plan pill should render on the demo session")
+        let taskText = app.staticTexts["Add stick-to-bottom anchor to ScrolledWindow"]
+        XCTAssertFalse(taskText.exists, "plan tree starts collapsed")
+        pill.tap()
+        XCTAssertTrue(taskText.waitForExistence(timeout: 3), "tapping the pill should unfold the plan tree")
+        pill.tap()
+        // The collapsed tree hides from accessibility too.
+        let gone = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: app.staticTexts["Add stick-to-bottom anchor to ScrolledWindow"]
+        )
+        XCTAssertEqual(XCTWaiter().wait(for: [gone], timeout: 3), .completed,
+                       "tapping again should re-collapse the tree")
+    }
 }
