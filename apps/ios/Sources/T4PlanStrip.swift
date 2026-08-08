@@ -44,6 +44,7 @@ struct T4PlanStrip: View {
                         .foregroundStyle(t.txtLabel)
                 }
                 .padding(.horizontal, 13).padding(.vertical, 10)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("plan-strip-pill")

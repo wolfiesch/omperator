@@ -94,6 +94,13 @@ struct T4SessionDetailView: View {
                     .padding()
                 }
                 .onAppear { proxy.scrollTo("transcript-bottom", anchor: .bottom) }
+                // Drag or tap the transcript to put the keyboard away. A
+                // quick tap never conflicts with text selection (that needs
+                // a long-press), and buttons inside rows still win their tap.
+                #if os(iOS)
+                .scrollDismissesKeyboard(.interactively)
+                .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
+                #endif
                 // Native iOS 26 scroll-edge fade at the bottom, like the nav
                 // bar's top-of-screen effect — lines dissolve under the
                 // floating composer instead of hard-clipping.
@@ -141,6 +148,11 @@ struct T4SessionDetailView: View {
             if focused, planExpanded {
                 withAnimation(.easeInOut(duration: 0.22)) { planExpanded = false }
             }
+        }
+        // Expanding the plan with the keyboard up crams the tree into the
+        // strip above it; dismiss the keyboard so the tree gets the room.
+        .onChange(of: planExpanded) { _, isExpanded in
+            if isExpanded { composerFocused = false }
         }
         .navigationTitle(session.title)
         #if os(iOS)
