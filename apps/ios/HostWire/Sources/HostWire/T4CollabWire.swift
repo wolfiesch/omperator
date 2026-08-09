@@ -199,10 +199,18 @@ extension JSONValue {
 public struct T4CollabWireMessage: Sendable, Equatable {
     public let role: String?
     public let content: JSONValue?
+    /// toolResult identity lives at the message level on the wire; the
+    /// decoder used to drop it, which made every tool card render as "tool".
+    public let toolName: String?
+    public let toolCallId: String?
+    public let isError: Bool?
 
     init(json: [String: Any]) {
         self.role = json["role"] as? String
         self.content = json["content"].flatMap(JSONValue.fromAny)
+        self.toolName = json["toolName"] as? String
+        self.toolCallId = json["toolCallId"] as? String
+        self.isError = json["isError"] as? Bool
     }
 }
 
