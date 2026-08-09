@@ -384,6 +384,18 @@ struct T4SessionDetailView: View {
     private var header: some View {
 
         HStack(alignment: .firstTextBaseline, spacing: 10) {
+            // Session state lives in the top buttons: a Live/Offline chip
+            // plus the model and actions menus. No ownership banners in the
+            // transcript, no labels on the rail.
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(store.connected ? t.cOk : t.txtGhost)
+                    .frame(width: 7, height: 7)
+                Text(store.connected ? "Live" : "Offline")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(store.connected ? t.txt : t.txtMuted)
+            }
+            .accessibilityLabel(store.connected ? "Live" : "Offline")
             StatusPill(status: session.status, theme: t)
             if let model = session.model {
                 T4ModelMenuButton(session: session, store: store, theme: t) {
@@ -397,26 +409,7 @@ struct T4SessionDetailView: View {
                     .foregroundStyle(badge.color)
             }
             Menu {
-                if let control = session.sessionControl {
-                    let presentation = control.t4Presentation
-                    if presentation.canFork && store.canForkSessions {
-                        Button {
-                            runOwnershipAction { await store.forkSession(sessionId: session.sessionId) }
-                        } label: {
-                            Label("Continue in a Copy", systemImage: "doc.on.doc")
-                        }
-                    }
-                    if case .released = control {
-                        Button {
-                            runOwnershipAction {
-                                await store.reclaimSession(sessionId: session.sessionId)
-                                return ()
-                            }
-                        } label: {
-                            Label("Bring Back to App", systemImage: "arrow.uturn.backward")
-                        }
-                    }
-                } else {
+                Section("Session") {
                     Button {
                         renameText = session.title
                         renaming = true
@@ -451,47 +444,49 @@ struct T4SessionDetailView: View {
                         Label("Delete", systemImage: "trash")
                     }
                 }
-                Divider()
-                Button {
-                    activeSheet = .selectText
-                } label: {
-                    Label("Select Text", systemImage: "text.viewfinder")
+                Section("Actions") {
+                    Button {
+                        activeSheet = .selectText
+                    } label: {
+                        Label("Select Text", systemImage: "text.viewfinder")
+                    }
+                    Button {
+                        Task { await newSessionInProject() }
+                    } label: {
+                        Label("New Session in Project", systemImage: "plus.square")
+                    }
+                    Button {
+                        activeSheet = .searchDiff
+                    } label: {
+                        Label("Search & Diff", systemImage: "magnifyingglass.and.list.bullet.indent")
+                    }
                 }
-                Button {
-                    Task { await newSessionInProject() }
-                } label: {
-                    Label("New Session in Project", systemImage: "plus.square")
-                }
-                Button {
-                    activeSheet = .agents
-                } label: {
-                    Label("Agents", systemImage: "person.3.sequence")
-                }
-                Divider()
-                Button {
-                    activeSheet = .usage
-                } label: {
-                    Label("Usage", systemImage: "chart.bar.xaxis")
-                }
-                Button {
-                    activeSheet = .review
-                } label: {
-                    Label("Review", systemImage: "checkmark.shield")
-                }
-                Button {
-                    activeSheet = .artifacts
-                } label: {
-                    Label("Artifacts", systemImage: "paperclip")
-                }
-                Button {
-                    activeSheet = .searchDiff
-                } label: {
-                    Label("Search & Diff", systemImage: "magnifyingglass.and.list.bullet.indent")
-                }
-                Button {
-                    activeSheet = .settings
-                } label: {
-                    Label("Settings", systemImage: "gearshape")
+                Section("Panes") {
+                    Button {
+                        activeSheet = .agents
+                    } label: {
+                        Label("Agents", systemImage: "person.3.sequence")
+                    }
+                    Button {
+                        activeSheet = .usage
+                    } label: {
+                        Label("Usage", systemImage: "chart.bar.xaxis")
+                    }
+                    Button {
+                        activeSheet = .review
+                    } label: {
+                        Label("Review", systemImage: "checkmark.shield")
+                    }
+                    Button {
+                        activeSheet = .artifacts
+                    } label: {
+                        Label("Artifacts", systemImage: "paperclip")
+                    }
+                    Button {
+                        activeSheet = .settings
+                    } label: {
+                        Label("Settings", systemImage: "gearshape")
+                    }
                 }
             } label: {
                 Image(systemName: "ellipsis.circle")
