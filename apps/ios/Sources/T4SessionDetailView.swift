@@ -194,6 +194,7 @@ struct T4SessionDetailView: View {
 
     /// Scroll-reader wiring: follow-to-bottom on growth, scroll-up paging.
     private func transcriptReader(_ proxy: ScrollViewProxy) -> some View {
+        // BISECT D: reader chain stubbed while hunting the arm64 timeout.
         transcriptScroll(proxy)
             .onAppear { proxy.scrollTo("transcript-bottom", anchor: .bottom) }
             // A page prepend increases the count too; suppress the
@@ -217,9 +218,6 @@ struct T4SessionDetailView: View {
                 guard transcriptModel.prependingSession != session.sessionId else { return }
                 proxy.scrollTo("transcript-bottom", anchor: .bottom)
             }
-            #if os(iOS)
-            .onPreferenceChange(TopOffsetKey.self) { handleScrollTop(minY: $0) }
-            #endif
     }
 
     /// Root chrome: background, floating composer, nav, task, alert, sheets.
@@ -441,15 +439,8 @@ struct T4SessionDetailView: View {
     /// 1pt marker pinned to the top of the scroll content; its offset in the
     /// named space drives scroll-up paging.
     private var topPagingMarker: some View {
-        Color.clear
-            .frame(height: 1)
-            .background(
-                GeometryReader { geo in
-                    Color.clear.preference(
-                        key: TopOffsetKey.self,
-                        value: geo.frame(in: .named("transcript-scroll")).minY)
-                }
-            )
+        // BISECT D: marker stubbed while hunting the arm64 timeout.
+        Color.clear.frame(height: 1)
     }
 
     /// "Load earlier messages" control (macOS). iOS pages automatically when
