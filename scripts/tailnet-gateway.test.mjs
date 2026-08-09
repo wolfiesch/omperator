@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { connect as connectSocket } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { test } from "node:test";
 
 import WebSocket, { WebSocketServer } from "ws";
@@ -21,6 +21,7 @@ import {
   optionsFromEnvironment,
   resolveAppSocket,
   safeStaticPath,
+  scanSessionsRooms,
   spawnTailscaleHostName,
   startTailnetGateway,
 } from "./tailnet-gateway.mjs";
@@ -315,6 +316,7 @@ test("gateway serves /v1/discovery with the owner auto-approval contract", async
       deploymentIdentity: DEPLOYMENT_IDENTITY,
       autoApprove: true,
       wsUrl: "https://host.example-tailnet.ts.net:8445/v1/ws",
+      roomsEndpoint: "/v1/rooms",
     });
 
     // A request from the served https origin gets that origin echoed; a
@@ -343,6 +345,218 @@ test("gateway serves /v1/discovery with the owner auto-approval contract", async
     assert.equal(postResponse.headers.get("allow"), "GET, HEAD");
   } finally {
     await running.close();
+  }
+});
+
+/**
+ * Build a fake T4_SESSIONS_ROOT matching the /enclave collab layout: session
+ * transcripts live directly in the root as `<artifactsDir>.jsonl` and each
+ * room's collab.json sits inside its one-level project dir
+ * (`<root>/<artifactsDir>/collab.json`). Returns the root path, the exact
+ * expected rooms payload (updatedAt descending), and a cleanup function.
+ */
+async function writeFakeSessionsRoot() {
+  const directory = await makeCanonicalTemporaryDirectory("t4-rooms-");
+  await chmod(directory, 0o700);
+  const root = join(directory, "sessions");
+  await mkdir(root);
+  const artifacts = (name) => join(root, name);
+  const writeCollab = (dir, payload) => writeFile(join(dir, "collab.json"), JSON.stringify(payload));
+  const writeTranscript = (name, firstLine) => writeFile(join(root, `${name}.jsonl`), `${firstLine}\n`);
+
+  // Project dir A: title line in the transcript + an /enclave token.
+  const dirA = artifacts("2026-08-09T07-13-35-233Z_019fe55e-ae01-1111-2222-333344445555");
+  await mkdir(dirA);
+  await writeCollab(dirA, {
+    link: "wss://relay.example-tailnet.ts.net/r/room-one.SECRET",
+    token: "dG9rZW4",
+    roomId: "room-one",
+    updatedAt: "2026-08-09T07:20:00.000Z",
+  });
+  await writeTranscript(
+    "2026-08-09T07-13-35-233Z_019fe55e-ae01-1111-2222-333344445555",
+    JSON.stringify({ type: "title", title: "First session" }),
+  );
+
+  // Project dir B: transcript's first line carries no title -> dir name.
+  const dirB = artifacts("2026-08-09T08-00-00-000Z_019fe55e-ae01-aaaa-bbbb-ccccddddeeee");
+  await mkdir(dirB);
+  await writeCollab(dirB, {
+    link: "wss://relay.example-tailnet.ts.net/r/room-two.SECRET",
+    roomId: "room-two",
+    updatedAt: "2026-08-09T08:10:00.000Z",
+  });
+  await writeTranscript(
+    "2026-08-09T08-00-00-000Z_019fe55e-ae01-aaaa-bbbb-ccccddddeeee",
+    JSON.stringify({ type: "message", id: "m1", parentId: null, timestamp: 1, message: { role: "user", content: "no title yet" } }),
+  );
+
+  // Project dir C: no sibling transcript yet -> title is "".
+  const dirC = artifacts("2026-08-09T06-00-00-000Z_019fe55e-ae01-cccc-dddd-eeeeffff0000");
+  await mkdir(dirC);
+  await writeCollab(dirC, {
+    link: "wss://relay.example-tailnet.ts.net/r/room-three.SECRET",
+    roomId: "room-three",
+    updatedAt: "2026-08-09T06:00:00.000Z",
+  });
+
+  // Project dir D: session header line carries the title.
+  const dirD = artifacts("2026-08-09T09-00-00-000Z_019fe55e-ae01-5555-4444-333322221111");
+  await mkdir(dirD);
+  await writeCollab(dirD, {
+    link: "wss://relay.example-tailnet.ts.net/r/room-four.SECRET",
+    roomId: "room-four",
+    updatedAt: "2026-08-09T09:00:00.000Z",
+  });
+  await writeTranscript(
+    "2026-08-09T09-00-00-000Z_019fe55e-ae01-5555-4444-333322221111",
+    JSON.stringify({ type: "session", version: 3, id: "x", cwd: "/tmp", timestamp: 1, title: "Session header title" }),
+  );
+
+  // A collab.json directly in the root (depth 1) is scanned too.
+  await writeCollab(root, {
+    link: "wss://relay.example-tailnet.ts.net/r/root-room.SECRET",
+    roomId: "root-room",
+    updatedAt: "2026-08-09T10:00:00.000Z",
+  });
+
+  // Nested one more level inside B: a different store layout, must be excluded.
+  const deepDir = join(dirB, "nested");
+  await mkdir(deepDir);
+  await writeCollab(deepDir, {
+    link: "wss://relay.example-tailnet.ts.net/r/deep.SECRET",
+    roomId: "deep-room",
+    updatedAt: "2026-08-09T11:00:00.000Z",
+  });
+
+  return {
+    root,
+    cleanup: () => rm(directory, { recursive: true, force: true }),
+    expected: [
+      {
+        sessionId: basename(root),
+        title: "",
+        link: "wss://relay.example-tailnet.ts.net/r/root-room.SECRET",
+        roomId: "root-room",
+        updatedAt: "2026-08-09T10:00:00.000Z",
+      },
+      {
+        sessionId: "019fe55e-ae01-5555-4444-333322221111",
+        title: "Session header title",
+        link: "wss://relay.example-tailnet.ts.net/r/room-four.SECRET",
+        roomId: "room-four",
+        updatedAt: "2026-08-09T09:00:00.000Z",
+      },
+      {
+        sessionId: "019fe55e-ae01-aaaa-bbbb-ccccddddeeee",
+        title: "2026-08-09T08-00-00-000Z",
+        link: "wss://relay.example-tailnet.ts.net/r/room-two.SECRET",
+        roomId: "room-two",
+        updatedAt: "2026-08-09T08:10:00.000Z",
+      },
+      {
+        sessionId: "019fe55e-ae01-1111-2222-333344445555",
+        title: "First session",
+        link: "wss://relay.example-tailnet.ts.net/r/room-one.SECRET",
+        token: "dG9rZW4",
+        roomId: "room-one",
+        updatedAt: "2026-08-09T07:20:00.000Z",
+      },
+      {
+        sessionId: "019fe55e-ae01-cccc-dddd-eeeeffff0000",
+        title: "",
+        link: "wss://relay.example-tailnet.ts.net/r/room-three.SECRET",
+        roomId: "room-three",
+        updatedAt: "2026-08-09T06:00:00.000Z",
+      },
+    ],
+  };
+}
+
+test("gateway rooms endpoint returns an empty list when no sessions root is configured", async () => {
+  const running = await fixture();
+  try {
+    const response = await fetch(`${running.url}/v1/rooms`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "application/json; charset=utf-8");
+    assert.equal(response.headers.get("x-frame-options"), "DENY");
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await response.json(), { rooms: [] });
+
+    // HEAD is served without a body; other methods are rejected.
+    const headResponse = await fetch(`${running.url}/v1/rooms`, { method: "HEAD" });
+    assert.equal(headResponse.status, 200);
+    assert.equal(await headResponse.text(), "");
+    const postResponse = await fetch(`${running.url}/v1/rooms`, { method: "POST" });
+    assert.equal(postResponse.status, 405);
+    assert.equal(postResponse.headers.get("allow"), "GET, HEAD");
+  } finally {
+    await running.close();
+  }
+});
+
+test("gateway serves /v1/rooms from one-level project dirs with the fixed rooms contract", async () => {
+  const sessions = await writeFakeSessionsRoot();
+  const running = await fixture("symlink", { sessionsRoot: sessions.root });
+  try {
+    const response = await fetch(`${running.url}/v1/rooms`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "application/json; charset=utf-8");
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await response.json(), { rooms: sessions.expected });
+  } finally {
+    await running.close();
+    await sessions.cleanup();
+  }
+});
+
+test("rooms scan falls back to collab.json mtime when updatedAt is absent", async () => {
+  const directory = await makeCanonicalTemporaryDirectory("t4-rooms-mtime-");
+  await chmod(directory, 0o700);
+  const root = join(directory, "sessions");
+  await mkdir(root);
+  const dir = join(root, "2026-08-09T05-00-00-000Z_019fe55e-ae01-eeee-dddd-ccccbbbbaaaa");
+  await mkdir(dir);
+  const collabPath = join(dir, "collab.json");
+  await writeFile(
+    collabPath,
+    JSON.stringify({ link: "wss://relay.example-tailnet.ts.net/r/room-five.SECRET", roomId: "room-five" }),
+  );
+  try {
+    const rooms = await scanSessionsRooms(root);
+    assert.equal(rooms.length, 1);
+    assert.equal(rooms[0]?.updatedAt, (await stat(collabPath)).mtime.toISOString());
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("rooms scan is capped at 500 rooms", async () => {
+  const directory = await makeCanonicalTemporaryDirectory("t4-rooms-cap-");
+  await chmod(directory, 0o700);
+  const root = join(directory, "sessions");
+  await mkdir(root);
+  for (let i = 0; i < 505; i += 1) {
+    const dir = join(root, `2026-08-09T00-00-00-000Z_room-${i}`);
+    await mkdir(dir);
+    await writeFile(
+      join(dir, "collab.json"),
+      JSON.stringify({
+        link: `wss://relay.example-tailnet.ts.net/r/room-${i}.SECRET`,
+        roomId: `room-${i}`,
+        updatedAt: new Date(Date.UTC(2026, 7, 9, 0, i, 0)).toISOString(),
+      }),
+    );
+  }
+  try {
+    const rooms = await scanSessionsRooms(root);
+    assert.equal(rooms.length, 500);
+    // The newest 500 (room-504 … room-5) are kept, oldest five are dropped.
+    assert.equal(rooms[0]?.roomId, "room-504");
+    assert.equal(rooms[499]?.roomId, "room-5");
+    assert.ok(!rooms.some((room) => room.roomId === "room-4"));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
 });
 

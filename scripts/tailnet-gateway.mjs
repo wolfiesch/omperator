@@ -2,11 +2,11 @@
 
 import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
-import { lstat, readFile, readlink, stat } from "node:fs/promises";
+import { lstat, readFile, readdir, readlink, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { connect as connectSocket } from "node:net";
 import { homedir } from "node:os";
-import { dirname, extname, isAbsolute, join, parse, resolve, sep } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, parse, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import WebSocket, { WebSocketServer } from "ws";
@@ -18,6 +18,8 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 const DEFAULT_PROFILE_START_WAIT_MS = 4_000;
 const DEFAULT_PROFILE_START_POLL_MS = 50;
 const DEFAULT_PROFILE_START_COOLDOWN_MS = 10_000;
+const MAX_ROOMS = 500;
+const ROOMS_SCAN_TTL_MS = 2_000;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1"]);
 const PROFILE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
 const SERVICE_UNIT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.@:-]{0,127}$/u;
@@ -445,6 +447,144 @@ function boundedReason(value, fallback) {
   return text || fallback;
 }
 
+/**
+ * Read only the first line of a session transcript so the rooms scan never
+ * streams a whole session into memory. Resolves undefined when the file is
+ * unreadable, the first line otherwise ("" for an empty file).
+ */
+function firstLineOfTranscript(path) {
+  return new Promise((resolvePromise) => {
+    const stream = createReadStream(path, { encoding: "utf8" });
+    let buffer = "";
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      stream.destroy();
+      resolvePromise(value);
+    };
+    stream.on("data", (chunk) => {
+      buffer += chunk;
+      const end = buffer.indexOf("\n");
+      if (end !== -1) finish(buffer.slice(0, end));
+    });
+    stream.on("end", () => finish(buffer));
+    stream.on("error", () => finish(undefined));
+  });
+}
+
+/**
+ * Extract the session title from a transcript header line. Accepts the
+ * `{"type":"title","title":"…"}` line and the session header line
+ * `{"type":"session",…,"title":"…"}`. Returns undefined when the line carries
+ * no usable title so callers can fall back to the artifacts dir name.
+ */
+function titleFromTranscriptLine(line) {
+  if (typeof line !== "string" || line === "") return undefined;
+  let parsed;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+  if (parsed === null || typeof parsed !== "object") return undefined;
+  const type = parsed.type;
+  if (type !== "title" && type !== "session") return undefined;
+  return typeof parsed.title === "string" && parsed.title !== "" ? parsed.title : undefined;
+}
+
+/**
+ * Build one room entry from a `<session artifacts>/collab.json` file
+ * ({ link, token?, roomId, updatedAt }). sessionId and title come from the
+ * parent artifacts dir name (`<timestamp>_<sessionId>`): the sessionId is the
+ * token after the last `_`; the title is the first line of the sibling
+ * `<artifactsDir>.jsonl` when it carries one, else the timestamp prefix of
+ * the dir name, else "" when the transcript has not been written yet. Files
+ * without a usable link or roomId are skipped; a missing updatedAt falls back
+ * to the file's mtime.
+ */
+async function collabRoomAt(collabPath) {
+  let text;
+  try {
+    text = await readFile(collabPath, "utf8");
+  } catch {
+    return undefined;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (parsed === null || typeof parsed !== "object") return undefined;
+  if (typeof parsed.link !== "string" || parsed.link === "") return undefined;
+  if (typeof parsed.roomId !== "string" || parsed.roomId === "") return undefined;
+
+  const artifactsDir = dirname(collabPath);
+  const dirName = basename(artifactsDir);
+  const separator = dirName.lastIndexOf("_");
+  const sessionId = separator === -1 ? dirName : dirName.slice(separator + 1);
+  // The transcript is the sibling of the artifacts dir (`<artifactsDir>.jsonl`).
+  const firstLine = await firstLineOfTranscript(join(dirname(artifactsDir), `${dirName}.jsonl`));
+  const title =
+    firstLine === undefined
+      ? ""
+      : (titleFromTranscriptLine(firstLine) ?? (separator === -1 ? "" : dirName.slice(0, separator)));
+  let updatedAt =
+    typeof parsed.updatedAt === "string" && parsed.updatedAt !== "" ? parsed.updatedAt : "";
+  if (updatedAt === "") {
+    try {
+      updatedAt = (await stat(collabPath)).mtime.toISOString();
+    } catch {
+      return undefined;
+    }
+  }
+  return {
+    sessionId,
+    title,
+    link: parsed.link,
+    ...(typeof parsed.token === "string" ? { token: parsed.token } : {}),
+    roomId: parsed.roomId,
+    updatedAt,
+  };
+}
+
+/**
+ * Scan a sessions root for live collab rooms. Only collab.json files at depth
+ * ≤ 2 are considered: files directly in the root and files directly inside a
+ * one-level project dir (the /enclave plugin writes
+ * `<session file minus .jsonl>/collab.json`, which sits inside the project
+ * dir). Deeper nesting is a different store layout and is ignored. Rooms are
+ * sorted by updatedAt descending (sessionId as a stable tie-break), capped at
+ * MAX_ROOMS, and an unreadable root yields an empty list.
+ */
+export async function scanSessionsRooms(sessionsRoot) {
+  if (sessionsRoot === undefined) return [];
+  let entries;
+  try {
+    entries = await readdir(sessionsRoot, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const rooms = [];
+  for (const entry of entries) {
+    if (entry.isFile() && entry.name === "collab.json") {
+      const room = await collabRoomAt(join(sessionsRoot, entry.name));
+      if (room !== undefined) rooms.push(room);
+      continue;
+    }
+    if (!entry.isDirectory()) continue;
+    const room = await collabRoomAt(join(sessionsRoot, entry.name, "collab.json"));
+    if (room !== undefined) rooms.push(room);
+  }
+  rooms.sort(
+    (a, b) =>
+      Date.parse(b.updatedAt) - Date.parse(a.updatedAt) ||
+      String(a.sessionId).localeCompare(String(b.sessionId)),
+  );
+  return rooms.slice(0, MAX_ROOMS);
+}
+
 const TAILSCALE_STATUS_TIMEOUT_MS = 10_000;
 
 /**
@@ -580,6 +720,10 @@ export async function startTailnetGateway(input) {
     profileStartWaitMs: input.profileStartWaitMs ?? DEFAULT_PROFILE_START_WAIT_MS,
     profileStartPollMs: input.profileStartPollMs ?? DEFAULT_PROFILE_START_POLL_MS,
     profileStartCooldownMs: input.profileStartCooldownMs ?? DEFAULT_PROFILE_START_COOLDOWN_MS,
+    sessionsRoot:
+      input.sessionsRoot === undefined || input.sessionsRoot === ""
+        ? undefined
+        : resolve(requiredText(input.sessionsRoot, "sessions root", 4_096)),
     resolveAppSocket: resolveSocket,
     startSupervisor: input.startSupervisor ?? supervisorStart,
   };
@@ -614,6 +758,23 @@ export async function startTailnetGateway(input) {
     return discoveryHostName;
   };
   let closed = false;
+
+  // Rooms scans are cached for ROOMS_SCAN_TTL_MS so /v1/rooms never hammers
+  // the sessions filesystem on every request. An unconfigured root short-
+  // circuits to an empty list without touching the filesystem.
+  const roomsCache = { rooms: undefined, at: 0 };
+  const roomsForRequest = () => {
+    if (options.sessionsRoot === undefined) return Promise.resolve([]);
+    const now = Date.now();
+    if (roomsCache.rooms !== undefined && now - roomsCache.at < ROOMS_SCAN_TTL_MS) {
+      return Promise.resolve(roomsCache.rooms);
+    }
+    return scanSessionsRooms(options.sessionsRoot).then((rooms) => {
+      roomsCache.rooms = rooms;
+      roomsCache.at = Date.now();
+      return rooms;
+    });
+  };
 
   const activeBrowsers = new Map();
   const webSockets = new WebSocketServer({
@@ -667,7 +828,14 @@ export async function startTailnetGateway(input) {
           deploymentIdentity: options.deploymentIdentity,
           autoApprove: true,
           wsUrl: new URL("/v1/ws", origin).toString(),
+          roomsEndpoint: "/v1/rooms",
         });
+        response.setHeader("Cache-Control", "no-store");
+        replyText(response, 200, "application/json; charset=utf-8", body, request.method === "HEAD");
+        return;
+      }
+      if (pathname === "/v1/rooms") {
+        const body = JSON.stringify({ rooms: await roomsForRequest() });
         response.setHeader("Cache-Control", "no-store");
         replyText(response, 200, "application/json; charset=utf-8", body, request.method === "HEAD");
         return;
@@ -804,6 +972,7 @@ export function optionsFromEnvironment(environment = process.env) {
     clusterWsUrl,
     profileRoutes,
     startProfiles: environment.T4_ENABLE_PROFILE_STARTS === "1",
+    sessionsRoot: environment.T4_SESSIONS_ROOT,
   };
 }
 
