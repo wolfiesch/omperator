@@ -262,6 +262,40 @@ struct T4SessionDetailView: View {
         }
     }
 
+    /// One pane per sheet case.
+    private func sheetBody(_ sheet: ActiveSheet) -> some View {
+        switch sheet {
+        case .files:
+            T4FilesPane(session: session, store: store, isPresented: sheetBinding(.files))
+                .environmentObject(theme)
+        case .agents:
+            T4AgentsPane(session: session, store: store, isPresented: sheetBinding(.agents))
+                .environmentObject(theme)
+        case .usage:
+            T4UsagePane(store: store, isPresented: sheetBinding(.usage))
+                .environmentObject(theme)
+        case .review:
+            T4ReviewPane(session: session, store: store, isPresented: sheetBinding(.review))
+                .environmentObject(theme)
+        case .artifacts:
+            T4ArtifactsPane(session: session, store: store, isPresented: sheetBinding(.artifacts))
+                .environmentObject(theme)
+        case .settings:
+            T4SettingsPane(store: store, isPresented: sheetBinding(.settings))
+                .environmentObject(theme)
+        case .browser:
+            T4BrowserPane(session: session, store: store, isPresented: sheetBinding(.browser))
+                .environmentObject(theme)
+        case .searchDiff:
+            T4SearchPane(session: session, store: store, isPresented: sheetBinding(.searchDiff))
+                .environmentObject(theme)
+        case .selectText:
+            T4TranscriptTextSheet(entries: store.transcript(for: session.sessionId), theme: t,
+                                  isPresented: sheetBinding(.selectText))
+                .environmentObject(theme)
+        }
+    }
+
     /// Confirmation challenge: summary + approve/deny, matching the desktop
     /// app's approval surface.
     private func confirmationBanner(_ challenge: ConfirmationChallenge) -> some View {
