@@ -320,11 +320,7 @@ struct T4SessionsView: View {
             }
         }
         Divider()
-        if let control = session.sessionControl {
-            let presentation = control.t4Presentation
-            Label(presentation.railLabel, systemImage: presentation.systemImage)
-                .disabled(true)
-            if session.t4CanRestore {
+        if session.t4CanRestore {
                 Button {
                     Task { await store.restoreSession(sessionId: session.sessionId) }
                 } label: {
@@ -415,14 +411,7 @@ struct T4SessionRow: View {
                     .foregroundStyle(theme.txt)
                     .lineLimit(1)
                 Spacer(minLength: 8)
-                if let control = session.sessionControl {
-                    Text(control.t4Presentation.railLabel)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(theme.cAdvisor)
-                        .lineLimit(1)
-                } else {
-                    StatusPill(status: session.status, theme: theme)
-                }
+                StatusPill(status: session.status, theme: theme)
             }
             HStack(spacing: 10) {
                 if let model = session.model {

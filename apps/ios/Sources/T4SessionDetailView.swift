@@ -69,7 +69,6 @@ struct T4SessionDetailView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         loadEarlierSection
                         header
-                        ownershipBanner
                         if let challenge = promptModel.pendingConfirmation {
                             confirmationBanner(challenge)
                         }
@@ -400,8 +399,6 @@ struct T4SessionDetailView: View {
             Menu {
                 if let control = session.sessionControl {
                     let presentation = control.t4Presentation
-                    Label(presentation.railLabel, systemImage: presentation.systemImage)
-                        .disabled(true)
                     if presentation.canFork && store.canForkSessions {
                         Button {
                             runOwnershipAction { await store.forkSession(sessionId: session.sessionId) }
@@ -540,65 +537,7 @@ struct T4SessionDetailView: View {
         }
     }
 
-    @ViewBuilder
-    private var ownershipBanner: some View {
-        if let control = session.sessionControl {
-            let presentation = control.t4Presentation
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
-                    Image(systemName: presentation.systemImage)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(t.cAdvisor)
-                    Text(presentation.title)
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(t.txt)
-                    if ownershipBusy {
-                        Spacer()
-                        ProgressView().controlSize(.small)
-                    }
-                }
-                Text(presentation.detail)
-                    .font(.system(size: 13))
-                    .foregroundStyle(t.txtBody)
-                if let resumeCommand = control.t4ResumeCommand {
-                    Text(resumeCommand)
-                        .font(.term(12))
-                        .foregroundStyle(t.txt)
-                        .textSelection(.enabled)
-                        .padding(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(t.bg, in: RoundedRectangle(cornerRadius: 8))
-                }
-                if presentation.canFork && store.canForkSessions {
-                    Button {
-                        runOwnershipAction { await store.forkSession(sessionId: session.sessionId) }
-                    } label: {
-                        Label("Continue in a Copy", systemImage: "doc.on.doc")
-                            .font(.system(size: 13, weight: .semibold))
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(ownershipBusy)
-                }
-                if case .released = control {
-                    Button {
-                        runOwnershipAction {
-                            await store.reclaimSession(sessionId: session.sessionId)
-                            return ()
-                        }
-                    } label: {
-                        Label("Bring Back to App", systemImage: "arrow.uturn.backward")
-                            .font(.system(size: 13, weight: .semibold))
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(t.cTask)
-                    .disabled(ownershipBusy)
-                }
-            }
-            .padding(12)
-            .background(t.highlightBG, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .accessibilityElement(children: .contain)
-        }
-    }
+
 
     private var facts: some View {
         let rows: [(String, String)] = [
@@ -650,9 +589,6 @@ struct T4SessionDetailView: View {
                 sendOrStop
             }
             .padding(.horizontal, 8).padding(.vertical, 5)
-            if draft.isEmpty && !dictation.recording {
-                ComposerTips(t: t)
-            }
         }
         .glass(t, 16, panel: true)
         .onChange(of: pickerItems) { _, items in loadAttachments(items) }
@@ -661,7 +597,6 @@ struct T4SessionDetailView: View {
 
     private var placeholder: String {
         if !connectionModel.connected { return "Connect a host to message" }
-        if let control = session.sessionControl { return control.t4Presentation.railLabel }
         if session.archivedAt != nil { return "Restore this session to message" }
         if dictation.recording { return "Listening\u{2026}" }
         return transcriptModel.activeTurns.contains(session.sessionId) ? "Steer the turn\u{2026}" : "Message the agent\u{2026}"
