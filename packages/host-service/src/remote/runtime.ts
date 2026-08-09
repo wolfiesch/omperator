@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import { access, chmod, lstat, mkdir, open, readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
+import { parseBounded, utf8ByteLength } from "@t4-code/host-wire";
 import { LocalPairingTicketIssuer, SqliteDeviceRegistry } from "../security/index.ts";
 import { appserverSupportedCapabilities, appserverSupportedFeatures, createAppserver } from "../server.ts";
 import type { AppserverHandle, AppserverOptions } from "../types.ts";
@@ -19,6 +20,12 @@ export interface RemoteAppserverOptions {
 	readonly appserver?: Omit<AppserverOptions, "remoteEndpoint" | "remotePolicy" | "remoteResolver" | "admin">;
 	readonly processRunner?: ProcessRunner;
 	readonly tailscaleExecutable?: string;
+	/** Owner auto-approval gate. Defaults to ON for direct-mode listeners (best
+	 * effort: disabled whenever the owner user cannot be resolved); pass false
+	 * to disable even when the executable resolves. */
+	readonly autoApproveOwner?: boolean;
+	/** Explicit tailnet owner user id; when set, skips the startup lookup. */
+	readonly autoApproveOwnerUserId?: string;
 }
 
 async function secureDirectory(path: string): Promise<void> {
@@ -166,19 +173,88 @@ export class BunProcessRunner implements ProcessRunner {
 	}
 }
 
+const STATUS_TIMEOUT_MS = 3_000;
+const DEFAULT_STATUS_OUTPUT = 256 * 1024;
+
+function statusUserId(value: unknown): string | undefined {
+	if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) return String(value);
+	if (typeof value === "string" && /^\d{1,15}$/u.test(value)) return value;
+	return undefined;
+}
+
+/** Best-effort: resolves the host's own tailnet user id from
+ * `tailscale status --json` (Self.UserID, falling back to the User map when
+ * it unambiguously identifies one user). Never throws; returns undefined when
+ * the executable is unavailable or the lookup fails so auto-approval stays
+ * disabled. */
+export async function resolveTailnetOwnerUserId(options: RemoteAppserverOptions): Promise<string | undefined> {
+	let executable: string;
+	try {
+		executable = options.tailscaleExecutable ?? (await discoverTailscaleExecutable());
+	} catch {
+		return undefined;
+	}
+	const runner = options.processRunner ?? new BunProcessRunner(executable);
+	let result: { stdout: string | Uint8Array; exitCode: number };
+	try {
+		result = await runner.run(["tailscale", "status", "--json"], {
+			timeoutMs: STATUS_TIMEOUT_MS,
+			maxOutputBytes: DEFAULT_STATUS_OUTPUT,
+		});
+	} catch {
+		return undefined;
+	}
+	if (result.exitCode !== 0) return undefined;
+	const bytes = typeof result.stdout === "string" ? utf8ByteLength(result.stdout) : result.stdout.byteLength;
+	if (bytes > DEFAULT_STATUS_OUTPUT) return undefined;
+	let value: unknown;
+	try {
+		value = parseBounded(result.stdout);
+	} catch {
+		return undefined;
+	}
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const root = value as Record<string, unknown>;
+	const self =
+		root.Self && typeof root.Self === "object" && !Array.isArray(root.Self)
+			? (root.Self as Record<string, unknown>)
+			: undefined;
+	const direct = statusUserId(self?.UserID);
+	if (direct) return direct;
+	const users =
+		root.User && typeof root.User === "object" && !Array.isArray(root.User)
+			? (root.User as Record<string, unknown>)
+			: undefined;
+	if (users) {
+		const candidates: string[] = [];
+		for (const entry of Object.values(users)) {
+			if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+			const id = statusUserId((entry as Record<string, unknown>).ID);
+			if (id) candidates.push(id);
+		}
+		if (candidates.length === 1) return candidates[0];
+	}
+	return undefined;
+}
+
 export async function createRemoteAppserver(options: RemoteAppserverOptions): Promise<AppserverHandle> {
 	await secureDirectory(options.stateDir);
 	const key = await loadPairingKey(options.stateDir);
 	const registry = new SqliteDeviceRegistry(join(options.stateDir, "devices.sqlite"));
 	const issuer = new LocalPairingTicketIssuer(registry, key);
 	const appserverOptions = options.appserver;
+	const endpoint = options.remoteEndpoint;
+	let autoApproveOwnerUserId: string | undefined;
+	if (endpoint.serveProxy !== true && options.autoApproveOwner !== false) {
+		autoApproveOwnerUserId = options.autoApproveOwnerUserId ?? (await resolveTailnetOwnerUserId(options));
+	}
 	const policy = new TailscaleRemotePolicy({
 		registry,
 		localPairing: issuer,
+		...(autoApproveOwnerUserId !== undefined ? { autoApproveOwnerUserId } : {}),
 		supportedCapabilities: appserverSupportedCapabilities(appserverOptions ?? {}),
 		supportedFeatures: appserverSupportedFeatures(appserverOptions ?? {}, true),
 	});
-	const endpoint = options.remoteEndpoint;
 	let resolver: TailscaleWhoisResolver | undefined;
 	try {
 		if (endpoint.serveProxy !== true) {

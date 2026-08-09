@@ -2,6 +2,8 @@ export interface RemotePeerIdentity {
 	readonly nodeId: string;
 	readonly hostname?: string;
 	readonly user?: string;
+	/** Tailnet numeric user id (from `tailscale whois --json` Node.User / UserProfile.ID). */
+	readonly userId?: string;
 	readonly addresses: readonly string[];
 	readonly source: "tailscale" | "serve" | "direct";
 }

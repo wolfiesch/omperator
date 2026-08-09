@@ -23,6 +23,11 @@ function parseAddressEntry(value: unknown): string | undefined {
 function text(value: unknown, max = 512): string | undefined {
 	return typeof value === "string" && value.length > 0 && utf8ByteLength(value) <= max ? value : undefined;
 }
+function tailnetUserId(value: unknown): string | undefined {
+	if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) return String(value);
+	if (typeof value === "string" && /^\d{1,15}$/u.test(value)) return value;
+	return undefined;
+}
 export class TailscaleWhoisResolver {
 	constructor(
 		private readonly runner: ProcessRunner,
@@ -67,6 +72,7 @@ export class TailscaleWhoisResolver {
 			nodeId,
 			hostname: text(node.ComputedName) ?? text(node.Name),
 			user: text(profile?.LoginName),
+			userId: tailnetUserId(node.User) ?? tailnetUserId(profile?.ID),
 			addresses: normalized,
 			source: "tailscale",
 		};

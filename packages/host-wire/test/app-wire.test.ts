@@ -960,6 +960,16 @@ describe("app-wire authority", () => {
 		expect(() => decodeServerFrame({ ...pairing, expiresAt: 1 })).toThrow(AppWireError);
 		expect(() => decodeServerFrame({ ...pairing, expiresAt: "x".repeat(129) })).toThrow(AppWireError);
 	});
+	test("pair.start accepts an absent or empty code but keeps non-empty codes strict", async () => {
+		const start = (await fixture("pair-start.json")) as Record<string, unknown>;
+		expect(decodeClientFrame(start)).toMatchObject({ type: "pair.start", code: "483921" });
+		const absent = { ...start };
+		delete absent.code;
+		expect(decodeClientFrame(absent)).toMatchObject({ type: "pair.start" });
+		expect(decodeClientFrame({ ...start, code: "" })).toMatchObject({ type: "pair.start", code: "" });
+		expect(() => decodeClientFrame({ ...start, code: "12345" })).toThrow(AppWireError);
+		expect(() => decodeClientFrame({ ...start, code: 483921 })).toThrow(AppWireError);
+	});
 	test("preview captures carry bounded metadata instead of inline browser bytes", async () => {
 		const capture = (await fixture("preview-capture.json")) as Record<string, unknown>;
 		expect(decodeServerFrame(capture)).toMatchObject({

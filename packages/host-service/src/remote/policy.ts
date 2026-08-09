@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import {
 	ARTIFACT_CHUNK_BASE64_BYTES,
 	type ClientFrame,
@@ -30,6 +30,7 @@ import {
 	type Lease,
 	LeaseRegistry,
 	LocalPairingTicketIssuer,
+	type LocalPairingResult,
 	type PairingService,
 	type Random,
 	type SecureConfirmationStore,
@@ -72,6 +73,10 @@ export interface TailscaleRemotePolicyOptions {
 	readonly random?: Random;
 	readonly supportedCapabilities?: readonly string[];
 	readonly supportedFeatures?: readonly string[];
+	/** Tailnet numeric user id of the host's owner. When set, a pair.start
+	 * with an empty/absent code from that exact user (tailscale or direct
+	 * source) is auto-approved without consuming a ticket. */
+	readonly autoApproveOwnerUserId?: string;
 }
 export interface LocalPairingTicketFactoryOptions {
 	readonly databasePath: string;
@@ -285,8 +290,10 @@ export class TailscaleRemotePolicy implements RemoteConnectionPolicy {
 	readonly #limiter?: TokenBucketLimiter;
 	readonly #confirmations?: SecureConfirmationStore;
 	readonly #clock: Clock;
+	readonly #random: Random;
 	readonly #supportedCapabilities: readonly Capability[];
 	readonly #supportedFeatures: readonly string[];
+	readonly #autoApproveOwnerUserId?: string;
 	readonly #unsubscribeInvalidation?: () => void;
 	constructor(options: TailscaleRemotePolicyOptions) {
 		this.#registry = options.registry;
@@ -296,6 +303,8 @@ export class TailscaleRemotePolicy implements RemoteConnectionPolicy {
 		this.#limiter = options.limiter;
 		this.#confirmations = options.confirmations;
 		this.#clock = options.clock ?? { now: () => Date.now() };
+		this.#random = options.random ?? { bytes: size => randomBytes(size) };
+		this.#autoApproveOwnerUserId = options.autoApproveOwnerUserId;
 		this.#supportedCapabilities = (options.supportedCapabilities ?? DEVICE_CAPABILITIES).filter(
 			(value): value is Capability => (DEVICE_CAPABILITIES as readonly string[]).includes(value),
 		);
@@ -443,14 +452,22 @@ export class TailscaleRemotePolicy implements RemoteConnectionPolicy {
 			!this.#limiter.allowUnauthenticatedPairing(securityIdentity(source), connection.peer.address)
 		)
 			return undefined;
+		const code = frame.code ?? "";
+		const ownerAutoApproval =
+			code === "" &&
+			this.#autoApproveOwnerUserId !== undefined &&
+			source.userId === this.#autoApproveOwnerUserId &&
+			(source.source === "tailscale" || source.source === "direct");
 		try {
-			const result = this.#localPairing.consume(
-				frame.code,
-				securityIdentity(source),
-				frame.deviceId,
-				{ label: frame.deviceName, platform: frame.platform } satisfies DeviceMetadata,
-				frame.requestedCapabilities as Capability[],
-			);
+			const result = ownerAutoApproval
+				? this.#registerOwnerDevice(source, frame)
+				: this.#localPairing.consume(
+						code,
+						securityIdentity(source),
+						frame.deviceId,
+						{ label: frame.deviceName, platform: frame.platform } satisfies DeviceMetadata,
+						frame.requestedCapabilities as Capability[],
+					);
 			state.paired = true;
 			state.justPaired = true;
 			state.ready = true;
@@ -478,6 +495,41 @@ export class TailscaleRemotePolicy implements RemoteConnectionPolicy {
 		} catch {
 			return undefined;
 		}
+	}
+	/** Registers the peer's device through the same registry path the pairing
+	 * ticket consume uses (identity_key = JSON.stringify([nodeId, login,
+	 * hostId, tailnetIp]), metadata, capabilities, 90-day token) without
+	 * consuming a ticket. Only reached when the peer's resolved tailnet user
+	 * id equals the configured owner and the code is empty. */
+	#registerOwnerDevice(source: RemotePeerIdentity, frame: PairStartFrame): LocalPairingResult {
+		if (!safeString(frame.deviceId, 256) || !safeString(frame.deviceName)) throw new Error("pairing denied");
+		if (this.#registry.get(frame.deviceId)) throw new Error("pairing denied");
+		const granted = [...new Set((frame.requestedCapabilities as Capability[]).filter(
+			(value): value is Capability => (DEVICE_CAPABILITIES as readonly string[]).includes(value),
+		))];
+		if (granted.length === 0) throw new Error("pairing denied");
+		const rawNow = this.#clock.now();
+		if (!Number.isFinite(rawNow)) throw new Error("clock invalid");
+		const now = rawNow;
+		const token = Buffer.from(this.#random.bytes(32)).toString("base64url");
+		const tokenExpiresAt = now + 90 * 24 * 60 * 60 * 1000;
+		const security = securityIdentity(source);
+		const identityKey = JSON.stringify([security.nodeId, security.login, security.hostId, security.tailnetIp]);
+		this.#registry.create(
+			{
+				deviceId: frame.deviceId,
+				identityKey,
+				capabilities: granted,
+				metadata: { label: frame.deviceName, platform: frame.platform },
+				createdAt: now,
+				lastSeenAt: now,
+				tokenExpiresAt,
+				revokedAt: null,
+				epoch: 0,
+			},
+			token,
+		);
+		return { deviceId: frame.deviceId, token, tokenExpiresAt, capabilities: granted };
 	}
 	authorize(connection: RemoteConnection, frame: ClientFrame, context: RemoteAuthorizationContext): boolean {
 		const deny = (reason: string): false => {

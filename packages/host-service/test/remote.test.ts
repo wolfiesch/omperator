@@ -24,6 +24,7 @@ import {
 } from "../src/remote/listener.ts";
 import { TailscaleRemotePolicy } from "../src/remote/policy.ts";
 import { TailscaleWhoisResolver } from "../src/remote/resolver.ts";
+import type { RemoteConnection } from "../src/remote/types.ts";
 import { LocalPairingTicketIssuer, SqliteDeviceRegistry } from "../src/security/index.ts";
 import { createAppserver } from "../src/server.ts";
 
@@ -76,9 +77,10 @@ describe("bounded tailscale whois", () => {
 							StableID: "node",
 							Name: "host",
 							ComputedName: "host.tail",
+							User: 42,
 							Addresses: ["100.64.0.1/32", "fd7a:115c:a1e0::1/128"],
 						},
-						UserProfile: { LoginName: "u" },
+						UserProfile: { ID: 42, LoginName: "u" },
 					}),
 				};
 			},
@@ -87,6 +89,7 @@ describe("bounded tailscale whois", () => {
 			nodeId: "node",
 			hostname: "host.tail",
 			user: "u",
+			userId: "42",
 			addresses: ["100.64.0.1", "fd7a:115c:a1e0::1"],
 		});
 		expect(calls[0]).toEqual(["tailscale", "whois", "--json", "100.64.0.1"]);
@@ -416,4 +419,107 @@ test("pair CLI admin ticket reaches the in-process issuer and is one-use across 
 	await appserver.stop();
 	policy.close();
 	await rm(root, { recursive: true, force: true });
+});
+
+function pairingConnection(
+	connectionId: string,
+	userId: string | undefined,
+	source: "direct" | "tailscale" | "serve",
+): RemoteConnection {
+	const identity = {
+		nodeId: `node-${connectionId}`,
+		hostname: `${connectionId}.tail`,
+		user: `${connectionId}@example`,
+		...(userId === undefined ? {} : { userId }),
+		addresses: ["100.64.0.2"],
+		source,
+	};
+	const contextSource = source === "serve" ? "serve" : "direct";
+	return {
+		connectionId,
+		peer: { address: "100.64.0.2", source: contextSource, identity },
+		socket: {
+			connectionId,
+			peer: { address: "100.64.0.2", source: contextSource, identity },
+			send: () => true,
+			close: () => undefined,
+		},
+	};
+}
+function ownerPairStart(deviceId: string, code?: string): PairStartFrame {
+	return {
+		v: "omp-app/1",
+		type: "pair.start",
+		requestId: requestId("pair-owner"),
+		...(code === undefined ? {} : { code }),
+		deviceId,
+		deviceName: "Owner device",
+		platform: "linux",
+		requestedCapabilities: ["sessions.read", "sessions.control"],
+	};
+}
+
+test("pair.start with an empty code from the tailnet owner auto-approves without a ticket", async () => {
+	const root = await mkdtemp(join(tmpdir(), "omp-owner-approve-"));
+	const registry = new SqliteDeviceRegistry(join(root, "devices.sqlite"));
+	const issuer = new LocalPairingTicketIssuer(registry, new Uint8Array(32).fill(7));
+	const policy = new TailscaleRemotePolicy({ registry, localPairing: issuer, autoApproveOwnerUserId: "12345" });
+	try {
+		const connection = pairingConnection("owner", "12345", "tailscale");
+		const hello: HelloFrame = {
+			v: "omp-app/1",
+			type: "hello",
+			protocol: { min: "1", max: "1" },
+			client: { name: "test", version: "1", build: "test", platform: "linux" },
+			requestedFeatures: [],
+			savedCursors: [],
+		};
+		expect(policy.authenticate(connection, hello).authentication).toBe("pairing-required");
+		const ok = policy.pairStart(connection, ownerPairStart("device-owner"));
+		expect(ok?.type).toBe("pair.ok");
+		expect(ok?.deviceId).toBe("device-owner");
+		expect(typeof ok?.deviceToken).toBe("string");
+		// The device row is registered through the same registry path consume
+		// uses: the issued token authenticates a reconnect of the same peer.
+		const authenticated: HelloFrame = {
+			...hello,
+			authentication: { deviceId: "device-owner", deviceToken: ok!.deviceToken },
+		};
+		expect(policy.authenticate(connection, authenticated).authentication).toBe("paired");
+		// An explicit empty code takes the same auto-approval path.
+		const again = pairingConnection("owner-empty", "12345", "direct");
+		expect(policy.authenticate(again, hello).authentication).toBe("pairing-required");
+		expect(policy.pairStart(again, ownerPairStart("device-owner-2", ""))?.type).toBe("pair.ok");
+	} finally {
+		policy.close();
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("pair.start with an empty code from a non-owner peer is rejected", async () => {
+	const root = await mkdtemp(join(tmpdir(), "omp-owner-reject-"));
+	const registry = new SqliteDeviceRegistry(join(root, "devices.sqlite"));
+	const issuer = new LocalPairingTicketIssuer(registry, new Uint8Array(32).fill(7));
+	const policy = new TailscaleRemotePolicy({ registry, localPairing: issuer, autoApproveOwnerUserId: "12345" });
+	try {
+		const stranger = pairingConnection("stranger", "99999", "tailscale");
+		expect(policy.pairStart(stranger, ownerPairStart("device-stranger"))).toBeUndefined();
+		// Serve-proxy peers are never auto-approved even when they carry the owner's user id.
+		const served = pairingConnection("served", "12345", "serve");
+		expect(policy.pairStart(served, ownerPairStart("device-served"))).toBeUndefined();
+		// A peer without a resolved user id cannot claim the owner slot.
+		const unknown = pairingConnection("unknown", undefined, "tailscale");
+		expect(policy.pairStart(unknown, ownerPairStart("device-unknown"))).toBeUndefined();
+		// The owner still needs a real ticket when a code is present.
+		const owner = pairingConnection("owner-code", "12345", "tailscale");
+		expect(policy.pairStart(owner, ownerPairStart("device-code", "000000"))).toBeUndefined();
+		// With auto-approval unset, an empty code never pairs.
+		const disabled = new TailscaleRemotePolicy({ registry, localPairing: issuer });
+		const unconfigured = pairingConnection("unconfigured", "12345", "tailscale");
+		expect(disabled.pairStart(unconfigured, ownerPairStart("device-unconfigured"))).toBeUndefined();
+		disabled.close();
+	} finally {
+		policy.close();
+		await rm(root, { recursive: true, force: true });
+	}
 });

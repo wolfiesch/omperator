@@ -45,7 +45,9 @@ export interface PairStartFrame {
 	v: typeof PROTOCOL_VERSION;
 	type: "pair.start";
 	requestId: RequestId;
-	code: string;
+	/** One-time six-digit pairing code. Omitted or empty when the peer requests
+	 * tailnet-owner auto-approval; non-empty codes must still be six digits. */
+	code?: string;
 	deviceId: string;
 	deviceName: string;
 	platform: string;
@@ -120,7 +122,7 @@ export function decodePairing(input: unknown): PairingFrame {
 	version(frame);
 	if (frame.type === "pair.start") {
 		requestId(frame.requestId);
-		pairingCode(frame.code, "code");
+		if (frame.code !== undefined && frame.code !== "") pairingCode(frame.code, "code");
 		device(frame);
 		return frame as unknown as PairStartFrame;
 	}

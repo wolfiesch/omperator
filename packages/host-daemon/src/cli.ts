@@ -115,6 +115,8 @@ export interface HostDaemonConfig {
     readonly origins: readonly string[];
     readonly trustedServeProxy: boolean;
     readonly tlsPort?: number;
+    /** Owner auto-approval override; undefined keeps the direct-mode default ON. */
+    readonly autoApproveOwner?: boolean;
   };
 }
 
@@ -177,6 +179,13 @@ export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): 
   let remoteTlsPort: number | undefined;
   let trustedServeProxy = false;
   let testControl = false;
+  let remoteAutoApprove: boolean | undefined;
+  const envAutoApprove = process.env.T4_REMOTE_AUTO_APPROVE;
+  if (envAutoApprove !== undefined) {
+    if (envAutoApprove === "1" || envAutoApprove === "true") remoteAutoApprove = true;
+    else if (envAutoApprove === "0" || envAutoApprove === "false") remoteAutoApprove = false;
+    else throw new Error("T4_REMOTE_AUTO_APPROVE must be 1, 0, true, or false");
+  }
   const origins: string[] = [];
   for (let index = 1; index < argv.length; index += 1) {
     const flag = argv[index]!;
@@ -207,6 +216,8 @@ export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): 
       if (origins.length >= ORIGIN_LIMIT) throw new Error("too many --remote-origin values");
       origins.push(boundedOrigin(value(argv, index++, flag)));
     } else if (flag === "--trusted-serve-proxy") trustedServeProxy = true;
+    else if (flag === "--remote-auto-approve") remoteAutoApprove = true;
+    else if (flag === "--no-remote-auto-approve") remoteAutoApprove = false;
     else if (flag === "--test-control") testControl = true;
     else throw new Error(`unsupported t4-host argument: ${flag}`);
   }
@@ -255,6 +266,7 @@ export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): 
             origins,
             trustedServeProxy,
             ...(remoteTlsPort !== undefined ? { tlsPort: remoteTlsPort } : {}),
+            ...(remoteAutoApprove !== undefined ? { autoApproveOwner: remoteAutoApprove } : {}),
           },
         }
       : {}),
@@ -690,6 +702,9 @@ export async function runHostDaemon(
       appserver = config.remote
         ? await (dependencies.createRemote ?? createRemoteAppserver)({
             stateDir: paths.remoteStateRoot,
+            ...(config.remote.autoApproveOwner !== undefined
+              ? { autoApproveOwner: config.remote.autoApproveOwner }
+              : {}),
             remoteEndpoint: {
               address: config.remote.address,
               port: config.remote.port,
