@@ -113,17 +113,7 @@ struct T4SessionDetailView: View {
     /// expression — the parameter list with closures was too much for the
     /// Swift type-checker.
     private func transcriptView(_ session: SessionRef) -> some View {
-        let entries = store.transcript(for: session.sessionId)
-        return T4TranscriptView(
-            entries: Array(entries.suffix(renderLimit)),
-            liveTurn: transcriptModel.liveTurns[session.sessionId],
-            streamingMessage: transcriptModel.streamingMessages[session.sessionId],
-            liveTools: transcriptModel.liveTools[session.sessionId] ?? LiveToolProjection(),
-            theme: t,
-            onSelectText: { activeSheet = .selectText },
-            totalCount: entries.count,
-            onShowEarlier: { withAnimation(.easeOut(duration: 0.18)) { renderLimit += 40 } },
-            showWindowButton: showWindowButton)
+        EmptyView()
     }
 
     var body: some View {
