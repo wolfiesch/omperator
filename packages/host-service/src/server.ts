@@ -34,6 +34,7 @@ import {
 	requiredCapability,
 	revision as wireRevision,
 	type ServerFrame,
+	type SessionConfiguredThinking,
 	type SessionId,
 	type SessionRef,
 	type SessionStateResult,
@@ -128,6 +129,7 @@ import {
 	readCollabLinkForTranscript,
 	type CollabBridgeHandlers,
 } from "./collab/bridge.ts";
+import type { CollabUiRequest } from "./collab/frames.ts";
 import { RpcChildRegistry } from "./rpc-child-registry.ts";
 import type {
 	RuntimeAdapterRegistry,
@@ -839,6 +841,8 @@ export class LocalAppserver implements AppserverHandle {
 	#collabActivePrompts = new Map<SessionId, PromptLifecycle>();
 	/** Sessions whose collab room died; skip re-bridging until the file renews. */
 	#collabDeadUntil = new Map<SessionId, number>();
+	/** Pending /enclave interactive requests (plan approval, select, editor). */
+	#collabUiRequests = new Map<SessionId, Map<number, CollabUiRequest>>();
 	#promptLifecycle = new PromptLifecycleController({
 		now: () => this.#clock.now(),
 		projection: sessionId => this.#projections.get(sessionId),
@@ -1226,7 +1230,9 @@ export class LocalAppserver implements AppserverHandle {
 			this.#handlers.has(command) ||
 			(DIRECT_SESSION_RPC_COMMANDS.has(command) && this.#directRpcCommandSupported(command)) ||
 			command === SESSION_CANCEL_COMMAND ||
-			command === AGENT_CANCEL_COMMAND
+			command === AGENT_CANCEL_COMMAND ||
+			command === "session.slash" ||
+			command === "session.rewind"
 		);
 	}
 
@@ -2167,6 +2173,9 @@ export class LocalAppserver implements AppserverHandle {
 			} else if (command.command === "session.ui.respond") {
 				const externalOutcome = this.respondExternalPermission(command);
 				if (externalOutcome) outcome = externalOutcome;
+				else if (this.#collabBridges.has(command.sessionId!)) {
+					outcome = this.respondCollabUi(command);
+				}
 				else {
 					if (this.#externalRuntimes.has(command.sessionId!)) throw new Error("UI request is no longer pending");
 					const supervisor = await this.ensureSupervisor(command.sessionId!);
@@ -2192,7 +2201,41 @@ export class LocalAppserver implements AppserverHandle {
 					outcome = { frame: response(this.hostId, command, true, { accepted: true }) };
 				}
 			} else if (DIRECT_SESSION_RPC_COMMANDS.has(command.command)) {
-				const rpcCommand = this.#directRpcCommand(command);
+				const bridge = this.#collabBridges.get(command.sessionId!);
+				if (bridge && (command.command === "session.model.set" || command.command === "session.thinking.set")) {
+					// Collab-bridged session: route model/thinking changes to the
+					// live host via the /enclave control channel instead of
+					// spawning a supervisor.
+					const method =
+						command.command === "session.model.set"
+							? { method: "set-model", params: { model: typeof command.args.selector === "string" ? command.args.selector : "" } }
+							: { method: "set-thinking", params: { level: command.args.level } };
+					outcome = await this.handleCollabControl(command, bridge, method);
+				} else if (command.command === "session.slash" || command.command === "session.rewind") {
+					const slashBridge = this.#collabBridges.get(command.sessionId!);
+					if (!slashBridge)
+						outcome = {
+							frame: response(this.hostId, command, false, undefined, {
+								code: "unsupported",
+								message: "slash/rewind control requires a live collab-shared session",
+							}),
+						};
+					else
+						outcome = await this.handleCollabControl(
+							command,
+							slashBridge,
+							command.command === "session.slash"
+								? {
+										method: "slash",
+										params: {
+											name: typeof command.args.name === "string" ? command.args.name : "",
+											args: typeof command.args.args === "string" ? command.args.args : "",
+										},
+									}
+								: { method: "rewind", params: { toEntryId: command.args.toEntryId } },
+						);
+				} else {
+					const rpcCommand = this.#directRpcCommand(command);
 				if (!rpcCommand) {
 					outcome = {
 						frame: response(this.hostId, command, false, undefined, {
@@ -2243,6 +2286,7 @@ export class LocalAppserver implements AppserverHandle {
 					command.command !== "session.fast.set"
 				)
 					this.scheduleStateRefresh(command.sessionId!, supervisor, command.requestId);
+					}
 			} else if (command.command === "session.prompt") {
 				if (this.#closedSessions.has(command.sessionId!)) throw new Error("session is closed");
 				const externalOwner = this.#externalRuntimes.get(command.sessionId!);
@@ -2980,6 +3024,79 @@ export class LocalAppserver implements AppserverHandle {
 			setStreaming: streaming => {
 				this.updateStatus(sessionId, streaming ? "active" : "idle");
 			},
+			onCaps: caps => {
+				const projection = this.#projections.get(sessionId);
+				const current = caps.current;
+				if (!projection || !current) return;
+				const state: SessionStateResult = {
+					isStreaming: false,
+					isCompacting: false,
+					isPaused: false,
+					messageCount: 0,
+					queuedMessageCount: 0,
+					steeringMode: "all",
+					followUpMode: "all",
+					interruptMode: "immediate",
+					...(typeof current.model === "string"
+						? {
+								model: {
+									id: current.model,
+									provider: current.model.includes("/") ? current.model.split("/")[0]! : "",
+									displayName: current.model,
+								},
+							}
+						: {}),
+					...(typeof current.thinking === "string"
+						? { thinking: current.thinking as SessionConfiguredThinking }
+						: {}),
+				};
+				const frame = projection.updateState(state);
+				if (frame) void this.broadcastIndex(frame);
+			},
+			onUiRequest: request => {
+				const projection = this.#projections.get(sessionId);
+				if (!projection) return;
+				let pending = this.#collabUiRequests.get(sessionId);
+				if (!pending) {
+					pending = new Map();
+					this.#collabUiRequests.set(sessionId, pending);
+				}
+				pending.set(request.reqId, request);
+				const at = this.#clock.now().toISOString();
+				const item: PendingAttentionItem =
+					request.kind === "plan"
+						? {
+								kind: "plan",
+								id: `collab-ui-${request.reqId}`,
+								title: request.title,
+								summary: request.helpText ?? request.title,
+								requestedAt: at,
+							}
+						: request.kind === "editor"
+							? {
+									kind: "question",
+									id: `collab-ui-${request.reqId}`,
+									question: request.title,
+									options: [],
+									allowText: true,
+									requestedAt: at,
+								}
+							: {
+									kind: "question",
+									id: `collab-ui-${request.reqId}`,
+									question: request.title,
+									options: (request.options ?? []).map(
+										(option: string | { label: string; description?: string }, index: number) => ({
+											id: String(index),
+											label: typeof option === "string" ? option : option.label,
+										}),
+									),
+									allowText: false,
+									requestedAt: at,
+								};
+				const frame = projection.setPendingAttention(item);
+				if (frame) this.broadcast(sessionId, frame);
+			},
 			fatal: reason => {
 				this.disposeCollabBridge(sessionId, reason);
 			},
@@ -3006,6 +3123,15 @@ export class LocalAppserver implements AppserverHandle {
 			this.#collabBridges.delete(sessionId);
 			this.#collabDeadUntil.set(sessionId, Date.now() + 30_000);
 			this.#log("collab.bridge.close", { sessionId, reason });
+		}
+		const pending = this.#collabUiRequests.get(sessionId);
+		if (pending) {
+			this.#collabUiRequests.delete(sessionId);
+			const projection = this.#projections.get(sessionId);
+			for (const reqId of pending.keys()) {
+				const cleared = projection?.removePendingAttention(`collab-ui-${reqId}`);
+				if (cleared) this.broadcast(sessionId, cleared);
+			}
 		}
 		this.finalizeCollabPrompt(sessionId);
 		this.#projectTerminalStatus(sessionId);
@@ -3079,6 +3205,86 @@ export class LocalAppserver implements AppserverHandle {
 			};
 		bridge.cancel();
 		return { frame: response(this.hostId, command, true, { cancelled: true }) };
+	}
+
+	private async handleCollabControl(
+		command: CommandFrame,
+		bridge: CollabSessionBridge,
+		call: { method: string; params?: unknown },
+	): Promise<CommandOutcome> {
+		const result = await bridge.control(call.method, call.params);
+		return {
+			frame: response(
+				this.hostId,
+				command,
+				result.ok,
+				result.ok ? { accepted: true, ...(result.message ? { message: result.message } : {}) } : undefined,
+				result.ok
+					? undefined
+					: { code: "control_error", message: result.message ?? `control ${call.method} failed` },
+			),
+		};
+	}
+
+	/** Resolve a pending /enclave interactive request (plan/select/editor). */
+	private respondCollabUi(command: CommandFrame): CommandOutcome {
+		const sessionId = command.sessionId!;
+		const bridge = this.#collabBridges.get(sessionId);
+		const pending = this.#collabUiRequests.get(sessionId);
+		const requestId = typeof command.args.requestId === "string" ? command.args.requestId : undefined;
+		if (!bridge || !pending || !requestId || !requestId.startsWith("collab-ui-")) {
+			return {
+				frame: response(this.hostId, command, false, undefined, {
+					code: "unsupported",
+					message: "UI request is no longer pending",
+				}),
+			};
+		}
+		const reqId = Number(requestId.slice("collab-ui-".length));
+		const request = pending.get(reqId);
+		if (!request) {
+			return {
+				frame: response(this.hostId, command, false, undefined, {
+					code: "unsupported",
+					message: "UI request is no longer pending",
+				}),
+			};
+		}
+		pending.delete(reqId);
+		if (pending.size === 0) this.#collabUiRequests.delete(sessionId);
+		let value: string | undefined;
+		if (command.args.cancelled === true) {
+			// Cancel: no value.
+		} else if (request.kind === "plan") {
+			const confirmed = command.args.confirmed;
+			const options = request.options ?? [];
+			value = confirmed === false ? "reject" : (typeof options[0] === "string" ? options[0] : options[0]?.label) ?? "approve";
+		} else if (request.kind === "select" && typeof command.args.value === "string") {
+			value = command.args.value;
+		} else if (request.kind === "editor" && typeof command.args.value === "string") {
+			value = command.args.value;
+		} else {
+			return {
+				frame: response(this.hostId, command, false, undefined, {
+					code: "unsupported",
+					message: "UI response kind does not match the pending request",
+				}),
+			};
+		}
+		bridge.uiResponse(reqId, value);
+		const projection = this.#projections.get(sessionId);
+		const cleared = projection?.removePendingAttention(requestId);
+		if (cleared) this.broadcast(sessionId, cleared);
+		if (projection) {
+			const at = this.#clock.now().toISOString();
+			const resolved = projection.appendEvent(
+				request.kind === "plan"
+					? asAppWireEvent({ type: "approval.resolved", approvalId: requestId, at })
+					: asAppWireEvent({ type: "ask.resolved", askId: requestId, at }),
+			);
+			this.broadcast(sessionId, resolved);
+		}
+		return { frame: response(this.hostId, command, true, { accepted: true }) };
 	}
 
 	private async handleCreate(command: CommandFrame): Promise<CommandOutcome> {

@@ -152,6 +152,8 @@ function mutation(command: string): boolean {
 		"session.release",
 		"session.reclaim",
 		"session.cancel",
+		"session.slash",
+		"session.rewind",
 		"files.write",
 		"files.patch",
 		"review.apply",

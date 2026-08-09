@@ -14,9 +14,25 @@ import {
 	type CollabEvent,
 	type CollabGuestFrame,
 	type CollabHostFrame,
+	type CollabUiRequest,
 	type CollabWireEntry,
 } from "./frames.ts";
 import type { HostId, SessionId, DurableEntry, SessionEvent } from "@t4-code/host-wire";
+
+export interface EnclaveCaps {
+	version?: number;
+	vision?: boolean;
+	models?: { id: string; name?: string; vision?: boolean }[];
+	commands?: { name: string; description?: string }[];
+	current?: { model?: string; thinking?: string };
+}
+
+export interface CollabControlResult {
+	ok: boolean;
+	message?: string;
+	data?: string;
+	mimeType?: string;
+}
 
 export interface CollabBridgeHandlers {
 	/** Rebase the session onto a fresh snapshot of durable entries. */
@@ -27,6 +43,10 @@ export interface CollabBridgeHandlers {
 	appendEvent(event: SessionEvent): void;
 	/** Host changed streaming/status (isStreaming). */
 	setStreaming(streaming: boolean): void;
+	/** The /enclave plugin announced its capability handshake. */
+	onCaps?(caps: EnclaveCaps): void;
+	/** The host wants interactive input (plan approval, select, editor). */
+	onUiRequest?(request: CollabUiRequest): void;
 	/** The room is gone; drop the bridge. */
 	fatal(reason: string): void;
 }
@@ -215,6 +235,8 @@ export class CollabSessionBridge {
 	#emittedEntryIds = new Set<string>();
 	#disposed = false;
 	readonly #onFatalInternal: () => void;
+	#pendingControl = new Map<number, (result: CollabControlResult) => void>();
+	#controlSeq = 0;
 
 	constructor(
 		sessionId: SessionId,
@@ -286,6 +308,28 @@ export class CollabSessionBridge {
 			}
 			return;
 		}
+		if (frame.t === "enclave-caps") {
+			this.#emit.onCaps?.({
+				version: frame.version,
+				vision: frame.vision,
+				models: frame.models,
+				commands: frame.commands,
+				current: frame.current,
+			});
+			return;
+		}
+		if (frame.t === "enclave-result") {
+			const resolve = frame.reqId !== undefined ? this.#pendingControl.get(frame.reqId) : undefined;
+			if (resolve) {
+				this.#pendingControl.delete(frame.reqId!);
+				resolve({ ok: frame.ok, message: frame.message, data: frame.data, mimeType: frame.mimeType });
+			}
+			return;
+		}
+		if (frame.t === "ui-request") {
+			this.#emit.onUiRequest?.(frame.request);
+			return;
+		}
 		projectCollabFrame(frame, this.#host, this.sessionId, this.#emit);
 	}
 
@@ -304,6 +348,23 @@ export class CollabSessionBridge {
 	}
 	uiResponse(reqId: number, value?: string): void {
 		this.#client.uiResponse(reqId, value);
+	}
+	/** /enclave extension: run a control command on the host plugin. */
+	control(method: string, params?: unknown): Promise<CollabControlResult> {
+		if (this.#disposed) return Promise.resolve({ ok: false, message: "bridge closed" });
+		const reqId = ++this.#controlSeq;
+		const { promise, resolve } = Promise.withResolvers<CollabControlResult>();
+		this.#pendingControl.set(reqId, resolve);
+		const timer = setTimeout(() => {
+			const pending = this.#pendingControl.get(reqId);
+			if (pending) {
+				this.#pendingControl.delete(reqId);
+				pending({ ok: false, message: `control ${method} timed out` });
+			}
+		}, 15_000);
+		void promise.finally(() => clearTimeout(timer));
+		this.#client.control(method, params, reqId);
+		return promise;
 	}
 
 	dispose(): void {

@@ -836,6 +836,8 @@ export class LeaseRegistry {
 						"session.model.set",
 						"session.thinking.set",
 						"session.mode.set",
+						"session.slash",
+						"session.rewind",
 						"files.write",
 						"files.patch",
 						"review.apply",

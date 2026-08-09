@@ -218,6 +218,10 @@ export class CollabGuestClient {
 	abort(): void {
 		this.#enqueueSeal({ t: "abort" });
 	}
+	/** /enclave extension: route a control command to the host plugin. */
+	control(method: string, params: unknown, reqId: number): void {
+		this.#enqueueSeal({ t: "enclave-cmd", method, params, reqId });
+	}
 	uiResponse(reqId: number, value?: string): void {
 		this.#enqueueSeal({ t: "ui-response", reqId, ...(value === undefined ? {} : { value }) });
 	}

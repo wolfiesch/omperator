@@ -147,7 +147,7 @@ export interface CollabAgentSnapshot {
 
 export interface CollabUiRequest {
 	reqId: number;
-	kind: "select" | "editor";
+	kind: "select" | "editor" | "plan";
 	title: string;
 	options?: (string | { label: string; description?: string })[];
 	initialIndex?: number;
@@ -171,7 +171,11 @@ export type CollabHostFrame =
 	| { t: "ui-request-end"; reqId: number }
 	| { t: "transcript"; reqId: number; text: string; newSize: number; error?: string }
 	| { t: "bye"; reason: string }
-	| { t: "error"; message: string };
+	| { t: "error"; message: string }
+	// /enclave extension frames (the Enclave plugin's superset on the same
+	// sealed channel). Guests must tolerate their absence.
+	| { t: "enclave-caps"; version: number; vision?: boolean; models?: { id: string; name?: string; vision?: boolean }[]; commands?: { name: string; description?: string }[]; current?: { model?: string; thinking?: string } }
+	| { t: "enclave-result"; ok: boolean; message?: string; data?: string; mimeType?: string; reqId?: number };
 
 // Guest → host frames
 export type CollabGuestFrame =
@@ -180,7 +184,9 @@ export type CollabGuestFrame =
 	| { t: "ui-response"; reqId: number; value?: string }
 	| { t: "abort" }
 	| { t: "agent-cmd"; cmd: "chat" | "kill" | "revive"; agentId: string; text?: string }
-	| { t: "fetch-transcript"; reqId: number; agentId: string; fromByte: number };
+	| { t: "fetch-transcript"; reqId: number; agentId: string; fromByte: number }
+	// /enclave extension: route a control command to the host plugin.
+	| { t: "enclave-cmd"; method: string; params?: unknown; reqId: number };
 
 export function isCollabHostFrame(value: unknown): value is CollabHostFrame {
 	return (

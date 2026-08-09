@@ -137,3 +137,75 @@ describe("collab guest client flow", () => {
 		server.close();
 	});
 });
+
+describe("collab bridge /enclave extension", () => {
+	test("surfaces caps + plan ui-request, routes control and ui responses", async () => {
+		const cipher = createCollabCipher(KEY);
+		const received: { t: string }[] = [];
+
+		const server = new WebSocketServer({ port: 0 });
+		await new Promise<void>(resolve => server.once("listening", resolve));
+		const port = (server.address() as { port: number }).port;
+
+		server.on("connection", async (socket: any) => {
+			socket.binaryType = "arraybuffer";
+			socket.on("message", async (data: any) => {
+				const bytes = new Uint8Array(data as ArrayBuffer);
+				const plain = await cipher.open(bytes.subarray(4));
+				const frame = JSON.parse(new TextDecoder().decode(plain)) as Record<string, unknown>;
+				received.push(frame as { t: string });
+				if (frame.t === "hello") {
+					const welcome = { t: "welcome", proto: COLLAB_PROTO, header: { id: "h", parentId: null, type: "session", timestamp: new Date().toISOString() }, state: {}, agents: [], entryCount: 0 };
+					const chunk = { t: "snapshot-chunk", entries: [], final: true };
+					const caps = { t: "enclave-caps", version: 1, models: [{ id: "m1", name: "Model One" }], current: { model: "m1", thinking: "high" } };
+					const plan = { t: "ui-request", request: { reqId: 7, kind: "plan", title: "Approve plan", helpText: "plan body" } };
+					for (const frame of [welcome, chunk, caps, plan]) {
+						socket.send(packEnvelope(0, await cipher.seal(new TextEncoder().encode(JSON.stringify(frame)))));
+					}
+				} else if (frame.t === "enclave-cmd") {
+					const result = { t: "enclave-result", ok: true, message: `ran ${frame.method}`, reqId: frame.reqId };
+					socket.send(packEnvelope(0, await cipher.seal(new TextEncoder().encode(JSON.stringify(result)))));
+				} else if (frame.t === "ui-response") {
+					const end = { t: "ui-request-end", reqId: frame.reqId };
+					socket.send(packEnvelope(0, await cipher.seal(new TextEncoder().encode(JSON.stringify(end)))));
+				}
+			});
+		});
+
+		const link = parseCollabLink(`ws://localhost:${port}/r/${ROOM}.${SECRET}`);
+		const capsSeen: unknown[] = [];
+		const uiSeen: unknown[] = [];
+		const bridge = new (await import("../src/collab/bridge.ts")).CollabSessionBridge(
+			"sid-1" as never, "/tmp/fake.jsonl", link, "host-test" as never,
+			{
+				rebase: () => {},
+				appendEntry: () => {},
+				appendEvent: () => {},
+				setStreaming: () => {},
+				onCaps: caps => capsSeen.push(caps),
+				onUiRequest: request => uiSeen.push(request),
+				fatal: () => {},
+			},
+			() => {},
+		);
+		bridge.start();
+		await Bun.sleep(600);
+
+		expect(capsSeen).toHaveLength(1);
+		expect((capsSeen[0] as { current?: { model?: string } }).current?.model).toBe("m1");
+		expect(uiSeen).toHaveLength(1);
+		expect((uiSeen[0] as { kind?: string }).kind).toBe("plan");
+
+		const result = await bridge.control("set-model", { model: "m2" });
+		expect(result.ok).toBe(true);
+		expect(result.message).toBe("ran set-model");
+		expect(received.some(f => f.t === "enclave-cmd")).toBe(true);
+
+		bridge.uiResponse(7, "approve");
+		await Bun.sleep(300);
+		expect(received.some(f => f.t === "ui-response")).toBe(true);
+
+		bridge.dispose();
+		server.close();
+	});
+});
