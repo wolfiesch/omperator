@@ -320,30 +320,7 @@ struct T4SessionsView: View {
             }
         }
         Divider()
-        if session.t4CanRestore {
-                Button {
-                    Task { await store.restoreSession(sessionId: session.sessionId) }
-                } label: {
-                    Label("Restore", systemImage: "arrow.uturn.backward")
-                }
-                .disabled(!store.connected)
-            }
-            if presentation.canFork && store.canForkSessions {
-                Button {
-                    Task { await store.forkSession(sessionId: session.sessionId) }
-                } label: {
-                    Label("Continue in a Copy", systemImage: "doc.on.doc")
-                }
-            }
-            if case .released = control {
-                Button {
-                    Task { await store.reclaimSession(sessionId: session.sessionId) }
-                } label: {
-                    Label("Bring Back to App", systemImage: "arrow.uturn.backward")
-                }
-            }
-        } else {
-            if session.archivedAt == nil {
+        if session.archivedAt == nil {
                 Button {
                     renameText = session.title
                     renaming = session
