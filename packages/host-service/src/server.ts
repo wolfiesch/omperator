@@ -121,6 +121,13 @@ import { BunRemoteListener, createInternalListenerPlan, createListenerPlan, crea
 import type { HostLogger } from "./remote/logging.ts";
 import type { HealthSnapshot, RemoteConnection, RemoteListenerConfig } from "./remote/types.ts";
 import { BunRpcChildFactory, RpcChildSupervisor } from "./rpc-child.ts";
+import {
+	CollabSessionBridge,
+	projectCollabEntry,
+	projectCollabEvent,
+	readCollabLinkForTranscript,
+	type CollabBridgeHandlers,
+} from "./collab/bridge.ts";
 import { RpcChildRegistry } from "./rpc-child-registry.ts";
 import type {
 	RuntimeAdapterRegistry,
@@ -826,6 +833,12 @@ export class LocalAppserver implements AppserverHandle {
 	readonly #openingExternalRuntimes = new Map<string, number>();
 	#externalPermissions = new Map<SessionId, Map<string, ExternalPermissionRequest>>();
 	#externalTurns = new Map<SessionId, ExternalTurnProjection>();
+	/** Live collab-guest bridges for externally-hosted sessions. */
+	#collabBridges = new Map<SessionId, CollabSessionBridge>();
+	/** Prompt lifecycles waiting on a collab turn.end to finalize. */
+	#collabActivePrompts = new Map<SessionId, PromptLifecycle>();
+	/** Sessions whose collab room died; skip re-bridging until the file renews. */
+	#collabDeadUntil = new Map<SessionId, number>();
 	#promptLifecycle = new PromptLifecycleController({
 		now: () => this.#clock.now(),
 		projection: sessionId => this.#projections.get(sessionId),
@@ -1510,6 +1523,9 @@ export class LocalAppserver implements AppserverHandle {
 			for (const sessionId of this.#externalPermissions.keys()) this.cancelExternalPermissions(sessionId);
 			await Promise.allSettled(Array.from(this.#externalRuntimes.values(), owner => owner.session.dispose()));
 			this.#externalRuntimes.clear();
+			for (const bridge of this.#collabBridges.values()) bridge.dispose();
+			this.#collabBridges.clear();
+			this.#collabActivePrompts.clear();
 			this.#externalTurns.clear();
 			this.#promptLifecycle.clear();
 			this.#stateRefreshGenerations.clear();
@@ -2096,7 +2112,16 @@ export class LocalAppserver implements AppserverHandle {
 				);
 				outcome = { frame: response(this.hostId, command, true, state) };
 			} else if (command.command === "session.steer" || command.command === "session.followUp") {
-				const supervisor = await this.ensureSupervisor(command.sessionId!);
+				if (this.#collabBridges.has(command.sessionId!)) {
+					const kind = command.command === "session.steer" ? "steer" : "followUp";
+					outcome = await this.handleCollabPrompt(
+						command,
+						command.sessionId!,
+						{ message: typeof command.args?.message === "string" ? command.args.message : "" },
+						kind,
+					);
+				} else {
+					const supervisor = await this.ensureSupervisor(command.sessionId!);
 				const kind = command.command === "session.steer" ? "steer" : "followUp";
 				const lifecycle: PromptLifecycle = {
 					requestId: command.requestId,
@@ -2137,6 +2162,7 @@ export class LocalAppserver implements AppserverHandle {
 						),
 					};
 					this.scheduleStateRefresh(command.sessionId!, supervisor, command.requestId);
+					}
 				}
 			} else if (command.command === "session.ui.respond") {
 				const externalOutcome = this.respondExternalPermission(command);
@@ -2221,6 +2247,8 @@ export class LocalAppserver implements AppserverHandle {
 				if (this.#closedSessions.has(command.sessionId!)) throw new Error("session is closed");
 				const externalOwner = this.#externalRuntimes.get(command.sessionId!);
 				if (externalOwner) outcome = await this.handleExternalPrompt(command, externalOwner, promptArguments!);
+				else if (this.#collabBridges.has(command.sessionId!))
+					outcome = await this.handleCollabPrompt(command, command.sessionId!, promptArguments!);
 				else {
 					const supervisor = await this.ensureSupervisor(command.sessionId!);
 					if (this.#promptLifecycle.activePrompt(command.sessionId!) !== undefined) {
@@ -2327,6 +2355,8 @@ export class LocalAppserver implements AppserverHandle {
 			} else if (command.command === SESSION_CANCEL_COMMAND) {
 				const externalOwner = this.#externalRuntimes.get(command.sessionId!);
 				if (externalOwner) outcome = await this.handleExternalCancel(command, externalOwner);
+				else if (this.#collabBridges.has(command.sessionId!))
+					outcome = await this.handleCollabCancel(command);
 				else {
 					// Capture the exact root before the first yield. A root which settles
 					// while the supervisor starts must not let this unscoped RPC abort a
@@ -2926,6 +2956,129 @@ export class LocalAppserver implements AppserverHandle {
 		}
 		request.resolve(selected ? { outcome: "selected", optionId: selected } : { outcome: "cancelled" });
 		return { frame: response(this.hostId, command, true, { accepted: true }) };
+	}
+
+	private collabBridgeHandlers(sessionId: SessionId): CollabBridgeHandlers {
+		return {
+			rebase: entries => {
+				const projection = this.#projections.get(sessionId);
+				if (!projection) return;
+				for (const frame of projection.rebaseEntries(entries)) this.broadcast(sessionId, frame);
+			},
+			appendEntry: entry => {
+				const projection = this.#projections.get(sessionId);
+				if (!projection) return;
+				const frame = projection.appendEntry(entry);
+				if (frame) this.broadcast(sessionId, frame);
+			},
+			appendEvent: event => {
+				const projection = this.#projections.get(sessionId);
+				if (!projection) return;
+				this.broadcast(sessionId, projection.appendEvent(event));
+				if (event.type === "turn.end") this.finalizeCollabPrompt(sessionId);
+			},
+			setStreaming: streaming => {
+				this.updateStatus(sessionId, streaming ? "active" : "idle");
+			},
+			fatal: reason => {
+				this.disposeCollabBridge(sessionId, reason);
+			},
+		};
+	}
+
+	private async ensureCollabBridge(sessionId: SessionId, path: string): Promise<void> {
+		if (this.#collabBridges.has(sessionId)) return;
+		if ((this.#collabDeadUntil.get(sessionId) ?? 0) > Date.now()) return;
+		const link = await readCollabLinkForTranscript(path);
+		if (!link) return;
+		const bridge = new CollabSessionBridge(sessionId, path, link, this.hostId, this.collabBridgeHandlers(sessionId), () => {
+			this.disposeCollabBridge(sessionId, "collab room closed");
+		});
+		this.#collabBridges.set(sessionId, bridge);
+		this.#log("collab.bridge.open", { sessionId, relay: link.wsUrl });
+		bridge.start();
+	}
+
+	private disposeCollabBridge(sessionId: SessionId, reason: string): void {
+		const bridge = this.#collabBridges.get(sessionId);
+		if (bridge) {
+			bridge.dispose();
+			this.#collabBridges.delete(sessionId);
+			this.#collabDeadUntil.set(sessionId, Date.now() + 30_000);
+			this.#log("collab.bridge.close", { sessionId, reason });
+		}
+		this.finalizeCollabPrompt(sessionId);
+		this.#projectTerminalStatus(sessionId);
+	}
+
+	private finalizeCollabPrompt(sessionId: SessionId): void {
+		const lifecycle = this.#collabActivePrompts.get(sessionId);
+		if (!lifecycle) return;
+		this.#collabActivePrompts.delete(sessionId);
+		this.#promptLifecycle.release(sessionId, lifecycle, "completed-without-entry");
+		this.#projectTerminalStatus(sessionId);
+	}
+
+	private async handleCollabPrompt(
+		command: CommandFrame,
+		sessionId: SessionId,
+		args: { message: string; images?: readonly unknown[] },
+		kind: "prompt" | "steer" | "followUp" = "prompt",
+	): Promise<CommandOutcome> {
+		const bridge = this.#collabBridges.get(sessionId);
+		if (!bridge)
+			return {
+				frame: response(this.hostId, command, false, undefined, {
+					code: "session_locked",
+					message: "session is no longer shared over collab",
+				}),
+			};
+		if (this.#promptLifecycle.activePrompt(sessionId) !== undefined)
+			return {
+				frame: response(this.hostId, command, false, undefined, {
+					code: "session_busy",
+					message: "another prompt is still running; use steer or follow-up",
+				}),
+			};
+		const lifecycle: PromptLifecycle = {
+			requestId: command.requestId,
+			commandId: command.commandId,
+			commandHash: payloadHash(command),
+			kind,
+			registeredAt: this.#clock.now().getTime(),
+		};
+		if (!this.#promptLifecycle.register(sessionId, lifecycle))
+			return {
+				frame: response(this.hostId, command, false, undefined, {
+					code: "message_queue_full",
+					message: `at most ${MAX_PENDING_PROMPTS} accepted prompts may be pending`,
+				}),
+			};
+		this.#promptLifecycle.setActivePrompt(sessionId, lifecycle);
+		this.#collabActivePrompts.set(sessionId, lifecycle);
+		this.updateStatus(sessionId, "active");
+		this.#promptLifecycle.emitTransient(sessionId, command, lifecycle, args.message, args.images?.length ?? 0);
+		const userEntryId = this.appendExternalEntry(sessionId, "message", {
+			role: "user",
+			text: projectMessageText(args.message),
+		});
+		if (userEntryId) this.#promptLifecycle.settleTransient(sessionId, lifecycle, userEntryId);
+		bridge.prompt(args.message);
+		return { frame: response(this.hostId, command, true, { accepted: true }) };
+	}
+
+	private async handleCollabCancel(command: CommandFrame): Promise<CommandOutcome> {
+		const sessionId = command.sessionId!;
+		const bridge = this.#collabBridges.get(sessionId);
+		if (!bridge)
+			return {
+				frame: response(this.hostId, command, false, undefined, {
+					code: "session_locked",
+					message: "session is no longer shared over collab",
+				}),
+			};
+		bridge.cancel();
+		return { frame: response(this.hostId, command, true, { cancelled: true }) };
 	}
 
 	private async handleCreate(command: CommandFrame): Promise<CommandOutcome> {
@@ -4901,6 +5054,16 @@ export class LocalAppserver implements AppserverHandle {
 				this.cleanupObserverState(sessionId);
 			}
 			return;
+		}
+		// Collab-shared session: join the live room the host runtime publishes,
+		// and never spawn a second runtime while bridged.
+		if (this.#collabBridges.has(sessionId)) {
+			const link = await readCollabLinkForTranscript(record.path).catch(() => undefined);
+			if (!link) this.disposeCollabBridge(sessionId, "collab host stopped");
+			else return;
+		} else {
+			await this.ensureCollabBridge(sessionId, record.path);
+			if (this.#collabBridges.has(sessionId)) return;
 		}
 		let status: SessionLockStatus;
 		try {
