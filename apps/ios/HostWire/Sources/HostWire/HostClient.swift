@@ -61,6 +61,15 @@ public actor HostClient {
     public let frames: AsyncStream<ServerFrame>
     private let frameContinuation: AsyncStream<ServerFrame>.Continuation
 
+    /// Called after a silent reconnect completes a fresh handshake. Consumers
+    /// re-issue subscriptions here: session.attach registrations died with the
+    /// previous socket, and the post-handshake `sessions` push can be lost to
+    /// a transient send failure, so a session.list re-fetch is required.
+    public var onReconnected: (@Sendable () -> Void)?
+    public func setOnReconnected(_ handler: (@Sendable () -> Void)?) {
+        onReconnected = handler
+    }
+
     /// Pending command requests awaiting their response, keyed by requestId.
     private var pending: [RequestId: CheckedContinuation<ResultFrame, any Error>] = [:]
     private var welcomeCont: CheckedContinuation<WelcomeFrame, any Error>?
@@ -230,7 +239,10 @@ public actor HostClient {
         guard !closedByUser, state == .reconnectWait else { return }
         do {
             try await openSocketAndHandshake()
-            if state == .ready { attempt = 0 }
+            if state == .ready {
+                attempt = 0
+                onReconnected?()
+            }
         } catch {
             handleDisconnect("reconnect failed")
         }

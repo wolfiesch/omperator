@@ -2015,6 +2015,9 @@ final class T4SessionStore: ObservableObject {
         let transport = makeTransport(endpoint: endpoint)
         let c = HostClient(transport: transport, config: HostClient.Config(identity: identity, authentication: authentication, requestedFeatures: Self.clientFeatures))
         client = c
+        await c.setOnReconnected { [weak self] in
+            Task { await self?.handleTransportReconnected() }
+        }
         do {
             let welcome = try await c.connect()
             #if os(Linux)
@@ -2136,6 +2139,32 @@ final class T4SessionStore: ObservableObject {
         }
         if slug.hasSuffix("-") { slug.removeLast() }
         return slug.isEmpty ? "device" : slug
+    }
+
+    /// Scene became active. iOS can keep a suspended app's socket open while
+    /// no frames flow, so a foregrounding may surface a zombie connection:
+    /// refresh the inventory. If the socket is dead the command fails and
+    /// HostClient's reconnect (plus onReconnected) performs the full recovery;
+    /// attach registrations only die with the socket, so a live connection
+    /// keeps them — no re-attach churn here.
+    func handleForegrounded() {
+        guard connected, !connecting else { return }
+        Task { await refresh() }
+    }
+
+    /// HostClient re-handshook silently after a transport drop. Attach
+    /// registrations died with the old socket and the post-handshake
+    /// `sessions` push can be lost, so re-fetch the inventory and re-subscribe
+    /// every session we were attached to.
+    private func handleTransportReconnected() {
+        let reattach = attachedSessions
+        attachedSessions.removeAll()
+        Task {
+            await refresh()
+            for sessionId in reattach {
+                await attach(sessionId: sessionId)
+            }
+        }
     }
 
     /// Re-fetch the authoritative session list (session.list).

@@ -4263,6 +4263,11 @@ export class LocalAppserver implements AppserverHandle {
 					cursor: prepared.baseline,
 				});
 				attached.add(frame.sessionId);
+				this.#log("session.attach", {
+					sessionId: frame.sessionId,
+					connectionId: ws.connectionId,
+					remote: ws.remote,
+				});
 				this.startExternalObserver(frame.sessionId);
 				try {
 					outputFrames.push(...completeAttachOutput(prepared, projection, this.#subagents.get(frame.sessionId)));
@@ -4421,7 +4426,15 @@ export class LocalAppserver implements AppserverHandle {
 			return;
 		}
 		if (this.#stopping || !this.#hello.has(ws)) return;
-		await this.#sendFrame(ws, this.sessionsFrame());
+		// The inventory push is the client's only post-handshake picture of the
+		// world; a transient send failure (client still ramping its reader) must
+		// not silently leave it empty for the life of the connection.
+		for (let attempt = 0; attempt < 3; attempt++) {
+			if (attempt > 0) await Bun.sleep(1500);
+			if (this.#stopping || !this.#hello.has(ws)) return;
+			if (await this.#sendFrame(ws, this.sessionsFrame())) return;
+			this.#log("sessions.send_retry", { connectionId: ws.connectionId, attempt, level: "warn" });
+		}
 	}
 	#createLocalTransport(ws: LocalWs): AppWs {
 		let closed = false;
@@ -4517,8 +4530,22 @@ export class LocalAppserver implements AppserverHandle {
 				connection.socket.close(1011, "remote policy failed");
 				return false;
 			}
-			if (transformed === undefined) return false;
-			return transport.send(typeof transformed === "string" ? transformed : JSON.stringify(transformed));
+			if (transformed === undefined) {
+				this.#log("remote.frame.dropped", {
+					connectionId: connection.connectionId,
+					frameType: compatibleFrame.type,
+					level: "warn",
+				});
+				return false;
+			}
+			const sent = transport.send(typeof transformed === "string" ? transformed : JSON.stringify(transformed));
+			if (!sent)
+				this.#log("remote.frame.send_failed", {
+					connectionId: connection.connectionId,
+					frameType: compatibleFrame.type,
+					level: "warn",
+				});
+			return sent;
 		}
 		return transport.send(JSON.stringify(compatibleFrame));
 	}

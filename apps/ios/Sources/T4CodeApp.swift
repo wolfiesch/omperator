@@ -9,6 +9,7 @@ import SwiftUI
 struct T4CodeApp: App {
     @StateObject private var theme = ThemeStore()
     @StateObject private var store = T4SessionStore()
+    @Environment(\.scenePhase) private var scenePhase
     #if os(macOS)
     @StateObject private var macCommands = MacCommandsModel()
     #endif
@@ -25,6 +26,12 @@ struct T4CodeApp: App {
                 .environmentObject(macCommands)
                 #endif
                 .preferredColorScheme(theme.preferredScheme)
+                .onChange(of: scenePhase) { _, phase in
+                    // Foregrounding can surface a zombie connection: iOS keeps
+                    // the socket open while suspended but no frames flowed.
+                    // Re-sync the inventory and re-attach the open session.
+                    if phase == .active { store.handleForegrounded() }
+                }
         }
         #if os(macOS)
         .commands { MacCommands() }
