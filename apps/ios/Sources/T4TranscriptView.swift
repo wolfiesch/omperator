@@ -119,10 +119,25 @@ struct T4AssistantMessage: View {
     let theme: Theme
     var onSelectText: (() -> Void)?
 
+    private var reasoning: String {
+        entry.data.string("reasoning") ?? ""
+    }
+
     var body: some View {
-        T4Markdown(text: entry.body, theme: theme)
-            .padding(.top, 6)
-            .accessibilityLabel("Assistant said: \(entry.body)")
+        VStack(alignment: .leading, spacing: 6) {
+            // Settled thinking stays visible (italic, muted) unless it is all
+            // the entry has — then body already carries it.
+            if !reasoning.isEmpty && reasoning != entry.body {
+                Text(reasoning)
+                    .font(.system(size: 13))
+                    .italic()
+                    .foregroundStyle(theme.txtMuted)
+                    .textSelection(.enabled)
+            }
+            T4Markdown(text: entry.body, theme: theme)
+        }
+        .padding(.top, 6)
+        .accessibilityLabel("Assistant said: \(entry.body)")
             .contextMenu {
                 Button {
                     platformCopy(entry.body)
@@ -146,7 +161,9 @@ struct T4AssistantMessage: View {
 struct T4TranscriptRow: View {
     let entry: TranscriptEntry
     let theme: Theme
-    @State private var expanded = false
+    // Tool bodies are the substance of a turn — show them by default; the
+    // chevron still folds an entry when it gets in the way.
+    @State private var expanded = true
 
     /// Tool-kind identity from the entry kind/headline.
     private var tool: (name: String, icon: String, color: Color) {
