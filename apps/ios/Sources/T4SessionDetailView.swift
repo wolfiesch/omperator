@@ -149,6 +149,14 @@ struct T4SessionDetailView: View {
                 // The session strip floats over the transcript as glass —
                 // conversation rows scroll under it, like the composer.
                 .onAppear { proxy.scrollTo("transcript-bottom", anchor: .bottom) }
+                #if os(iOS)
+                .onChange(of: store.transcript(for: session.sessionId).count) { _, _ in
+                    guard transcriptModel.prependingSession != session.sessionId else { return }
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo("transcript-bottom", anchor: .bottom)
+                    }
+                }
+                #endif
                 // A page prepend increases the count too; suppress the
                 // scroll-to-bottom follow while the store is prepending
                 // older history so the viewport stays put.
@@ -179,8 +187,6 @@ struct T4SessionDetailView: View {
                 // Native iOS 26 scroll-edge fades: bottom under the floating
                 // composer, top under the glass strip and nav bar — rows
                 // dissolve under both instead of hard-clipping.
-                .scrollEdgeEffectStyle(.soft, for: .bottom)
-                .scrollEdgeEffectStyle(.soft, for: .top)
                 #endif
             }
             T4TerminalDrawer(session: session, store: store, isOpen: showTerminal)
