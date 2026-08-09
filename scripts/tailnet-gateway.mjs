@@ -2,11 +2,11 @@
 
 import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
-import { lstat, readFile, readdir, readlink, stat } from "node:fs/promises";
+import { lstat, readFile, readlink, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { connect as connectSocket } from "node:net";
 import { homedir } from "node:os";
-import { basename, dirname, extname, isAbsolute, join, parse, resolve, sep } from "node:path";
+import { dirname, extname, isAbsolute, join, parse, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import WebSocket, { WebSocketServer } from "ws";
@@ -18,9 +18,6 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 const DEFAULT_PROFILE_START_WAIT_MS = 4_000;
 const DEFAULT_PROFILE_START_POLL_MS = 50;
 const DEFAULT_PROFILE_START_COOLDOWN_MS = 10_000;
-const MAX_ROOMS = 500;
-const STALE_ROOM_MS = 2 * 60 * 1000;
-const ROOMS_SCAN_TTL_MS = 2_000;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1"]);
 const PROFILE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
 const SERVICE_UNIT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.@:-]{0,127}$/u;
@@ -449,190 +446,252 @@ function boundedReason(value, fallback) {
 }
 
 /**
- * Read only the first line of a session transcript so the rooms scan never
- * streams a whole session into memory. Resolves undefined when the file is
- * unreadable, the first line otherwise ("" for an empty file).
+ * Live node + room registry (push model).
+ *
+ * The /enclave plugin in every runtime registers itself and its rooms with
+ * this gateway directly — no session files are scanned, nothing is read from
+ * disk. Each registration carries a heartbeat (the plugin re-registers every
+ * 30s); entries that miss REGISTRY_TTL_MS expire on their own, so a crashed
+ * runtime's rooms disappear without any file-watching. This is also the seed
+ * of the spread-compute registry: /v1/discovery lists the live nodes and
+ * their capabilities.
  */
-function firstLineOfTranscript(path) {
-  return new Promise((resolvePromise) => {
-    const stream = createReadStream(path, { encoding: "utf8" });
-    let buffer = "";
-    let settled = false;
-    const finish = (value) => {
-      if (settled) return;
-      settled = true;
-      stream.destroy();
-      resolvePromise(value);
-    };
-    stream.on("data", (chunk) => {
-      buffer += chunk;
-      const end = buffer.indexOf("\n");
-      if (end !== -1) finish(buffer.slice(0, end));
-    });
-    stream.on("end", () => finish(buffer));
-    stream.on("error", () => finish(undefined));
-  });
+const REGISTRY_TTL_MS = 90 * 1000;
+const REGISTRY_SWEEP_MS = 15 * 1000;
+const MAX_ROOMS_PER_NODE = 64;
+const TOKEN_PATH = join(
+  process.env.XDG_RUNTIME_DIR ?? `/run/user/${process.getuid?.() ?? 0}`,
+  "omp",
+  "enclave-token",
+);
+
+/** nodeId -> live node announcement { nodeId, hostname, arch, cpuCount, memoryBytes, version, lastSeen } */
+const registryNodes = new Map();
+/** `${nodeId}\u0000${sessionId}` -> { nodeId, sessionId, title, roomId, link, token, lastSeen } */
+const registryRooms = new Map();
+let registryToken = "";
+
+function registryTtlMs() {
+  const override = Number(process.env.T4_REGISTRY_TTL_MS);
+  return Number.isSafeInteger(override) && override > 0 ? override : REGISTRY_TTL_MS;
 }
 
-/**
- * Extract the session title from a transcript header line. Accepts the
- * `{"type":"title","title":"…"}` line and the session header line
- * `{"type":"session",…,"title":"…"}`. Returns undefined when the line carries
- * no usable title so callers can fall back to the artifacts dir name.
- */
-function titleFromTranscriptLine(line) {
-  if (typeof line !== "string" || line === "") return undefined;
-  let parsed;
-  try {
-    parsed = JSON.parse(line);
-  } catch {
-    return undefined;
+function registrySweep(now = Date.now()) {
+  const ttl = registryTtlMs();
+  for (const [key, entry] of registryNodes) {
+    if (now - entry.lastSeen > ttl) registryNodes.delete(key);
   }
-  if (parsed === null || typeof parsed !== "object") return undefined;
-  const type = parsed.type;
-  if (type !== "title" && type !== "session") return undefined;
-  return typeof parsed.title === "string" && parsed.title !== "" ? parsed.title : undefined;
+  for (const [key, entry] of registryRooms) {
+    if (now - entry.lastSeen > ttl) registryRooms.delete(key);
+  }
 }
 
-/**
- * Build one room entry from a `<session artifacts>/collab.json` file
- * ({ link, token?, roomId, updatedAt }). sessionId and title come from the
- * parent artifacts dir name (`<timestamp>_<sessionId>`): the sessionId is the
- * token after the last `_`; the title is the first line of the sibling
- * `<artifactsDir>.jsonl` when it carries one, else the timestamp prefix of
- * the dir name, else "" when the transcript has not been written yet. Files
- * without a usable link or roomId are skipped; a missing updatedAt falls back
- * to the file's mtime.
- */
-async function collabRoomAt(collabPath) {
-  // Freshness gate: the plugin heartbeats collab.json every 30s while the
-  // room is live, so a file older than STALE_ROOM_MS advertises a dead room
-  // and must not reach clients.
-  try {
-    const info = await stat(collabPath);
-    if (Date.now() - info.mtimeMs > STALE_ROOM_MS) return undefined;
-  } catch {
-    return undefined;
-  }
-  let text;
-  try {
-    text = await readFile(collabPath, "utf8");
-  } catch {
-    return undefined;
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-  if (parsed === null || typeof parsed !== "object") return undefined;
-  if (typeof parsed.link !== "string" || parsed.link === "") return undefined;
-  if (typeof parsed.roomId !== "string" || parsed.roomId === "") return undefined;
-
-  const artifactsDir = dirname(collabPath);
-  const dirName = basename(artifactsDir);
-  const separator = dirName.lastIndexOf("_");
-  const sessionId = separator === -1 ? dirName : dirName.slice(separator + 1);
-  // The transcript is the sibling of the artifacts dir (`<artifactsDir>.jsonl`).
-  const firstLine = await firstLineOfTranscript(join(dirname(artifactsDir), `${dirName}.jsonl`));
-  const title =
-    firstLine === undefined
-      ? ""
-      : (titleFromTranscriptLine(firstLine) ?? (separator === -1 ? "" : dirName.slice(0, separator)));
-  let updatedAt =
-    typeof parsed.updatedAt === "string" && parsed.updatedAt !== "" ? parsed.updatedAt : "";
-  if (updatedAt === "") {
-    try {
-      updatedAt = (await stat(collabPath)).mtime.toISOString();
-    } catch {
-      return undefined;
-    }
-  }
+function registryRoomForEntry(entry) {
   return {
-    sessionId,
-    title,
-    link: parsed.link,
-    ...(typeof parsed.token === "string" ? { token: parsed.token } : {}),
-    roomId: parsed.roomId,
-    updatedAt,
+    sessionId: entry.sessionId,
+    title: entry.title,
+    link: entry.link,
+    token: entry.token,
+    roomId: entry.roomId,
+    nodeId: entry.nodeId,
+    updatedAt: new Date(entry.lastSeen).toISOString(),
   };
 }
 
+function liveRegistryRooms() {
+  registrySweep();
+  return [...registryRooms.values()].map(registryRoomForEntry);
+}
+
+function liveRegistryNodes() {
+  registrySweep();
+  return [...registryNodes.values()]
+    .map((entry) => ({
+      nodeId: entry.nodeId,
+      hostname: entry.hostname,
+      arch: entry.arch,
+      cpuCount: entry.cpuCount,
+      memoryBytes: entry.memoryBytes,
+      version: entry.version,
+      roomCount: [...registryRooms.values()].filter((room) => room.nodeId === entry.nodeId).length,
+      lastSeen: new Date(entry.lastSeen).toISOString(),
+    }))
+    .sort((a, b) => (a.hostname ?? "").localeCompare(b.hostname ?? ""));
+}
+
+/** The gateway owns the registration secret: env override, else a generated
+ * token persisted under the user runtime dir (mode 0600). */
+async function ensureRegistryToken(environment = process.env) {
+  if (environment.T4_ENCLAVE_TOKEN !== undefined && environment.T4_ENCLAVE_TOKEN !== "") {
+    registryToken = environment.T4_ENCLAVE_TOKEN;
+    return registryToken;
+  }
+  try {
+    const existing = await readFile(TOKEN_PATH, "utf8");
+    const trimmed = existing.trim();
+    if (trimmed.length >= 16) {
+      registryToken = trimmed;
+      return registryToken;
+    }
+  } catch {
+    // fall through to generation
+  }
+  const bytes = new Uint8Array(32);
+  const randomBytes = (await import("node:crypto")).randomBytes;
+  registryToken = randomBytes(32).toString("base64url");
+  try {
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    await mkdir(dirname(TOKEN_PATH), { recursive: true, mode: 0o700 });
+    await writeFile(TOKEN_PATH, `${registryToken}\n`, { mode: 0o600 });
+  } catch {
+    // Token stays in memory only; the plugin falls back to the env token.
+  }
+  return registryToken;
+}
+
+function registryAuthed(request) {
+  const header = request.headers.authorization ?? "";
+  const [scheme, presented] = header.split(/\s+/);
+  if (scheme !== "Bearer" || typeof presented !== "string" || presented === "") return false;
+  const expected = Buffer.from(registryToken);
+  const actual = Buffer.from(presented);
+  if (expected.byteLength !== actual.byteLength) return false;
+  let diff = 0;
+  for (let i = 0; i < expected.byteLength; i += 1) diff |= expected[i] ^ actual[i];
+  return diff === 0;
+}
+
+function registryBody(request, response) {
+  return new Promise((resolvePromise) => {
+    const chunks = [];
+    let size = 0;
+    request.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > 64 * 1024) {
+        replyText(response, 413, "application/json; charset=utf-8", JSON.stringify({ ok: false, error: "body too large" }));
+        request.destroy();
+        resolvePromise(undefined);
+        return;
+      }
+      chunks.push(chunk);
+    });
+    request.on("end", () => {
+      const text = Buffer.concat(chunks).toString("utf8");
+      try {
+        resolvePromise(text === "" ? {} : JSON.parse(text));
+      } catch {
+        replyText(response, 400, "application/json; charset=utf-8", JSON.stringify({ ok: false, error: "invalid JSON body" }));
+        resolvePromise(undefined);
+      }
+    });
+    request.on("error", () => resolvePromise(undefined));
+  });
+}
+
+function registryText(value, name, maximum = 2_048) {
+  return typeof value === "string" && value !== "" && value.length <= maximum ? value : undefined;
+}
+
 /**
- * Scan a sessions root for live collab rooms. The /enclave plugin writes
- * `<session file minus .jsonl>/collab.json`, i.e. inside the session's
- * artifacts dir, which sits one level below the project dir:
- * `<root>/<project>/<artifacts>/collab.json`. We therefore look at files in
- * the root, directly inside one-level project dirs, and directly inside those
- * dirs' subdirectories (the artifacts dirs). Deeper nesting is a different
- * store layout and is ignored. Rooms are sorted by updatedAt descending
- * (sessionId as a stable tie-break), capped at MAX_ROOMS, and an unreadable
- * root yields an empty list.
+ * Route one registry request. Returns true when the request was handled.
+ * Handles POST /v1/nodes, POST /v1/nodes/<nodeId>/rooms,
+ * DELETE /v1/nodes/<nodeId>/rooms/<sessionId>, and GET /v1/nodes.
  */
-export async function scanSessionsRooms(sessionsRoot) {
-  if (sessionsRoot === undefined) return [];
-  let entries;
-  try {
-    entries = await readdir(sessionsRoot, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  const rooms = [];
-  // Discovery-dir rooms: harness-spawned runtimes publish
-  // ~/.omp/collab/rooms/<sessionId>.json when the artifacts dir isn't
-  // discoverable from the extension context.
-  try {
-    const discoveryRoot = join(sessionsRoot, "..", "collab", "rooms");
-    const discoveryEntries = await readdir(discoveryRoot, { withFileTypes: true });
-    for (const entry of discoveryEntries) {
-      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-      const room = await collabRoomAt(join(discoveryRoot, entry.name));
-      if (room !== undefined) rooms.push(room);
+async function handleRegistryRequest(request, response, pathname, method) {
+  if (pathname === "/v1/nodes" && (method === "POST" || method === "GET")) {
+    if (method === "POST") {
+      if (!registryAuthed(request)) {
+        replyText(response, 401, "application/json; charset=utf-8", JSON.stringify({ ok: false, error: "unauthorized" }));
+        return true;
+      }
+      const body = await registryBody(request, response);
+      if (body === undefined) return true;
+      const nodeId = registryText(body.nodeId, "nodeId");
+      if (nodeId === undefined) {
+        replyText(response, 400, "application/json; charset=utf-8", JSON.stringify({ ok: false, error: "nodeId is required" }));
+        return true;
+      }
+      registryNodes.set(nodeId, {
+        nodeId,
+        hostname: registryText(body.hostname, "hostname", 256) ?? nodeId,
+        arch: registryText(body.arch, "arch", 64) ?? "",
+        cpuCount: Number.isSafeInteger(body.cpuCount) && body.cpuCount > 0 ? body.cpuCount : undefined,
+        memoryBytes: Number.isSafeInteger(body.memoryBytes) && body.memoryBytes > 0 ? body.memoryBytes : undefined,
+        version: registryText(body.version, "version", 64) ?? "",
+        lastSeen: Date.now(),
+      });
+      replyText(response, 200, "application/json; charset=utf-8", JSON.stringify({ ok: true }));
+      return true;
     }
-  } catch {
-    // Discovery dir may not exist yet; the artifacts scan below is primary.
+    const body = JSON.stringify({ nodes: liveRegistryNodes() });
+    replyText(response, 200, "application/json; charset=utf-8", body, request.method === "HEAD");
+    return true;
   }
-  for (const entry of entries) {
-    if (entry.isFile() && entry.name === "collab.json") {
-      const room = await collabRoomAt(join(sessionsRoot, entry.name));
-      if (room !== undefined) rooms.push(room);
-      continue;
+
+  const roomsMatch = pathname.match(/^\/v1\/nodes\/([^/]+)\/rooms(?:\/([^/]+))?$/u);
+  if (roomsMatch !== null) {
+    if (method !== "POST" && method !== "DELETE") {
+      response.setHeader("Allow", "POST, DELETE");
+      replyText(response, 405, "text/plain; charset=utf-8", "Method not allowed");
+      return true;
     }
-    if (!entry.isDirectory()) continue;
-    const projectDir = join(sessionsRoot, entry.name);
-    const direct = await collabRoomAt(join(projectDir, "collab.json"));
-    if (direct !== undefined) rooms.push(direct);
-    // Artifacts dirs: one level below the project dir.
-    let children;
+    if (!registryAuthed(request)) {
+      replyText(response, 401, "application/json; charset=utf-8", JSON.stringify({ ok: false, error: "unauthorized" }));
+      return true;
+    }
+    let nodeId;
     try {
-      children = await readdir(projectDir, { withFileTypes: true });
+      nodeId = decodeURIComponent(roomsMatch[1]);
     } catch {
-      continue;
+      nodeId = undefined;
     }
-    for (const child of children) {
-      if (!child.isDirectory()) continue;
-      const room = await collabRoomAt(join(projectDir, child.name, "collab.json"));
-      if (room !== undefined) rooms.push(room);
+    if (nodeId === undefined || nodeId === "") {
+      replyText(response, 400, "application/json; charset=utf-8", JSON.stringify({ ok: false, error: "invalid nodeId" }));
+      return true;
     }
+    if (method === "DELETE") {
+      let sessionId;
+      try {
+        sessionId = decodeURIComponent(roomsMatch[2] ?? "");
+      } catch {
+        sessionId = undefined;
+      }
+      registryRooms.delete(`${nodeId}\u0000${sessionId ?? ""}`);
+      replyText(response, 200, "application/json; charset=utf-8", JSON.stringify({ ok: true }));
+      return true;
+    }
+    const body = await registryBody(request, response);
+    if (body === undefined) return true;
+    const sessionId = registryText(body.sessionId, "sessionId");
+    const roomId = registryText(body.roomId, "roomId");
+    const link = registryText(body.link, "link", 4_096);
+    if (sessionId === undefined || roomId === undefined || link === undefined) {
+      replyText(response, 400, "application/json; charset=utf-8", JSON.stringify({ ok: false, error: "sessionId, roomId, and link are required" }));
+      return true;
+    }
+    const nodeRooms = [...registryRooms.values()].filter((room) => room.nodeId === nodeId);
+    if (nodeRooms.length >= MAX_ROOMS_PER_NODE && !registryRooms.has(`${nodeId}\u0000${sessionId}`)) {
+      // Drop the oldest room so one node cannot crowd out the registry.
+      const oldest = nodeRooms.sort((a, b) => a.lastSeen - b.lastSeen)[0];
+      registryRooms.delete(`${oldest.nodeId}\u0000${oldest.sessionId}`);
+    }
+    registryRooms.set(`${nodeId}\u0000${sessionId}`, {
+      nodeId,
+      sessionId,
+      title: registryText(body.title, "title", 512) ?? "",
+      roomId,
+      link,
+      token: registryText(body.token, "token", 2_048) ?? null,
+      lastSeen: Date.now(),
+    });
+    replyText(response, 200, "application/json; charset=utf-8", JSON.stringify({ ok: true }));
+    return true;
   }
-  rooms.sort(
-    (a, b) =>
-      Date.parse(b.updatedAt) - Date.parse(a.updatedAt) ||
-      String(a.sessionId).localeCompare(String(b.sessionId)),
-  );
-  return rooms.slice(0, MAX_ROOMS);
+  return false;
 }
 
 const TAILSCALE_STATUS_TIMEOUT_MS = 10_000;
 
-/**
- * Resolve this host's MagicDNS name via one `tailscale status --json` spawn.
- * The Self.DNSName (e.g. "host.tailnet.ts.net.") is returned without its
- * trailing dot, or null when tailscale is unavailable or reports no identity.
- * Callers cache the result; a failed spawn is not cached so a later request
- * can retry.
- */
 export function spawnTailscaleHostName(environment = process.env) {
   return new Promise((resolvePromise) => {
     const child = spawn("tailscale", ["status", "--json"], {
@@ -759,10 +818,8 @@ export async function startTailnetGateway(input) {
     profileStartWaitMs: input.profileStartWaitMs ?? DEFAULT_PROFILE_START_WAIT_MS,
     profileStartPollMs: input.profileStartPollMs ?? DEFAULT_PROFILE_START_POLL_MS,
     profileStartCooldownMs: input.profileStartCooldownMs ?? DEFAULT_PROFILE_START_COOLDOWN_MS,
-    sessionsRoot:
-      input.sessionsRoot === undefined || input.sessionsRoot === ""
-        ? undefined
-        : resolve(requiredText(input.sessionsRoot, "sessions root", 4_096)),
+    environment: input.environment ?? process.env,
+
     resolveAppSocket: resolveSocket,
     startSupervisor: input.startSupervisor ?? supervisorStart,
   };
@@ -798,22 +855,18 @@ export async function startTailnetGateway(input) {
   };
   let closed = false;
 
-  // Rooms scans are cached for ROOMS_SCAN_TTL_MS so /v1/rooms never hammers
-  // the sessions filesystem on every request. An unconfigured root short-
-  // circuits to an empty list without touching the filesystem.
-  const roomsCache = { rooms: undefined, at: 0 };
-  const roomsForRequest = () => {
-    if (options.sessionsRoot === undefined) return Promise.resolve([]);
-    const now = Date.now();
-    if (roomsCache.rooms !== undefined && now - roomsCache.at < ROOMS_SCAN_TTL_MS) {
-      return Promise.resolve(roomsCache.rooms);
+  // Registration secret: loaded once at startup (env or generated token).
+  await ensureRegistryToken(options.environment ?? process.env);
+
+  // TTL sweeper: expired node/room announcements leave on their own.
+  const registrySweeper = setInterval(() => {
+    try {
+      registrySweep();
+    } catch {
+      // sweep failures are non-fatal
     }
-    return scanSessionsRooms(options.sessionsRoot).then((rooms) => {
-      roomsCache.rooms = rooms;
-      roomsCache.at = Date.now();
-      return rooms;
-    });
-  };
+  }, REGISTRY_SWEEP_MS);
+  registrySweeper.unref?.();
 
   const activeBrowsers = new Map();
   const webSockets = new WebSocketServer({
@@ -845,7 +898,11 @@ export async function startTailnetGateway(input) {
         replyText(response, healthy ? 200 : 503, "application/json; charset=utf-8", body, request.method === "HEAD");
         return;
       }
-      if (request.method !== "GET" && request.method !== "HEAD") {
+      const method = request.method ?? "GET";
+      if (pathname.startsWith("/v1/nodes")) {
+        if (await handleRegistryRequest(request, response, pathname, method)) return;
+      }
+      if (method !== "GET" && method !== "HEAD") {
         response.setHeader("Allow", "GET, HEAD");
         replyText(response, 405, "text/plain; charset=utf-8", "Method not allowed");
         return;
@@ -868,13 +925,14 @@ export async function startTailnetGateway(input) {
           autoApprove: true,
           wsUrl: new URL("/v1/ws", origin).toString(),
           roomsEndpoint: "/v1/rooms",
+          nodes: liveRegistryNodes(),
         });
         response.setHeader("Cache-Control", "no-store");
         replyText(response, 200, "application/json; charset=utf-8", body, request.method === "HEAD");
         return;
       }
       if (pathname === "/v1/rooms") {
-        const body = JSON.stringify({ rooms: await roomsForRequest() });
+        const body = JSON.stringify({ rooms: liveRegistryRooms() });
         response.setHeader("Cache-Control", "no-store");
         replyText(response, 200, "application/json; charset=utf-8", body, request.method === "HEAD");
         return;
@@ -1011,7 +1069,7 @@ export function optionsFromEnvironment(environment = process.env) {
     clusterWsUrl,
     profileRoutes,
     startProfiles: environment.T4_ENABLE_PROFILE_STARTS === "1",
-    sessionsRoot: environment.T4_SESSIONS_ROOT,
+    environment,
   };
 }
 
