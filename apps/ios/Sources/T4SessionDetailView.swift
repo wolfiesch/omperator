@@ -169,14 +169,14 @@ struct T4SessionDetailView: View {
         let entries = store.transcript(for: session.sessionId)
         return T4TranscriptView(
             entries: Array(entries.suffix(renderLimit)),
-            totalCount: entries.count,
-            onShowEarlier: { withAnimation(.easeOut(duration: 0.18)) { renderLimit += 40 } },
-            showWindowButton: showWindowButton,
             liveTurn: transcriptModel.liveTurns[session.sessionId],
             streamingMessage: transcriptModel.streamingMessages[session.sessionId],
             liveTools: transcriptModel.liveTools[session.sessionId] ?? LiveToolProjection(),
             theme: t,
-            onSelectText: { activeSheet = .selectText })
+            onSelectText: { activeSheet = .selectText },
+            totalCount: entries.count,
+            onShowEarlier: { withAnimation(.easeOut(duration: 0.18)) { renderLimit += 40 } },
+            showWindowButton: showWindowButton)
     }
 
     var body: some View {
