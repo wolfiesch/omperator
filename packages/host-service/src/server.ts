@@ -3253,6 +3253,18 @@ export class LocalAppserver implements AppserverHandle {
 		if (!command.sessionId) return false;
 		if (this.#observerIndependentTerminalOperations && command.command === "term.open") return false;
 		if (this.#externalRuntimes.has(command.sessionId)) return false;
+		// An explicit prompt adopts an observed session stuck in reconciling:
+		// waiting for a continuously written transcript to go quiet starves the
+		// observer promotion forever, while spawning the supervisor IS the
+		// adoption (resume-in-place, claude-code style). Unverified and
+		// malformed sessions stay barred — their ownership is genuinely unsafe.
+		if (
+			(command.command === "session.prompt" ||
+				command.command === "session.steer" ||
+				command.command === "session.followUp") &&
+			this.#projections.get(command.sessionId)?.value.ref.liveState?.sessionControl?.mode === "reconciling"
+		)
+			return false;
 		if (
 			command.command === "session.reclaim" &&
 			this.#projections.get(command.sessionId)?.value.ref.liveState?.sessionControl?.mode === "released"
@@ -3999,6 +4011,10 @@ export class LocalAppserver implements AppserverHandle {
 		try {
 		await supervisor.start();
 		if (this.#supervisors.get(sessionId) !== supervisor) throw new Error("rpc child exited during startup");
+		// Record ownership for prompt-driven adoptions too (not just observer
+		// promotion), so the reconciling control state settles back to writable
+		// on the next external refresh instead of sticking at "take over".
+		await this.#sessionOwnership?.add(sessionId, record.path).catch(() => undefined);
 		this.releaseSupervisorAfterExit(sessionId, supervisor);
 		this.#log("supervisor.spawn", { sessionId });
 		return supervisor;

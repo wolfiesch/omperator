@@ -40,11 +40,11 @@ extension SessionControlState {
             }
         case .reconciling(let transcript):
             return T4SessionControlPresentation(
-                railLabel: "Taking over",
-                title: "Taking over",
+                railLabel: "Take over",
+                title: "Take over this session",
                 detail: transcript == .live
-                    ? "Confirming the transcript is complete. Input returns in a moment."
-                    : "Catching up from the last saved copy before enabling input.",
+                    ? "Another runtime may still be writing. Sending a message resumes this transcript here."
+                    : "Sending a message resumes from the last saved copy of this transcript.",
                 systemImage: "arrow.trianglehead.2.clockwise.rotate.90",
                 canFork: false
             )
@@ -83,7 +83,11 @@ extension SessionControlState {
 
 extension SessionRef {
     var t4IsWritable: Bool {
-        sessionControl == nil && archivedAt == nil
+        // Reconciling stays writable: an explicit prompt adopts the session
+        // (resume-in-place), and against a continuously written transcript the
+        // "input returns in a moment" wait otherwise starves forever.
+        if case .reconciling = sessionControl { return archivedAt == nil }
+        return sessionControl == nil && archivedAt == nil
     }
 
     /// Archived sessions normally restore without a controller lease. A
