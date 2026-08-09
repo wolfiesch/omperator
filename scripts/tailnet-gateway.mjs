@@ -569,6 +569,20 @@ export async function scanSessionsRooms(sessionsRoot) {
     return [];
   }
   const rooms = [];
+  // Discovery-dir rooms: harness-spawned runtimes publish
+  // ~/.omp/collab/rooms/<sessionId>.json when the artifacts dir isn't
+  // discoverable from the extension context.
+  try {
+    const discoveryRoot = join(sessionsRoot, "..", "collab", "rooms");
+    const discoveryEntries = await readdir(discoveryRoot, { withFileTypes: true });
+    for (const entry of discoveryEntries) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+      const room = await collabRoomAt(join(discoveryRoot, entry.name));
+      if (room !== undefined) rooms.push(room);
+    }
+  } catch {
+    // Discovery dir may not exist yet; the artifacts scan below is primary.
+  }
   for (const entry of entries) {
     if (entry.isFile() && entry.name === "collab.json") {
       const room = await collabRoomAt(join(sessionsRoot, entry.name));
