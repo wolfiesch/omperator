@@ -263,6 +263,7 @@ struct T4SessionDetailView: View {
     }
 
     /// One pane per sheet case.
+    @ViewBuilder
     private func sheetBody(_ sheet: ActiveSheet) -> some View {
         switch sheet {
         case .files:
