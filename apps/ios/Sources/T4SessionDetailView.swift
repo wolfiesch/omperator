@@ -77,6 +77,31 @@ struct T4SessionDetailView: View {
     @State private var renderLimit = 40
     @State private var lastWindowGrow = Date.distantPast
 
+    private var showWindowButton: Bool {
+        #if os(macOS)
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    /// The transcript with the render window applied. Broken out of the body
+    /// expression — the parameter list with closures was too much for the
+    /// Swift type-checker.
+    private func transcriptView(_ session: SessionRef) -> some View {
+        let entries = store.transcript(for: session.sessionId)
+        return T4TranscriptView(
+            entries: Array(entries.suffix(renderLimit)),
+            totalCount: entries.count,
+            onShowEarlier: { withAnimation(.easeOut(duration: 0.18)) { renderLimit += 40 } },
+            showWindowButton: showWindowButton,
+            liveTurn: transcriptModel.liveTurns[session.sessionId],
+            streamingMessage: transcriptModel.streamingMessages[session.sessionId],
+            liveTools: transcriptModel.liveTools[session.sessionId] ?? LiveToolProjection(),
+            theme: t,
+            onSelectText: { activeSheet = .selectText })
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
@@ -94,22 +119,7 @@ struct T4SessionDetailView: View {
                         }
                         if showFacts { facts }
                         Divider().overlay(t.lineFaint)
-                        T4TranscriptView(
-                            entries: Array(store.transcript(for: session.sessionId).suffix(renderLimit)),
-                            totalCount: store.transcript(for: session.sessionId).count,
-                            onShowEarlier: { withAnimation(.easeOut(duration: 0.18)) { renderLimit += 40 } },
-                            showWindowButton: {
-                                #if os(macOS)
-                                return true
-                                #else
-                                return false
-                                #endif
-                            }(),
-                            liveTurn: transcriptModel.liveTurns[session.sessionId],
-                            streamingMessage: transcriptModel.streamingMessages[session.sessionId],
-                            liveTools: transcriptModel.liveTools[session.sessionId] ?? LiveToolProjection(),
-                            theme: t,
-                            onSelectText: { activeSheet = .selectText })
+                        transcriptView(session)
                         // Live asks belong at the transcript's tail — the
                         // newest thing demanding attention, always in view.
                         if let ask = promptModel.pendingAsk, ask.sessionId == session.sessionId {
