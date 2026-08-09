@@ -2891,6 +2891,9 @@ final class T4SessionStore: ObservableObject {
         case "custom_message":
             let customType = entry.customType ?? "custom_message"
             let text = collabCustomMessageText(entry.message?.content)
+            // Metadata-only entries (tool execution markers, session events)
+            // have no readable text — drop them entirely.
+            guard !text.isEmpty else { return [] }
             let data: JSONValue = .object([
                 "role": .string("assistant"),
                 "customType": .string(customType),
@@ -3010,16 +3013,24 @@ final class T4SessionStore: ObservableObject {
         return parts.joined(separator: "\n")
     }
 
-    /// custom_message content → a one-line renderable string.
+    /// custom_message content → a renderable string. Metadata-only entries
+    /// (tool_execution_start/end, session_exit) yield "" and are dropped —
+    /// they are never shown as raw JSON.
     private func collabCustomMessageText(_ content: JSONValue?) -> String {
         guard let content else { return "" }
         if case .string(let text) = content { return text }
-        if case .object(let o) = content, case .string(let text) = o["text"] ?? .null {
-            return text
+        if case .object(let o) = content {
+            if case .string(let text) = o["text"] ?? .null, !text.isEmpty { return text }
         }
-        if let data = try? JSONEncoder().encode(content),
-           let json = String(data: data, encoding: .utf8) {
-            return json
+        if case .array(let blocks) = content {
+            var parts: [String] = []
+            for block in blocks {
+                guard case .object(let b) = block else { continue }
+                if case .string("text") = b["type"], case .string(let text) = b["text"] {
+                    parts.append(text)
+                }
+            }
+            return parts.joined(separator: "\n")
         }
         return ""
     }
