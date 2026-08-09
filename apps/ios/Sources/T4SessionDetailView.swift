@@ -71,32 +71,7 @@ struct T4SessionDetailView: View {
     /// fades. Extracted so the type-checker gets small expressions.
     private func transcriptScroll(_ proxy: ScrollViewProxy) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                #if os(macOS)
-                loadEarlierSection
-                #else
-                // iOS: paging is scroll-driven — no button. Reaching the top
-                // of the loaded window pulls the next page.
-                topPagingMarker
-                #endif
-                if let challenge = promptModel.pendingConfirmation {
-                    confirmationBanner(challenge)
-                }
-                if showFacts { facts }
-                Divider().overlay(t.lineFaint)
-                transcriptView(session)
-                // Live asks belong at the transcript's tail — the
-                // newest thing demanding attention, always in view.
-                if let ask = promptModel.pendingAsk, ask.sessionId == session.sessionId {
-                    T4AskCard(ask: ask, theme: t) { value in
-                        Task { await store.respondAsk(value: value) }
-                    }
-                }
-                Color.clear
-                    .frame(height: 1)
-                    .id("transcript-bottom")
-            }
-            .padding()
+            transcriptContent()
         }
         .coordinateSpace(name: "transcript-scroll")
         // The session strip floats over the transcript as glass —
@@ -114,6 +89,37 @@ struct T4SessionDetailView: View {
         .scrollEdgeEffectStyle(.soft, for: .bottom)
         .scrollEdgeEffectStyle(.soft, for: .top)
         #endif
+    }
+
+    /// The transcript scroll content. Split from the scroll chain — the
+    /// arm64 type-checker times out on the combined expression.
+    private func transcriptContent() -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            #if os(macOS)
+            loadEarlierSection
+            #else
+            // iOS: paging is scroll-driven — no button. Reaching the top
+            // of the loaded window pulls the next page.
+            topPagingMarker
+            #endif
+            if let challenge = promptModel.pendingConfirmation {
+                confirmationBanner(challenge)
+            }
+            if showFacts { facts }
+            Divider().overlay(t.lineFaint)
+            transcriptView(session)
+            // Live asks belong at the transcript's tail — the
+            // newest thing demanding attention, always in view.
+            if let ask = promptModel.pendingAsk, ask.sessionId == session.sessionId {
+                T4AskCard(ask: ask, theme: t) { value in
+                    Task { await store.respondAsk(value: value) }
+                }
+            }
+            Color.clear
+                .frame(height: 1)
+                .id("transcript-bottom")
+        }
+        .padding()
     }
 
     /// Scroll-up paging: nearing the top of the loaded window grows the
