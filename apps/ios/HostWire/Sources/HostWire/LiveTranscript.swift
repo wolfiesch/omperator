@@ -180,16 +180,48 @@ public struct LiveTurnBlock: Equatable, Identifiable, Sendable {
 
     fileprivate static func display(_ value: JSONValue) -> String {
         if case .string(let value) = value { return retained(value, limit: 65_536) }
-        guard let data = try? JSONEncoder.sortedPretty.encode(value),
-              let output = String(data: data, encoding: .utf8) else { return "" }
-        return retained(output, limit: 65_536)
+        if let prose = prose(value), !prose.isEmpty {
+            return retained(prose, limit: 65_536)
+        }
+        // Structured payload with no prose: empty beats a raw JSON dump.
+        return ""
     }
 
     fileprivate static func compactDisplay(_ value: JSONValue) -> String {
         if case .string(let value) = value { return retained(value, limit: 65_536) }
-        guard let data = try? JSONEncoder.sortedCompact.encode(value),
-              let output = String(data: data, encoding: .utf8) else { return "" }
-        return retained(output, limit: 65_536)
+        if let prose = prose(value), !prose.isEmpty {
+            // Collapse to one line for the live tool header/meta.
+            let oneLine = prose.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: " ")
+            return retained(oneLine, limit: 65_536)
+        }
+        return ""
+    }
+
+    /// Walk a structured JSON value for readable prose (text/content/thinking
+    /// blocks, nested arrays/objects). Double-encoded strings are re-walked.
+    fileprivate static func prose(_ value: JSONValue) -> String? {
+        guard let data = try? JSONEncoder().encode(value),
+              let object = try? JSONSerialization.jsonObject(with: data) else { return nil }
+        var parts: [String] = []
+        func walk(_ value: Any) {
+            if let text = value as? String {
+                if let nested = text.data(using: .utf8),
+                   let inner = try? JSONSerialization.jsonObject(with: nested),
+                   !(inner is String) {
+                    walk(inner)
+                } else {
+                    parts.append(text)
+                }
+            } else if let array = value as? [Any] {
+                for item in array { walk(item) }
+            } else if let dict = value as? [String: Any] {
+                for key in ["text", "content", "thinking", "output", "message"] {
+                    if let value = dict[key] { walk(value) }
+                }
+            }
+        }
+        walk(object)
+        return parts.isEmpty ? nil : parts.joined(separator: "\n")
     }
 
     fileprivate static func retained(_ value: String, limit: Int) -> String {
