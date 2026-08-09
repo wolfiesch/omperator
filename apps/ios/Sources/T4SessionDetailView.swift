@@ -113,7 +113,17 @@ struct T4SessionDetailView: View {
     /// expression — the parameter list with closures was too much for the
     /// Swift type-checker.
     private func transcriptView(_ session: SessionRef) -> some View {
-        EmptyView()
+        let entries = store.transcript(for: session.sessionId)
+        return T4TranscriptView(
+            entries: Array(entries.suffix(renderLimit)),
+            liveTurn: transcriptModel.liveTurns[session.sessionId],
+            streamingMessage: transcriptModel.streamingMessages[session.sessionId],
+            liveTools: transcriptModel.liveTools[session.sessionId] ?? LiveToolProjection(),
+            theme: t,
+            onSelectText: { activeSheet = .selectText },
+            totalCount: entries.count,
+            onShowEarlier: { withAnimation(.easeOut(duration: 0.18)) { renderLimit += 40 } },
+            showWindowButton: showWindowButton)
     }
 
     var body: some View {
@@ -148,15 +158,8 @@ struct T4SessionDetailView: View {
                 .coordinateSpace(name: "transcript-scroll")
                 // The session strip floats over the transcript as glass —
                 // conversation rows scroll under it, like the composer.
+                .safeAreaInset(edge: .top, spacing: 0) { pinnedHeader }
                 .onAppear { proxy.scrollTo("transcript-bottom", anchor: .bottom) }
-                #if os(iOS)
-                .onChange(of: store.transcript(for: session.sessionId).count) { _, _ in
-                    guard transcriptModel.prependingSession != session.sessionId else { return }
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo("transcript-bottom", anchor: .bottom)
-                    }
-                }
-                #endif
                 // A page prepend increases the count too; suppress the
                 // scroll-to-bottom follow while the store is prepending
                 // older history so the viewport stays put.
@@ -179,6 +182,9 @@ struct T4SessionDetailView: View {
                     proxy.scrollTo("transcript-bottom", anchor: .bottom)
                 }
                 #if os(iOS)
+                // Scroll-up paging: nearing the top of the loaded window
+                // pulls the next page — no button.
+                .onPreferenceChange(TopOffsetKey.self) { handleScrollTop(minY: $0) }
                 // Drag or tap the transcript to put the keyboard away. A
                 // quick tap never conflicts with text selection (that needs
                 // a long-press), and buttons inside rows still win their tap.
@@ -187,6 +193,8 @@ struct T4SessionDetailView: View {
                 // Native iOS 26 scroll-edge fades: bottom under the floating
                 // composer, top under the glass strip and nav bar — rows
                 // dissolve under both instead of hard-clipping.
+                .scrollEdgeEffectStyle(.soft, for: .bottom)
+                .scrollEdgeEffectStyle(.soft, for: .top)
                 #endif
             }
             T4TerminalDrawer(session: session, store: store, isOpen: showTerminal)
@@ -409,7 +417,15 @@ struct T4SessionDetailView: View {
     /// 1pt marker pinned to the top of the scroll content; its offset in the
     /// named space drives scroll-up paging.
     private var topPagingMarker: some View {
-        Color.clear.frame(height: 1)
+        Color.clear
+            .frame(height: 1)
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(
+                        key: TopOffsetKey.self,
+                        value: geo.frame(in: .named("transcript-scroll")).minY)
+                }
+            )
     }
 
     /// "Load earlier messages" control (macOS). iOS pages automatically when
