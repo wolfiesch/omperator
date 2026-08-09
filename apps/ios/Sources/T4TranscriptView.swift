@@ -125,14 +125,10 @@ struct T4AssistantMessage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            // Settled thinking stays visible (italic, muted) unless it is all
-            // the entry has — then body already carries it.
+            // Settled thinking: hidden by default, tap to expand. When
+            // thinking is all the entry has, body already carries it.
             if !reasoning.isEmpty && reasoning != entry.body {
-                Text(reasoning)
-                    .font(.system(size: 13))
-                    .italic()
-                    .foregroundStyle(theme.txtMuted)
-                    .textSelection(.enabled)
+                T4ThinkingBlock(text: reasoning, theme: theme)
             }
             T4Markdown(text: entry.body, theme: theme)
         }
@@ -244,6 +240,45 @@ struct T4TranscriptRow: View {
 
 /// Live tail row. The unfinished tail intentionally stays lightweight plain
 /// text; settled entries receive full Markdown and syntax highlighting.
+/// Thinking/reasoning text: hidden by default, tap the "Thinking" row to
+/// expand. Shared by live, streaming, and settled renders so the collapse
+/// behavior is identical everywhere.
+struct T4ThinkingBlock: View {
+    let text: String
+    let theme: Theme
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button { withAnimation(.easeInOut(duration: 0.18)) { expanded.toggle() } } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "brain.head.profile")
+                        .font(.system(size: 11))
+                        .foregroundStyle(theme.txtMuted)
+                    Text("Thinking")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(theme.txtMuted)
+                    Spacer()
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(theme.txtLabel)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if expanded {
+                Text(text)
+                    .font(.system(size: 13))
+                    .italic()
+                    .foregroundStyle(theme.txtMuted)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+}
+
 struct T4StreamingMessage: View {
     let text: String
     let reasoning: String
@@ -254,11 +289,7 @@ struct T4StreamingMessage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if !reasoning.isEmpty {
-                Text(reasoning)
-                    .font(.system(size: 13))
-                    .italic()
-                    .foregroundStyle(theme.txtMuted)
-                    .textSelection(.enabled)
+                T4ThinkingBlock(text: reasoning, theme: theme)
             }
             if !text.isEmpty {
                 Text(text)
@@ -335,11 +366,7 @@ struct T4LiveTurnBlockView: View {
         switch block.kind {
         case .thinking:
             if !block.content.isEmpty {
-                Text(block.content)
-                    .font(.system(size: 13))
-                    .italic()
-                    .foregroundStyle(theme.txtMuted)
-                    .textSelection(.enabled)
+                T4ThinkingBlock(text: block.content, theme: theme)
                     .accessibilityLabel("Assistant thinking: \(block.content)")
                     .accessibilityIdentifier("live-turn-thinking")
             }
