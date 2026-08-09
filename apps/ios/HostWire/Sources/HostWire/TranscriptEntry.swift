@@ -69,28 +69,29 @@ public struct TranscriptEntry: Equatable, Sendable {
         var parts: [String] = []
         func walk(_ value: Any) {
             if let text = value as? String {
-                parts.append(text)
+                // A string that is itself JSON (double-encoded payload) must
+                // be walked, not shown verbatim.
+                if let nested = text.data(using: .utf8),
+                   let inner = try? JSONSerialization.jsonObject(with: nested),
+                   !(inner is String) {
+                    walk(inner)
+                } else {
+                    parts.append(text)
+                }
             } else if let array = value as? [Any] {
                 for item in array { walk(item) }
             } else if let dict = value as? [String: Any] {
-                // Prefer the payload keys that carry prose; skip metadata.
+                // Prose keys first; skip metadata keys.
                 for key in ["text", "content", "thinking", "output", "message"] {
                     if let value = dict[key] { walk(value) }
-                }
-                for (key, value) in dict where !["type", "toolCallId", "toolName", "isError", "id", "name", "details", "timestamp"].contains(key) {
-                    if let text = value as? String { parts.append(text) }
                 }
             }
         }
         walk(object)
         let joined = parts.joined(separator: "\n")
         if !joined.isEmpty { return joined }
-        // No prose found: a compact pretty dump beats a one-line blob.
-        if let pretty = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]),
-           let text = String(data: pretty, encoding: .utf8) {
-            return text
-        }
-        return raw
+        // No prose: never dump raw JSON — the row shows the ok/error state.
+        return ""
     }
 
     /// Decode a `DurableEntry` from JSON then wrap it.

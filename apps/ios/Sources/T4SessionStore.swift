@@ -2974,18 +2974,14 @@ final class T4SessionStore: ObservableObject {
         content?.bool("isError") ?? false
     }
 
-    /// The tool result's readable output: text blocks (string or array),
-    /// json-typed blocks pretty-dumped, else a compact JSON rendering.
+    /// The tool result's readable output — Enclave `contentString` semantics:
+    /// a plain string, or the `text` blocks of a content array, joined.
+    /// Anything else yields "" (never a raw JSON dump).
     private func collabToolResultText(_ content: JSONValue?) -> String {
         guard let content else { return "" }
         if case .string(let text) = content { return text }
         if case .array(let blocks) = content { return collabBlocksText(blocks) }
         if let blocks = content.array("content") { return collabBlocksText(blocks) }
-        if let json = content.object("json") { return collabJsonDump(json) }
-        if let data = try? JSONEncoder().encode(content),
-           let json = String(data: data, encoding: .utf8) {
-            return json
-        }
         return ""
     }
 
@@ -3001,41 +2997,17 @@ final class T4SessionStore: ObservableObject {
                     for item in texts { if case .string(let text) = item { parts.append(text) } }
                 }
             case .string("json"), .string("json_object"):
-                if let json = b["json"] { parts.append(collabJsonDump(json)) }
-                else if case .string(let text) = b["text"] { parts.append(text) }
+                // Structured payload: keep any prose it carries, never dump.
+                if case .string(let text) = b["text"] { parts.append(text) }
             default:
                 if case .string(let text) = b["text"] { parts.append(text) }
                 else if case .string(let value) = b["content"] { parts.append(value) }
                 else if let values = b.array("content") {
-                    for item in values {
-                        if case .string(let text) = item { parts.append(text) }
-                        else if case .object = item, let nested = collabJsonDumpOrText(item) { parts.append(nested) }
-                    }
+                    for item in values { if case .string(let text) = item { parts.append(text) } }
                 }
             }
         }
         return parts.joined(separator: "\n")
-    }
-
-    /// A structured value: pretty JSON when it is an object/array, else the
-    /// plain string. Used for json-typed blocks so the user sees real
-    /// formatting, not a one-line blob.
-    private func collabJsonDump(_ value: JSONValue) -> String {
-        if case .string(let text) = value { return text }
-        guard let data = try? JSONEncoder().encode(value),
-              let json = String(data: data, encoding: .utf8),
-              let parsed = try? JSONSerialization.jsonObject(with: data),
-              let pretty = try? JSONSerialization.data(withJSONObject: parsed, options: [.prettyPrinted, .sortedKeys]),
-              let prettyText = String(data: pretty, encoding: .utf8) else { return "" }
-        // The raw (possibly huge) string may exceed the row's body cap; the
-        // row itself truncates, but keep single-line dumps bounded here.
-        return prettyText.count > json.count ? prettyText : json
-    }
-
-    private func collabJsonDumpOrText(_ value: JSONValue) -> String? {
-        if case .string(let text) = value { return text }
-        let dump = collabJsonDump(value)
-        return dump.isEmpty ? nil : dump
     }
 
     /// custom_message content → a one-line renderable string.
