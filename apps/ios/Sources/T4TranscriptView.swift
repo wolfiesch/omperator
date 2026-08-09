@@ -209,7 +209,6 @@ struct T4TranscriptRow: View {
                             .foregroundStyle(theme.txtLabel)
                     }
                 }
-                .padding(.horizontal, 10).padding(.vertical, 8)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -227,14 +226,9 @@ struct T4TranscriptRow: View {
                 }
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10).padding(.bottom, 8)
+                .padding(.top, 4)
             }
         }
-        .background(theme.glassFill2, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(tool.color.opacity(0.35), lineWidth: 1)
-        )
     }
 }
 
@@ -415,12 +409,6 @@ struct T4LiveTurnBlockView: View {
                         .textSelection(.enabled)
                 }
             }
-            .padding(10)
-            .background(theme.glassFill2, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(toolColor.opacity(0.35), lineWidth: 1)
-            )
             .animation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true), value: pulse)
             .onAppear { pulse = true }
             .accessibilityLabel("\(block.tool) \(toolStatus): \(block.previewText)")
@@ -501,12 +489,6 @@ struct T4LiveToolRow: View {
                     .textSelection(.enabled)
             }
         }
-        .padding(10)
-        .background(theme.glassFill2, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(color.opacity(0.35), lineWidth: 1)
-        )
         .animation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true), value: pulse)
         .onAppear { pulse = true }
         .accessibilityLabel("\(call.tool) \(status)")
