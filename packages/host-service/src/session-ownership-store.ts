@@ -92,6 +92,10 @@ export class SessionOwnershipStore {
 		if (!ledger) return;
 		this.#sessions = new Map(ledger.sessions.map(record => [record.sessionId, record]));
 	}
+	/** All owned sessions (ledger snapshot). */
+	list(): { sessionId: SessionId; path: string }[] {
+		return [...this.#sessions.entries()].map(([sessionId, record]) => ({ sessionId, path: record.path }));
+	}
 	owns(id: SessionId, transcriptPath: string): boolean {
 		return this.#sessions.get(id)?.path === transcriptPath;
 	}

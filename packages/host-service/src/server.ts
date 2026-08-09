@@ -2,7 +2,7 @@ import { Buffer } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
 import type { FileHandle } from "node:fs/promises";
 import { chmod, stat as fsStat, lstat, open, readlink, rename, symlink, unlink } from "node:fs/promises";
-import { dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import {
 	type AttentionOutcome,
 	type CatalogItem,
@@ -1400,6 +1400,7 @@ export class LocalAppserver implements AppserverHandle {
 			this.#started = true;
 			this.#startedAt = this.#clock.now().getTime();
 			this.#startIdleSupervisorWatchdog();
+			await this.#resumeOwnedSessions();
 			// Folder-created sessions (e.g. another OMP runtime writing into the
 			// same sessions tree) must reach clients without waiting for the next
 			// welcome/session.list. The debounced watcher re-runs discovery and
@@ -5454,6 +5455,30 @@ export class LocalAppserver implements AppserverHandle {
 		const control = projection.setSessionControl();
 		if (control) await this.broadcastIndex(control);
 		this.cleanupObserverState(sessionId);
+	}
+	/**
+	 * After a restart, re-spawn supervisors for sessions this host created
+	 * (their transcripts live under the host-owned `-t4` project dir). External
+	 * sessions are left alone: if their runtime restarts and auto-shares a
+	 * collab room, the guest bridge re-joins; re-spawning them here would
+	 * duplicate a live runtime. Runs once at startup; failures are tolerated
+	 * (a session may have been deleted while the host was down).
+	 */
+	async #resumeOwnedSessions(): Promise<void> {
+		if (!this.#sessionOwnership) return;
+		const owned = this.#sessionOwnership.list();
+		for (const record of owned) {
+			const parent = dirname(record.path);
+			if (basename(parent) !== "-t4") continue;
+			try {
+				await this.ensureSupervisor(record.sessionId);
+			} catch (error) {
+				this.#log("owned.resume.skip", {
+					sessionId: record.sessionId,
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
+		}
 	}
 	private startExternalObserver(sessionId: SessionId): void {
 		if (this.#observerTimers.has(sessionId)) return;
