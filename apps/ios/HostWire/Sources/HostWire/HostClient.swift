@@ -50,6 +50,13 @@ public actor HostClient {
         }
     }
 
+    /// True when commands can be sent right now (ready, or pairing where
+    /// the host accepts pair.start). Consumers guard background work on this
+    /// instead of catching invalidState after a silent reconnect.
+    public var isReady: Bool {
+        state == .ready || state == .pairing
+    }
+
     public let transport: HostWireTransport
     public private(set) var config: Config
     public private(set) var state: State = .idle

@@ -274,7 +274,13 @@ final class T4SessionStore: ObservableObject {
     }
     var lastError: String? {
         get { connectionModel.lastError }
-        set { connectionModel.lastError = newValue }
+        set {
+            // "client not ready" is transient: it means a silent reconnect is
+            // in progress and the command raced it. The reconnect restores
+            // readiness; painting it red makes a healthy recovery look broken.
+            if let value = newValue, value.contains("client not ready") { return }
+            connectionModel.lastError = newValue
+        }
     }
     /// Human-readable endpoint the store is currently paired/connected to
     /// (e.g. "ws://macbookpro.my-tailnet.ts.net:8787/v1/ws"), for UI display.
@@ -1084,7 +1090,7 @@ final class T4SessionStore: ObservableObject {
     /// snapshot frame (full log at a cursor) and then live entry frames;
     /// `observe()` routes both into `liveEntries`. Safe to repeat.
     func attach(sessionId: String) async {
-        guard let client, connected, !hostId.isEmpty else { return }
+        guard let client, connected, !hostId.isEmpty, await client.isReady else { return }
         guard !attachedSessions.contains(sessionId) else { return }
         attachedSessions.insert(sessionId)
         do {
@@ -2149,7 +2155,10 @@ final class T4SessionStore: ObservableObject {
     /// keeps them — no re-attach churn here.
     func handleForegrounded() {
         guard connected, !connecting else { return }
-        Task { await refresh() }
+        Task {
+            guard await client?.isReady == true else { return }
+            await refresh()
+        }
     }
 
     /// HostClient re-handshook silently after a transport drop. Attach
@@ -2169,7 +2178,7 @@ final class T4SessionStore: ObservableObject {
 
     /// Re-fetch the authoritative session list (session.list).
     func refresh() async {
-        guard let client, connected, !hostId.isEmpty else { return }
+        guard let client, connected, !hostId.isEmpty, await client.isReady else { return }
         do {
             let result = try await client.sendCommand(CommandIntent(hostId: hostId, command: "session.list"))
             sessions = try result.sessionListResult().sessions
@@ -2202,7 +2211,7 @@ final class T4SessionStore: ObservableObject {
     /// Skipped when the device lacks catalog.read — an unauthorized command
     /// gets the connection closed by the remote policy.
     private func loadCatalog() async {
-        guard let client, connected, !hostId.isEmpty, grantedCapabilities.contains("catalog.read") else { return }
+        guard let client, connected, !hostId.isEmpty, grantedCapabilities.contains("catalog.read"), await client.isReady else { return }
         do {
             let result = try await client.sendCommand(CommandIntent(hostId: hostId, command: "catalog.get"))
             catalog = try result.catalogItems()
