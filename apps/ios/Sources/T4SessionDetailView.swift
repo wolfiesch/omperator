@@ -7,6 +7,15 @@
 
 import SwiftUI
 import PhotosUI
+
+/// Scroll-position preference for scroll-up paging: the minimum top-of-content
+/// offset (closest to 0 = nearest the top edge).
+private struct TopOffsetKey: PreferenceKey {
+    static var defaultValue: CGFloat = .infinity
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = min(value, nextValue())
+    }
+}
 import HostWire
 
 /// One picked photo, kept as a downscaled JPEG ready for session.image upload.
@@ -64,11 +73,20 @@ struct T4SessionDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // The session strip (Live chip, model, actions, files, terminal)
+            // is pinned chrome, not transcript content — it stays put while
+            // the conversation scrolls underneath.
+            pinnedHeader
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
+                        #if os(macOS)
                         loadEarlierSection
-                        header
+                        #else
+                        // iOS: paging is scroll-driven — no button. Reaching
+                        // the top of the loaded window pulls the next page.
+                        topPagingMarker
+                        #endif
                         if let challenge = promptModel.pendingConfirmation {
                             confirmationBanner(challenge)
                         }
@@ -93,7 +111,24 @@ struct T4SessionDetailView: View {
                     }
                     .padding()
                 }
+                .coordinateSpace(name: "transcript-scroll")
                 .onAppear { proxy.scrollTo("transcript-bottom", anchor: .bottom) }
+                #if os(iOS)
+                // Scroll-up paging: nearing the top of the loaded window
+                // pulls the next older page — no button. Guarded against
+                // concurrent pages and prepends so the viewport never jumps.
+                .onPreferenceChange(TopOffsetKey.self) { minY in
+                    guard minY > -240 else { return }
+                    let paging = transcriptModel.pagingState[session.sessionId]
+                    let entries = store.transcript(for: session.sessionId)
+                    let hasMore = (paging?.hasMore == true)
+                        || (paging?.hasMore == nil && entries.count >= 50)
+                    guard hasMore, paging?.loading != true,
+                          transcriptModel.prependingSession != session.sessionId,
+                          store.connected, !store.collabMode else { return }
+                    Task { await store.loadEarlier(sessionId: session.sessionId) }
+                }
+                #endif
                 // Drag or tap the transcript to put the keyboard away. A
                 // quick tap never conflicts with text selection (that needs
                 // a long-press), and buttons inside rows still win their tap.
@@ -340,11 +375,22 @@ struct T4SessionDetailView: View {
         .padding(12)
         .background(t.highlightBG, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
-    /// "Load earlier messages" control at the top of the transcript scroll
-    /// content. Shown when the host reports more history (`hasMore == true`)
-    /// or when paging state is unknown and the live transcript is at least
-    /// 50 rows (a full first page may still be fetchable). A spinner replaces
-    /// the label while a page is in flight.
+    /// 1pt marker pinned to the top of the scroll content; its offset in the
+    /// named space drives scroll-up paging.
+    private var topPagingMarker: some View {
+        Color.clear
+            .frame(height: 1)
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(
+                        key: TopOffsetKey.self,
+                        value: geo.frame(in: .named("transcript-scroll")).minY)
+                }
+            )
+    }
+
+    /// "Load earlier messages" control (macOS). iOS pages automatically when
+    /// scrolling up; this button remains the desktop affordance.
     private var loadEarlierSection: some View {
         let paging = transcriptModel.pagingState[session.sessionId]
         let entries = store.transcript(for: session.sessionId)
@@ -381,6 +427,16 @@ struct T4SessionDetailView: View {
         }
     }
 
+    /// Pinned session strip: chrome bar above the transcript scroll.
+    private var pinnedHeader: some View {
+        header
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(t.bg.opacity(0.92))
+            .overlay(alignment: .bottom) { Divider().overlay(t.lineFaint) }
+    }
+
     private var header: some View {
 
         HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -396,7 +452,9 @@ struct T4SessionDetailView: View {
                     .foregroundStyle(store.connected ? t.txt : t.txtMuted)
             }
             .accessibilityLabel(store.connected ? "Live" : "Offline")
+            #if os(macOS)
             StatusPill(status: session.status, theme: t)
+            #endif
             if let model = session.model {
                 T4ModelMenuButton(session: session, store: store, theme: t) {
                     T4ModelLabel(selector: model, theme: t)
