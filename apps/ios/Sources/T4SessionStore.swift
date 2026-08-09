@@ -2543,6 +2543,7 @@ final class T4SessionStore: ObservableObject {
             pendingConfirmation = nil
             connected = false
             pairedEndpoint = nil
+            hasLiveInventory = false
             return
         }
         await client?.close()
@@ -2553,6 +2554,7 @@ final class T4SessionStore: ObservableObject {
         grantedFeatures = []
         pairedEndpoint = nil
         hostInfo = nil
+        hasLiveInventory = false
         resetTranscriptProjections()
         Keychain.remove(forKey: Self.savedEndpointKey)
         Keychain.remove(forKey: Self.savedDeviceIdKey)
