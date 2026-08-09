@@ -8,8 +8,19 @@ let package = Package(
     products: [
         .library(name: "HostWire", targets: ["HostWire"]),
     ],
+    dependencies: [
+        // CryptoKit API parity for Linux builds (T4CollabWire.swift's AES-GCM).
+        // On Apple platforms the `Crypto` product re-exports CryptoKit.
+        .package(url: "https://github.com/apple/swift-crypto", from: "3.12.0"),
+    ],
     targets: [
-        .target(name: "HostWire", path: "Sources/HostWire"),
+        .target(
+            name: "HostWire",
+            dependencies: [
+                .product(name: "Crypto", package: "swift-crypto"),
+            ],
+            path: "Sources/HostWire"
+        ),
         .testTarget(
             name: "HostWireTests",
             dependencies: ["HostWire"],
