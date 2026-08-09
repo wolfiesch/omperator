@@ -53,6 +53,33 @@ struct T4ConnectView: View {
         NavigationStack {
             Form {
                 Section {
+                    TextField("Computer (e.g. macbookpro.my-tailnet.ts.net)", text: $pairHost)
+                        .autocorrectionDisabled()
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        #endif
+                    Button {
+                        Task { await connectPlugAndPlay() }
+                    } label: {
+                        HStack {
+                            if store.connecting { ProgressView().tint(.white) }
+                            Text("Connect").fontWeight(.semibold)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(t.interactiveAccent)
+                    .disabled(!pairValid || store.connecting)
+                } header: {
+                    Text("Connect to your computer")
+                } footer: {
+                    Text("Enter your computer's Tailnet name, or tap a link shared from it. No code needed — your own devices are trusted automatically.")
+                }
+
+                DisclosureGroup("Advanced", isExpanded: $showAdvanced) {
+                    Text("Legacy pairing (code required only for devices outside your Tailnet):")
+                        .font(.system(size: 12))
+                        .foregroundStyle(t.txtMuted)
                     TextField("Host (e.g. macbookpro.my-tailnet.ts.net)", text: $pairHost)
                         .autocorrectionDisabled()
                         #if os(iOS)
@@ -77,13 +104,7 @@ struct T4ConnectView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(t.interactiveAccent)
                     .disabled(!pairValid || store.connecting)
-                } header: {
-                    Text("Pair a new device")
-                } footer: {
-                    Text("Enter the host hint and, when required, the 6-digit code shown by the host. The port defaults to 8787 when not specified.")
-                }
 
-                DisclosureGroup("Advanced", isExpanded: $showAdvanced) {
                     TextField("wss://host:port/v1/ws", text: $endpoint)
                         .autocorrectionDisabled()
                         #if os(iOS)
@@ -157,13 +178,30 @@ struct T4ConnectView: View {
         }
     }
 
-    /// Prefill the pair fields from a deep link on first appearance — then
-    /// pair immediately: opening the link IS the consent gesture.
+    /// Plug-and-play connect: host hint -> tailnet gateway
+    /// (https://<host>:8445) -> /v1/rooms -> collab guest join. No PIN, no
+    /// port/IP typing; the daemon auto-approves your own Tailnet devices.
+    private func connectPlugAndPlay() async {
+        let host = trimmedHost
+        guard !host.isEmpty else { return }
+        let gateway: URL
+        if host.hasPrefix("http://") || host.hasPrefix("https://") {
+            gateway = URL(string: host)!
+        } else {
+            gateway = URL(string: "https://\(host):8445")!
+        }
+        let name = platformDeviceName()
+        await store.connectCollab(gatewayURL: gateway, name: name)
+        if store.connected { dismiss() }
+    }
+
+    /// Prefill the connect fields from a deep link on first appearance — then
+    /// connect immediately: opening the link IS the consent gesture.
     private func applyPendingPair() {
         guard let pair = pendingPair, pairHost.isEmpty, pairCode.isEmpty else { return }
         pairHost = pair.hostHint
         pairCode = pair.code
-        Task { await pairAndConnect() }
+        Task { await connectPlugAndPlay() }
     }
 
     /// Build the endpoint from the host hint. Explicit schemes pass through;
