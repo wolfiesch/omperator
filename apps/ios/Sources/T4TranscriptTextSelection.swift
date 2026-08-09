@@ -37,8 +37,8 @@ enum TranscriptTextSelection {
                     markdown: entry.body,
                     options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
                 ) {
-                    let body = NSMutableAttributedString(NSAttributedString(parsed))
-                    body.addAttribute(.foregroundColor, value: bodyColor, range: NSRange(location: 0, length: body.length))
+                    let body = NSMutableAttributedString(attributedString: NSAttributedString(parsed))
+                    body.addAttribute(NSAttributedString.Key.foregroundColor, value: bodyColor, range: NSRange(location: 0, length: body.length))
                     out.append(body)
                 } else {
                     append(entry.body, color: bodyColor, font: bodyFont)
