@@ -209,6 +209,12 @@ export class OfficialOmpProfileAuthority implements SessionAuthority, SessionDis
 		});
 	}
 
+	watch(onChange: () => void): (() => void) | undefined {
+		// Lease/assert checks are intentionally skipped: watching is passive and
+		// the server starts it before clients connect.
+		return this.#discovery.watch(onChange);
+	}
+
 	async load(session: SessionRecord): Promise<SessionRecord> {
 		await this.#assertLease();
 		await this.#assertOwnedSession(session);

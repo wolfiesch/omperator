@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -1798,4 +1798,30 @@ test("same-epoch gap-plus-snapshot replay is monotonic and accepts gap.to as the
 	expect(gap.from.seq).toBeLessThanOrEqual(gap.to.seq);
 	expect(snapshot.cursor).toEqual(gap.to);
 	expect(first.replay(gap.to)).toEqual([]);
+});
+
+test("watch notifies on new session files at the root and in encoded project directories", async () => {
+	const root = await mkdtemp(join(tmpdir(), "omp-discovery-watch-"));
+	const discovery = new FileSessionDiscovery(root, undefined, host);
+	const events: string[] = [];
+	const unwatch = discovery.watch(() => events.push("change"));
+	try {
+		expect(unwatch).toBeDefined();
+		await writeFile(join(root, "session-one.jsonl"), "{}\n");
+		await Bun.sleep(1200);
+		expect(events.length).toBeGreaterThan(0);
+
+		// An encoded project subdirectory created after watching starts must be
+		// picked up on the next debounced sync.
+		const projectDir = join(root, "-home-user-project");
+		await mkdir(projectDir);
+		await Bun.sleep(1200);
+		await writeFile(join(projectDir, "session-two.jsonl"), "{}\n");
+		await Bun.sleep(1200);
+		const count = events.length;
+		expect(count).toBeGreaterThan(1);
+	} finally {
+		unwatch?.();
+		await rm(root, { recursive: true, force: true });
+	}
 });

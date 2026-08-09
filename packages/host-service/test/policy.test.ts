@@ -154,6 +154,7 @@ test("remote read responses preserve protocol-bounded large payload fields", () 
 		expect(policy.transformOutbound(remote, frame)).toMatchObject({ result: { content } });
 	}
 
+	const longText = `reasoning-${"A".repeat(70_000)}`;
 	const ordinary = {
 		v: "omp-app/1",
 		type: "response",
@@ -161,9 +162,15 @@ test("remote read responses preserve protocol-bounded large payload fields", () 
 		commandId: "ordinary-command",
 		command: "session.list",
 		ok: true,
-		result: { content },
+		result: { content: longText },
 	} as unknown as ServerFrame;
-	expect(policy.transformOutbound(remote, ordinary)).toBeUndefined();
+	// Oversized ordinary strings are truncated, not dropped: dropping the whole
+	// frame silently deletes long transcript entries (reasoning, tool output)
+	// for remote clients.
+	const truncated = policy.transformOutbound(remote, ordinary) as { result: { content: string } };
+	expect(truncated.result.content).toHaveLength(65_536);
+	expect(truncated.result.content.endsWith("…")).toBe(true);
+	expect(truncated.result.content.startsWith("reasoning-")).toBe(true);
 	const nested = {
 		v: "omp-app/1",
 		type: "response",
@@ -171,9 +178,12 @@ test("remote read responses preserve protocol-bounded large payload fields", () 
 		commandId: "nested-command",
 		command: "files.read",
 		ok: true,
-		result: { metadata: { content } },
+		result: { metadata: { content: longText } },
 	} as unknown as ServerFrame;
-	expect(policy.transformOutbound(remote, nested)).toBeUndefined();
+	const nestedTruncated = policy.transformOutbound(remote, nested) as {
+		result: { metadata: { content: string } };
+	};
+	expect(nestedTruncated.result.metadata.content).toHaveLength(65_536);
 	policy.close();
 });
 

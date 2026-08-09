@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstatSync, readdirSync, realpathSync } from "node:fs";
+import { lstatSync, readdirSync, realpathSync, watch, type FSWatcher } from "node:fs";
 import { chmod, lstat, mkdir, open, readdir, readFile, realpath, stat, unlink } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type {
@@ -1573,6 +1573,57 @@ export class FileSessionDiscovery implements SessionDiscovery {
 		const target = resolve(path);
 		for (const [identity, cached] of this.index)
 			if (resolve(cached.record.path) === target) this.index.delete(identity);
+	}
+	watch(onChange: () => void): (() => void) | undefined {
+		if (this.fs !== realFs) return undefined;
+		const watchers = new Map<string, FSWatcher>();
+		let timer: NodeJS.Timeout | undefined;
+		let closed = false;
+		const schedule = () => {
+			if (closed) return;
+			clearTimeout(timer);
+			timer = setTimeout(() => {
+				timer = undefined;
+				syncDirectories();
+				onChange();
+			}, 500);
+		};
+		const syncDirectories = () => {
+			if (closed) return;
+			const directories = new Set<string>([this.root]);
+			try {
+				for (const entry of readdirSync(this.root, { withFileTypes: true }))
+					if (entry.isDirectory() && isEncodedProjectDirectory(entry.name))
+						directories.add(join(this.root, entry.name));
+			} catch {
+				// The root may not exist yet; watchers resync on the next event.
+			}
+			for (const [directory, watcher] of watchers)
+				if (!directories.has(directory)) {
+					watcher.close();
+					watchers.delete(directory);
+				}
+			for (const directory of directories)
+				if (!watchers.has(directory)) {
+					try {
+						const watcher = watch(directory, () => schedule());
+						watcher.on("error", () => {
+							watcher.close();
+							if (watchers.get(directory) === watcher) watchers.delete(directory);
+						});
+						watchers.set(directory, watcher);
+					} catch {
+						// The directory vanished between readdir and watch.
+					}
+				}
+		};
+		syncDirectories();
+		return () => {
+			closed = true;
+			clearTimeout(timer);
+			for (const watcher of watchers.values()) watcher.close();
+			watchers.clear();
+		};
 	}
 	async list(): Promise<SessionRecord[]> {
 		let files: string[];

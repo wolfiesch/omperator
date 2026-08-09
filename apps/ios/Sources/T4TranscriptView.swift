@@ -13,6 +13,8 @@ struct T4TranscriptView: View {
     var streamingMessage: StreamingAssistantBuffer?
     var liveTools: LiveToolProjection
     let theme: Theme
+    /// Opens the full-transcript "Select Text" sheet (cross-message selection).
+    var onSelectText: (() -> Void)?
 
     /// Render window: only the most recent `visibleLimit` entries are drawn.
     /// Long transcripts re-render every row — markdown bodies included — on
@@ -42,9 +44,9 @@ struct T4TranscriptView: View {
             ForEach(visibleEntries, id: \.id) { entry in
                 switch entry.kind {
                 case .message where entry.role == "user":
-                    T4UserBubble(entry: entry, theme: theme)
+                    T4UserBubble(entry: entry, theme: theme, onSelectText: onSelectText)
                 case .message:
-                    T4AssistantMessage(entry: entry, theme: theme)
+                    T4AssistantMessage(entry: entry, theme: theme, onSelectText: onSelectText)
                 default:
                     T4TranscriptRow(entry: entry, theme: theme)
                 }
@@ -75,6 +77,7 @@ struct T4TranscriptView: View {
 struct T4UserBubble: View {
     let entry: TranscriptEntry
     let theme: Theme
+    var onSelectText: (() -> Void)?
 
     var body: some View {
         HStack {
@@ -90,6 +93,20 @@ struct T4UserBubble: View {
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .stroke(theme.line, lineWidth: 1)
                 )
+                .contextMenu {
+                    Button {
+                        platformCopy(entry.body)
+                    } label: {
+                        Label("Copy", systemImage: "doc.on.doc")
+                    }
+                    if let onSelectText {
+                        Button {
+                            onSelectText()
+                        } label: {
+                            Label("Select Text…", systemImage: "text.viewfinder")
+                        }
+                    }
+                }
         }
         .padding(.top, 6)
         .accessibilityLabel("You said: \(entry.body)")
@@ -100,11 +117,26 @@ struct T4UserBubble: View {
 struct T4AssistantMessage: View {
     let entry: TranscriptEntry
     let theme: Theme
+    var onSelectText: (() -> Void)?
 
     var body: some View {
         T4Markdown(text: entry.body, theme: theme)
             .padding(.top, 6)
             .accessibilityLabel("Assistant said: \(entry.body)")
+            .contextMenu {
+                Button {
+                    platformCopy(entry.body)
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc")
+                }
+                if let onSelectText {
+                    Button {
+                        onSelectText()
+                    } label: {
+                        Label("Select Text…", systemImage: "text.viewfinder")
+                    }
+                }
+            }
     }
 }
 

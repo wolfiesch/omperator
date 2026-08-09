@@ -38,7 +38,7 @@ struct T4SessionDetailView: View {
     @State private var showTerminal = false
     /// One enum-driven sheet: multiple .sheet modifiers on one view stack
     /// and merge toolbars (the triple-Done bug).
-    enum ActiveSheet: String, Identifiable { case files, agents, usage, review, artifacts, settings, browser, searchDiff; var id: String { rawValue } }
+    enum ActiveSheet: String, Identifiable { case files, agents, usage, review, artifacts, settings, browser, searchDiff, selectText; var id: String { rawValue } }
     @State private var activeSheet: ActiveSheet?
     @State private var attachments: [ComposerAttachment] = []
     @State private var pickerItems: [PhotosPickerItem] = []
@@ -79,7 +79,8 @@ struct T4SessionDetailView: View {
                                          liveTurn: transcriptModel.liveTurns[session.sessionId],
                                          streamingMessage: transcriptModel.streamingMessages[session.sessionId],
                                          liveTools: transcriptModel.liveTools[session.sessionId] ?? LiveToolProjection(),
-                                         theme: t)
+                                         theme: t,
+                                         onSelectText: { activeSheet = .selectText })
                         // Live asks belong at the transcript's tail — the
                         // newest thing demanding attention, always in view.
                         if let ask = promptModel.pendingAsk, ask.sessionId == session.sessionId {
@@ -217,6 +218,10 @@ struct T4SessionDetailView: View {
                     .environmentObject(theme)
             case .searchDiff:
                 T4SearchPane(session: session, store: store, isPresented: sheetBinding(.searchDiff))
+                    .environmentObject(theme)
+            case .selectText:
+                T4TranscriptTextSheet(entries: store.transcript(for: session.sessionId), theme: t,
+                                      isPresented: sheetBinding(.selectText))
                     .environmentObject(theme)
             }
         }
@@ -445,6 +450,11 @@ struct T4SessionDetailView: View {
                     }
                 }
                 Divider()
+                Button {
+                    activeSheet = .selectText
+                } label: {
+                    Label("Select Text", systemImage: "text.viewfinder")
+                }
                 Button {
                     Task { await newSessionInProject() }
                 } label: {

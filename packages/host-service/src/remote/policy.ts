@@ -745,9 +745,12 @@ function sanitizeRemoteFrame(frame: ServerFrame): ServerFrame | undefined {
 	const walk = (value: unknown, depth: number, settingsMap = false, largeContent = false): unknown => {
 		if (depth > 12) throw new Error("outbound depth exceeded");
 		if (typeof value === "string") {
-			if (value.length > (largeContent && largeContentLimit !== undefined ? largeContentLimit : 65_536))
-				throw new Error("outbound string exceeded");
-			if (largeContent) return value;
+			if (largeContent && largeContentLimit !== undefined) {
+				// Protocol-bounded payloads (base64 chunks) must stay intact;
+				// truncating them would corrupt the transfer.
+				if (value.length > largeContentLimit) throw new Error("outbound string exceeded");
+				return value;
+			}
 			if (
 				/^(?:[A-Za-z]+\s+)?[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(value) ||
 				/^Bearer\s+/iu.test(value)
@@ -755,6 +758,9 @@ function sanitizeRemoteFrame(frame: ServerFrame): ServerFrame | undefined {
 				return "[redacted]";
 			if (value.startsWith("/") || value.startsWith("\\\\") || /^[A-Za-z]:[\\/]/u.test(value))
 				return "[relative-path-redacted]";
+			// Long transcript strings (reasoning, tool output) must not drop the
+			// whole frame — remote clients would silently lose the entry.
+			if (value.length > 65_536) return `${value.slice(0, 65_535)}…`;
 			return value;
 		}
 		if (value === null || typeof value !== "object") return value;

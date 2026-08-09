@@ -30,7 +30,10 @@ struct T4Markdown: View {
                             .foregroundStyle(theme.txt)
                             .textSelection(.enabled)
                     } else {
-                        Text(md).font(.system(size: 15)).foregroundStyle(theme.txt)
+                        Text(md)
+                            .font(.system(size: 15))
+                            .foregroundStyle(theme.txt)
+                            .textSelection(.enabled)
                     }
                 case .code(let language, let code):
                     T4CodeBlock(language: language, code: code, theme: theme)

@@ -2195,6 +2195,31 @@ final class T4SessionStore: ObservableObject {
             case .sessions(let inventory):
                 sessions = inventory.sessions
                 markLive()
+                // The host sends `sessions` only right after a (re)handshake.
+                // Per-session attach registrations died with the previous
+                // socket, so re-subscribe every session we were attached to —
+                // otherwise transcript updates silently stop after a reconnect.
+                var reattach = attachedSessions
+                attachedSessions.removeAll()
+                if let selected = selectedSession { reattach.insert(selected.sessionId) }
+                reconcileSelection()
+                for sessionId in reattach {
+                    Task { await attach(sessionId: sessionId) }
+                }
+            case .sessionDelta(let delta):
+                // Host-wide inventory change (folder-created sessions, status
+                // flips, removals). The rail sorts by updatedAt when rendering,
+                // so a plain upsert/append keeps the ordering contract.
+                if let upsert = delta.upsert {
+                    if let index = sessions.firstIndex(where: { $0.sessionId == upsert.sessionId }) {
+                        sessions[index] = upsert
+                    } else {
+                        sessions.append(upsert)
+                    }
+                } else if let remove = delta.remove {
+                    sessions.removeAll { $0.sessionId == remove }
+                }
+                markLive()
                 reconcileSelection()
             case .snapshot(let snapshot):
                 clearStreamingMessage(sessionId: snapshot.sessionId)

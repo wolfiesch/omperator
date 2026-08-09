@@ -156,6 +156,12 @@ export interface SessionDiscovery {
 	load?(session: SessionRecord): Promise<SessionRecord>;
 	/** Read one bounded chronological page backward from the authoritative JSONL file. */
 	page?(session: SessionRecord, args: TranscriptPageArguments): Promise<TranscriptPageResult>;
+	/**
+	 * Watch the sessions tree for filesystem changes, invoking onChange
+	 * (debounced) until the returned unwatch function is called. Undefined when
+	 * the backing store cannot be watched.
+	 */
+	watch?(onChange: () => void): (() => void) | undefined;
 }
 export interface ChildHandle {
 	stdin: { write(data: string): Promise<void> | void };

@@ -793,6 +793,7 @@ export class LocalAppserver implements AppserverHandle {
 	readonly socketPath: string;
 	#clock: Clock;
 	#discovery: SessionDiscovery;
+	#discoveryUnwatch?: () => void;
 	#authority?: SessionAuthority;
 	#operations?: DesktopOperationDispatcher;
 	#usageAuthority?: AppserverUsageAuthority;
@@ -1380,6 +1381,14 @@ export class LocalAppserver implements AppserverHandle {
 			this.#started = true;
 			this.#startedAt = this.#clock.now().getTime();
 			this.#startIdleSupervisorWatchdog();
+			// Folder-created sessions (e.g. another OMP runtime writing into the
+			// same sessions tree) must reach clients without waiting for the next
+			// welcome/session.list. The debounced watcher re-runs discovery and
+			// refreshSessionsOnce publishes session.delta for any changes.
+			this.#discoveryUnwatch = this.#discovery.watch?.(() => {
+				if (!this.#started || this.#stopping) return;
+				void this.refreshSessions().catch(() => undefined);
+			});
 			if (this.#remotePolicy && this.#remoteEndpoint) {
 				const listener =
 					this.#remoteListener ??
@@ -1490,6 +1499,8 @@ export class LocalAppserver implements AppserverHandle {
 				clearInterval(this.#idleSupervisorTimer);
 				this.#idleSupervisorTimer = undefined;
 			}
+			this.#discoveryUnwatch?.();
+			this.#discoveryUnwatch = undefined;
 			for (const timer of this.#observerTimers.values()) clearInterval(timer);
 			this.#observerTimers.clear();
 			this.#observers.clear();
