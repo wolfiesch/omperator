@@ -93,6 +93,7 @@ struct T4UserBubble: View {
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .stroke(theme.line, lineWidth: 1)
                 )
+                #if os(macOS)
                 .contextMenu {
                     Button {
                         platformCopy(entry.body)
@@ -107,6 +108,7 @@ struct T4UserBubble: View {
                         }
                     }
                 }
+                #endif
         }
         .padding(.top, 6)
         .accessibilityLabel("You said: \(entry.body)")
@@ -134,6 +136,7 @@ struct T4AssistantMessage: View {
         }
         .padding(.top, 6)
         .accessibilityLabel("Assistant said: \(entry.body)")
+        #if os(macOS)
             .contextMenu {
                 Button {
                     platformCopy(entry.body)
@@ -148,6 +151,7 @@ struct T4AssistantMessage: View {
                     }
                 }
             }
+        #endif
     }
 }
 
@@ -157,9 +161,9 @@ struct T4AssistantMessage: View {
 struct T4TranscriptRow: View {
     let entry: TranscriptEntry
     let theme: Theme
-    // Tool bodies are the substance of a turn — show them by default; the
-    // chevron still folds an entry when it gets in the way.
-    @State private var expanded = true
+    // Folded by default: tool bodies are the heaviest rows in the transcript
+    // and rarely need to be open; tap the header to expand one.
+    @State private var expanded = false
 
     /// Tool-kind identity from the entry kind/headline.
     private var tool: (name: String, icon: String, color: Color) {
