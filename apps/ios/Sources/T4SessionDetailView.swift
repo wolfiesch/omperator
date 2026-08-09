@@ -159,7 +159,12 @@ struct T4SessionDetailView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
-        .task(id: session.sessionId) { await store.attach(sessionId: session.sessionId) }
+        .task(id: session.sessionId) {
+            await store.attach(sessionId: session.sessionId)
+            // Collab mode has no host-wire attach: joining the room IS the
+            // attach. No-op for host-wire sessions (room not in collabRooms).
+            await store.openCollabRoomIfNeeded(sessionId: session.sessionId)
+        }
         .onAppear {
             // UI-test seams: boot with a pane/drawer/card visible for screenshots.
             let args = ProcessInfo.processInfo.arguments

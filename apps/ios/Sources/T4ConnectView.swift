@@ -27,6 +27,9 @@ struct T4ConnectView: View {
     @State private var endpoint = "wss://"
     @State private var deviceId = ""
     @State private var deviceToken = ""
+    // Collab entry point: a tailnet gateway URL discovers rooms to join as
+    // a collab guest (GET <gateway>/v1/rooms).
+    @State private var gatewayURL = ""
 
     private var t: Theme { theme.t }
 
@@ -39,6 +42,11 @@ struct T4ConnectView: View {
     private var trimmedEndpoint: String { endpoint.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var endpointValid: Bool {
         URL(string: trimmedEndpoint)?.scheme == "ws" || URL(string: trimmedEndpoint)?.scheme == "wss"
+    }
+
+    private var trimmedGateway: String { gatewayURL.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var gatewayValid: Bool {
+        URL(string: trimmedGateway)?.scheme == "http" || URL(string: trimmedGateway)?.scheme == "https"
     }
 
     var body: some View {
@@ -100,6 +108,29 @@ struct T4ConnectView: View {
                     .tint(t.interactiveAccent)
                     .disabled(!endpointValid || store.connecting)
                     Text("Use raw endpoint + device credentials for an already-paired host. Credentials are optional for an open host.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(t.txtMuted)
+
+                    Divider().padding(.vertical, 6)
+                    TextField("https://gateway.my-tailnet.ts.net", text: $gatewayURL)
+                        .autocorrectionDisabled()
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.URL)
+                        #endif
+                    Button {
+                        Task { await connectCollabGateway() }
+                    } label: {
+                        HStack {
+                            if store.connecting { ProgressView().tint(.white) }
+                            Text("Join collab rooms").fontWeight(.semibold)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(t.interactiveAccent)
+                    .disabled(!gatewayValid || store.connecting)
+                    Text("A tailnet gateway URL discovers rooms hosted by the collab /enclave plugin and joins them as a guest.")
                         .font(.system(size: 12))
                         .foregroundStyle(t.txtMuted)
                 }
@@ -171,6 +202,12 @@ struct T4ConnectView: View {
             ),
             authentication: auth
         )
+        if store.connected { dismiss() }
+    }
+
+    private func connectCollabGateway() async {
+        guard let url = URL(string: trimmedGateway) else { return }
+        await store.connectCollab(gatewayURL: url, name: platformClientName)
         if store.connected { dismiss() }
     }
 }
