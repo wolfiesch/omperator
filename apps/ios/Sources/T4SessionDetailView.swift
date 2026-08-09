@@ -70,25 +70,34 @@ struct T4SessionDetailView: View {
     /// The transcript scroll: content, glass strip, gestures, and edge
     /// fades. Extracted so the type-checker gets small expressions.
     private func transcriptScroll(_ proxy: ScrollViewProxy) -> some View {
-        ScrollView {
-            transcriptContent()
-        }
-        .coordinateSpace(name: "transcript-scroll")
-        // The session strip floats over the transcript as glass —
-        // conversation rows scroll under it, like the composer.
-        .safeAreaInset(edge: .top, spacing: 0) { pinnedHeader }
-        // Drag or tap the transcript to put the keyboard away. A quick tap
-        // never conflicts with text selection (that needs a long-press),
-        // and buttons inside rows still win their tap.
-        #if os(iOS)
-        .scrollDismissesKeyboard(.interactively)
-        .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
-        // Native iOS 26 scroll-edge fades: bottom under the floating
-        // composer, top under the glass strip and nav bar — rows dissolve
-        // under both instead of hard-clipping.
-        .scrollEdgeEffectStyle(.soft, for: .bottom)
-        .scrollEdgeEffectStyle(.soft, for: .top)
-        #endif
+        transcriptGestures(transcriptChrome(ScrollView { transcriptContent() }))
+    }
+
+    /// Glass strip + named space on the scroll. Split from the iOS gesture
+    /// chain — the arm64 type-checker times out on the combined expression.
+    private func transcriptChrome(_ scroll: some View) -> some View {
+        scroll
+            .coordinateSpace(name: "transcript-scroll")
+            // The session strip floats over the transcript as glass —
+            // conversation rows scroll under it, like the composer.
+            .safeAreaInset(edge: .top, spacing: 0) { pinnedHeader }
+    }
+
+    /// Keyboard-dismiss tap and native iOS 26 scroll-edge fades.
+    private func transcriptGestures(_ scroll: some View) -> some View {
+        scroll
+            // Drag or tap the transcript to put the keyboard away. A quick
+            // tap never conflicts with text selection (that needs a
+            // long-press), and buttons inside rows still win their tap.
+            #if os(iOS)
+            .scrollDismissesKeyboard(.interactively)
+            .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
+            // Native iOS 26 scroll-edge fades: bottom under the floating
+            // composer, top under the glass strip and nav bar — rows
+            // dissolve under both instead of hard-clipping.
+            .scrollEdgeEffectStyle(.soft, for: .bottom)
+            .scrollEdgeEffectStyle(.soft, for: .top)
+            #endif
     }
 
     /// The transcript scroll content. Split from the scroll chain — the
