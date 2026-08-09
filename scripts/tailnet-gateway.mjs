@@ -19,6 +19,7 @@ const DEFAULT_PROFILE_START_WAIT_MS = 4_000;
 const DEFAULT_PROFILE_START_POLL_MS = 50;
 const DEFAULT_PROFILE_START_COOLDOWN_MS = 10_000;
 const MAX_ROOMS = 500;
+const STALE_ROOM_MS = 2 * 60 * 1000;
 const ROOMS_SCAN_TTL_MS = 2_000;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1"]);
 const PROFILE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
@@ -504,6 +505,15 @@ function titleFromTranscriptLine(line) {
  * to the file's mtime.
  */
 async function collabRoomAt(collabPath) {
+  // Freshness gate: the plugin heartbeats collab.json every 30s while the
+  // room is live, so a file older than STALE_ROOM_MS advertises a dead room
+  // and must not reach clients.
+  try {
+    const info = await stat(collabPath);
+    if (Date.now() - info.mtimeMs > STALE_ROOM_MS) return undefined;
+  } catch {
+    return undefined;
+  }
   let text;
   try {
     text = await readFile(collabPath, "utf8");
