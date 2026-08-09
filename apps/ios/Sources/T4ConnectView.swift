@@ -12,6 +12,14 @@ import SwiftUI
 import HostWire
 
 struct T4ConnectView: View {
+    /// Git commit baked into the bundle (build script writes commit.txt).
+    private static let buildStamp: String? = {
+        guard let url = Bundle.main.url(forResource: "commit", withExtension: "txt"),
+              let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }()
+
     @EnvironmentObject var theme: ThemeStore
     @ObservedObject var store: T4SessionStore
     @Environment(\.dismiss) private var dismiss
@@ -74,6 +82,15 @@ struct T4ConnectView: View {
                     Text("Connect to your computer")
                 } footer: {
                     Text("Enter your computer's Tailnet name, or tap a link shared from it. No code needed — your own devices are trusted automatically.")
+                }
+
+                // Build stamp: the git commit baked into the bundle by the
+                // device-build script — the ground truth for which binary runs.
+                if let stamp = Self.buildStamp {
+                    Text("build \(stamp)")
+                        .font(.system(size: 10))
+                        .foregroundStyle(t.txtLabel)
+                        .frame(maxWidth: .infinity)
                 }
 
                 DisclosureGroup("Advanced", isExpanded: $showAdvanced) {
