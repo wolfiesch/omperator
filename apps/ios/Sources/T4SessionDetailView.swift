@@ -503,13 +503,11 @@ struct T4SessionDetailView: View {
 
     /// Floating session strip: glass over the transcript, like the composer.
     private var pinnedHeader: some View {
-        header
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.thinMaterial)
-            .overlay(alignment: .bottom) { Divider().overlay(t.lineFaint) }
+        bisectHeader
     }
+
+    // BISECT: full header chain replaced while hunting the arm64 timeout.
+    private var bisectHeader: some View { EmptyView() }
 
     private var header: some View {
 
