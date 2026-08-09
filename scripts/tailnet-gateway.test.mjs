@@ -420,7 +420,9 @@ async function writeFakeSessionsRoot() {
     updatedAt: "2026-08-09T10:00:00.000Z",
   });
 
-  // Nested one more level inside B: a different store layout, must be excluded.
+  // A subdirectory of a project dir is a session artifacts dir in the real
+  // layout (the /enclave plugin writes <session file minus .jsonl>/collab.json),
+  // so it is scanned too.
   const deepDir = join(dirB, "nested");
   await mkdir(deepDir);
   await writeCollab(deepDir, {
@@ -433,6 +435,13 @@ async function writeFakeSessionsRoot() {
     root,
     cleanup: () => rm(directory, { recursive: true, force: true }),
     expected: [
+      {
+        sessionId: "nested",
+        title: "",
+        link: "wss://relay.example-tailnet.ts.net/r/deep.SECRET",
+        roomId: "deep-room",
+        updatedAt: "2026-08-09T11:00:00.000Z",
+      },
       {
         sessionId: basename(root),
         title: "",

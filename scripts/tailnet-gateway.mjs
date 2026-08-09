@@ -550,13 +550,15 @@ async function collabRoomAt(collabPath) {
 }
 
 /**
- * Scan a sessions root for live collab rooms. Only collab.json files at depth
- * ≤ 2 are considered: files directly in the root and files directly inside a
- * one-level project dir (the /enclave plugin writes
- * `<session file minus .jsonl>/collab.json`, which sits inside the project
- * dir). Deeper nesting is a different store layout and is ignored. Rooms are
- * sorted by updatedAt descending (sessionId as a stable tie-break), capped at
- * MAX_ROOMS, and an unreadable root yields an empty list.
+ * Scan a sessions root for live collab rooms. The /enclave plugin writes
+ * `<session file minus .jsonl>/collab.json`, i.e. inside the session's
+ * artifacts dir, which sits one level below the project dir:
+ * `<root>/<project>/<artifacts>/collab.json`. We therefore look at files in
+ * the root, directly inside one-level project dirs, and directly inside those
+ * dirs' subdirectories (the artifacts dirs). Deeper nesting is a different
+ * store layout and is ignored. Rooms are sorted by updatedAt descending
+ * (sessionId as a stable tie-break), capped at MAX_ROOMS, and an unreadable
+ * root yields an empty list.
  */
 export async function scanSessionsRooms(sessionsRoot) {
   if (sessionsRoot === undefined) return [];
@@ -574,8 +576,21 @@ export async function scanSessionsRooms(sessionsRoot) {
       continue;
     }
     if (!entry.isDirectory()) continue;
-    const room = await collabRoomAt(join(sessionsRoot, entry.name, "collab.json"));
-    if (room !== undefined) rooms.push(room);
+    const projectDir = join(sessionsRoot, entry.name);
+    const direct = await collabRoomAt(join(projectDir, "collab.json"));
+    if (direct !== undefined) rooms.push(direct);
+    // Artifacts dirs: one level below the project dir.
+    let children;
+    try {
+      children = await readdir(projectDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const child of children) {
+      if (!child.isDirectory()) continue;
+      const room = await collabRoomAt(join(projectDir, child.name, "collab.json"));
+      if (room !== undefined) rooms.push(room);
+    }
   }
   rooms.sort(
     (a, b) =>
