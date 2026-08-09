@@ -15,6 +15,14 @@ function toB64(bytes: Uint8Array): string {
 	return btoa(out).replace(/=+$/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 }
 const SECRET = toB64(new Uint8Array([...KEY, ...TOKEN]));
+// The locked /enclave host publishes this in collab.json and requires the
+// guest's hello to carry it as enclaveToken.
+const ENCLAVE_TOKEN = toB64(TOKEN);
+
+/** Parse a link and attach the collab.json token, mirroring readCollabLinkForTranscript. */
+function linkWithToken(url: string, token: string): ReturnType<typeof parseCollabLink> & { token: string } {
+	return { ...parseCollabLink(url), token };
+}
 
 describe("collab link parsing", () => {
 	test("bare link resolves to default relay", () => {
@@ -81,6 +89,12 @@ describe("collab guest client flow", () => {
 				const frame = JSON.parse(new TextDecoder().decode(plain)) as CollabGuestFrame;
 				frames.push(frame);
 				if (frame.t === "hello") {
+					// Locked host: require the enclaveToken before serving the room.
+					if (frame.enclaveToken !== ENCLAVE_TOKEN) {
+						socket.send(packEnvelope(0, await cipher.seal(new TextEncoder().encode(JSON.stringify({ t: "error", message: "missing or invalid enclaveToken" })))));
+						socket.close();
+						return;
+					}
 					const welcome = {
 						t: "welcome",
 						proto: COLLAB_PROTO,
@@ -106,7 +120,7 @@ describe("collab guest client flow", () => {
 			});
 		});
 
-		const link = parseCollabLink(`ws://localhost:${port}/r/${ROOM}.${SECRET}`);
+		const link = linkWithToken(`ws://localhost:${port}/r/${ROOM}.${SECRET}`, ENCLAVE_TOKEN);
 		const snapshots: CollabGuestSnapshot[] = [];
 		const live: string[] = [];
 		const client = new CollabGuestClient(link, {
@@ -123,7 +137,7 @@ describe("collab guest client flow", () => {
 		client.start();
 		// Wait for snapshot.
 		await Bun.sleep(500);
-		expect(frames[0]).toMatchObject({ t: "hello", proto: 3 });
+		expect(frames[0]).toMatchObject({ t: "hello", proto: 3, enclaveToken: ENCLAVE_TOKEN });
 		expect(snapshots).toHaveLength(1);
 		expect(snapshots[0].entries).toHaveLength(1);
 		expect(snapshots[0].readOnly).toBe(false);
@@ -132,6 +146,58 @@ describe("collab guest client flow", () => {
 		await Bun.sleep(500);
 		expect(frames.some(frame => frame.t === "prompt")).toBe(true);
 		expect(live).toContain("assistant");
+
+		client.close();
+		server.close();
+	});
+
+	test("guest without token is rejected by a locked host", async () => {
+		const cipher = createCollabCipher(KEY);
+		const hellos: CollabGuestFrame[] = [];
+
+		const server = new WebSocketServer({ port: 0 });
+		await new Promise<void>(resolve => server.once("listening", resolve));
+		const port = (server.address() as { port: number }).port;
+
+		server.on("connection", async (socket: any) => {
+			socket.binaryType = "arraybuffer";
+			socket.on("message", async (data: any) => {
+				const bytes = new Uint8Array(data as ArrayBuffer);
+				const plain = await cipher.open(bytes.subarray(4));
+				const frame = JSON.parse(new TextDecoder().decode(plain)) as CollabGuestFrame;
+				hellos.push(frame);
+				if (frame.t === "hello") {
+					// Locked host: no enclaveToken → error frame + close.
+					if (frame.enclaveToken !== ENCLAVE_TOKEN) {
+						socket.send(packEnvelope(0, await cipher.seal(new TextEncoder().encode(JSON.stringify({ t: "error", message: "missing or invalid enclaveToken" })))));
+						socket.close();
+						return;
+					}
+					expect.unreachable("token-less guest must not be served");
+				}
+			});
+		});
+
+		// parseCollabLink path yields no token (it comes from collab.json);
+		// the guest therefore joins without enclaveToken.
+		const link = parseCollabLink(`ws://localhost:${port}/r/${ROOM}.${SECRET}`);
+		const frames: { t: string }[] = [];
+		const client = new CollabGuestClient(link, {
+			onSnapshot() {
+				expect.unreachable("locked host must not admit the guest");
+			},
+			onFrame(frame) {
+				frames.push({ t: frame.t });
+			},
+			onFatal() {},
+		});
+		client.start();
+		await Bun.sleep(500);
+
+		expect(hellos).toHaveLength(1);
+		expect(hellos[0]).toMatchObject({ t: "hello" });
+		expect(hellos[0]).not.toHaveProperty("enclaveToken");
+		expect(frames.some(frame => frame.t === "error")).toBe(true);
 
 		client.close();
 		server.close();
@@ -155,6 +221,12 @@ describe("collab bridge /enclave extension", () => {
 				const frame = JSON.parse(new TextDecoder().decode(plain)) as Record<string, unknown>;
 				received.push(frame as { t: string });
 				if (frame.t === "hello") {
+					// Locked host: require the enclaveToken before serving the room.
+					if (frame.enclaveToken !== ENCLAVE_TOKEN) {
+						socket.send(packEnvelope(0, await cipher.seal(new TextEncoder().encode(JSON.stringify({ t: "error", message: "missing or invalid enclaveToken" })))));
+						socket.close();
+						return;
+					}
 					const welcome = { t: "welcome", proto: COLLAB_PROTO, header: { id: "h", parentId: null, type: "session", timestamp: new Date().toISOString() }, state: {}, agents: [], entryCount: 0 };
 					const chunk = { t: "snapshot-chunk", entries: [], final: true };
 					const caps = { t: "enclave-caps", version: 1, models: [{ id: "m1", name: "Model One" }], current: { model: "m1", thinking: "high" } };
@@ -172,7 +244,7 @@ describe("collab bridge /enclave extension", () => {
 			});
 		});
 
-		const link = parseCollabLink(`ws://localhost:${port}/r/${ROOM}.${SECRET}`);
+		const link = linkWithToken(`ws://localhost:${port}/r/${ROOM}.${SECRET}`, ENCLAVE_TOKEN);
 		const capsSeen: unknown[] = [];
 		const uiSeen: unknown[] = [];
 		const bridge = new (await import("../src/collab/bridge.ts")).CollabSessionBridge(

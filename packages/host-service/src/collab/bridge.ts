@@ -210,15 +210,16 @@ export async function readCollabLinkForTranscript(
 	} catch {
 		return undefined;
 	}
-	let parsed: { link?: unknown };
+	let parsed: { link?: unknown; token?: unknown };
 	try {
-		parsed = JSON.parse(text) as { link?: unknown };
+		parsed = JSON.parse(text) as { link?: unknown; token?: unknown };
 	} catch {
 		return undefined;
 	}
 	if (typeof parsed.link !== "string") return undefined;
 	try {
-		return parseCollabLink(parsed.link);
+		const link = parseCollabLink(parsed.link);
+		return typeof parsed.token === "string" ? { ...link, token: parsed.token } : link;
 	} catch {
 		return undefined;
 	}

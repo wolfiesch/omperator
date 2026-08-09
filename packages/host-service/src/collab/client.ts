@@ -81,7 +81,7 @@ export class CollabGuestClient {
 			this.#attempt = 0;
 			this.#resetSnapshot();
 			// Send hello serially so reconnect never overlaps an in-flight seal.
-			this.#enqueueSeal({ t: "hello", proto: COLLAB_PROTO, name: this.#guestName, ...(this.link.writeToken ? { writeToken: toBase64Url(this.link.writeToken) } : {}) });
+			this.#enqueueSeal({ t: "hello", proto: COLLAB_PROTO, name: this.#guestName, ...(this.link.writeToken ? { writeToken: toBase64Url(this.link.writeToken) } : {}), ...(this.link.token ? { enclaveToken: this.link.token } : {}) });
 			this.#handlers.onOpen?.();
 		});
 		ws.addEventListener("message", (event: MessageEvent) => {

@@ -179,7 +179,7 @@ export type CollabHostFrame =
 
 // Guest → host frames
 export type CollabGuestFrame =
-	| { t: "hello"; proto: number; name: string; writeToken?: string }
+	| { t: "hello"; proto: number; name: string; writeToken?: string; enclaveToken?: string }
 	| { t: "prompt"; text: string; images?: { type: "image"; mimeType: string; data: string }[] }
 	| { t: "ui-response"; reqId: number; value?: string }
 	| { t: "abort" }

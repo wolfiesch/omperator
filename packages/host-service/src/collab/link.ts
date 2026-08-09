@@ -8,6 +8,8 @@ export interface CollabLink {
 	readonly roomId: string;
 	readonly key: Uint8Array; // 32 bytes
 	readonly writeToken?: Uint8Array; // 16 bytes, absent on view links
+	/** /enclave auth token (base64url) read from collab.json, absent on un-locked rooms. */
+	readonly token?: string;
 }
 
 export const ROOM_ID_BYTES = 16;
