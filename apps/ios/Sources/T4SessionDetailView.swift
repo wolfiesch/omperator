@@ -134,8 +134,6 @@ struct T4SessionDetailView: View {
                         #if os(macOS)
                         loadEarlierSection
                         #else
-                        // iOS: paging is scroll-driven — no button. Reaching
-                        // the top of the loaded window pulls the next page.
                         topPagingMarker
                         #endif
                         if let challenge = promptModel.pendingConfirmation {
@@ -183,9 +181,6 @@ struct T4SessionDetailView: View {
                     proxy.scrollTo("transcript-bottom", anchor: .bottom)
                 }
                 #if os(iOS)
-                // Scroll-up paging: nearing the top of the loaded window
-                // pulls the next page — no button.
-                .onPreferenceChange(TopOffsetKey.self) { handleScrollTop(minY: $0) }
                 // Drag or tap the transcript to put the keyboard away. A
                 // quick tap never conflicts with text selection (that needs
                 // a long-press), and buttons inside rows still win their tap.
@@ -383,15 +378,7 @@ struct T4SessionDetailView: View {
     /// 1pt marker pinned to the top of the scroll content; its offset in the
     /// named space drives scroll-up paging.
     private var topPagingMarker: some View {
-        Color.clear
-            .frame(height: 1)
-            .background(
-                GeometryReader { geo in
-                    Color.clear.preference(
-                        key: TopOffsetKey.self,
-                        value: geo.frame(in: .named("transcript-scroll")).minY)
-                }
-            )
+        Color.clear.frame(height: 1)
     }
 
     /// "Load earlier messages" control (macOS). iOS pages automatically when
