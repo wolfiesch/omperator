@@ -56,6 +56,43 @@ public struct TranscriptEntry: Equatable, Sendable {
         body = b
     }
 
+    /// Render a tool output safely: when the payload parses as JSON, walk it
+    /// for text/content/thinking strings and join them; a structured value
+    /// with no readable text falls back to a pretty JSON dump. Plain text
+    /// passes through untouched.
+    public static func readableOutput(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let data = trimmed.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) else {
+            return raw
+        }
+        var parts: [String] = []
+        func walk(_ value: Any) {
+            if let text = value as? String {
+                parts.append(text)
+            } else if let array = value as? [Any] {
+                for item in array { walk(item) }
+            } else if let dict = value as? [String: Any] {
+                // Prefer the payload keys that carry prose; skip metadata.
+                for key in ["text", "content", "thinking", "output", "message"] {
+                    if let value = dict[key] { walk(value) }
+                }
+                for (key, value) in dict where !["type", "toolCallId", "toolName", "isError", "id", "name", "details", "timestamp"].contains(key) {
+                    if let text = value as? String { parts.append(text) }
+                }
+            }
+        }
+        walk(object)
+        let joined = parts.joined(separator: "\n")
+        if !joined.isEmpty { return joined }
+        // No prose found: a compact pretty dump beats a one-line blob.
+        if let pretty = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]),
+           let text = String(data: pretty, encoding: .utf8) {
+            return text
+        }
+        return raw
+    }
+
     /// Decode a `DurableEntry` from JSON then wrap it.
     public static func decode(_ data: Data) throws -> TranscriptEntry {
         let entry = try JSONDecoder().decode(DurableEntry.self, from: data)
@@ -96,7 +133,9 @@ public struct TranscriptEntry: Equatable, Sendable {
             let output = data.object("result")?.string("output") ?? ""
             let body: String
             if !output.isEmpty {
-                body = output
+                // Never let a raw JSON dump reach the row: walk it for the
+                // readable text blocks and pretty-print only as a fallback.
+                body = Self.readableOutput(output)
             } else {
                 body = ok ? "ok" : "error"
             }

@@ -464,19 +464,19 @@ struct T4LiveTurnBlockView: View {
                         .foregroundStyle(theme.txtLabel)
                 }
                 if !block.previewText.isEmpty {
-                    Text(String(block.previewText.prefix(2_400)))
+                    Text(String(TranscriptEntry.readableOutput(block.previewText).prefix(2_400)))
                         .font(.term(11.5))
                         .foregroundStyle(theme.txt)
                         .textSelection(.enabled)
                 }
                 if !block.progress.isEmpty {
-                    Text(String(block.progress.suffix(1_600)))
+                    Text(String(TranscriptEntry.readableOutput(block.progress).suffix(1_600)))
                         .font(.term(11.5))
                         .foregroundStyle(theme.txtMuted)
                         .textSelection(.enabled)
                 }
                 if !block.result.isEmpty && !isActiveTool {
-                    Text(String(block.result.prefix(1_600)))
+                    Text(String(TranscriptEntry.readableOutput(block.result).prefix(1_600)))
                         .font(.term(11.5))
                         .foregroundStyle(theme.txtMuted)
                         .textSelection(.enabled)
@@ -544,19 +544,19 @@ struct T4LiveToolRow: View {
                     .foregroundStyle(theme.txtLabel)
             }
             if !call.input.isEmpty {
-                Text(String(call.input.prefix(2_400)))
+                Text(String(TranscriptEntry.readableOutput(call.input).prefix(2_400)))
                     .font(.term(11.5))
                     .foregroundStyle(theme.txt)
                     .textSelection(.enabled)
             }
             if !call.progress.isEmpty {
-                Text(String(call.progress.suffix(1_600)))
+                Text(String(TranscriptEntry.readableOutput(call.progress).suffix(1_600)))
                     .font(.term(11.5))
                     .foregroundStyle(theme.txtMuted)
                     .textSelection(.enabled)
             }
             if !call.result.isEmpty && !isActive {
-                Text(String(call.result.prefix(1_600)))
+                Text(String(TranscriptEntry.readableOutput(call.result).prefix(1_600)))
                     .font(.term(11.5))
                     .foregroundStyle(theme.txtMuted)
                     .textSelection(.enabled)
