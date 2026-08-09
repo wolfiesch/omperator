@@ -318,7 +318,6 @@ struct T4SessionsView: View {
             } label: {
                 Label("Move down", systemImage: "arrow.down")
             }
-        }
         Divider()
         if session.archivedAt == nil {
                 Button {
