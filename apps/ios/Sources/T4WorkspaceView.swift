@@ -387,8 +387,9 @@ struct T4WorkspaceView: View {
 
     // MARK: - Deep links
 
-    /// Open the connect sheet prefilled from a `t4-code://pair/<host>/<code>`
-    /// link. Ignored when already connected — the user is paired already.
+    /// Open the connect sheet prefilled from a `t4-code://pair/<host>[/<code>]`
+    /// link (the code is optional: hint-only links leave it empty for owner
+    /// auto-approval). Ignored when already connected — the user is paired already.
     private func handleDeepLink(_ url: URL) {
         guard !store.connected else { return }
         guard let pair = Pairing.parseDeepLink(

@@ -59,6 +59,33 @@ test("service config requires an exact Tailnet HTTPS origin and absolute local p
   );
 });
 
+test("host DNS name flows from config into both unit definitions when set", () => {
+  const withName = validateServiceConfig({
+    ...CONFIG,
+    hostDnsName: "workstation.example-tailnet.ts.net.",
+  });
+  assert.equal(withName.hostDnsName, "workstation.example-tailnet.ts.net");
+  assert.match(
+    renderSystemdUnit(withName),
+    /Environment="T4_HOST_DNS_NAME=workstation\.example-tailnet\.ts\.net"/u,
+  );
+  const darwinPaths = servicePaths({ platform: "darwin", homeDirectory: "/Users/alice", uid: 501 });
+  assert.match(
+    renderLaunchAgent(withName, darwinPaths),
+    /<key>T4_HOST_DNS_NAME<\/key>\s+<string>workstation\.example-tailnet\.ts\.net<\/string>/u,
+  );
+
+  const withoutName = validateServiceConfig(CONFIG);
+  assert.equal(withoutName.hostDnsName, undefined);
+  assert.doesNotMatch(renderSystemdUnit(withoutName), /T4_HOST_DNS_NAME/u);
+  const emptyName = validateServiceConfig({ ...CONFIG, hostDnsName: "" });
+  assert.equal(emptyName.hostDnsName, undefined);
+  assert.throws(
+    () => validateServiceConfig({ ...CONFIG, hostDnsName: "bad\nname" }),
+    /host DNS name is invalid/u,
+  );
+});
+
 test("profile route schema and generated environment are static and start-explicit", () => {
   const config = validateServiceConfig({
     ...CONFIG,

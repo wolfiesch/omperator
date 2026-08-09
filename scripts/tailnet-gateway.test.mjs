@@ -21,6 +21,7 @@ import {
   optionsFromEnvironment,
   resolveAppSocket,
   safeStaticPath,
+  spawnTailscaleHostName,
   startTailnetGateway,
 } from "./tailnet-gateway.mjs";
 import { makeCanonicalTemporaryDirectory } from "./test-temporary-directory.mjs";
@@ -144,6 +145,7 @@ test("gateway environment parses the explicit comma-separated native origin set"
     T4_ALLOWED_ORIGIN: ALLOWED_ORIGIN,
     T4_NATIVE_ALLOWED_ORIGINS: "https://localhost,capacitor://localhost",
     T4_DEPLOYMENT_IDENTITY: DEPLOYMENT_IDENTITY,
+    T4_HOST_DNS_NAME: "workstation.example-tailnet.ts.net.",
     XDG_RUNTIME_DIR: "/run/user/1000",
   });
   assert.deepEqual(normalizeNativeAllowedOrigins(options.nativeAllowedOrigins), [
@@ -151,6 +153,7 @@ test("gateway environment parses the explicit comma-separated native origin set"
     "capacitor://localhost",
   ]);
   assert.equal(options.deploymentIdentity, DEPLOYMENT_IDENTITY);
+  assert.equal(options.hostDnsName, "workstation.example-tailnet.ts.net.");
 });
 
 test("backend injection is explicit, credential-free, and script-safe", () => {
@@ -294,6 +297,57 @@ test("gateway serves configured app and reports real upstream health", async () 
   } finally {
     await running.close();
   }
+});
+
+test("gateway serves /v1/discovery with the owner auto-approval contract", async () => {
+  const running = await fixture("symlink", {
+    hostDnsName: "workstation.example-tailnet.ts.net.",
+  });
+  try {
+    const response = await fetch(`${running.url}/v1/discovery`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "application/json; charset=utf-8");
+    assert.equal(response.headers.get("x-frame-options"), "DENY");
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await response.json(), {
+      hostName: "workstation.example-tailnet.ts.net",
+      label: "Test host </script>",
+      deploymentIdentity: DEPLOYMENT_IDENTITY,
+      autoApprove: true,
+      wsUrl: "https://host.example-tailnet.ts.net:8445/v1/ws",
+    });
+
+    // A request from the served https origin gets that origin echoed; a
+    // cross-origin header never leaks into wsUrl (the configured origin wins).
+    const originResponse = await fetch(`${running.url}/v1/discovery`, {
+      headers: { Origin: ALLOWED_ORIGIN },
+    });
+    assert.equal(
+      (await originResponse.json()).wsUrl,
+      "https://host.example-tailnet.ts.net:8445/v1/ws",
+    );
+    const crossOriginResponse = await fetch(`${running.url}/v1/discovery`, {
+      headers: { Origin: "https://attacker.example-tailnet.ts.net" },
+    });
+    assert.equal(
+      (await crossOriginResponse.json()).wsUrl,
+      "https://host.example-tailnet.ts.net:8445/v1/ws",
+    );
+
+    // HEAD is served without a body; other methods are rejected.
+    const headResponse = await fetch(`${running.url}/v1/discovery`, { method: "HEAD" });
+    assert.equal(headResponse.status, 200);
+    assert.equal(await headResponse.text(), "");
+    const postResponse = await fetch(`${running.url}/v1/discovery`, { method: "POST" });
+    assert.equal(postResponse.status, 405);
+    assert.equal(postResponse.headers.get("allow"), "GET, HEAD");
+  } finally {
+    await running.close();
+  }
+});
+
+test("discovery host name falls back gracefully when tailscale is unavailable", async () => {
+  assert.equal(await spawnTailscaleHostName({ PATH: "" }), null);
 });
 
 test("gateway rejects cross-origin sockets and bridges only the web and native allowlist", async () => {

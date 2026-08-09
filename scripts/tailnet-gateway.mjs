@@ -445,6 +445,54 @@ function boundedReason(value, fallback) {
   return text || fallback;
 }
 
+const TAILSCALE_STATUS_TIMEOUT_MS = 10_000;
+
+/**
+ * Resolve this host's MagicDNS name via one `tailscale status --json` spawn.
+ * The Self.DNSName (e.g. "host.tailnet.ts.net.") is returned without its
+ * trailing dot, or null when tailscale is unavailable or reports no identity.
+ * Callers cache the result; a failed spawn is not cached so a later request
+ * can retry.
+ */
+export function spawnTailscaleHostName(environment = process.env) {
+  return new Promise((resolvePromise) => {
+    const child = spawn("tailscale", ["status", "--json"], {
+      shell: false,
+      stdio: ["ignore", "pipe", "ignore"],
+      env: environment,
+      windowsHide: true,
+    });
+    let output = "";
+    let settled = false;
+    let timer;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.kill();
+      resolvePromise(value);
+    };
+    timer = setTimeout(() => finish(null), TAILSCALE_STATUS_TIMEOUT_MS);
+    child.stdout.on("data", (chunk) => {
+      if (output.length < MAX_FRAME_BYTES) output += chunk.toString("utf8");
+    });
+    child.once("error", () => finish(null));
+    child.once("close", (code) => {
+      if (code !== 0) {
+        finish(null);
+        return;
+      }
+      try {
+        const status = JSON.parse(output);
+        const dnsName = status?.Self?.DNSName;
+        finish(typeof dnsName === "string" ? dnsName.replace(/\.$/, "") : null);
+      } catch {
+        finish(null);
+      }
+    });
+  });
+}
+
 function bridgeBrowser(browser, options, activeBrowsers) {
   activeBrowsers.set(browser, true);
   const pending = [];
@@ -523,6 +571,10 @@ export async function startTailnetGateway(input) {
         ? normalizeClusterWebSocketUrl(input.clusterWsUrl)
         : undefined,
     heartbeatIntervalMs: input.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS,
+    hostDnsName:
+      input.hostDnsName === undefined || input.hostDnsName === ""
+        ? undefined
+        : requiredText(input.hostDnsName, "T4_HOST_DNS_NAME", 253).replace(/\.$/, ""),
     profiles: normalizeProfileRoutes(input.profileRoutes ?? input.profiles ?? []),
     startProfiles: input.startProfiles === true || input.enableProfileStarts === true,
     profileStartWaitMs: input.profileStartWaitMs ?? DEFAULT_PROFILE_START_WAIT_MS,
@@ -547,6 +599,20 @@ export async function startTailnetGateway(input) {
   const allowedSocketOrigins = new Set([options.allowedOrigin, ...options.nativeAllowedOrigins]);
   const profilesById = new Map(options.profiles.map((profile) => [profile.id, profile]));
   const startState = { starts: new Map(), lastStarts: new Map() };
+  // One-shot MagicDNS lookup for /v1/discovery: the first request spawns
+  // `tailscale status --json` once and the result is cached. A failed spawn
+  // is not cached so a later request can retry.
+  let discoveryHostName;
+  const resolveDiscoveryHostName = () => {
+    if (options.hostDnsName !== undefined) return Promise.resolve(options.hostDnsName);
+    if (discoveryHostName === undefined) {
+      discoveryHostName = spawnTailscaleHostName().catch(() => {
+        discoveryHostName = undefined;
+        return null;
+      });
+    }
+    return discoveryHostName;
+  };
   let closed = false;
 
   const activeBrowsers = new Map();
@@ -582,6 +648,28 @@ export async function startTailnetGateway(input) {
       if (request.method !== "GET" && request.method !== "HEAD") {
         response.setHeader("Allow", "GET, HEAD");
         replyText(response, 405, "text/plain; charset=utf-8", "Method not allowed");
+        return;
+      }
+      if (pathname === "/v1/discovery") {
+        // wsUrl prefers the request's own https origin when it is one the
+        // gateway already serves (browser clients); native clients, which
+        // send no Origin header, get the configured T4_ALLOWED_ORIGIN.
+        const requestOrigin = request.headers.origin;
+        const origin =
+          requestOrigin !== undefined &&
+          allowedSocketOrigins.has(requestOrigin) &&
+          requestOrigin.startsWith("https://")
+            ? requestOrigin
+            : options.allowedOrigin;
+        const body = JSON.stringify({
+          hostName: await resolveDiscoveryHostName(),
+          label: options.label,
+          deploymentIdentity: options.deploymentIdentity,
+          autoApprove: true,
+          wsUrl: new URL("/v1/ws", origin).toString(),
+        });
+        response.setHeader("Cache-Control", "no-store");
+        replyText(response, 200, "application/json; charset=utf-8", body, request.method === "HEAD");
         return;
       }
       const path = safeStaticPath(options.webRoot, pathname);
@@ -710,6 +798,7 @@ export function optionsFromEnvironment(environment = process.env) {
         ? undefined
         : environment.T4_NATIVE_ALLOWED_ORIGINS.split(","),
     label: environment.T4_HOST_LABEL ?? "OMP on this Tailnet host",
+    hostDnsName: environment.T4_HOST_DNS_NAME,
     deploymentIdentity: environment.T4_DEPLOYMENT_IDENTITY,
     clusterOperatorEnabled,
     clusterWsUrl,

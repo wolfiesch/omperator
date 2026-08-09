@@ -84,11 +84,17 @@ struct HostWireFixtureTests {
     func deepLinks() {
         #expect(Pairing.parseDeepLink("t4-code://pair/studio-mac/123456", issuedAtMs: 1)?.code == "123456")
         #expect(Pairing.parseDeepLink("t4-code://pair/studio-mac/123456", issuedAtMs: 1)?.hostHint == "studio-mac")
-        // wrong scheme, extra query, bad code length, bad hint char
+        // Hint-only links are valid owner auto-approval prefills (empty code).
+        let hintOnly = Pairing.parseDeepLink("t4-code://pair/studio-mac", issuedAtMs: 1)
+        #expect(hintOnly?.hostHint == "studio-mac")
+        #expect(hintOnly?.code == "")
+        #expect(Pairing.parseDeepLink("t4-code://pair/studio-mac/", issuedAtMs: 1)?.code == "")
+        // wrong scheme, extra query, bad code length, bad hint char, missing hint
         #expect(Pairing.parseDeepLink("https://pair/studio-mac/123456", issuedAtMs: 1) == nil)
         #expect(Pairing.parseDeepLink("t4-code://pair/studio-mac/123456?x=1", issuedAtMs: 1) == nil)
         #expect(Pairing.parseDeepLink("t4-code://pair/studio-mac/12345", issuedAtMs: 1) == nil)
         #expect(Pairing.parseDeepLink("t4-code://pair/stud!o-mac/123456", issuedAtMs: 1) == nil)
+        #expect(Pairing.parseDeepLink("t4-code://pair/", issuedAtMs: 1) == nil)
     }
 
     @Test("Device token format is enforced")

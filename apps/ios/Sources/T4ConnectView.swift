@@ -1,11 +1,12 @@
 //  T4ConnectView.swift
 //  Connect to a T4 host over host-wire. The new-user path comes first: enter
-//  the host hint and the 6-digit pairing code shown by the host, tap Pair &
-//  Connect, and the store runs the pair.start handshake and persists the
-//  granted device token. Already-paired devices (or local/open hosts) can use
-//  the Advanced section to connect with raw endpoint + credentials, or just a
-//  raw endpoint. t4-code://pair/... deep links prefill the pair fields via the
-//  optional `pendingPair` parameter.
+//  the host hint and, when required, the 6-digit pairing code shown by the
+//  host, tap Pair & Connect, and the store runs the pair.start handshake and
+//  persists the granted device token. Same-tailnet owner hosts auto-approve
+//  pairing with an empty code. Already-paired devices (or local/open hosts)
+//  can use the Advanced section to connect with raw endpoint + credentials,
+//  or just a raw endpoint. t4-code://pair/... deep links prefill the pair
+//  fields via the optional `pendingPair` parameter.
 
 import SwiftUI
 import HostWire
@@ -15,7 +16,7 @@ struct T4ConnectView: View {
     @ObservedObject var store: T4SessionStore
     @Environment(\.dismiss) private var dismiss
 
-    /// Optional deep-link prefill (t4-code://pair/<hostHint>/<code>).
+    /// Optional deep-link prefill (t4-code://pair/<hostHint>[/<code>]).
     var pendingPair: PendingPair? = nil
 
     @State private var pairHost: String = ""
@@ -31,7 +32,9 @@ struct T4ConnectView: View {
 
     private var trimmedHost: String { pairHost.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var trimmedCode: String { pairCode.trimmingCharacters(in: .whitespacesAndNewlines) }
-    private var pairValid: Bool { !trimmedHost.isEmpty && trimmedCode.count == 6 }
+    // The code is optional: same-tailnet owner hosts auto-approve an empty
+    // code; non-owners still need the 6-digit ticket.
+    private var pairValid: Bool { !trimmedHost.isEmpty }
 
     private var trimmedEndpoint: String { endpoint.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var endpointValid: Bool {
@@ -69,7 +72,7 @@ struct T4ConnectView: View {
                 } header: {
                     Text("Pair a new device")
                 } footer: {
-                    Text("Enter the host hint and the 6-digit code shown by the host. The port defaults to 8787 when not specified.")
+                    Text("Enter the host hint and, when required, the 6-digit code shown by the host. The port defaults to 8787 when not specified.")
                 }
 
                 DisclosureGroup("Advanced", isExpanded: $showAdvanced) {

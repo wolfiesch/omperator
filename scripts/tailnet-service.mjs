@@ -170,6 +170,9 @@ export function validateServiceConfig(input) {
     port: gatewayPort(input.port ?? DEFAULT_GATEWAY_PORT),
     label: cleanText(input.label ?? "OMP on this Tailnet host", "host label", 128),
     deploymentIdentity: deploymentIdentity(input.deploymentIdentity),
+    ...(input.hostDnsName === undefined || input.hostDnsName === ""
+      ? {}
+      : { hostDnsName: cleanText(input.hostDnsName, "host DNS name", 253).replace(/\.$/, "") }),
     ...(input.electronRunAsNode === true ? { electronRunAsNode: true } : {}),
     ...(routes === undefined ? {} : { profileRoutes: routes, startProfiles: input.startProfiles === true }),
   };
@@ -199,6 +202,7 @@ function gatewayEnvironment(config) {
     T4_APP_SERVER_SOCKET: config.appSocket,
     T4_HOST_LABEL: config.label,
     T4_DEPLOYMENT_IDENTITY: config.deploymentIdentity,
+    ...(config.hostDnsName === undefined ? {} : { T4_HOST_DNS_NAME: config.hostDnsName }),
     ...(config.electronRunAsNode ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
     ...(config.profileRoutes === undefined
       ? {}
@@ -621,6 +625,7 @@ export function validateCliOptions(command, options) {
           "webRoot",
           "appSocket",
           "label",
+          "hostDnsName",
           "deploymentIdentity",
           "profileRoutes",
           "startProfiles",
@@ -650,6 +655,7 @@ Install options:
   --profile-routes JSON Static named-profile route array
   --start-profiles       Allow configured named profiles to start on demand
   --label TEXT          Host label shown by Omperator
+  --host-dns-name NAME  MagicDNS name served by /v1/discovery (default: resolved from tailscale)
   --deployment-identity SHA256:HEX
                         Immutable identity for the exact deployed T4/OMP tuple (required)
   --electron-run-as-node
@@ -674,6 +680,7 @@ async function install(options, paths) {
     allowedOrigin: options.origin,
     port: options.port ?? DEFAULT_GATEWAY_PORT,
     label: options.label ?? "OMP on this Tailnet host",
+    hostDnsName: options.hostDnsName,
     deploymentIdentity: options.deploymentIdentity,
     electronRunAsNode: options.electronRunAsNode === true,
     ...(options.profileRoutes === undefined
