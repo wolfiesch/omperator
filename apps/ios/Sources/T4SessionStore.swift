@@ -587,6 +587,11 @@ final class T4SessionStore: ObservableObject {
     // Keychain.swift). The account names are reused as the legacy
     // UserDefaults keys so the one-time migration maps 1:1.
     private static let savedEndpointKey = "t4.endpoint"
+    /// Saved tailnet gateway for the plug-and-play collab path. When present,
+    /// restore() prefers it over the legacy host-wire endpoint: the collab
+    /// world has no ownership machinery, no PIN, and no clones.
+    private static let savedCollabGatewayKey = "t4.collabGateway"
+    private static let savedCollabNameKey = "t4.collabName"
     private static let savedDeviceIdKey = "t4.deviceId"
     private static let savedDeviceTokenKey = "t4.deviceToken"
     private static let railListViewKey = "t4.rail.listView"
@@ -997,8 +1002,16 @@ final class T4SessionStore: ObservableObject {
         if let seam = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("-T4Endpoint=") }) {
             Keychain.set(String(seam.dropFirst("-T4Endpoint=".count)), forKey: Self.savedEndpointKey)
         }
-        guard !connected, !connecting,
-              let endpointString = Keychain.get(Self.savedEndpointKey),
+        guard !connected, !connecting else { return }
+        // Plug-and-play first: a saved collab gateway restores the rooms
+        // inventory directly — no host-wire, no PIN, no ownership states.
+        if let gatewayString = UserDefaults.standard.string(forKey: Self.savedCollabGatewayKey),
+           let gateway = URL(string: gatewayString) {
+            let name = UserDefaults.standard.string(forKey: Self.savedCollabNameKey) ?? platformDeviceName()
+            await connectCollab(gatewayURL: gateway, name: name)
+            return
+        }
+        guard let endpointString = Keychain.get(Self.savedEndpointKey),
               let endpoint = URL(string: endpointString) else { return }
         #if os(Linux)
         T4Perf.mark("restore-keychain-read")
@@ -2516,11 +2529,13 @@ final class T4SessionStore: ObservableObject {
     func disconnect() async {
         await closeCollabRoom()
         if collabMode {
-            // Collab mode keeps the host-wire credentials: exiting collab is
-            // not "forget this host", it is just dropping the guest inventory.
+            // Exiting collab drops the guest inventory and the saved gateway
+            // (the user chose to disconnect from this host).
             collabRooms = []
             collabMode = false
             collabGatewayURL = nil
+            UserDefaults.standard.removeObject(forKey: Self.savedCollabGatewayKey)
+            UserDefaults.standard.removeObject(forKey: Self.savedCollabNameKey)
             collabModels = []
             collabCurrentModel = nil
             collabPendingRequestBySession.removeAll()
@@ -2614,6 +2629,8 @@ final class T4SessionStore: ObservableObject {
             collabMode = true
             connected = true
             pairedEndpoint = gatewayURL.absoluteString
+            UserDefaults.standard.set(gatewayURL.absoluteString, forKey: Self.savedCollabGatewayKey)
+            UserDefaults.standard.set(name, forKey: Self.savedCollabNameKey)
             markLive()
             clearErrorAfterSuccessfulConnection()
             reconcileSelection()
@@ -2725,6 +2742,7 @@ final class T4SessionStore: ObservableObject {
         collabPendingRequestBySession.removeAll()
         pendingAsk = nil
         pendingConfirmation = nil
+        if collabMode { connected = false }
     }
 
     /// Drop the open room's connection state after a terminal bye/error.
@@ -2738,6 +2756,9 @@ final class T4SessionStore: ObservableObject {
         pendingAsk = nil
         pendingConfirmation = nil
         activeTurns.remove(sessionId)
+        // The room is gone (bye/error/close); a dead guest must not leave the
+        // app showing "Live" with a composer that silently no-ops.
+        connected = false
         if let reason, !reason.isEmpty {
             lastError = reason
         }
