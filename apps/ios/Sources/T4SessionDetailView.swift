@@ -67,6 +67,77 @@ struct T4SessionDetailView: View {
         self._promptModel = ObservedObject(wrappedValue: store.promptModel)
     }
 
+    /// The transcript scroll: content, glass strip, gestures, and edge
+    /// fades. Extracted so the type-checker gets small expressions.
+    private func transcriptScroll(_ proxy: ScrollViewProxy) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                #if os(macOS)
+                loadEarlierSection
+                #else
+                // iOS: paging is scroll-driven — no button. Reaching the top
+                // of the loaded window pulls the next page.
+                topPagingMarker
+                #endif
+                if let challenge = promptModel.pendingConfirmation {
+                    confirmationBanner(challenge)
+                }
+                if showFacts { facts }
+                Divider().overlay(t.lineFaint)
+                transcriptView(session)
+                // Live asks belong at the transcript's tail — the
+                // newest thing demanding attention, always in view.
+                if let ask = promptModel.pendingAsk, ask.sessionId == session.sessionId {
+                    T4AskCard(ask: ask, theme: t) { value in
+                        Task { await store.respondAsk(value: value) }
+                    }
+                }
+                Color.clear
+                    .frame(height: 1)
+                    .id("transcript-bottom")
+            }
+            .padding()
+        }
+        .coordinateSpace(name: "transcript-scroll")
+        // The session strip floats over the transcript as glass —
+        // conversation rows scroll under it, like the composer.
+        .safeAreaInset(edge: .top, spacing: 0) { pinnedHeader }
+        // Drag or tap the transcript to put the keyboard away. A quick tap
+        // never conflicts with text selection (that needs a long-press),
+        // and buttons inside rows still win their tap.
+        #if os(iOS)
+        .scrollDismissesKeyboard(.interactively)
+        .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
+        // Native iOS 26 scroll-edge fades: bottom under the floating
+        // composer, top under the glass strip and nav bar — rows dissolve
+        // under both instead of hard-clipping.
+        .scrollEdgeEffectStyle(.soft, for: .bottom)
+        .scrollEdgeEffectStyle(.soft, for: .top)
+        #endif
+    }
+
+    /// Scroll-up paging: nearing the top of the loaded window grows the
+    /// render window (debounced — one gesture, one page) and then pulls the
+    /// next host page. No buttons on iOS.
+    private func handleScrollTop(minY: CGFloat) {
+        guard minY > -240 else { return }
+        let total = store.transcript(for: session.sessionId).count
+        if total > renderLimit, Date().timeIntervalSince(lastWindowGrow) > 0.6 {
+            lastWindowGrow = Date()
+            withAnimation(.easeOut(duration: 0.18)) {
+                renderLimit = min(total, renderLimit + 40)
+            }
+        }
+        // Host-side paging (host-wire only; collab snapshots ship everything).
+        let paging = transcriptModel.pagingState[session.sessionId]
+        let hasMore = (paging?.hasMore == true)
+            || (paging?.hasMore == nil && total >= 50)
+        guard hasMore, paging?.loading != true,
+              transcriptModel.prependingSession != session.sessionId,
+              store.connected, !store.collabMode else { return }
+        Task { await store.loadEarlier(sessionId: session.sessionId) }
+    }
+
     private func sheetBinding(_ sheet: ActiveSheet) -> Binding<Bool> {
         Binding(get: { activeSheet == sheet }, set: { if !$0 { activeSheet = nil } })
     }
@@ -105,101 +176,32 @@ struct T4SessionDetailView: View {
     var body: some View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        #if os(macOS)
-                        loadEarlierSection
-                        #else
-                        // iOS: paging is scroll-driven — no button. Reaching
-                        // the top of the loaded window pulls the next page.
-                        topPagingMarker
-                        #endif
-                        if let challenge = promptModel.pendingConfirmation {
-                            confirmationBanner(challenge)
-                        }
-                        if showFacts { facts }
-                        Divider().overlay(t.lineFaint)
-                        transcriptView(session)
-                        // Live asks belong at the transcript's tail — the
-                        // newest thing demanding attention, always in view.
-                        if let ask = promptModel.pendingAsk, ask.sessionId == session.sessionId {
-                            T4AskCard(ask: ask, theme: t) { value in
-                                Task { await store.respondAsk(value: value) }
-                            }
-                        }
-                        Color.clear
-                            .frame(height: 1)
-                            .id("transcript-bottom")
-                    }
-                    .padding()
-                }
-                .coordinateSpace(name: "transcript-scroll")
-                // The session strip floats over the transcript as glass —
-                // conversation rows scroll under it, like the composer.
-                .safeAreaInset(edge: .top, spacing: 0) { pinnedHeader }
-                .onAppear { proxy.scrollTo("transcript-bottom", anchor: .bottom) }
-                #if os(iOS)
-                // Scroll-up paging: nearing the top of the loaded window
-                // pulls the next older page — no button. Guarded against
-                // concurrent pages and prepends so the viewport never jumps.
-                .onPreferenceChange(TopOffsetKey.self) { minY in
-                    guard minY > -240 else { return }
-                    // Grow the render window first — debounced so one scroll
-                    // gesture pulls one page, not the whole transcript.
-                    let total = store.transcript(for: session.sessionId).count
-                    if total > renderLimit,
-                       Date().timeIntervalSince(lastWindowGrow) > 0.6 {
-                        lastWindowGrow = Date()
-                        withAnimation(.easeOut(duration: 0.18)) {
-                            renderLimit = min(total, renderLimit + 40)
-                        }
-                    }
-                    // Host-side paging (host-wire only; collab snapshots ship
-                    // everything).
-                    let paging = transcriptModel.pagingState[session.sessionId]
-                    let hasMore = (paging?.hasMore == true)
-                        || (paging?.hasMore == nil && total >= 50)
-                    guard hasMore, paging?.loading != true,
-                          transcriptModel.prependingSession != session.sessionId,
-                          store.connected, !store.collabMode else { return }
-                    Task { await store.loadEarlier(sessionId: session.sessionId) }
-                }
-                #endif
-                // Drag or tap the transcript to put the keyboard away. A
-                // quick tap never conflicts with text selection (that needs
-                // a long-press), and buttons inside rows still win their tap.
-                #if os(iOS)
-                .scrollDismissesKeyboard(.interactively)
-                .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
-                #endif
-                // Native iOS 26 scroll-edge fades: bottom under the floating
-                // composer, top under the glass strip and nav bar — rows
-                // dissolve under both instead of hard-clipping.
-                #if os(iOS)
-                .scrollEdgeEffectStyle(.soft, for: .bottom)
-                .scrollEdgeEffectStyle(.soft, for: .top)
-                #endif
-                .onChange(of: store.transcript(for: session.sessionId).count) { _, _ in
+                transcriptScroll(proxy)
+                    .onAppear { proxy.scrollTo("transcript-bottom", anchor: .bottom) }
                     // A page prepend increases the count too; suppress the
                     // scroll-to-bottom follow while the store is prepending
                     // older history so the viewport stays put.
-                    guard transcriptModel.prependingSession != session.sessionId else { return }
-                    withAnimation(.easeOut(duration: 0.2)) {
+                    .onChange(of: store.transcript(for: session.sessionId).count) { _, _ in
+                        guard transcriptModel.prependingSession != session.sessionId else { return }
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            proxy.scrollTo("transcript-bottom", anchor: .bottom)
+                        }
+                    }
+                    .onChange(of: transcriptModel.streamingMessages[session.sessionId]) { _, _ in
+                        guard transcriptModel.prependingSession != session.sessionId else { return }
                         proxy.scrollTo("transcript-bottom", anchor: .bottom)
                     }
-                }
-                .onChange(of: transcriptModel.streamingMessages[session.sessionId]) { _, _ in
-                    guard transcriptModel.prependingSession != session.sessionId else { return }
-                    proxy.scrollTo("transcript-bottom", anchor: .bottom)
-                }
-                .onChange(of: transcriptModel.liveTurns[session.sessionId]) { _, _ in
-                    guard transcriptModel.prependingSession != session.sessionId else { return }
-                    proxy.scrollTo("transcript-bottom", anchor: .bottom)
-                }
-                .onChange(of: transcriptModel.liveTools[session.sessionId]) { _, _ in
-                    guard transcriptModel.prependingSession != session.sessionId else { return }
-                    proxy.scrollTo("transcript-bottom", anchor: .bottom)
-                }
+                    .onChange(of: transcriptModel.liveTurns[session.sessionId]) { _, _ in
+                        guard transcriptModel.prependingSession != session.sessionId else { return }
+                        proxy.scrollTo("transcript-bottom", anchor: .bottom)
+                    }
+                    .onChange(of: transcriptModel.liveTools[session.sessionId]) { _, _ in
+                        guard transcriptModel.prependingSession != session.sessionId else { return }
+                        proxy.scrollTo("transcript-bottom", anchor: .bottom)
+                    }
+                    #if os(iOS)
+                    .onPreferenceChange(TopOffsetKey.self) { handleScrollTop(minY: $0) }
+                    #endif
             }
             T4TerminalDrawer(session: session, store: store, isOpen: showTerminal)
                 .environmentObject(theme)
