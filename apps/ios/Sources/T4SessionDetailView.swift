@@ -189,134 +189,154 @@ struct T4SessionDetailView: View {
     }
 
     var body: some View {
+        rootChrome(transcriptPane)
+    }
+
+    /// The session pane: transcript reader + terminal drawer. Split from the
+    /// root chrome chain — the arm64 type-checker times out on the combined
+    /// body expression.
+    private var transcriptPane: some View {
         VStack(spacing: 0) {
-            ScrollViewReader { proxy in
-                transcriptScroll(proxy)
-                    .onAppear { proxy.scrollTo("transcript-bottom", anchor: .bottom) }
-                    // A page prepend increases the count too; suppress the
-                    // scroll-to-bottom follow while the store is prepending
-                    // older history so the viewport stays put.
-                    .onChange(of: store.transcript(for: session.sessionId).count) { _, _ in
-                        guard transcriptModel.prependingSession != session.sessionId else { return }
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            proxy.scrollTo("transcript-bottom", anchor: .bottom)
-                        }
-                    }
-                    .onChange(of: transcriptModel.streamingMessages[session.sessionId]) { _, _ in
-                        guard transcriptModel.prependingSession != session.sessionId else { return }
-                        proxy.scrollTo("transcript-bottom", anchor: .bottom)
-                    }
-                    .onChange(of: transcriptModel.liveTurns[session.sessionId]) { _, _ in
-                        guard transcriptModel.prependingSession != session.sessionId else { return }
-                        proxy.scrollTo("transcript-bottom", anchor: .bottom)
-                    }
-                    .onChange(of: transcriptModel.liveTools[session.sessionId]) { _, _ in
-                        guard transcriptModel.prependingSession != session.sessionId else { return }
-                        proxy.scrollTo("transcript-bottom", anchor: .bottom)
-                    }
-                    #if os(iOS)
-                    .onPreferenceChange(TopOffsetKey.self) { handleScrollTop(minY: $0) }
-                    #endif
-            }
+            ScrollViewReader { proxy in transcriptReader(proxy) }
             T4TerminalDrawer(session: session, store: store, isOpen: showTerminal)
                 .environmentObject(theme)
         }
-        .background(t.bg.ignoresSafeArea())
-        // Floating glass: plan strip + composer hover over the transcript,
-        // which scrolls underneath. No floor, no divider.
-        .safeAreaInset(edge: .bottom, spacing: 20) {
-            VStack(spacing: 8) {
-                planStripSection
-                composer
+    }
+
+    /// Scroll-reader wiring: follow-to-bottom on growth, scroll-up paging.
+    private func transcriptReader(_ proxy: ScrollViewProxy) -> some View {
+        transcriptScroll(proxy)
+            .onAppear { proxy.scrollTo("transcript-bottom", anchor: .bottom) }
+            // A page prepend increases the count too; suppress the
+            // scroll-to-bottom follow while the store is prepending
+            // older history so the viewport stays put.
+            .onChange(of: store.transcript(for: session.sessionId).count) { _, _ in
+                guard transcriptModel.prependingSession != session.sessionId else { return }
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo("transcript-bottom", anchor: .bottom)
+                }
             }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 6)
-        }
-        // Collapse the plan strip while typing so the keyboard never buries it.
-        .onChange(of: composerFocused) { _, focused in
-            if focused, planExpanded {
-                withAnimation(.easeInOut(duration: 0.22)) { planExpanded = false }
+            .onChange(of: transcriptModel.streamingMessages[session.sessionId]) { _, _ in
+                guard transcriptModel.prependingSession != session.sessionId else { return }
+                proxy.scrollTo("transcript-bottom", anchor: .bottom)
             }
-        }
-        // Expanding the plan with the keyboard up crams the tree into the
-        // strip above it; dismiss the keyboard so the tree gets the room.
-        .onChange(of: planExpanded) { _, isExpanded in
-            if isExpanded { composerFocused = false }
-        }
-        .navigationTitle(session.title)
-        #if os(iOS)
-        .navigationBarTitleDisplayMode(.inline)
-        #endif
-        .task(id: session.sessionId) {
-            await store.attach(sessionId: session.sessionId)
-            // Collab mode has no host-wire attach: joining the room IS the
-            // attach. No-op for host-wire sessions (room not in collabRooms).
-            await store.openCollabRoomIfNeeded(sessionId: session.sessionId)
-        }
-        .onAppear {
-            // UI-test seams: boot with a pane/drawer/card visible for screenshots.
-            let args = ProcessInfo.processInfo.arguments
-            if args.contains("-T4ShowFiles") { activeSheet = .files }
-            if args.contains("-T4ShowBrowser") { activeSheet = .browser }
-            if args.contains("-T4ShowAgents") { activeSheet = .agents }
-            if args.contains("-T4ShowTerminal") { showTerminal = true }
-            if args.contains("-T4ShowPlan") { planExpanded = true }
-            // Generic: -T4ShowSheet=usage|review|artifacts|settings|searchDiff|files|browser|agents
-            if let raw = args.first(where: { $0.hasPrefix("-T4ShowSheet=") }),
-               let sheet = ActiveSheet(rawValue: String(raw.dropFirst("-T4ShowSheet=".count))) {
-                activeSheet = sheet
+            .onChange(of: transcriptModel.liveTurns[session.sessionId]) { _, _ in
+                guard transcriptModel.prependingSession != session.sessionId else { return }
+                proxy.scrollTo("transcript-bottom", anchor: .bottom)
             }
-        }
-        .task(id: session.sessionId) {
-            // -T4ShowAsk: demo ask pinned to whatever session is current (the
-            // selection swaps from sample to live after connect).
-            if ProcessInfo.processInfo.arguments.contains("-T4ShowAsk") {
-                promptModel.pendingAsk = T4SessionStore.PendingAsk(
-                    sessionId: session.sessionId,
-                    request: AskRequest(askId: "demo-ask", question: "Apply the plan and make these changes?",
-                                        options: [AskOption(id: "yes", label: "Yes, apply the plan"),
-                                                  AskOption(id: "edit", label: "Edit the plan first"),
-                                                  AskOption(id: "no", label: "Cancel")]))
+            .onChange(of: transcriptModel.liveTools[session.sessionId]) { _, _ in
+                guard transcriptModel.prependingSession != session.sessionId else { return }
+                proxy.scrollTo("transcript-bottom", anchor: .bottom)
             }
-        }
-        .alert("Rename Session", isPresented: $renaming) {
-            TextField("Session name", text: $renameText)
-            Button("Rename", action: submitRename)
-            Button("Cancel", role: .cancel) { renaming = false }
-        } message: {
-            Text("Enter a new title for this session.")
-        }
-        .sheet(item: $activeSheet) { sheet in
-            switch sheet {
-            case .files:
-                T4FilesPane(session: session, store: store, isPresented: sheetBinding(.files))
-                    .environmentObject(theme)
-            case .agents:
-                T4AgentsPane(session: session, store: store, isPresented: sheetBinding(.agents))
-                    .environmentObject(theme)
-            case .usage:
-                T4UsagePane(store: store, isPresented: sheetBinding(.usage))
-                    .environmentObject(theme)
-            case .review:
-                T4ReviewPane(session: session, store: store, isPresented: sheetBinding(.review))
-                    .environmentObject(theme)
-            case .artifacts:
-                T4ArtifactsPane(session: session, store: store, isPresented: sheetBinding(.artifacts))
-                    .environmentObject(theme)
-            case .settings:
-                T4SettingsPane(store: store, isPresented: sheetBinding(.settings))
-                    .environmentObject(theme)
-            case .browser:
-                T4BrowserPane(session: session, store: store, isPresented: sheetBinding(.browser))
-                    .environmentObject(theme)
-            case .searchDiff:
-                T4SearchPane(session: session, store: store, isPresented: sheetBinding(.searchDiff))
-                    .environmentObject(theme)
-            case .selectText:
-                T4TranscriptTextSheet(entries: store.transcript(for: session.sessionId), theme: t,
-                                      isPresented: sheetBinding(.selectText))
-                    .environmentObject(theme)
+            #if os(iOS)
+            .onPreferenceChange(TopOffsetKey.self) { handleScrollTop(minY: $0) }
+            #endif
+    }
+
+    /// Root chrome: background, floating composer, nav, task, alert, sheets.
+    private func rootChrome(_ content: some View) -> some View {
+        content
+            .background(t.bg.ignoresSafeArea())
+            // Floating glass: plan strip + composer hover over the transcript,
+            // which scrolls underneath. No floor, no divider.
+            .safeAreaInset(edge: .bottom, spacing: 20) {
+                VStack(spacing: 8) {
+                    planStripSection
+                    composer
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 6)
             }
+            // Collapse the plan strip while typing so the keyboard never buries it.
+            .onChange(of: composerFocused) { _, focused in
+                if focused, planExpanded {
+                    withAnimation(.easeInOut(duration: 0.22)) { planExpanded = false }
+                }
+            }
+            // Expanding the plan with the keyboard up crams the tree into the
+            // strip above it; dismiss the keyboard so the tree gets the room.
+            .onChange(of: planExpanded) { _, isExpanded in
+                if isExpanded { composerFocused = false }
+            }
+            .navigationTitle(session.title)
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .task(id: session.sessionId) {
+                await store.attach(sessionId: session.sessionId)
+                // Collab mode has no host-wire attach: joining the room IS the
+                // attach. No-op for host-wire sessions (room not in collabRooms).
+                await store.openCollabRoomIfNeeded(sessionId: session.sessionId)
+            }
+            .onAppear {
+                // UI-test seams: boot with a pane/drawer/card visible for screenshots.
+                let args = ProcessInfo.processInfo.arguments
+                if args.contains("-T4ShowFiles") { activeSheet = .files }
+                if args.contains("-T4ShowBrowser") { activeSheet = .browser }
+                if args.contains("-T4ShowAgents") { activeSheet = .agents }
+                if args.contains("-T4ShowTerminal") { showTerminal = true }
+                if args.contains("-T4ShowPlan") { planExpanded = true }
+                // Generic: -T4ShowSheet=usage|review|artifacts|settings|searchDiff|files|browser|agents
+                if let raw = args.first(where: { $0.hasPrefix("-T4ShowSheet=") }),
+                   let sheet = ActiveSheet(rawValue: String(raw.dropFirst("-T4ShowSheet=".count))) {
+                    activeSheet = sheet
+                }
+            }
+            .task(id: session.sessionId) {
+                // -T4ShowAsk: demo ask pinned to whatever session is current (the
+                // selection swaps from sample to live after connect).
+                if ProcessInfo.processInfo.arguments.contains("-T4ShowAsk") {
+                    promptModel.pendingAsk = T4SessionStore.PendingAsk(
+                        sessionId: session.sessionId,
+                        request: AskRequest(askId: "demo-ask", question: "Apply the plan and make these changes?",
+                                            options: [AskOption(id: "yes", label: "Yes, apply the plan"),
+                                                      AskOption(id: "edit", label: "Edit the plan first"),
+                                                      AskOption(id: "no", label: "Cancel")]))
+                }
+            }
+            .alert("Rename Session", isPresented: $renaming) {
+                TextField("Session name", text: $renameText)
+                Button("Rename", action: submitRename)
+                Button("Cancel", role: .cancel) { renaming = false }
+            } message: {
+                Text("Enter a new title for this session.")
+            }
+            .sheet(item: $activeSheet) { sheet in
+                sheetBody(sheet)
+            }
+    }
+
+    /// One pane per sheet case.
+    private func sheetBody(_ sheet: ActiveSheet) -> some View {
+        switch sheet {
+        case .files:
+            T4FilesPane(session: session, store: store, isPresented: sheetBinding(.files))
+                .environmentObject(theme)
+        case .agents:
+            T4AgentsPane(session: session, store: store, isPresented: sheetBinding(.agents))
+                .environmentObject(theme)
+        case .usage:
+            T4UsagePane(store: store, isPresented: sheetBinding(.usage))
+                .environmentObject(theme)
+        case .review:
+            T4ReviewPane(session: session, store: store, isPresented: sheetBinding(.review))
+                .environmentObject(theme)
+        case .artifacts:
+            T4ArtifactsPane(session: session, store: store, isPresented: sheetBinding(.artifacts))
+                .environmentObject(theme)
+        case .settings:
+            T4SettingsPane(store: store, isPresented: sheetBinding(.settings))
+                .environmentObject(theme)
+        case .browser:
+            T4BrowserPane(session: session, store: store, isPresented: sheetBinding(.browser))
+                .environmentObject(theme)
+        case .searchDiff:
+            T4SearchPane(session: session, store: store, isPresented: sheetBinding(.searchDiff))
+                .environmentObject(theme)
+        case .selectText:
+            T4TranscriptTextSheet(entries: store.transcript(for: session.sessionId), theme: t,
+                                  isPresented: sheetBinding(.selectText))
+                .environmentObject(theme)
         }
     }
 
