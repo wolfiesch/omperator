@@ -93,7 +93,6 @@ struct T4SessionDetailView: View {
             // composer, top under the glass strip and nav bar — rows
             // dissolve under both instead of hard-clipping.
             .scrollEdgeEffectStyle(.soft, for: .bottom)
-            .scrollEdgeEffectStyle(.soft, for: .top)
             #endif
     }
 
