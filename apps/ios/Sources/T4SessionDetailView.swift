@@ -76,8 +76,11 @@ struct T4SessionDetailView: View {
     /// Glass strip + named space on the scroll. Split from the iOS gesture
     /// chain — the arm64 type-checker times out on the combined expression.
     private func transcriptChrome(_ scroll: some View) -> some View {
-        // BISECT C: strip inset stubbed while hunting the arm64 timeout.
-        scroll.coordinateSpace(name: "transcript-scroll")
+        scroll
+            .coordinateSpace(name: "transcript-scroll")
+            // The session strip floats over the transcript as glass —
+            // conversation rows scroll under it, like the composer.
+            .safeAreaInset(edge: .top, spacing: 0) { pinnedHeader }
     }
 
     /// Keyboard-dismiss tap and native iOS 26 scroll-edge fades.
@@ -93,6 +96,7 @@ struct T4SessionDetailView: View {
             // composer, top under the glass strip and nav bar — rows
             // dissolve under both instead of hard-clipping.
             .scrollEdgeEffectStyle(.soft, for: .bottom)
+            .scrollEdgeEffectStyle(.soft, for: .top)
             #endif
     }
 
@@ -171,9 +175,17 @@ struct T4SessionDetailView: View {
     /// expression — the parameter list with closures was too much for the
     /// Swift type-checker.
     private func transcriptView(_ session: SessionRef) -> some View {
-        // BISECT B: stub while hunting the arm64 timeout.
-        EmptyView()
-    }
+        let entries = store.transcript(for: session.sessionId)
+        return T4TranscriptView(
+            entries: Array(entries.suffix(renderLimit)),
+            liveTurn: transcriptModel.liveTurns[session.sessionId],
+            streamingMessage: transcriptModel.streamingMessages[session.sessionId],
+            liveTools: transcriptModel.liveTools[session.sessionId] ?? LiveToolProjection(),
+            theme: t,
+            onSelectText: { activeSheet = .selectText },
+            totalCount: entries.count,
+            onShowEarlier: { withAnimation(.easeOut(duration: 0.18)) { renderLimit += 40 } },
+            showWindowButton: showWindowButton)
     }
 
     var body: some View {
@@ -193,7 +205,6 @@ struct T4SessionDetailView: View {
 
     /// Scroll-reader wiring: follow-to-bottom on growth, scroll-up paging.
     private func transcriptReader(_ proxy: ScrollViewProxy) -> some View {
-        // BISECT D: reader chain stubbed while hunting the arm64 timeout.
         transcriptScroll(proxy)
             .onAppear { proxy.scrollTo("transcript-bottom", anchor: .bottom) }
             // A page prepend increases the count too; suppress the
@@ -217,6 +228,9 @@ struct T4SessionDetailView: View {
                 guard transcriptModel.prependingSession != session.sessionId else { return }
                 proxy.scrollTo("transcript-bottom", anchor: .bottom)
             }
+            #if os(iOS)
+            .onPreferenceChange(TopOffsetKey.self) { handleScrollTop(minY: $0) }
+            #endif
     }
 
     /// Root chrome: background, floating composer, nav, task, alert, sheets.
@@ -438,8 +452,15 @@ struct T4SessionDetailView: View {
     /// 1pt marker pinned to the top of the scroll content; its offset in the
     /// named space drives scroll-up paging.
     private var topPagingMarker: some View {
-        // BISECT D: marker stubbed while hunting the arm64 timeout.
-        Color.clear.frame(height: 1)
+        Color.clear
+            .frame(height: 1)
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(
+                        key: TopOffsetKey.self,
+                        value: geo.frame(in: .named("transcript-scroll")).minY)
+                }
+            )
     }
 
     /// "Load earlier messages" control (macOS). iOS pages automatically when
@@ -482,11 +503,13 @@ struct T4SessionDetailView: View {
 
     /// Floating session strip: glass over the transcript, like the composer.
     private var pinnedHeader: some View {
-        bisectHeader
+        header
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.thinMaterial)
+            .overlay(alignment: .bottom) { Divider().overlay(t.lineFaint) }
     }
-
-    // BISECT: full header chain replaced while hunting the arm64 timeout.
-    private var bisectHeader: some View { EmptyView() }
 
     private var header: some View {
 
