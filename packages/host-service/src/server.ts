@@ -5466,6 +5466,13 @@ export class LocalAppserver implements AppserverHandle {
 	 */
 	async #resumeOwnedSessions(): Promise<void> {
 		if (!this.#sessionOwnership) return;
+		// Discovery must populate #records first — the supervisor path resolves
+		// sessions through the record map.
+		try {
+			await this.refreshSessions();
+		} catch {
+			return; // inventory unavailable at boot; sessions stay observed
+		}
 		const owned = this.#sessionOwnership.list();
 		for (const record of owned) {
 			const parent = dirname(record.path);
