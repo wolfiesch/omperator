@@ -2224,17 +2224,10 @@ final class T4SessionStore: ObservableObject {
             case .sessions(let inventory):
                 sessions = inventory.sessions
                 markLive()
-                // The host sends `sessions` only right after a (re)handshake.
-                // Per-session attach registrations died with the previous
-                // socket, so re-subscribe every session we were attached to —
-                // otherwise transcript updates silently stop after a reconnect.
-                var reattach = attachedSessions
-                attachedSessions.removeAll()
-                if let selected = selectedSession { reattach.insert(selected.sessionId) }
+                // Reconnect recovery (re-fetch + re-attach) is owned by
+                // HostClient.onReconnected -> handleTransportReconnected;
+                // duplicating it here double-attaches on every reconnect.
                 reconcileSelection()
-                for sessionId in reattach {
-                    Task { await attach(sessionId: sessionId) }
-                }
             case .sessionDelta(let delta):
                 // Host-wide inventory change (folder-created sessions, status
                 // flips, removals). The rail sorts by updatedAt when rendering,
