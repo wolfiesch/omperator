@@ -160,7 +160,6 @@ struct T4SessionDetailView: View {
                 .coordinateSpace(name: "transcript-scroll")
                 // The session strip floats over the transcript as glass —
                 // conversation rows scroll under it, like the composer.
-                .safeAreaInset(edge: .top, spacing: 0) { pinnedHeader }
                 .onAppear { proxy.scrollTo("transcript-bottom", anchor: .bottom) }
                 // A page prepend increases the count too; suppress the
                 // scroll-to-bottom follow while the store is prepending
