@@ -569,12 +569,14 @@ export class RpcChildSupervisor {
 		this.#readyReject = ready.reject;
 		void this.readStdout(ready);
 		this.#stderrDrained = this.readStderr();
-		void this.#child.exited.then(async code => {
-			// Same race as the stdout-EOF path: without the drain this can reject
-			// `ready` before the child's diagnostic has been read.
-			if (!this.#closed && code !== 0)
-				this.fail(new Error(`rpc child exited (${code}): ${await this.drainedStderr()}`));
-		});
+		void this.#child.exited
+			.then(async code => {
+				// Same race as the stdout-EOF path: without the drain this can reject
+				// `ready` before the child's diagnostic has been read.
+				if (!this.#closed && code !== 0)
+					this.fail(new Error(`rpc child exited (${code}): ${await this.drainedStderr()}`));
+			})
+			.catch(() => undefined);
 		const timer = setTimeout(() => ready.reject(new Error("rpc child ready timeout")), 10_000);
 		try {
 			await ready.promise;
@@ -911,7 +913,15 @@ export class RpcChildSupervisor {
 		if (!this.#closed) {
 			this.#closed = true;
 			if (terminateChild) this.terminateAfterReaderFailure();
-			this.callbacks.crashed(error);
+			try {
+				this.callbacks.crashed(error);
+			} catch (callbackError) {
+				// A throwing crash callback must never become an unhandled
+				// rejection — Bun terminates the daemon on those, taking every
+				// connected client down with it (observed: killing a supervisor
+				// child mid-lifecycle crashed the appserver).
+				console.error("rpc child crash callback failed", callbackError);
+			}
 		}
 	}
 }
