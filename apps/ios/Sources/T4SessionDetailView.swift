@@ -76,11 +76,8 @@ struct T4SessionDetailView: View {
     /// Glass strip + named space on the scroll. Split from the iOS gesture
     /// chain — the arm64 type-checker times out on the combined expression.
     private func transcriptChrome(_ scroll: some View) -> some View {
-        scroll
-            .coordinateSpace(name: "transcript-scroll")
-            // The session strip floats over the transcript as glass —
-            // conversation rows scroll under it, like the composer.
-            .safeAreaInset(edge: .top, spacing: 0) { pinnedHeader }
+        // BISECT C: strip inset stubbed while hunting the arm64 timeout.
+        scroll.coordinateSpace(name: "transcript-scroll")
     }
 
     /// Keyboard-dismiss tap and native iOS 26 scroll-edge fades.
@@ -175,17 +172,9 @@ struct T4SessionDetailView: View {
     /// expression — the parameter list with closures was too much for the
     /// Swift type-checker.
     private func transcriptView(_ session: SessionRef) -> some View {
-        let entries = store.transcript(for: session.sessionId)
-        return T4TranscriptView(
-            entries: Array(entries.suffix(renderLimit)),
-            liveTurn: transcriptModel.liveTurns[session.sessionId],
-            streamingMessage: transcriptModel.streamingMessages[session.sessionId],
-            liveTools: transcriptModel.liveTools[session.sessionId] ?? LiveToolProjection(),
-            theme: t,
-            onSelectText: { activeSheet = .selectText },
-            totalCount: entries.count,
-            onShowEarlier: { withAnimation(.easeOut(duration: 0.18)) { renderLimit += 40 } },
-            showWindowButton: showWindowButton)
+        // BISECT B: stub while hunting the arm64 timeout.
+        EmptyView()
+    }
     }
 
     var body: some View {
