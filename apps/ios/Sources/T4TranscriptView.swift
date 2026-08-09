@@ -16,24 +16,31 @@ struct T4TranscriptView: View {
     /// Opens the full-transcript "Select Text" sheet (cross-message selection).
     var onSelectText: (() -> Void)?
 
-    /// Render window: only the most recent `visibleLimit` entries are drawn.
-    /// Long transcripts re-render every row — markdown bodies included — on
-    /// each paced streaming delta, which pegs the main thread on live
-    /// sessions. The window keeps live updates cheap; the button pages
-    /// older entries forward.
+    /// External render window (hosted by the session detail view so scroll-up
+    /// can grow it). When nil, the view owns a 40-row window with a button —
+    /// the standalone/preview fallback.
+    var totalCount: Int? = nil
+    var onShowEarlier: (() -> Void)? = nil
+    /// macOS keeps the manual window button; iOS pages by scrolling.
+    var showWindowButton = true
+
     @State private var visibleLimit = 40
 
     private var visibleEntries: ArraySlice<TranscriptEntry> {
-        entries.suffix(visibleLimit)
+        totalCount == nil ? entries.suffix(visibleLimit) : entries[...]
+    }
+
+    private var hiddenAhead: Int {
+        (totalCount ?? entries.count) - entries.count
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if entries.count > visibleEntries.count {
+            if showWindowButton && hiddenAhead > 0 {
                 HStack {
                     Spacer()
-                    Button("Show \(min(40, entries.count - visibleEntries.count)) earlier of \(entries.count - visibleEntries.count)") {
-                        visibleLimit += 40
+                    Button("Show \(min(40, hiddenAhead)) earlier of \(hiddenAhead)") {
+                        if let onShowEarlier { onShowEarlier() } else { visibleLimit += 40 }
                     }
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.txtMuted)

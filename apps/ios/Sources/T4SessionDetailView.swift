@@ -71,12 +71,14 @@ struct T4SessionDetailView: View {
         Binding(get: { activeSheet == sheet }, set: { if !$0 { activeSheet = nil } })
     }
 
+    /// Render window for the transcript: the detail view owns it so scroll-up
+    /// paging can grow it (no button on iOS). Growth is debounced — a single
+    /// scroll gesture must not explode the window.
+    @State private var renderLimit = 40
+    @State private var lastWindowGrow = Date.distantPast
+
     var body: some View {
         VStack(spacing: 0) {
-            // The session strip (Live chip, model, actions, files, terminal)
-            // is pinned chrome, not transcript content — it stays put while
-            // the conversation scrolls underneath.
-            pinnedHeader
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
@@ -92,12 +94,22 @@ struct T4SessionDetailView: View {
                         }
                         if showFacts { facts }
                         Divider().overlay(t.lineFaint)
-                        T4TranscriptView(entries: store.transcript(for: session.sessionId),
-                                         liveTurn: transcriptModel.liveTurns[session.sessionId],
-                                         streamingMessage: transcriptModel.streamingMessages[session.sessionId],
-                                         liveTools: transcriptModel.liveTools[session.sessionId] ?? LiveToolProjection(),
-                                         theme: t,
-                                         onSelectText: { activeSheet = .selectText })
+                        T4TranscriptView(
+                            entries: Array(store.transcript(for: session.sessionId).suffix(renderLimit)),
+                            totalCount: store.transcript(for: session.sessionId).count,
+                            onShowEarlier: { withAnimation(.easeOut(duration: 0.18)) { renderLimit += 40 } },
+                            showWindowButton: {
+                                #if os(macOS)
+                                return true
+                                #else
+                                return false
+                                #endif
+                            }(),
+                            liveTurn: transcriptModel.liveTurns[session.sessionId],
+                            streamingMessage: transcriptModel.streamingMessages[session.sessionId],
+                            liveTools: transcriptModel.liveTools[session.sessionId] ?? LiveToolProjection(),
+                            theme: t,
+                            onSelectText: { activeSheet = .selectText })
                         // Live asks belong at the transcript's tail — the
                         // newest thing demanding attention, always in view.
                         if let ask = promptModel.pendingAsk, ask.sessionId == session.sessionId {
@@ -112,6 +124,9 @@ struct T4SessionDetailView: View {
                     .padding()
                 }
                 .coordinateSpace(name: "transcript-scroll")
+                // The session strip floats over the transcript as glass —
+                // conversation rows scroll under it, like the composer.
+                .safeAreaInset(edge: .top, spacing: 0) { pinnedHeader }
                 .onAppear { proxy.scrollTo("transcript-bottom", anchor: .bottom) }
                 #if os(iOS)
                 // Scroll-up paging: nearing the top of the loaded window
@@ -119,10 +134,21 @@ struct T4SessionDetailView: View {
                 // concurrent pages and prepends so the viewport never jumps.
                 .onPreferenceChange(TopOffsetKey.self) { minY in
                     guard minY > -240 else { return }
+                    // Grow the render window first — debounced so one scroll
+                    // gesture pulls one page, not the whole transcript.
+                    let total = store.transcript(for: session.sessionId).count
+                    if total > renderLimit,
+                       Date().timeIntervalSince(lastWindowGrow) > 0.6 {
+                        lastWindowGrow = Date()
+                        withAnimation(.easeOut(duration: 0.18)) {
+                            renderLimit = min(total, renderLimit + 40)
+                        }
+                    }
+                    // Host-side paging (host-wire only; collab snapshots ship
+                    // everything).
                     let paging = transcriptModel.pagingState[session.sessionId]
-                    let entries = store.transcript(for: session.sessionId)
                     let hasMore = (paging?.hasMore == true)
-                        || (paging?.hasMore == nil && entries.count >= 50)
+                        || (paging?.hasMore == nil && total >= 50)
                     guard hasMore, paging?.loading != true,
                           transcriptModel.prependingSession != session.sessionId,
                           store.connected, !store.collabMode else { return }
@@ -136,11 +162,12 @@ struct T4SessionDetailView: View {
                 .scrollDismissesKeyboard(.interactively)
                 .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
                 #endif
-                // Native iOS 26 scroll-edge fade at the bottom, like the nav
-                // bar's top-of-screen effect — lines dissolve under the
-                // floating composer instead of hard-clipping.
+                // Native iOS 26 scroll-edge fades: bottom under the floating
+                // composer, top under the glass strip and nav bar — rows
+                // dissolve under both instead of hard-clipping.
                 #if os(iOS)
                 .scrollEdgeEffectStyle(.soft, for: .bottom)
+                .scrollEdgeEffectStyle(.soft, for: .top)
                 #endif
                 .onChange(of: store.transcript(for: session.sessionId).count) { _, _ in
                     // A page prepend increases the count too; suppress the
@@ -427,13 +454,13 @@ struct T4SessionDetailView: View {
         }
     }
 
-    /// Pinned session strip: chrome bar above the transcript scroll.
+    /// Floating session strip: glass over the transcript, like the composer.
     private var pinnedHeader: some View {
         header
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(t.bg.opacity(0.92))
+            .background(.thinMaterial)
             .overlay(alignment: .bottom) { Divider().overlay(t.lineFaint) }
     }
 
