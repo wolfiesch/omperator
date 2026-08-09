@@ -4538,14 +4538,25 @@ export class LocalAppserver implements AppserverHandle {
 				});
 				return false;
 			}
-			const sent = transport.send(typeof transformed === "string" ? transformed : JSON.stringify(transformed));
-			if (!sent)
-				this.#log("remote.frame.send_failed", {
-					connectionId: connection.connectionId,
-					frameType: compatibleFrame.type,
-					level: "warn",
-				});
-			return sent;
+			const payload = typeof transformed === "string" ? transformed : JSON.stringify(transformed);
+			// Fresh remote connections routinely refuse the first sends while
+			// the client's reader ramps (observed: sessions, responses, and
+			// snapshots dropped on an otherwise healthy socket). Dropping is
+			// unrecoverable for unsolicited frames, so retry briefly inside the
+			// serialized outbound chain — order is preserved and later frames
+			// simply wait.
+			for (let attempt = 0; ; attempt++) {
+				if (transport.send(payload)) return true;
+				if (attempt >= 10) {
+					this.#log("remote.frame.send_failed", {
+						connectionId: connection.connectionId,
+						frameType: compatibleFrame.type,
+						level: "warn",
+					});
+					return false;
+				}
+				await Bun.sleep(200);
+			}
 		}
 		return transport.send(JSON.stringify(compatibleFrame));
 	}
