@@ -2996,7 +2996,7 @@ final class T4SessionStore: ObservableObject {
             switch b["type"] {
             case .string("text"):
                 if case .string(let text) = b["text"] { parts.append(text) }
-                else if let texts = b.array("text") {
+                else if case .array(let texts)? = b["text"] {
                     for item in texts { if case .string(let text) = item { parts.append(text) } }
                 }
             case .string("json"), .string("json_object"):
@@ -3005,7 +3005,7 @@ final class T4SessionStore: ObservableObject {
             default:
                 if case .string(let text) = b["text"] { parts.append(text) }
                 else if case .string(let value) = b["content"] { parts.append(value) }
-                else if let values = b.array("content") {
+                else if case .array(let values)? = b["content"] {
                     for item in values { if case .string(let text) = item { parts.append(text) } }
                 }
             }
