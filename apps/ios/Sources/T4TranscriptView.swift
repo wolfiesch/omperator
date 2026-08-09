@@ -172,12 +172,12 @@ struct T4TranscriptRow: View {
     // and rarely need to be open; tap the header to expand one.
     @State private var expanded = false
 
-    /// Tool-kind identity from the entry kind/headline.
+    /// Tool-kind identity from the entry kind + the wire tool name.
     private var tool: (name: String, icon: String, color: Color) {
-        let head = entry.headline.lowercased()
         switch entry.kind {
         case .toolUse, .toolResult:
-            let name = head.split(separator: " ").first.map(String.init) ?? "tool"
+            let name = (entry.data.string("tool") ?? entry.headline.split(separator: " ").first.map(String.init) ?? "tool")
+                .lowercased()
             switch name {
             case "read":              return (name, "doc.text", theme.cLsp)
             case "write":             return (name, "doc.badge.plus", theme.diffAdd)
@@ -195,6 +195,44 @@ struct T4TranscriptRow: View {
         }
     }
 
+    /// Enclave-style header: the bare tool name uppercased, title as muted
+    /// meta, and +adds/−dels counted from a diff body.
+    private var toolName: String {
+        switch entry.kind {
+        case .toolUse, .toolResult:
+            return (entry.data.string("tool") ?? entry.headline.split(separator: " ").first.map(String.init) ?? "tool").uppercased()
+        default:
+            return entry.headline.isEmpty ? tool.name.uppercased() : entry.headline
+        }
+    }
+
+    private var meta: String {
+        switch entry.kind {
+        case .toolUse, .toolResult:
+            // The title ("edit ScrolledWindow.swift") is the Enclave meta line;
+            // when it is just the tool name, show the file/args hint if any.
+            let title = entry.headline
+            let bare = (entry.data.string("tool") ?? "").lowercased()
+            if title.lowercased() == bare { return "" }
+            return title
+        case .turnReview: return entry.body
+        case .compaction: return entry.body
+        default: return ""
+        }
+    }
+
+    private var diffCounts: (add: Int?, del: Int?) {
+        guard isDiffBody else { return (nil, nil) }
+        var add = 0
+        var del = 0
+        for line in entry.body.split(separator: "\n") {
+            if line.hasPrefix("+++") || line.hasPrefix("---") { continue }
+            if line.hasPrefix("+") { add += 1 }
+            else if line.hasPrefix("-") { del += 1 }
+        }
+        return (add > 0 ? add : nil, del > 0 ? del : nil)
+    }
+
     private var isDiffBody: Bool {
         entry.body.contains("\n@@") || entry.body.hasPrefix("diff ") || entry.body.contains("\n--- ") && entry.body.contains("\n+++ ")
     }
@@ -202,42 +240,66 @@ struct T4TranscriptRow: View {
     private static let bodyCap = 1_600
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button { withAnimation(.easeInOut(duration: 0.18)) { expanded.toggle() } } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: tool.icon)
-                        .font(.system(size: 11))
-                        .foregroundStyle(tool.color)
-                        .frame(width: 15)
-                    Text(entry.headline.isEmpty ? tool.name : entry.headline)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(theme.txtBody)
-                        .lineLimit(expanded ? nil : 1)
-                    Spacer(minLength: 4)
-                    if !entry.body.isEmpty {
-                        Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(theme.txtLabel)
+        HStack(alignment: .top, spacing: 10) {
+            // Enclave-style accent rail: the tool kind's color, 2pt.
+            Rectangle()
+                .fill(tool.color)
+                .frame(width: 2)
+                .cornerRadius(2)
+            VStack(alignment: .leading, spacing: 6) {
+                Button { withAnimation(.easeInOut(duration: 0.18)) { expanded.toggle() } } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: tool.icon)
+                            .font(.system(size: 13))
+                            .foregroundStyle(tool.color)
+                        Text(toolName)
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .tracking(0.4)
+                            .foregroundStyle(tool.color)
+                            .lineLimit(1)
+                        if !meta.isEmpty {
+                            Text(meta)
+                                .font(.term(13))
+                                .foregroundStyle(theme.txtMuted)
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 0)
+                        if let add = diffCounts.add {
+                            Text("+\(add)").font(.term(13)).foregroundStyle(theme.diffAdd)
+                            if let del = diffCounts.del { Text("−\(del)").font(.term(13)).foregroundStyle(theme.cAdvisor) }
+                        } else if let del = diffCounts.del {
+                            Text("−\(del)").font(.term(13)).foregroundStyle(theme.cAdvisor)
+                        }
+                        if !entry.body.isEmpty {
+                            Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(theme.txtLabel)
+                        }
                     }
+                    .contentShape(Rectangle())
                 }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+                .buttonStyle(.plain)
 
-            if expanded && !entry.body.isEmpty {
-                Group {
+                if expanded && !entry.body.isEmpty {
                     if isDiffBody {
-                        Text(AttributedString(SyntaxHighlighter.diff(
-                            String(entry.body.prefix(Self.bodyCap)), theme: theme, fontSize: 11)))
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            Text(AttributedString(SyntaxHighlighter.diff(
+                                String(entry.body.prefix(Self.bodyCap)), theme: theme, fontSize: 13)))
+                                .padding(.horizontal, 10).padding(.vertical, 8)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(theme.bg2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .textSelection(.enabled)
                     } else {
                         Text(String(entry.body.prefix(Self.bodyCap)))
-                            .font(.term(12))
+                            .font(.term(13))
                             .foregroundStyle(theme.txt)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                            .background(theme.bg2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
                 }
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 4)
             }
         }
     }
