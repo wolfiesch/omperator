@@ -1,4 +1,4 @@
-import { chmod, link, lstat, mkdir, open, readdir, readFile, readlink, realpath, rename, rm, stat, unlink } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, stat, unlink } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
 	hostId,
@@ -18,8 +18,6 @@ import type {
 
 const TITLE_SLOT_BYTES = 256;
 const METADATA_BYTES = 1024 * 1024;
-/** Transcript writes newer than this imply a live external writer. */
-const LIVE_TRANSCRIPT_ACTIVITY_MS = 5 * 60 * 1000;
 export const OFFICIAL_OMP_OWNER_FILE = ".t4-exclusive-owner.lock";
 const OWNER_FILE = OFFICIAL_OMP_OWNER_FILE;
 
@@ -115,45 +113,6 @@ async function syncDirectory(path: string): Promise<void> {
 }
 
 /**
- * PIDs of other live processes holding `path` open, via /proc fd symlinks.
- * Returns [] on non-Linux (no /proc) — the guard fails open there rather
- * than blocking legitimate supervisor starts.
- */
-async function liveTranscriptHolders(path: string): Promise<number[]> {
-	const target = await realpath(path).catch(() => path);
-	let pids: string[];
-	try {
-		pids = await readdir("/proc");
-	} catch {
-		return [];
-	}
-	const holders = new Set<number>();
-	for (const entry of pids) {
-		const pid = Number(entry);
-		if (!Number.isInteger(pid) || pid === process.pid) continue;
-		let fds: string[];
-		try {
-			fds = await readdir(`/proc/${pid}/fd`);
-		} catch {
-			continue; // process exited or is unreadable
-		}
-		for (const fd of fds) {
-			let link: string;
-			try {
-				link = await readlink(`/proc/${pid}/fd/${fd}`);
-			} catch {
-				continue; // fd raced away
-			}
-			if (link === target || link === path) {
-				if (processIsAlive(pid)) holders.add(pid);
-				break;
-			}
-		}
-	}
-	return [...holders];
-}
-
-/**
  * T4-owned host management for an isolated official-OMP profile. The caller
  * must give this authority an exclusive sessions root because stock OMP has no
  * cross-process writer lock. OMP remains the per-session runtime and JSONL
@@ -164,9 +123,6 @@ export class OfficialOmpProfileAuthority implements SessionAuthority, SessionDis
 	readonly #metadataPath: string;
 	readonly #discovery: FileSessionDiscovery;
 	readonly #archived = new Map<string, string>();
-	/** Session files this authority wrote itself (create/fork); the
-	 * recent-activity guard must not refuse their first supervisor start. */
-	readonly #selfCreated = new Set<string>();
 	readonly #owner: OwnerRecord = { version: 1, pid: process.pid, ownerId: Bun.randomUUIDv7() };
 	#canonicalRoot?: string;
 	#ownerIdentity?: FileIdentity;
@@ -299,7 +255,6 @@ export class OfficialOmpProfileAuthority implements SessionAuthority, SessionDis
 		} finally {
 			await handle.close();
 		}
-		this.#selfCreated.add(path);
 		return { sessionId: sessionId(id), path, cwd: canonicalCwd, title, entries: [] };
 	}
 
@@ -345,7 +300,6 @@ export class OfficialOmpProfileAuthority implements SessionAuthority, SessionDis
 		} finally {
 			await handle.close();
 		}
-		this.#selfCreated.add(path);
 		return { sessionId: sessionId(id), path, cwd: canonicalCwd, title: source.title, entries: [] };
 	}
 
@@ -442,22 +396,6 @@ export class OfficialOmpProfileAuthority implements SessionAuthority, SessionDis
 	async lockCheck(session: SessionRecord): Promise<void> {
 		await this.#assertLease();
 		await this.#assertOwnedSession(session);
-		// Stock OMP writes no session lockfile, so ownership of an observed
-		// session can only be inferred: another live process holding the
-		// transcript open, or recent transcript activity. Spawning a supervisor
-		// anyway would interleave two runtimes' writes into one JSONL
-		// (observed: a phone prompt to a broker-owned session silently forked
-		// the conversation). Idle transcripts stay adoptable — that is the
-		// resume-in-place behavior clients expect.
-		const holders = await liveTranscriptHolders(session.path);
-		if (holders.length > 0)
-			throw new Error(`session is owned by a live runtime (pid ${holders.join(", ")})`);
-		if (this.#selfCreated.has(session.path)) return;
-		const activity = await stat(session.path).catch(() => undefined);
-		if (activity && Date.now() - activity.mtimeMs < LIVE_TRANSCRIPT_ACTIVITY_MS)
-			throw new Error(
-				"session was recently active in another runtime; prompting it here would fork the conversation",
-			);
 	}
 
 	#assertInitialized(): void {
