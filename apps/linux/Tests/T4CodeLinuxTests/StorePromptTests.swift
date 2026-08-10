@@ -37,6 +37,51 @@ struct StorePromptTests {
         await store.disconnect()
     }
 
+    /// Auto-rc: select() remembers the open session, explicit disconnect()
+    /// forgets it, and a fresh store with no in-memory selection returns to
+    /// the persisted session once the inventory lands (the relaunch/reconnect
+    /// flow) instead of the default visible row.
+    @Test
+    @MainActor
+    func restoreReturnsToLastSession() async throws {
+        let fixture = try await FixtureServer.spawn(scenario: "basic-v1", repoPath: t4RepoRoot)
+        defer { fixture.stop() }
+
+        let store = T4SessionStore()
+        await store.connect(endpoint: fixture.url, identity: Self.identity(), authentication: Self.auth())
+        #expect(store.connectionModel.connected, "store should be connected: \(store.connectionModel.lastError ?? "")")
+
+        try await waitUntil("session inventory") { !store.connectionModel.sessions.isEmpty }
+        guard let session = store.connectionModel.sessions.first(where: { $0.sessionId == "session-basic" }) else {
+            Issue.record("session-basic not in inventory")
+            return
+        }
+
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "t4.lastSessionId")
+        defer { defaults.removeObject(forKey: "t4.lastSessionId") }
+
+        store.select(session)
+        #expect(store.selectedSession?.sessionId == "session-basic")
+        #expect(defaults.string(forKey: "t4.lastSessionId") == session.sessionId, "select() must persist the open session")
+        await store.disconnect()
+        #expect(defaults.string(forKey: "t4.lastSessionId") == nil, "explicit disconnect forgets the host and the session memory")
+
+        // The returning-user shape: the app quit without disconnecting, so
+        // the persisted id survives. A fresh store has no selection; the
+        // inventory landing must bring it back to the same session.
+        defaults.set(session.sessionId, forKey: "t4.lastSessionId")
+        let restored = T4SessionStore()
+        #expect(restored.selectedSession == nil)
+        await restored.connect(endpoint: fixture.url, identity: Self.identity(), authentication: Self.auth())
+        #expect(restored.connectionModel.connected, "restored store should be connected: \(restored.connectionModel.lastError ?? "")")
+        try await waitUntil("restored selection") {
+            restored.selectedSession?.sessionId == "session-basic"
+        }
+
+        await restored.disconnect()
+    }
+
     /// Full prompt flow: select the seeded session, attach, send a prompt,
     /// and assert the fixture's streaming deltas land as transcript entries.
     @Test

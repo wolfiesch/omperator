@@ -515,11 +515,18 @@ struct T4WorkspaceView: View {
             if let error = store.lastError {
                 Text(error).font(.system(size: 12)).foregroundStyle(t.diffDel)
                     .multilineTextAlignment(.center).padding(.horizontal, 32)
-                Button { showConnect = true } label: {
-                    Text("Pair a different host").font(.system(size: 13, weight: .semibold))
+                HStack(spacing: 10) {
+                    Button { Task { await store.restore() } } label: {
+                        Text("Retry").font(.system(size: 13, weight: .semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(t.interactiveAccent)
+                    Button { showConnect = true } label: {
+                        Text("Pair a different host").font(.system(size: 13, weight: .semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(t.interactiveAccent)
                 }
-                .buttonStyle(.bordered)
-                .tint(t.interactiveAccent)
                 .padding(.top, 4)
             }
         }

@@ -293,9 +293,12 @@ struct T4WorkspaceView: View {
             if let error = store.lastError {
                 Text(error).font(.system(size: 12)).foregroundColor(t.diffDel)
                     .multilineTextAlignment(.center).padding(.horizontal, 32)
-                T4TextButton("Pair a different host") { showConnect = true }
-                    .font(.system(size: 13, weight: .semibold))
-                    .padding(.top, 4)
+                HStack(spacing: 10) {
+                    T4TextButton("Retry") { Task { await store.restore() } }
+                    T4TextButton("Pair a different host") { showConnect = true }
+                }
+                .font(.system(size: 13, weight: .semibold))
+                .padding(.top, 4)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
