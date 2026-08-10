@@ -56,6 +56,10 @@ swift test
 
 SwiftPM can print `pkg-config` warnings for GTK system-library declarations while evaluating SwiftCrossUI's cross-platform package manifest. The Windows targets depend directly on `WinUIBackend`; they do not import or link GTK.
 
+The executable target passes MSVC `/STACK:8388608`. Windows' 1 MiB default is
+not sufficient to materialize the source-aligned SwiftCrossUI workspace's
+deeply nested generic view metadata.
+
 ## Exercise the deterministic host flow
 
 The Windows test target launches `scripts/run-fixture-host.mts` on an ephemeral
@@ -82,11 +86,12 @@ After `swift build`:
 .\.build\debug\T4CodeWindows.exe -T4Demo
 ```
 
-Deterministic capture options:
+Deterministic visual-parity capture commands:
 
 ```powershell
-.\.build\debug\T4CodeWindows.exe -T4Demo -T4Theme=dark -T4WindowSize=1280x800
-.\.build\debug\T4CodeWindows.exe -T4Demo -T4Theme=light -T4WindowSize=1600x1000
+.\.build\debug\T4CodeWindows.exe -T4Demo -T4Theme=dark  -T4WindowSize=900x600
+.\.build\debug\T4CodeWindows.exe -T4Demo -T4Theme=light -T4WindowSize=1280x800
+.\.build\debug\T4CodeWindows.exe -T4Demo -T4Theme=dark  -T4WindowSize=1600x900
 ```
 
 Supported first-milestone launch seams:
@@ -98,7 +103,14 @@ Supported first-milestone launch seams:
 ## Package layout
 
 - `Sources/T4CodeWindows/` — thin `@main` executable; imports `WinUIBackend` and creates the native window.
-- `Sources/T4CodeWindowsLib/` — testable launch parsing, Windows identity and HostWire transport seams, portable demo models, Linux-parity theme tokens, and SwiftCrossUI views.
-- `Tests/T4CodeWindowsLibTests/` — launch, identity, demo-data, and deterministic host-flow integration tests.
+- `Sources/T4CodeWindowsLib/Store/` — source-aligned links to the Linux `T4SessionStore` and domain models.
+- `Sources/T4CodeWindowsLib/Views/` — the Linux workspace, rail, session detail, transcript, composer, model menu, theme, and view primitives, plus documented Windows-only seams for deferred panes.
+- `Sources/T4CodeWindowsLib/Platform/` — Windows launch parsing, identity, credential placeholder, WinUI environment gaps, and the tested URLSession HostWire transport.
+- `Tests/T4CodeWindowsLibTests/` — launch, identity, credential-seam, and deterministic host-flow integration tests.
+
+Most Store and shared View entries are relative source links; the Windows root
+and adapted workspace are local files. Enable Windows Developer Mode (or run
+Git with symlink privileges) so checkout preserves links instead of plain text
+files.
 
 SwiftCrossUI is pinned to revision `199a85614e3b2346aa10736b12f969af14a1f1ea`, matching `apps/linux/Package.swift`. `HostWire` is consumed directly from `apps/ios/HostWire`.
