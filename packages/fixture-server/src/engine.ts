@@ -907,16 +907,17 @@ export class FixtureEngine {
     }
   }
   private settingsWriteEdits(frame: CommandFrame): Record<string, unknown>[] | null {
-    if (
-      frame.command !== "settings.write" ||
-      frame.args.expectedRevision !== frame.expectedRevision ||
-      !Array.isArray(frame.args.edits) ||
-      frame.args.edits.length === 0 ||
-      frame.args.edits.length > 32
-    )
-      return null;
+    if (frame.command !== "settings.write") return null;
+
+    const candidates = Array.isArray(frame.args.edits)
+      ? frame.args.expectedRevision === frame.expectedRevision
+        ? frame.args.edits
+        : null
+      : Object.entries(frame.args).map(([path, value]) => ({ path, scope: "global", value }));
+    if (candidates === null || candidates.length === 0 || candidates.length > 32) return null;
+
     const edits: Record<string, unknown>[] = [];
-    for (const candidate of frame.args.edits) {
+    for (const candidate of candidates) {
       if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate))
         return null;
       const edit = candidate as Record<string, unknown>;
@@ -987,7 +988,7 @@ export class FixtureEngine {
         ok: false,
         error: {
           code: "invalid_args",
-          message: "settings write edits are invalid or unavailable",
+          message: "settings write payload is invalid or unavailable",
         },
       };
     const targetSessionId = frame.sessionId ?? branded<SessionId>(this.seed.sessionId);
@@ -1143,6 +1144,23 @@ export class FixtureEngine {
     if (frame.command === "session.delete") return { ...base, ok: true, result: { deleted: true } };
     if (frame.command === "files.read")
       return { ...base, ok: true, result: { content: "", revision: this.revision } };
+    if (frame.command === "review.read")
+      return {
+        ...base,
+        ok: true,
+        result: {
+          reviewId: "review-fixture",
+          status: "pending",
+          path: "src/fixture.ts",
+          findings: [
+            {
+              severity: "warning",
+              message: "Fixture review finding for the mobile application flow.",
+              line: 12,
+            },
+          ],
+        },
+      };
     if (
       frame.command === "files.write" ||
       frame.command === "files.patch" ||
