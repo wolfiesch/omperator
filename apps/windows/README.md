@@ -50,11 +50,20 @@ The current Windows baseline is 21 tests across the `HostClientTests`, `HostWire
 
 ```powershell
 Set-Location apps\windows
+swift package resolve
+.\Scripts\prepare-dependencies.ps1
 swift build
 swift test
 ```
 
 SwiftPM can print `pkg-config` warnings for GTK system-library declarations while evaluating SwiftCrossUI's cross-platform package manifest. The Windows targets depend directly on `WinUIBackend`; they do not import or link GTK.
+
+`prepare-dependencies.ps1` idempotently applies
+`patches/swift-winui-webview2-sta.patch` to the pinned `swift-winui` checkout.
+The pinned backend otherwise initializes the WinUI thread as MTA; native
+WebView2 requires the XAML UI thread to remain STA and fails with
+`0x80010106 (RPC_E_CHANGED_MODE)`. The script fails closed if the pinned source
+no longer matches either the original or patched form.
 
 The executable target passes MSVC `/STACK:8388608`. Windows' 1 MiB default is
 not sufficient to materialize the source-aligned SwiftCrossUI workspace's
@@ -153,11 +162,58 @@ Pane capture seams are also available for deterministic development checks:
 ```
 
 `-T4ShowSheet` accepts `files`, `searchDiff`, `agents`, `usage`, `review`,
-`artifacts`, and `settings`; `browser` selects the explicitly deferred browser
-surface. `-T4SearchQuery=<text>` opens Search with a deterministic query.
-`-T4ShowPlan` expands the plan strip, while `-T4ShowAsk` injects the capture
-request only when `-T4Demo` is also present. Normal launches never synthesize
-pane content.
+`artifacts`, `settings`, and `browser`. `-T4ShowBrowser` is the direct browser
+capture alias. Add `-T4BrowserFixture` with `-T4Demo` to load the deterministic
+native WebView2 history, popup, and scrolling page instead of a network URL.
+`-T4SearchQuery=<text>` opens Search with a deterministic query. `-T4ShowPlan`
+expands the plan strip, while `-T4ShowAsk` injects the capture request only when
+`-T4Demo` is also present. Normal launches never synthesize pane content.
+
+## Verify the native WebView2 browser
+
+From `apps\windows`, prepare the pinned dependency, run the focused state and
+lifecycle contracts, then launch the embedded fixture:
+
+```powershell
+.\Scripts\prepare-dependencies.ps1
+swift test --filter T4WindowsBrowserTests
+.\.build\debug\T4CodeWindows.exe `
+  -T4Demo `
+  -T4NoRestore `
+  -T4Theme=dark `
+  -T4WindowSize=1280x800 `
+  -T4ShowBrowser `
+  -T4BrowserFixture
+```
+
+For the six browser capture baselines, launch each command from
+`apps\windows`; save the resulting window image under `.build\`:
+
+```powershell
+.\.build\debug\T4CodeWindows.exe -T4Demo -T4NoRestore -T4Theme=dark  -T4WindowSize=900x600  -T4ShowBrowser -T4BrowserFixture
+.\.build\debug\T4CodeWindows.exe -T4Demo -T4NoRestore -T4Theme=light -T4WindowSize=900x600  -T4ShowBrowser -T4BrowserFixture
+.\.build\debug\T4CodeWindows.exe -T4Demo -T4NoRestore -T4Theme=dark  -T4WindowSize=1280x800 -T4ShowBrowser -T4BrowserFixture
+.\.build\debug\T4CodeWindows.exe -T4Demo -T4NoRestore -T4Theme=light -T4WindowSize=1280x800 -T4ShowBrowser -T4BrowserFixture
+.\.build\debug\T4CodeWindows.exe -T4Demo -T4NoRestore -T4Theme=dark  -T4WindowSize=1600x900 -T4ShowBrowser -T4BrowserFixture
+.\.build\debug\T4CodeWindows.exe -T4Demo -T4NoRestore -T4Theme=light -T4WindowSize=1600x900 -T4ShowBrowser -T4BrowserFixture
+```
+
+The browser is a WinUI `WebView2` hosted directly by SwiftCrossUI's
+`WinUIElementRepresentable`; no browser window, Electron surface, or second
+runtime authority is created. The fixture verifies rendered HTML, Back and
+Forward history, Reload and Stop command routing, `_blank` interception into
+the same pane, title/loading state, scrolling, resize behavior, per-session
+surface isolation, and close/reopen cleanup. For an HTTP navigation check,
+serve the fixture in another terminal and enter the shown URL in the pane:
+
+```powershell
+Set-Location apps\windows\Sources\T4CodeWindowsLib\Resources
+python -m http.server 8765 --bind 127.0.0.1
+# Enter http://127.0.0.1:8765/BrowserFixture.html in Omperator.
+```
+
+Deterministic browser captures may be stored under `apps\windows\.build\`;
+that directory is ignored and must not be committed.
 
 ## Pane behavior and fixture limits
 
@@ -180,9 +236,10 @@ until a fixture scenario emits the matching request and lease.
 
 - `Sources/T4CodeWindows/` — thin `@main` executable; imports `WinUIBackend` and creates the native window.
 - `Sources/T4CodeWindowsLib/Store/` — source-aligned links to the Linux `T4SessionStore` and domain models.
-- `Sources/T4CodeWindowsLib/Views/` — source links to the Linux panes, inline cards, workspace components, theme, and view primitives, plus Windows-only seams for pairing and the deferred browser and terminal.
-- `Sources/T4CodeWindowsLib/Platform/` — Windows launch parsing, identity, credential placeholder, WinUI environment gaps, and the tested URLSession HostWire transport.
-- `Tests/T4CodeWindowsLibTests/` — launch, identity, credential-seam, pane behavior, and deterministic host-flow integration tests.
+- `Sources/T4CodeWindowsLib/Views/` — source links to the Linux panes, inline cards, workspace components, theme, and view primitives, plus Windows-owned browser, pairing, and deferred terminal surfaces.
+- `Sources/T4CodeWindowsLib/Platform/` — Windows launch parsing, identity, credential placeholder, WinUI environment gaps, the native WebView2 representable and per-session browser state, and the tested URLSession HostWire transport.
+- `Scripts/` and `patches/` — the fail-closed preparation step and minimal pinned WinUI STA startup correction required by WebView2.
+- `Tests/T4CodeWindowsLibTests/` — launch, identity, credential-seam, browser lifecycle, pane behavior, and deterministic host-flow integration tests.
 
 Most Store and shared View entries are relative source links; the Windows root
 and adapted workspace are local files. Enable Windows Developer Mode (or run
