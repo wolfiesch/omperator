@@ -42,11 +42,19 @@ func windowsHostWireIdentity() {
     #expect(T4WindowsPlatform.deviceName(environment: ["COMPUTERNAME": "DEVBOX"], fallback: "fallback") == "DEVBOX")
 }
 
-@Test("Demo data is explicit and internally consistent")
-func demoContentConsistency() {
-    let ids = T4WindowsDemoContent.sessions.map(\.id)
+@Test("Host overrides parse through the shared store credential seam")
+func ephemeralConnectionCredentials() {
+    let credentials = EphemeralConnectionCredentials(arguments: [
+        "T4CodeWindows.exe",
+        "-T4Endpoint=ws://127.0.0.1:8787/v1/ws",
+        "-T4DeviceId=windows-devbox",
+        "-T4DeviceToken=test-token",
+    ])
 
-    #expect(!T4WindowsDemoContent.sessions.isEmpty)
-    #expect(Set(ids).count == ids.count)
-    #expect(!T4WindowsDemoContent.transcript.isEmpty)
+    #expect(credentials == EphemeralConnectionCredentials(
+        endpoint: "ws://127.0.0.1:8787/v1/ws",
+        deviceId: "windows-devbox",
+        deviceToken: "test-token"
+    ))
+    #expect(!Keychain.usesPersistentStore(arguments: ["T4CodeWindows.exe", "-T4NoRestore"]))
 }

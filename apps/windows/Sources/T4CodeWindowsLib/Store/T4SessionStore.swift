@@ -1,0 +1,1 @@
+../../../../linux/Sources/T4CodeLinuxLib/Store/T4SessionStore.swift
