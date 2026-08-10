@@ -44,6 +44,7 @@ struct T4SessionDetailView: View {
     private let connectionModel: T4ConnectionInventoryModel
     private let transcriptModel: T4TranscriptProjectionModel
     private let promptModel: T4PromptLeaseModel
+    private let inboxPresented: Binding<Bool>?
     @State private var draft = ""
     @State private var sending = false
     @State private var showFacts = false
@@ -57,12 +58,21 @@ struct T4SessionDetailView: View {
     @State private var renaming = false
     @State private var renameText = ""
     @State private var ownershipBusy = false
+#if os(Windows)
+    @Environment(\.t4WindowWidth) private var windowWidth
+#endif
     private var t: Theme { theme.t }
 
-    init(session: SessionRef, store: T4SessionStore, theme: ThemeStore) {
+    init(
+        session: SessionRef,
+        store: T4SessionStore,
+        theme: ThemeStore,
+        inboxPresented: Binding<Bool>? = nil
+    ) {
         self.session = session
         self.store = store
         self.theme = theme
+        self.inboxPresented = inboxPresented
         self.connectionModel = store.connectionModel
         self.transcriptModel = store.transcriptModel
         self.promptModel = store.promptModel
@@ -70,6 +80,35 @@ struct T4SessionDetailView: View {
 
     private func sheetBinding(_ sheet: ActiveSheet) -> Binding<Bool> {
         Binding(get: { activeSheet == sheet }, set: { if !$0 { activeSheet = nil } })
+    }
+
+    private var isExternalInboxPresented: Bool {
+        inboxPresented?.wrappedValue ?? false
+    }
+
+    private func openSheet(_ sheet: ActiveSheet) {
+        inboxPresented?.wrappedValue = false
+        activeSheet = sheet
+    }
+
+    private func paneWidth(_ preferred: Double) -> Double {
+#if os(Windows)
+        // WINDOWS-GAP: WinUIBackend preserves fixed child widths instead of
+        // negotiating the two sidebars at the 900-point minimum window.
+        if windowWidth < 1000 { return min(preferred, 300) }
+        if windowWidth < 1200 { return min(preferred, 360) }
+#endif
+        return preferred
+    }
+
+    private var showsHeaderModel: Bool {
+#if os(Windows)
+        // WINDOWS-GAP: the root toolbar already exposes the model picker.
+        // Omitting this duplicate leaves every pane action visible on resize.
+        return false
+#else
+        return true
+#endif
     }
 
     var body: some View {
@@ -90,6 +129,9 @@ struct T4SessionDetailView: View {
                 applyAskSeam()
             }
             .onAppear { applyBootSeams() }
+            .onChange(of: isExternalInboxPresented) {
+                if isExternalInboxPresented { activeSheet = nil }
+            }
             .sheet(isPresented: $renaming) { renameSheet }
         } else {
             detailColumn
@@ -99,6 +141,9 @@ struct T4SessionDetailView: View {
                     applyAskSeam()
                 }
                 .onAppear { applyBootSeams() }
+                .onChange(of: isExternalInboxPresented) {
+                    if isExternalInboxPresented { activeSheet = nil }
+                }
                 .sheet(isPresented: $renaming) { renameSheet }
         }
     }
@@ -122,13 +167,9 @@ struct T4SessionDetailView: View {
                                      streamingMessage: transcriptModel.streamingMessages[session.sessionId],
                                      liveTools: transcriptModel.liveTools[session.sessionId] ?? LiveToolProjection(),
                                      theme: t)
-                    // Live asks belong at the transcript's tail — the
-                    // newest thing demanding attention, always in view.
-                    if let ask = promptModel.pendingAsk, ask.sessionId == session.sessionId {
-                        T4AskCard(ask: ask, theme: t) { value in
-                            Task { await store.respondAsk(value: value) }
-                        }
-                    }
+#if !os(Windows)
+                    pendingAskCard
+#endif
                 }
                 .padding()
             }
@@ -141,11 +182,25 @@ struct T4SessionDetailView: View {
             // transcript. macOS uses `.safeAreaInset(edge: .bottom)`;
             // Linux docks them in the outer column below the drawer.
             VStack(spacing: 8) {
+#if os(Windows)
+                // WINDOWS-GAP: WinUIBackend has no transcript bottom anchor;
+                // pin live asks above the composer so they cannot open off-screen.
+                pendingAskCard
+#endif
                 planStripSection
                 composer
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 6)
+        }
+    }
+
+    @ViewBuilder
+    private var pendingAskCard: some View {
+        if let ask = promptModel.pendingAsk, ask.sessionId == session.sessionId {
+            T4AskCard(ask: ask, theme: t) { value in
+                Task { await store.respondAsk(value: value) }
+            }
         }
     }
 
@@ -156,22 +211,22 @@ struct T4SessionDetailView: View {
         switch sheet {
         case .files:
             T4FilesPane(session: session, store: store, theme: theme, isPresented: sheetBinding(.files))
-                .frame(width: 400)
+                .frame(width: paneWidth(400))
         case .agents:
             T4AgentsPane(session: session, store: store, theme: theme, isPresented: sheetBinding(.agents))
-                .frame(width: 400)
+                .frame(width: paneWidth(400))
         case .usage:
             T4UsagePane(store: store, theme: theme, isPresented: sheetBinding(.usage))
-                .frame(width: 400)
+                .frame(width: paneWidth(400))
         case .review:
             T4ReviewPane(session: session, store: store, theme: theme, isPresented: sheetBinding(.review))
-                .frame(width: 440)
+                .frame(width: paneWidth(440))
         case .artifacts:
             T4ArtifactsPane(session: session, store: store, theme: theme, isPresented: sheetBinding(.artifacts))
-                .frame(width: 400)
+                .frame(width: paneWidth(400))
         case .settings:
             T4SettingsPane(store: store, theme: theme, isPresented: sheetBinding(.settings))
-                .frame(width: 400)
+                .frame(width: paneWidth(400))
         case .browser:
             T4BrowserPaneView(
                 session: session,
@@ -182,7 +237,7 @@ struct T4SessionDetailView: View {
             .frame(width: 620)
         case .searchDiff:
             T4SearchPane(session: session, store: store, theme: theme, isPresented: sheetBinding(.searchDiff))
-                .frame(width: 440)
+                .frame(width: paneWidth(440))
         }
     }
 
@@ -190,22 +245,23 @@ struct T4SessionDetailView: View {
     /// screenshots and UI tests.
     private func applyBootSeams() {
         let args = ProcessInfo.processInfo.arguments
-        if args.contains("-T4ShowFiles") { activeSheet = .files }
-        if args.contains("-T4ShowBrowser") { activeSheet = .browser }
-        if args.contains("-T4ShowAgents") { activeSheet = .agents }
+        if args.contains("-T4ShowFiles") { openSheet(.files) }
+        if args.contains("-T4ShowBrowser") { openSheet(.browser) }
+        if args.contains("-T4ShowAgents") { openSheet(.agents) }
         if args.contains("-T4ShowTerminal") { showTerminal = true }
         if args.contains("-T4ShowPlan") { planExpanded = true }
         // Generic: -T4ShowSheet=usage|review|artifacts|settings|searchDiff|files|browser|agents
         if let raw = args.first(where: { $0.hasPrefix("-T4ShowSheet=") }),
            let sheet = ActiveSheet(rawValue: String(raw.dropFirst("-T4ShowSheet=".count))) {
-            activeSheet = sheet
+            openSheet(sheet)
         }
     }
 
-    /// -T4ShowAsk: demo ask pinned to whatever session is current (the
-    /// selection swaps from sample to live after connect).
+    /// -T4ShowAsk: demo ask pinned to the current demo session.
+    /// Live launches never synthesize host input.
     private func applyAskSeam() {
-        if ProcessInfo.processInfo.arguments.contains("-T4ShowAsk") {
+        if T4SessionStore.demoMode,
+           ProcessInfo.processInfo.arguments.contains("-T4ShowAsk") {
             promptModel.pendingAsk = T4SessionStore.PendingAsk(
                 sessionId: session.sessionId,
                 request: AskRequest(askId: "demo-ask", question: "Apply the plan and make these changes?",
@@ -343,7 +399,7 @@ struct T4SessionDetailView: View {
         // has .top/.center/.bottom vertical alignments.
         HStack(alignment: .top, spacing: 10) {
             StatusPill(status: session.status, theme: t)
-            if let model = session.model {
+            if showsHeaderModel, let model = session.model {
                 T4ModelMenuButton(session: session, store: store, theme: t, label: T4ModelLabel.labelString(model))
             }
             if let badge = modeBadgeText {
@@ -396,23 +452,23 @@ struct T4SessionDetailView: View {
                     Task { await newSessionInProject() }
                 }
                 T4TextButton("Agents") {
-                    activeSheet = .agents
+                    openSheet(.agents)
                 }
                 Divider()
                 T4TextButton("Usage") {
-                    activeSheet = .usage
+                    openSheet(.usage)
                 }
                 T4TextButton("Review") {
-                    activeSheet = .review
+                    openSheet(.review)
                 }
                 T4TextButton("Artifacts") {
-                    activeSheet = .artifacts
+                    openSheet(.artifacts)
                 }
                 T4TextButton("Search & Diff") {
-                    activeSheet = .searchDiff
+                    openSheet(.searchDiff)
                 }
                 T4TextButton("Settings") {
-                    activeSheet = .settings
+                    openSheet(.settings)
                 }
             }
             .font(.system(size: 16))
@@ -425,7 +481,7 @@ struct T4SessionDetailView: View {
             .foregroundColor(showFacts ? t.accent : t.txtMuted)
             .frame(width: 34, height: 34)
             T4TextButton("Files") {
-                activeSheet = .files
+                openSheet(.files)
             }
             .font(.system(size: 11))
             .foregroundColor(t.txtMuted)
@@ -437,7 +493,7 @@ struct T4SessionDetailView: View {
             .foregroundColor(showTerminal ? t.cBash : t.txtMuted)
             .frame(width: 34, height: 34)
             T4TextButton("Web") {
-                activeSheet = .browser
+                openSheet(.browser)
             }
             .font(.system(size: 11))
             .foregroundColor(t.txtMuted)

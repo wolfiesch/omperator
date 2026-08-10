@@ -32,6 +32,7 @@ struct T4WorkspaceView: View {
     @State private var showInbox = false
     @State private var showPalette = false
 
+    @Environment(\.t4WindowWidth) private var windowWidth
     private var t: Theme { theme.t }
 
     private var pendingPair: PendingPair? {
@@ -60,7 +61,9 @@ struct T4WorkspaceView: View {
                 if showInbox {
                     Divider(t.line)
                     T4InboxView(store: store, theme: theme, isPresented: $showInbox)
-                        .frame(width: 380)
+                        // WINDOWS-GAP: keep the transcript and inbox actions
+                        // visible together at the minimum window width.
+                        .frame(width: windowWidth < 1000 ? 300 : (windowWidth < 1200 ? 340 : 380))
                 }
             }
 
@@ -190,7 +193,9 @@ struct T4WorkspaceView: View {
 
             connectBar
         }
-        .frame(width: 300)
+        // WINDOWS-GAP: WinUIBackend does not negotiate the fixed rail against
+        // an open detail pane, so preserve both at the supported minimum.
+        .frame(width: windowWidth < 1000 ? 220 : (windowWidth < 1100 ? 240 : 300))
         .background(t.bg)
     }
 
@@ -232,7 +237,12 @@ struct T4WorkspaceView: View {
                     onboarding
                 } else if let session = store.selectedSession {
                     // Cross-agent type (TranscriptAgent): T4SessionDetailView(session:store:theme:)
-                    T4SessionDetailView(session: session, store: store, theme: theme)
+                    T4SessionDetailView(
+                        session: session,
+                        store: store,
+                        theme: theme,
+                        inboxPresented: $showInbox
+                    )
                 } else {
                     emptyState
                 }

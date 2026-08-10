@@ -1,0 +1,1 @@
+../../../../linux/Sources/T4CodeLinuxLib/Views/T4PaletteView.swift

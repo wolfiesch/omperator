@@ -481,9 +481,22 @@ struct StatusPill: View {
     let theme: Theme
     var body: some View {
         let (label, color) = Self.style(status)
+#if os(Windows)
+        // WINDOWS-GAP: WinUIBackend ellipsizes a single leading Text even
+        // through fixed sizing. Two intrinsic runs preserve the status label.
+        let uppercased = label.uppercased()
+        HStack(spacing: 0) {
+            Text(String(uppercased.prefix(3))).fixedSize()
+            Text(String(uppercased.dropFirst(3))).fixedSize()
+        }
+        .font(.system(size: 10, weight: .semibold))
+        .foregroundColor(color)
+        .frame(width: 64, alignment: .leading)
+#else
         Text(label.uppercased())
             .font(.system(size: 10, weight: .semibold))
             .foregroundColor(color)
+#endif
     }
     static func style(_ status: String) -> (String, Color) {
         switch status {

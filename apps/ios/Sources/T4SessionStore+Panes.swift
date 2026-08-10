@@ -88,7 +88,6 @@ extension T4SessionStore {
     ) -> [String: JSONValue] {
         settings.mapValues { value in
             guard case .object(let entry) = value,
-                  entry["type"] != nil,
                   let effective = entry["effective"] else {
                 return value
             }
@@ -169,7 +168,7 @@ extension T4SessionStore {
 
     func reviews(for sessionId: String) -> [ReviewFrame] {
         if connected { return reviewsBySession[sessionId] ?? [] }
-        return Self.sampleReviews
+        return Self.demoMode ? Self.sampleReviews : []
     }
 
     func artifacts(for sessionId: String) -> [ArtifactDescriptor] {

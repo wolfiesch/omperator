@@ -92,7 +92,6 @@ struct T4InboxView: View {
     /// reason label + project + updated time below.
     private func row(_ item: T4SessionStore.AttentionSession) -> some View {
         let session = item.session
-        let (statusLabel, statusColor) = StatusPill.style(session.status)
         return VStack(alignment: .leading, spacing: 6) {
             // LINUX-GAP: .firstTextBaseline alignment is unavailable
             HStack(alignment: .top, spacing: 8) {
@@ -101,9 +100,7 @@ struct T4InboxView: View {
                     .foregroundColor(t.txt)
                     .lineLimit(1)
                 Spacer(minLength: 8)
-                Text(statusLabel.uppercased())
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(statusColor)
+                StatusPill(status: session.status, theme: t)
             }
             HStack(spacing: 8) {
                 Text(item.reasonLabel.uppercased())

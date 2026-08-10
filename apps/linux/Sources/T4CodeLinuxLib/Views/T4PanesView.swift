@@ -136,6 +136,10 @@ struct T4UsagePane: View {
                 Text(provider)
                     .font(.system(size: 12, weight: .bold))
                     .foregroundColor(t.txtLabel)
+#if os(Windows)
+                    // WINDOWS-GAP: WinUIBackend otherwise truncates this label.
+                    .fixedSize()
+#endif
             case .limit(let limit):
                 limitRow(limit)
             case .note(let note):
@@ -176,9 +180,15 @@ struct T4UsagePane: View {
                 Text(amountLabel(limit.amount))
                     .font(.system(size: 12))
                     .foregroundColor(t.txtBody)
+#if os(Windows)
+                    .fixedSize()
+#endif
                 Text(limit.amount.unit.rawValue)
                     .font(.system(size: 11))
                     .foregroundColor(t.txtMuted)
+#if os(Windows)
+                    .fixedSize()
+#endif
                 Spacer()
                 if let frac = limit.amount.usedFraction {
                     ProgressBar(value: frac, tint: t.accent, track: t.lineFaint)

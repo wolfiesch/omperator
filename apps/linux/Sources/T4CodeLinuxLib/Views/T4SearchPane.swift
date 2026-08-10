@@ -83,10 +83,15 @@ struct T4SearchPane: View {
             // Header (replaces the navigation toolbar + Done item).
             HStack(spacing: 10) {
                 Text("Search & Diff")
-                    // Capture seam: -T4SearchQuery=q pre-fills and runs a search.
+                    // Capture seams: open Diff directly, or prefill and run a
+                    // file search without adding non-production pane data.
                     .onAppear {
-                        if let raw = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("-T4SearchQuery=") }),
-                           query.isEmpty {
+                        let args = ProcessInfo.processInfo.arguments
+                        if args.contains("-T4SearchMode=diff") {
+                            mode = .diff
+                            Task { await runDiff(turnId) }
+                        } else if let raw = args.first(where: { $0.hasPrefix("-T4SearchQuery=") }),
+                                  query.isEmpty {
                             query = String(raw.dropFirst("-T4SearchQuery=".count))
                             Task { await runSearch(query) }
                         }
@@ -126,7 +131,13 @@ struct T4SearchPane: View {
                 diffBody
             }
         }
+#if os(Windows)
+        // WINDOWS-GAP: the Windows pane is hosted in the live detail column,
+        // so it follows the parent instead of imposing the Linux sheet size.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+#else
         .frame(width: 560, height: 520)
+#endif
         .background(t.bg)
         .onChange(of: mode) {
             if mode == .diff { Task { await runDiff(turnId) } }

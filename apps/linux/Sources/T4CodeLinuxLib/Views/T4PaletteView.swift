@@ -68,7 +68,7 @@ enum PaletteAction: String, CaseIterable, Identifiable {
     /// palette of greyed-out entries is noise.
     func isAvailable(connected: Bool, hasSelected: Bool) -> Bool {
         switch self {
-        case .newSession:   return connected
+        case .newSession:   return connected && hasSelected
         case .connect:      return !connected
         case .disconnect:   return connected
         case .rename:       return hasSelected
@@ -373,9 +373,8 @@ struct T4PaletteView: View {
         let selected = store.selectedSession
         switch action {
         case .newSession:
-            let projectId = selected?.project.projectId
-                ?? store.groups.first?.sessions.first?.project.projectId
-                ?? ""
+            guard let projectId = selected?.project.projectId
+                    ?? store.groups.first?.sessions.first?.project.projectId else { return }
             Task {
                 if let created = await store.createSession(projectId: projectId) {
                     store.select(created)
