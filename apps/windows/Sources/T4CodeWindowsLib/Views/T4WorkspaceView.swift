@@ -108,6 +108,13 @@ struct T4WorkspaceView: View {
             if ProcessInfo.processInfo.arguments.contains("-T4ShowInbox") { showInbox = true }
             // Capture seam: launch with -T4ShowPalette to boot with the palette open.
             if ProcessInfo.processInfo.arguments.contains("-T4ShowPalette") { showPalette = true }
+            // Capture seam: render the saved-host sheet without touching real credentials in demo mode.
+            if ProcessInfo.processInfo.arguments.contains("-T4ShowConnect") {
+                Task {
+                    try? await Task.sleep(for: .milliseconds(500))
+                    showConnect = true
+                }
+            }
         }
         .task {
             await store.restore()
@@ -323,6 +330,13 @@ struct T4WorkspaceView: View {
             Text("Your agents, from your pocket.")
                 .font(.system(size: 15))
                 .foregroundColor(t.txtMuted)
+            if let error = store.lastError {
+                Text(error)
+                    .font(.system(size: 12))
+                    .foregroundColor(t.diffDel)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+            }
             T4TextButton("Pair a host") { showConnect = true }
                 .padding(12)
                 .frame(maxWidth: 260)
@@ -338,19 +352,37 @@ struct T4WorkspaceView: View {
         .background(t.bg)
     }
 
-    /// Boot state for saved-connection devices: connecting, never fake chat.
+    /// Saved-host state: connecting during restore, actionable after disconnect.
     private var bootSplash: some View {
         VStack(spacing: 16) {
-            ProgressView()
-            Text("Connecting to your T4 host\u{2026}")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(t.txtBody)
+            if store.connecting {
+                ProgressView()
+                Text("Connecting to your saved host\u{2026}")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(t.txtBody)
+            } else {
+                Text("Saved host disconnected")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(t.txtBody)
+            }
             if let error = store.lastError {
-                Text(error).font(.system(size: 12)).foregroundColor(t.diffDel)
-                    .multilineTextAlignment(.center).padding(.horizontal, 32)
-                T4TextButton("Pair a different host") { showConnect = true }
-                    .font(.system(size: 13, weight: .semibold))
-                    .padding(.top, 4)
+                Text(error)
+                    .font(.system(size: 12))
+                    .foregroundColor(t.diffDel)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+            }
+            if !store.connecting {
+                HStack(spacing: 12) {
+                    T4TextButton("Reconnect") {
+                        Task { await store.restore() }
+                    }
+                    T4TextButton("Saved hosts") {
+                        showConnect = true
+                    }
+                }
+                .font(.system(size: 13, weight: .semibold))
+                .padding(.top, 4)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -383,14 +415,16 @@ struct T4WorkspaceView: View {
             .padding(.bottom, 16)
             .overlay(alignment: .top) { Rectangle().fill(t.lineFaint).frame(height: 1) }
         } else {
-            // No Connect button here — onboarding and the palette own that.
-            // The rail bar only manages an EXISTING connection.
             HStack(spacing: 10) {
                 Circle().fill(t.txtGhost).frame(width: 8, height: 8)
                 Text("Not connected")
                     .font(.system(size: 13))
                     .foregroundColor(t.txtMuted)
                 Spacer()
+                T4TextButton(store.hasSavedConnection ? "Saved hosts" : "Pair") {
+                    showConnect = true
+                }
+                .font(.system(size: 12, weight: .semibold))
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)

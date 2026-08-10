@@ -1,3 +1,4 @@
+import Foundation
 import SwiftCrossUI
 import HostWire
 
@@ -34,21 +35,228 @@ private struct WindowsDeferredPane: View {
     }
 }
 
-/// WINDOWS-GAP: pairing UI is not part of the requested workspace slice.
 struct T4ConnectView: View {
     let store: T4SessionStore
     let theme: ThemeStore
     let isPresented: Binding<Bool>
     let pendingPair: PendingPair?
 
+    @State private var endpoint = ""
+    @State private var pairingCode = ""
+    @State private var certificatePin = ""
+    @State private var deviceName = platformDeviceName()
+    @State private var formError = ""
+    @State private var isWorking = false
+
+    private var t: Theme { theme.t }
+
     var body: some View {
-        WindowsDeferredPane(
-            title: "Pair a host",
-            detail: "Windows host pairing will use this native surface after the workspace parity port.",
-            theme: theme,
-            isPresented: isPresented
-        )
-        .frame(width: 420, height: 260)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Hosts")
+                        .font(.disp(18))
+                        .foregroundColor(t.txt)
+                    Text("Reconnect a saved host or pair a new one.")
+                        .font(.bodyF(12))
+                        .foregroundColor(t.txtMuted)
+                }
+                Spacer()
+                Button("Close") {
+                    isPresented.wrappedValue = false
+                }
+                .font(.bodyF(12))
+                .foregroundColor(t.txtBody)
+            }
+
+            Divider(t.line)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    savedHosts
+                    Divider(t.lineFaint)
+                    pairForm
+                }
+                .frame(maxWidth: .infinity)
+            }
+
+            if !formError.isEmpty {
+                Text(formError)
+                    .font(.bodyF(12))
+                    .foregroundColor(t.diffDel)
+                    .multilineTextAlignment(.leading)
+            }
+        }
+        .padding(18)
+        .frame(width: 560, height: 620)
+        .background(t.bg2)
+        .onAppear {
+            guard let pendingPair else { return }
+            if endpoint.isEmpty { endpoint = pendingPair.hostHint }
+            if pairingCode.isEmpty { pairingCode = pendingPair.code }
+        }
+    }
+
+    private var savedHosts: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text("Saved hosts")
+                .font(.bodyF(13))
+                .foregroundColor(t.txt)
+            if store.savedHosts.isEmpty {
+                Text("No saved hosts yet.")
+                    .font(.bodyF(12))
+                    .foregroundColor(t.txtMuted)
+            } else {
+                ForEach(store.savedHosts) { host in
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(store.activeSavedHostID == host.id ? t.diffAdd : t.txtGhost)
+                                .frame(width: 7, height: 7)
+                            Text(host.endpoint)
+                                .font(.term(11))
+                                .foregroundColor(t.txtBody)
+                                .lineLimit(1)
+                            Spacer()
+                        }
+                        HStack(spacing: 12) {
+                            Button("Reconnect") {
+                                reconnect(host.id)
+                            }
+                            .font(.bodyF(12))
+                            .foregroundColor(t.accent)
+                            .disabled(isWorking)
+                            Button("Forget") {
+                                forget(host.id)
+                            }
+                            .font(.bodyF(12))
+                            .foregroundColor(t.diffDel)
+                            .disabled(isWorking)
+                            Spacer()
+                        }
+                    }
+                    .padding(10)
+                    .background {
+                        RoundedRectangle(cornerRadius: 9)
+                            .fill(t.bg)
+                    }
+                }
+            }
+        }
+    }
+
+    private var pairForm: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text("Pair a new host")
+                .font(.bodyF(13))
+                .foregroundColor(t.txt)
+            TextField("Host or ws(s) endpoint", text: $endpoint)
+                .font(.bodyF(12))
+                .padding(9)
+                .background {
+                    RoundedRectangle(cornerRadius: 8).fill(t.bg)
+                }
+            SecureField("6-digit pairing code", text: $pairingCode)
+                .font(.bodyF(12))
+                .padding(9)
+                .background {
+                    RoundedRectangle(cornerRadius: 8).fill(t.bg)
+                }
+            TextField("Device name", text: $deviceName)
+                .font(.bodyF(12))
+                .padding(9)
+                .background {
+                    RoundedRectangle(cornerRadius: 8).fill(t.bg)
+                }
+            TextField("TLS certificate fingerprint for wss", text: $certificatePin)
+                .font(.term(11))
+                .padding(9)
+                .background {
+                    RoundedRectangle(cornerRadius: 8).fill(t.bg)
+                }
+            Text("The device token stays in Windows Credential Manager and is never shown here.")
+                .font(.bodyF(11))
+                .foregroundColor(t.txtMuted)
+            HStack(spacing: 10) {
+                Button(isWorking ? "Connecting\u{2026}" : "Pair and connect") {
+                    pair()
+                }
+                .font(.bodyF(12))
+                .foregroundColor(t.accent)
+                .disabled(isWorking)
+                Spacer()
+            }
+        }
+    }
+
+    private func pair() {
+        guard let url = pairEndpoint() else {
+            formError = "Enter a valid ws or wss host endpoint."
+            return
+        }
+        let trimmedPin = certificatePin.trimmingCharacters(in: .whitespacesAndNewlines)
+        if url.scheme?.lowercased() == "wss" && trimmedPin.isEmpty {
+            formError = "Enter the host's SHA-256 TLS certificate fingerprint."
+            return
+        }
+        let trimmedName = deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            formError = "Enter a device name."
+            return
+        }
+        isWorking = true
+        formError = ""
+        Task {
+            await store.pairAndConnect(
+                endpoint: url,
+                code: pairingCode.trimmingCharacters(in: .whitespacesAndNewlines),
+                deviceName: trimmedName,
+                certificatePin: trimmedPin.isEmpty ? nil : trimmedPin
+            )
+            isWorking = false
+            if store.connected {
+                isPresented.wrappedValue = false
+            } else {
+                formError = store.lastError ?? "The host could not be reached."
+            }
+        }
+    }
+
+    private func reconnect(_ id: String) {
+        isWorking = true
+        formError = ""
+        Task {
+            await store.connectSavedHost(id: id)
+            isWorking = false
+            if store.connected {
+                isPresented.wrappedValue = false
+            } else {
+                formError = store.lastError ?? "The saved host could not be reached."
+            }
+        }
+    }
+
+    private func forget(_ id: String) {
+        isWorking = true
+        formError = ""
+        Task {
+            await store.forgetSavedHost(id: id)
+            isWorking = false
+            if let error = store.lastError {
+                formError = error
+            }
+        }
+    }
+
+    private func pairEndpoint() -> URL? {
+        let host = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !host.isEmpty else { return nil }
+        if host.hasPrefix("ws://") || host.hasPrefix("wss://") {
+            return URL(string: host.hasSuffix("/v1/ws") ? host : "\(host)/v1/ws")
+        }
+        let withPort = host.contains(":") ? host : "\(host):8787"
+        let scheme = withPort.hasSuffix(":8788") ? "wss" : "ws"
+        return URL(string: "\(scheme)://\(withPort)/v1/ws")
     }
 }
 

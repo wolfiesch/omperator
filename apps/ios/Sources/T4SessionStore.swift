@@ -282,12 +282,12 @@ final class T4SessionStore: ObservableObject {
     /// Search and quick-filter state is deliberately ephemeral so relaunching
     /// can never make sessions appear to be missing.
     @Published var railFilter: T4RailFilter = .all
-    @Published private(set) var sessionListView: T4SessionListView
-    @Published private(set) var railOrganization: T4RailOrganization
-    @Published private(set) var railSort: T4RailSort
-    @Published private(set) var pinnedSessionIds: Set<String>
-    @Published private(set) var projectManualOrder: [String]
-    @Published private(set) var sessionManualOrderByScope: [String: [String]]
+    @Published private(set) var sessionListView: T4SessionListView = .current
+    @Published private(set) var railOrganization: T4RailOrganization = .byProject
+    @Published private(set) var railSort: T4RailSort = .priority
+    @Published private(set) var pinnedSessionIds: Set<String> = []
+    @Published private(set) var projectManualOrder: [String] = []
+    @Published private(set) var sessionManualOrderByScope: [String: [String]] = [:]
     private(set) var connecting: Bool {
         get { connectionModel.connecting }
         set { connectionModel.connecting = newValue }
@@ -550,11 +550,23 @@ final class T4SessionStore: ObservableObject {
         get { connectionModel.hasLiveInventory }
         set { connectionModel.hasLiveInventory = newValue }
     }
+    #if os(Windows)
+    @Published private(set) var savedHosts: [WindowsSavedHostSummary] = []
+    private(set) var activeSavedHostID: String?
+
+    /// Saved-host credentials are unavailable to demo and launch-fixture paths.
+    var hasSavedConnection: Bool {
+        guard !Self.demoMode, !launchArguments.contains("-T4Demo") else { return false }
+        return EphemeralConnectionCredentials(arguments: launchArguments) != nil
+            || !savedHosts.isEmpty
+    }
+    #else
     /// True when a previous session's endpoint is persisted (restore will run).
     var hasSavedConnection: Bool {
         EphemeralConnectionCredentials() != nil
             || Keychain.get(Self.savedEndpointKey) != nil
     }
+    #endif
 
     /// True once a live host has spoken; false while showing the offline sample.
     private func markLive() { hasLiveInventory = true }
@@ -567,6 +579,12 @@ final class T4SessionStore: ObservableObject {
     var client: HostClient?
     var hostId: String = ""
     private var streamingTasks: [String: Task<Void, Never>] = [:]
+    #if os(Windows)
+    private var savedHostCredentialStore: any WindowsSavedHostCredentialStoring =
+        WindowsInMemorySavedHostCredentialStore()
+    private var credentialPersistenceEnabled = false
+    private var launchArguments = ProcessInfo.processInfo.arguments
+    #endif
     private var liveTurnTasks: [String: Task<Void, Never>] = [:]
     private var toolStreamingTasks: [String: Task<Void, Never>] = [:]
     /// Capabilities the host granted at welcome — gates optional commands
@@ -916,6 +934,7 @@ final class T4SessionStore: ObservableObject {
         else { liveTools[sessionId] = projection }
     }
 
+    #if !os(Windows)
     /// One-time migration of the prior dev-grade UserDefaults credentials
     /// into the Keychain. Copies any legacy endpoint/deviceId/deviceToken
     /// values across (only when the Keychain doesn't already hold them),
@@ -940,10 +959,16 @@ final class T4SessionStore: ObservableObject {
         }
         defaults.set(true, forKey: keychainMigratedKey)
     }
+    #endif
 
     /// Auto-reconnect on launch with the last successful connection, if any.
     func restore() async {
+        #if os(Windows)
+        let arguments = launchArguments
+        guard !arguments.contains("-T4Demo") else { return }
+        #else
         let arguments = ProcessInfo.processInfo.arguments
+        #endif
         // Harness seam: a complete endpoint/device/token triple is an
         // in-memory connection profile. It never reads, writes, migrates, or
         // deletes the developer's Keychain credentials.
@@ -961,7 +986,9 @@ final class T4SessionStore: ObservableObject {
                 authentication: DeviceAuthentication(
                     deviceId: ephemeral.deviceId,
                     deviceToken: ephemeral.deviceToken
-                )
+                ),
+                certificatePin: ephemeral.certificatePin,
+                persistCredentials: false
             )
             return
         }
@@ -981,7 +1008,8 @@ final class T4SessionStore: ObservableObject {
                     build: "dev",
                     platform: platformClientPlatform
                 ),
-                authentication: nil
+                authentication: nil,
+                persistCredentials: false
             )
             return
         }
@@ -991,6 +1019,7 @@ final class T4SessionStore: ObservableObject {
         // when no complete in-memory connection profile was supplied.
         if Self.shouldSkipRestore(arguments: arguments) { return }
 
+        #if !os(Windows)
         // UI-test seam: -T4ForgetCreds wipes saved connection credentials so
         // the boot lands on real onboarding (fresh-install path).
         if ProcessInfo.processInfo.arguments.contains("-T4ForgetCreds") {
@@ -1005,6 +1034,7 @@ final class T4SessionStore: ObservableObject {
         if let seam = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("-T4Endpoint=") }) {
             Keychain.set(String(seam.dropFirst("-T4Endpoint=".count)), forKey: Self.savedEndpointKey)
         }
+        #endif
         guard !connected, !connecting else { return }
         // Plug-and-play first: a saved collab gateway restores the rooms
         // inventory directly — no host-wire, no PIN, no ownership states.
@@ -1014,6 +1044,39 @@ final class T4SessionStore: ObservableObject {
             await connectCollab(gatewayURL: gateway, name: name)
             return
         }
+        #if os(Windows)
+        guard credentialPersistenceEnabled else { return }
+        do {
+            let credentials = try savedHostCredentialStore.allCredentials()
+            savedHosts = credentials.map {
+                WindowsSavedHostSummary(id: $0.id, endpoint: $0.displayEndpoint)
+            }
+            guard let credential = credentials.first,
+                  let endpoint = URL(string: credential.endpoint)
+            else {
+                return
+            }
+            await connect(
+                endpoint: endpoint,
+                identity: ClientIdentity(
+                    name: platformClientName,
+                    version: "0.1",
+                    build: "dev",
+                    platform: platformClientPlatform
+                ),
+                authentication: DeviceAuthentication(
+                    deviceId: credential.deviceID,
+                    deviceToken: credential.deviceToken
+                ),
+                certificatePin: credential.certificatePin,
+                persistCredentials: false
+            )
+            if connected { activeSavedHostID = credential.id }
+        } catch {
+            lastError = "Could not restore saved hosts. \(error.localizedDescription)"
+        }
+        return
+        #else
         guard let endpointString = Keychain.get(Self.savedEndpointKey),
               let endpoint = URL(string: endpointString) else { return }
         #if os(Linux)
@@ -1033,6 +1096,7 @@ final class T4SessionStore: ObservableObject {
             ),
             authentication: auth
         )
+        #endif
     }
 
     static func shouldSkipRestore(arguments: [String]) -> Bool {
@@ -1040,13 +1104,105 @@ final class T4SessionStore: ObservableObject {
             && EphemeralConnectionCredentials(arguments: arguments) == nil
     }
 
-    private func persist(endpoint: URL, authentication: DeviceAuthentication?) {
+    private func persist(
+        endpoint: URL,
+        authentication: DeviceAuthentication?,
+        certificatePin: String? = nil,
+        persistCredentials: Bool = true
+    ) -> String? {
+        #if os(Windows)
+        guard credentialPersistenceEnabled, persistCredentials, !Self.demoMode,
+              !launchArguments.contains("-T4Demo"), let authentication
+        else {
+            return nil
+        }
+        do {
+            let credential = try WindowsSavedHostCredential(
+                endpoint: endpoint.absoluteString,
+                deviceID: authentication.deviceId,
+                deviceToken: authentication.deviceToken,
+                certificatePin: certificatePin
+            )
+            try savedHostCredentialStore.save(credential)
+            activeSavedHostID = credential.id
+            savedHosts.removeAll { $0.id == credential.id }
+            savedHosts.insert(
+                WindowsSavedHostSummary(
+                    id: credential.id,
+                    endpoint: credential.displayEndpoint
+                ),
+                at: 0
+            )
+            return nil
+        } catch {
+            return "Connected, but credentials could not be saved. \(error.localizedDescription)"
+        }
+        #else
         // nil/empty values clear the item, matching the prior UserDefaults
         // semantics (an open host persists only the endpoint, no creds).
         Keychain.set(endpoint.absoluteString, forKey: Self.savedEndpointKey)
         Keychain.set(authentication?.deviceId, forKey: Self.savedDeviceIdKey)
         Keychain.set(authentication?.deviceToken, forKey: Self.savedDeviceTokenKey)
+        return nil
+        #endif
     }
+
+    #if os(Windows)
+    func connectSavedHost(id: String) async {
+        guard credentialPersistenceEnabled, !Self.demoMode,
+              !launchArguments.contains("-T4Demo")
+        else {
+            lastError = "Saved hosts are unavailable in this launch mode."
+            return
+        }
+        do {
+            guard let credential = try savedHostCredentialStore.credential(id: id),
+                  let endpoint = URL(string: credential.endpoint)
+            else {
+                throw WindowsSavedHostCredentialError.notFound
+            }
+            if connected { await disconnect() }
+            await connect(
+                endpoint: endpoint,
+                identity: ClientIdentity(
+                    name: platformClientName,
+                    version: "0.1",
+                    build: "dev",
+                    platform: platformClientPlatform
+                ),
+                authentication: DeviceAuthentication(
+                    deviceId: credential.deviceID,
+                    deviceToken: credential.deviceToken
+                ),
+                certificatePin: credential.certificatePin,
+                persistCredentials: false
+            )
+            if connected { activeSavedHostID = credential.id }
+        } catch {
+            lastError = "Could not read the saved host. \(error.localizedDescription)"
+        }
+    }
+
+    func forgetSavedHost(id: String) async {
+        guard credentialPersistenceEnabled, !Self.demoMode,
+              !launchArguments.contains("-T4Demo")
+        else {
+            lastError = "Saved hosts are unavailable in this launch mode."
+            return
+        }
+        if connected, activeSavedHostID == id {
+            await disconnect()
+        }
+        do {
+            try savedHostCredentialStore.remove(id: id)
+            savedHosts.removeAll { $0.id == id }
+            if activeSavedHostID == id { activeSavedHostID = nil }
+            lastError = nil
+        } catch {
+            lastError = "Could not forget the saved host. \(error.localizedDescription)"
+        }
+    }
+    #endif
 
     /// Select a session (rail tap or auto-select of the most recent).
     func select(_ session: SessionRef?) {
@@ -1624,7 +1780,25 @@ final class T4SessionStore: ObservableObject {
     /// launch arguments (UI tests + screenshots). Never a user-facing default.
     static let demoMode = ProcessInfo.processInfo.arguments.contains("-T4Demo")
 
+    #if os(Windows)
+    init(
+        savedHostCredentialStore: (any WindowsSavedHostCredentialStoring)? = nil,
+        launchArguments: [String] = ProcessInfo.processInfo.arguments
+    ) {
+        self.launchArguments = launchArguments
+        self.savedHostCredentialStore = savedHostCredentialStore
+            ?? WindowsSavedHostCredentialStoreFactory.make(arguments: launchArguments)
+        self.credentialPersistenceEnabled =
+            WindowsCredentialAccessPolicy.allowsPersistentCredentials(arguments: launchArguments)
+        initialize()
+    }
+    #else
     init() {
+        initialize()
+    }
+    #endif
+
+    private func initialize() {
         let defaults = UserDefaults.standard
         if ProcessInfo.processInfo.arguments.contains("-T4ResetRailPreferences") {
             for key in [
@@ -1658,7 +1832,19 @@ final class T4SessionStore: ObservableObject {
         } else {
             self.sessionManualOrderByScope = [:]
         }
+        #if os(Windows)
+        if credentialPersistenceEnabled, !launchArguments.contains("-T4Demo") {
+            do {
+                savedHosts = try savedHostCredentialStore.allCredentials().map {
+                    WindowsSavedHostSummary(id: $0.id, endpoint: $0.displayEndpoint)
+                }
+            } catch {
+                lastError = "Could not load saved hosts. \(error.localizedDescription)"
+            }
+        }
+        #else
         Self.migrateCredentialsToKeychainIfNeeded()
+        #endif
         connectionModel.sessions = Self.demoMode ? Self.sample : []
         if Self.demoMode {
             // Offline captures: the usage and settings panes only have live
@@ -2089,7 +2275,13 @@ final class T4SessionStore: ObservableObject {
     }
 
     /// Connect to a t4-host over host-wire, handshake, and load the inventory.
-    func connect(endpoint: URL, identity: ClientIdentity, authentication: DeviceAuthentication? = nil) async {
+    func connect(
+        endpoint: URL,
+        identity: ClientIdentity,
+        authentication: DeviceAuthentication? = nil,
+        certificatePin: String? = nil,
+        persistCredentials: Bool = true
+    ) async {
         #if os(Linux)
         T4Perf.mark("connect-start")
         #endif
@@ -2116,8 +2308,16 @@ final class T4SessionStore: ObservableObject {
             connected = welcome.authentication == .paired || welcome.authentication == .local
             if connected {
                 pairedEndpoint = endpoint.absoluteString
-                persist(endpoint: endpoint, authentication: authentication)
-                clearErrorAfterSuccessfulConnection()
+                if let persistenceError = persist(
+                    endpoint: endpoint,
+                    authentication: authentication,
+                    certificatePin: certificatePin,
+                    persistCredentials: persistCredentials
+                ) {
+                    lastError = persistenceError
+                } else {
+                    clearErrorAfterSuccessfulConnection()
+                }
                 // Don't hold the first frame hostage to a busy host:
                 // session.list and catalog.get can take many seconds (the
                 // appserver serializes external usage fetches into catalog
@@ -2149,7 +2349,12 @@ final class T4SessionStore: ObservableObject {
     /// behaves like `connect(...)` with no credentials. Otherwise it sends a
     /// pair.start with the 6-digit code and persists the granted device token
     /// on success, mirroring connect()'s post-connect refresh/catalog/observe.
-    func pairAndConnect(endpoint: URL, code: String, deviceName: String) async {
+    func pairAndConnect(
+        endpoint: URL,
+        code: String,
+        deviceName: String,
+        certificatePin: String? = nil
+    ) async {
         // A restored macOS WindowGroup can render more than one RootView.
         // Each view runs the launch-argument pairing task, but a pairing
         // ticket is single-use. Serialize those tasks through the shared
@@ -2176,7 +2381,7 @@ final class T4SessionStore: ObservableObject {
                 grantedFeatures = Set(welcome.grantedFeatures)
                 connected = true
                 pairedEndpoint = endpoint.absoluteString
-                persist(endpoint: endpoint, authentication: nil)
+                _ = persist(endpoint: endpoint, authentication: nil)
                 clearErrorAfterSuccessfulConnection()
                 await refresh()
                 await loadCatalog()
@@ -2200,7 +2405,12 @@ final class T4SessionStore: ObservableObject {
             // credentials — connect() handles persist/refresh/catalog/observe.
             await c.close()
             let auth = DeviceAuthentication(deviceId: ok.deviceId, deviceToken: ok.deviceToken)
-            await connect(endpoint: endpoint, identity: identity, authentication: auth)
+            await connect(
+                endpoint: endpoint,
+                identity: identity,
+                authentication: auth,
+                certificatePin: certificatePin
+            )
             if connected { pairedEndpoint = endpoint.absoluteString }
         } catch {
             lastError = "Pairing failed — check the code and that the host is running (\(error))"
@@ -2583,12 +2793,14 @@ final class T4SessionStore: ObservableObject {
         hostInfo = nil
         hasLiveInventory = false
         resetTranscriptProjections()
+        #if !os(Windows)
         Keychain.remove(forKey: Self.savedEndpointKey)
         Keychain.remove(forKey: Self.savedDeviceIdKey)
         Keychain.remove(forKey: Self.savedDeviceTokenKey)
         // Explicit disconnect forgets the host, so the auto-rc "return here"
         // memory goes with it (restore() has no endpoint to reconnect to).
         UserDefaults.standard.removeObject(forKey: Self.lastSessionIdKey)
+        #endif
     }
 
     // MARK: - Collab guest mode

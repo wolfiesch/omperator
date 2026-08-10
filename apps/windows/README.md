@@ -314,6 +314,61 @@ Known terminal limits:
 - `-T4Demo -T4ShowTerminal` is a read-only visual fixture. Use the live fixture
   command above to prove HostWire output, input, resize, close, and reconnect.
 
+## Saved-host credentials
+
+Normal Windows launches store each paired host as a `CRED_TYPE_GENERIC` item in
+the current user's Windows Credential Manager vault. The target name is
+`net.t4code.app/Omperator/SavedHost/v1/<sha256-normalized-endpoint>`; it contains
+only the namespace and endpoint hash. A versioned binary credential blob holds
+the normalized endpoint, device identity, device token, and the SHA-256
+certificate pin required for `wss://` endpoints. There is no companion
+UserDefaults, JSON, environment, registry, or plaintext index.
+
+`WindowsSavedHostCredentialStoring` is injected into `T4SessionStore`. Normal
+launches receive `WindowsCredentialManagerSavedHostStore`; unit and store-flow
+tests use `WindowsInMemorySavedHostCredentialStore`. Demo, fixture, pairing
+launch-argument, `-T4NoRestore`, and complete ephemeral credential profiles are
+non-persistent launch modes: they use an in-memory backend and never enumerate,
+read, write, update, or delete the user's real saved-host records.
+
+The store writes only after a successful authenticated connection. Re-pairing
+the same normalized endpoint replaces that one Credential Manager item.
+Disconnect closes the live HostWire connection but retains the item. Forget
+deletes only the selected target. A normal restart enumerates the namespace in
+Credential Manager, lists every saved host without exposing its device fields,
+and restores the most recently written record. Credential Manager and decoding
+failures remain visible in onboarding and the Hosts sheet; credential model
+descriptions redact device identity, device token, and certificate pin.
+
+Run the Windows credential gates from `apps\windows` in a Visual Studio x64
+Developer PowerShell:
+
+```powershell
+swift build
+swift test
+swift test --filter WindowsSavedHost
+git diff --check
+```
+
+The focused filter includes real Credential Manager and saved-host store
+lifecycle coverage.
+Every real Credential Manager test uses a UUID-scoped target namespace under
+`net.t4code.app/Omperator/Tests/` and runs `removeAll()` from `defer`, including
+failure paths. The remaining credential tests inject an in-memory backend.
+
+Manual lifecycle check:
+
+1. Launch Omperator normally, open **Hosts**, and pair a host. The pairing code
+   is a masked field; device credentials and stored certificate pins are never
+   rendered.
+2. Close and relaunch Omperator with no credential launch arguments. Confirm it
+   restores the host.
+3. Select **Disconnect**, then **Saved hosts** > **Reconnect**.
+4. Pair a second endpoint, disconnect, and confirm both endpoints are listed.
+5. Forget one endpoint. Confirm the other still reconnects and only the
+   forgotten target disappeared from Windows Credential Manager. Do not open or
+   export a credential blob during verification.
+
 ## Pane behavior and fixture limits
 
 Run the pane contract suite from `apps/windows`:
@@ -334,11 +389,11 @@ until a fixture scenario emits the matching request and lease.
 ## Package layout
 
 - `Sources/T4CodeWindows/` — thin `@main` executable; imports `WinUIBackend` and creates the native window.
-- `Sources/T4CodeWindowsLib/Store/` — source-aligned links to the Linux `T4SessionStore` and domain models.
-- `Sources/T4CodeWindowsLib/Views/` — source links to the Linux panes, inline cards, workspace components, theme, and view primitives, plus Windows-owned browser, pairing, and deferred terminal surfaces.
-- `Sources/T4CodeWindowsLib/Platform/` — Windows launch parsing, identity, credential placeholder, WinUI environment gaps, the native WebView2 representable and per-session browser state, and the tested URLSession HostWire transport.
+- `Sources/T4CodeWindowsLib/Store/` — source-aligned links to the shared `T4SessionStore` and domain models, including Windows-only injected saved-host lifecycle branches.
+- `Sources/T4CodeWindowsLib/Views/` — source links to shared panes, inline cards, workspace components, theme, and view primitives, plus Windows-owned browser, Hosts/pairing, terminal, and adapted workspace surfaces.
+- `Sources/T4CodeWindowsLib/Platform/` — Windows launch parsing, identity, Credential Manager saved-host backend, WinUI environment gaps, native WebView2 representables, per-session browser/terminal state, and the tested URLSession HostWire transport.
 - `Scripts/` and `patches/` — the fail-closed preparation step and minimal pinned WinUI STA startup correction required by WebView2.
-- `Tests/T4CodeWindowsLibTests/` — launch, identity, credential-seam, browser lifecycle, pane behavior, and deterministic host-flow integration tests.
+- `Tests/T4CodeWindowsLibTests/` — launch, identity, saved-host credential, browser lifecycle, terminal lifecycle, pane behavior, and deterministic host-flow integration tests.
 
 Most Store and shared View entries are relative source links; the Windows root
 and adapted workspace are local files. Enable Windows Developer Mode (or run
