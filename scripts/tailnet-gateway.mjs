@@ -543,8 +543,8 @@ async function ensureRegistryToken(environment = process.env) {
     const { mkdir, writeFile } = await import("node:fs/promises");
     await mkdir(dirname(TOKEN_PATH), { recursive: true, mode: 0o700 });
     await writeFile(TOKEN_PATH, `${registryToken}\n`, { mode: 0o600 });
-  } catch {
-    // Token stays in memory only; the plugin falls back to the env token.
+  } catch (err) {
+    console.error("gateway: failed to persist registry token at", TOKEN_PATH, ":", err?.message ?? err);
   }
   return registryToken;
 }
