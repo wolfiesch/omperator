@@ -36,7 +36,10 @@ let package = Package(
         ),
         .testTarget(
             name: "T4CodeWindowsLibTests",
-            dependencies: ["T4CodeWindowsLib"],
+            dependencies: [
+                "T4CodeWindowsLib",
+                .product(name: "HostWire", package: "HostWire"),
+            ],
             path: "Tests/T4CodeWindowsLibTests"
         ),
     ]

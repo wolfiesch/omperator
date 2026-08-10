@@ -12,6 +12,8 @@ Required:
 - Visual Studio 2022 C++ build tools
 - Windows SDK 10.0.17763 or newer
 - Windows App Runtime 1.5 required by the pinned SwiftCrossUI/`swift-winui` graph
+- Bun on `PATH` (or its absolute path in `BUN_EXE`) for fixture integration tests
+- Root workspace dependencies installed with `pnpm install --frozen-lockfile`
 
 Install the SDK from PowerShell if it is missing:
 
@@ -54,6 +56,24 @@ swift test
 
 SwiftPM can print `pkg-config` warnings for GTK system-library declarations while evaluating SwiftCrossUI's cross-platform package manifest. The Windows targets depend directly on `WinUIBackend`; they do not import or link GTK.
 
+## Exercise the deterministic host flow
+
+The Windows test target launches `scripts/run-fixture-host.mts` on an ephemeral
+loopback port and drives the existing `HostWire` client through hello/welcome,
+session inventory, catalog lookup, session attach, transcript snapshot,
+invalid-token rejection, and clean disconnect:
+
+```powershell
+Set-Location apps\windows
+swift test --filter HostWireFixtureIntegrationTests
+```
+
+The shared `URLSessionHostWireTransport` is exercised directly for handshake
+and small push frames. Swift Foundation on Windows exposes responses larger
+than 16 KiB as separate libcurl callbacks, so
+`WindowsURLSessionHostWireTransport` rejoins one complete JSON frame before
+passing it to `HostClient`. The fixture's catalog response guards that path.
+
 ## Launch the native demo
 
 After `swift build`:
@@ -78,7 +98,7 @@ Supported first-milestone launch seams:
 ## Package layout
 
 - `Sources/T4CodeWindows/` — thin `@main` executable; imports `WinUIBackend` and creates the native window.
-- `Sources/T4CodeWindowsLib/` — testable launch parsing, Windows identity seam, portable demo models, Linux-parity theme tokens, and SwiftCrossUI views.
-- `Tests/T4CodeWindowsLibTests/` — launch-contract, identity, and deterministic-demo tests.
+- `Sources/T4CodeWindowsLib/` — testable launch parsing, Windows identity and HostWire transport seams, portable demo models, Linux-parity theme tokens, and SwiftCrossUI views.
+- `Tests/T4CodeWindowsLibTests/` — launch, identity, demo-data, and deterministic host-flow integration tests.
 
 SwiftCrossUI is pinned to revision `199a85614e3b2346aa10736b12f969af14a1f1ea`, matching `apps/linux/Package.swift`. `HostWire` is consumed directly from `apps/ios/HostWire`.
