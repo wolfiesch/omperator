@@ -11,11 +11,11 @@ func platformDeviceName() -> String {
     T4WindowsPlatform.deviceName()
 }
 
-/// WINDOWS-GAP: the shared store selects `LinuxWebSocketTransport` whenever
-/// Apple's Security module is unavailable. Windows is in that branch too, so
-/// bind the shared name to the tested Windows URLSession reassembly transport
-/// until the store gains an explicit platform transport factory.
-typealias LinuxWebSocketTransport = WindowsURLSessionHostWireTransport
+func makePlatformHostWireTransport(
+    endpoint: URL
+) -> any HostWireTransport {
+    WindowsURLSessionHostWireTransport(endpoint: endpoint)
+}
 
 struct EphemeralConnectionCredentials: Equatable {
     let endpoint: String

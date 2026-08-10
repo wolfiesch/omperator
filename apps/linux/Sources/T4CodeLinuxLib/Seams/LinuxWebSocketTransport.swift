@@ -19,6 +19,12 @@ import FoundationNetworking
 #endif
 import HostWire
 
+func makePlatformHostWireTransport(
+    endpoint: URL
+) -> any HostWireTransport {
+    LinuxWebSocketTransport(endpoint: endpoint)
+}
+
 final class LinuxWebSocketTransport: HostWireTransport {
     private let endpoint: URL
     private var fd: Int32 = -1

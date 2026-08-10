@@ -4,10 +4,10 @@ import FoundationNetworking
 #endif
 import HostWire
 
-/// Windows' Foundation WebSocket implementation exposes each 16 KiB libcurl
-/// callback as a separate message. HostWire sends one JSON object per WebSocket
-/// message, so this seam rejoins those callbacks before handing a frame to
-/// `HostClient` while continuing to use the shared URLSession transport.
+/// Windows Foundation can expose one WebSocket text message as multiple,
+/// variably sized libcurl callbacks. HostWire sends one JSON object per message,
+/// so this seam rejoins those callbacks before handing a frame to `HostClient`
+/// while continuing to use the shared URLSession transport.
 public final class WindowsURLSessionHostWireTransport: HostWireTransport {
     public static let defaultMaximumMessageSize = 32 * 1024 * 1024
 
@@ -38,13 +38,22 @@ public final class WindowsURLSessionHostWireTransport: HostWireTransport {
 
     public func receive() async throws -> Data {
         var message = try await transport.receive()
-        guard message.count == Self.foundationChunkSize,
-              !Self.isCompleteJSONObject(message)
-        else {
-            return message
+        guard message.count <= maximumMessageSize else {
+            throw HostClientError.transport(
+                "host frame exceeds \(maximumMessageSize) bytes"
+            )
         }
 
-        message.reserveCapacity(min(maximumMessageSize, Self.foundationChunkSize * 2))
+        switch Self.jsonFrameState(message) {
+        case .complete, .invalid:
+            return message
+        case .incomplete:
+            break
+        }
+
+        message.reserveCapacity(
+            min(maximumMessageSize, max(message.count * 2, Self.foundationChunkSize))
+        )
         while message.count < maximumMessageSize {
             let chunk = try await transport.receive()
             guard chunk.count <= maximumMessageSize - message.count else {
@@ -53,13 +62,15 @@ public final class WindowsURLSessionHostWireTransport: HostWireTransport {
                 )
             }
             message.append(chunk)
-            if Self.isCompleteJSONObject(message) {
+            switch Self.jsonFrameState(message) {
+            case .complete:
                 return message
-            }
-            if chunk.count < Self.foundationChunkSize {
-                // The callback stream ended but the payload is malformed. Return
-                // it intact so HostClient reports the canonical JSON error.
+            case .invalid:
+                // Preserve malformed frames so HostClient reports its canonical
+                // protocol decoding error instead of hiding it as a timeout.
                 return message
+            case .incomplete:
+                continue
             }
         }
         throw HostClientError.transport(
@@ -71,7 +82,17 @@ public final class WindowsURLSessionHostWireTransport: HostWireTransport {
         transport.close()
     }
 
-    private static func isCompleteJSONObject(_ data: Data) -> Bool {
+    private enum JSONFrameState {
+        case complete
+        case incomplete
+        case invalid
+    }
+
+    /// Classify an object/array frame without decoding or copying it. Windows
+    /// Foundation does not reliably preserve the nominal 16 KiB callback size,
+    /// so structural prefix validity—not fragment length—decides whether the
+    /// next callback belongs to the current WebSocket message.
+    private static func jsonFrameState(_ data: Data) -> JSONFrameState {
         var depth = 0
         var sawRoot = false
         var rootClosed = false
@@ -92,26 +113,29 @@ public final class WindowsURLSessionHostWireTransport: HostWireTransport {
 
             switch byte {
             case 0x22:
+                guard sawRoot, !rootClosed else { return .invalid }
                 isInsideString = true
             case 0x7B, 0x5B:
-                guard !rootClosed else { return false }
+                guard !rootClosed else { return .invalid }
                 sawRoot = true
                 depth += 1
             case 0x7D, 0x5D:
+                guard sawRoot else { return .invalid }
                 depth -= 1
-                guard depth >= 0 else { return false }
-                if sawRoot, depth == 0 {
+                guard depth >= 0 else { return .invalid }
+                if depth == 0 {
                     rootClosed = true
                 }
             case 0x20, 0x09, 0x0A, 0x0D:
                 break
             default:
-                if rootClosed {
-                    return false
-                }
+                guard sawRoot, !rootClosed else { return .invalid }
             }
         }
 
-        return sawRoot && rootClosed && depth == 0 && !isInsideString
+        if sawRoot, rootClosed, depth == 0, !isInsideString {
+            return .complete
+        }
+        return .incomplete
     }
 }

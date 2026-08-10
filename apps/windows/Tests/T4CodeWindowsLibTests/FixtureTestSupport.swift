@@ -4,6 +4,7 @@ final class WindowsFixtureServer {
     let process: Process
     private let outputFile: URL
     private let outputHandle: FileHandle
+    private let inputHandle: FileHandle
     private(set) var url: URL
 
     static func spawn(
@@ -20,6 +21,8 @@ final class WindowsFixtureServer {
             scenario,
         ]
         process.currentDirectoryURL = URL(fileURLWithPath: repoPath)
+        let inputPipe = Pipe()
+        process.standardInput = inputPipe
 
         let outputFile = FileManager.default.temporaryDirectory
             .appendingPathComponent("t4-windows-fixture-\(UUID().uuidString).log")
@@ -33,7 +36,8 @@ final class WindowsFixtureServer {
             process: process,
             url: URL(string: "ws://127.0.0.1:0")!,
             outputFile: outputFile,
-            outputHandle: outputHandle
+            outputHandle: outputHandle,
+            inputHandle: inputPipe.fileHandleForWriting,
         )
         do {
             server.url = try await server.waitForURL(timeout: 20)
@@ -75,12 +79,14 @@ final class WindowsFixtureServer {
         process: Process,
         url: URL,
         outputFile: URL,
-        outputHandle: FileHandle
+        outputHandle: FileHandle,
+        inputHandle: FileHandle
     ) {
         self.process = process
         self.url = url
         self.outputFile = outputFile
         self.outputHandle = outputHandle
+        self.inputHandle = inputHandle
     }
 
     private func waitForURL(timeout: TimeInterval) async throws -> URL {
@@ -110,12 +116,85 @@ final class WindowsFixtureServer {
         throw WindowsFixtureProbeError.fixtureDidNotStart(output)
     }
 
+    func dropConnections() async throws {
+        let requestId = try sendControl("drop")
+        _ = try await waitForControlLine(
+            containing: "fixture control: dropped \(requestId)",
+            timeout: 5
+        )
+    }
+
+    func waitForConnectionCount(
+        atLeast expected: Int,
+        timeout: TimeInterval = 15
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if try await connectionCount() >= expected {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        throw WindowsFixtureProbeError.timeout(
+            "fixture connection count to reach \(expected)"
+        )
+    }
+
+    private func connectionCount() async throws -> Int {
+        let requestId = try sendControl("status")
+        let line = try await waitForControlLine(
+            containing: "fixture control: status \(requestId) ",
+            timeout: 5
+        )
+        guard let field = line
+            .split(whereSeparator: \.isWhitespace)
+            .first(where: { $0.hasPrefix("connections=") }),
+              let count = Int(field.dropFirst("connections=".count))
+        else {
+            throw WindowsFixtureProbeError.invalidControlResponse(line)
+        }
+        return count
+    }
+
+    private func sendControl(_ command: String) throws -> String {
+        let requestId = UUID().uuidString
+        try inputHandle.write(
+            contentsOf: Data("\(command) \(requestId)\n".utf8)
+        )
+        return requestId
+    }
+
+    private func waitForControlLine(
+        containing marker: String,
+        timeout: TimeInterval
+    ) async throws -> String {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let data = (try? Data(contentsOf: outputFile)) ?? Data()
+            let text = String(decoding: data, as: UTF8.self)
+            if let line = text
+                .split(whereSeparator: \.isNewline)
+                .first(where: { $0.contains(marker) }) {
+                return String(line)
+            }
+            if !process.isRunning {
+                throw WindowsFixtureProbeError.fixtureExited(
+                    process.terminationStatus,
+                    text
+                )
+            }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        throw WindowsFixtureProbeError.timeout(marker)
+    }
+
     func stop() {
         if process.isRunning {
             process.terminate()
             process.waitUntilExit()
         }
         try? outputHandle.close()
+        try? inputHandle.close()
         try? FileManager.default.removeItem(at: outputFile)
     }
 
@@ -129,6 +208,7 @@ enum WindowsFixtureProbeError: Error, CustomStringConvertible {
     case fixtureExited(Int32, String)
     case fixtureDidNotStart(String)
     case timeout(String)
+    case invalidControlResponse(String)
 
     var description: String {
         switch self {
@@ -140,6 +220,8 @@ enum WindowsFixtureProbeError: Error, CustomStringConvertible {
             return "fixture server did not report its URL: \(output)"
         case .timeout(let operation):
             return "timed out waiting for \(operation)"
+        case .invalidControlResponse(let response):
+            return "fixture server returned an invalid control response: \(response)"
         }
     }
 }

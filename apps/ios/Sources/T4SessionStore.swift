@@ -961,12 +961,11 @@ final class T4SessionStore: ObservableObject {
             )
             return
         }
-        // Linux QA seam: -T4OpenEndpoint=<ws://…> connects to an open host
-        // without device credentials (welcome.authentication == .local) — the
-        // raw-endpoint connect-sheet path for open hosts. The Tailnet
-        // gateway's local transport rejects device authentication, so this is
-        // how the Linux client reaches a gateway-backed host from the CLI.
-        #if os(Linux)
+        // Native desktop QA seam: -T4OpenEndpoint=<ws://…> connects to an open
+        // host without device credentials (welcome.authentication == .local).
+        // This covers Linux's Tailnet gateway and the Windows fixture-backed
+        // live-host flow without persisting test credentials.
+        #if os(Linux) || os(Windows)
         if let openSeam = arguments.first(where: { $0.hasPrefix("-T4OpenEndpoint=") }),
            let endpoint = URL(string: String(openSeam.dropFirst("-T4OpenEndpoint=".count))),
            !connected, !connecting {
@@ -2050,10 +2049,9 @@ final class T4SessionStore: ObservableObject {
         "session.observer", "session.unverified", "session.fork",
     ]
 
-    /// Transport for an endpoint. `wss://` gets a pinning session (TOFU leaf
-    /// fingerprint in the Keychain); everything else uses the shared session.
-    /// On platforms without Security (Linux), plain transport only — cert
-    /// pinning is a wave-2 concern there.
+    /// Apple keeps certificate pinning. Linux and Windows provide the same
+    /// platform factory seam from their native targets, selecting respectively
+    /// the RFC 6455 socket client and the Foundation callback reassembler.
     private func makeTransport(endpoint: URL) -> any HostWireTransport {
         #if canImport(Security)
         guard endpoint.scheme == "wss",
@@ -2066,11 +2064,10 @@ final class T4SessionStore: ObservableObject {
             delegateQueue: nil
         )
         return URLSessionHostWireTransport(endpoint: endpoint, session: session)
+        #elseif os(Linux) || os(Windows)
+        return makePlatformHostWireTransport(endpoint: endpoint)
         #else
-        // Linux: URLSession's WebSocket path requires libcurl built with
-        // WebSockets (distro curl lacks it); use the native RFC 6455
-        // transport from Seams/LinuxWebSocketTransport.swift.
-        return LinuxWebSocketTransport(endpoint: endpoint)
+        return URLSessionHostWireTransport(endpoint: endpoint)
         #endif
     }
 
