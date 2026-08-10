@@ -62,21 +62,43 @@ deeply nested generic view metadata.
 
 ## Exercise the deterministic host flow
 
-The Windows test target launches `scripts/run-fixture-host.mts` on an ephemeral
-loopback port and drives the existing `HostWire` client through hello/welcome,
-session inventory, catalog lookup, session attach, transcript snapshot,
-invalid-token rejection, and clean disconnect:
+The Windows tests launch `scripts/run-fixture-host.mts` on ephemeral loopback
+ports. The HostWire probe covers hello/welcome, inventory, catalog, attach,
+snapshot, invalid-token rejection, and clean disconnect. The shared-store probe
+additionally sends a prompt, observes the live streaming projection, forces an
+unclean socket drop, verifies automatic reconnect, and sends again:
 
 ```powershell
 Set-Location apps\windows
 swift test --filter HostWireFixtureIntegrationTests
+swift test --filter T4SessionStoreFixtureIntegrationTests
 ```
 
 The shared `URLSessionHostWireTransport` is exercised directly for handshake
-and small push frames. Swift Foundation on Windows exposes responses larger
-than 16 KiB as separate libcurl callbacks, so
-`WindowsURLSessionHostWireTransport` rejoins one complete JSON frame before
-passing it to `HostClient`. The fixture's catalog response guards that path.
+and small push frames. Swift Foundation on Windows can expose a single large
+WebSocket text message as variably sized libcurl callbacks.
+`WindowsURLSessionHostWireTransport` structurally rejoins those callbacks into
+one complete JSON frame before passing it to `HostClient`. The fixture's catalog
+response guards that production store path.
+
+To exercise the same open-host prompt flow in the native window, run these in
+separate PowerShell terminals:
+
+```powershell
+# Repository root
+bun scripts/run-fixture-host.mts 18788 stream-v1
+
+# apps\windows, after swift build
+.\.build\debug\T4CodeWindows.exe `
+  -T4OpenEndpoint=ws://127.0.0.1:18788/fixture `
+  -T4NoRestore `
+  -T4Send "Native Windows fixture prompt" `
+  -T4SendSession session-stream
+```
+
+`-T4OpenEndpoint` connects without device credentials to a host that reports
+local authentication. `-T4NoRestore` prevents unrelated saved state from
+participating, and this QA path does not persist test credentials.
 
 ## Launch the native demo
 
