@@ -33,6 +33,7 @@ struct T4WorkspaceView: View {
     @State private var showInbox = false
     @State private var showPalette = false
     @State private var browserModel = T4WindowsBrowserWorkspaceModel()
+    @State private var terminalWorkspace = T4WindowsTerminalWorkspaceModel()
 
     @Environment(\.t4WindowWidth) private var windowWidth
     private var t: Theme { theme.t }
@@ -96,8 +97,10 @@ struct T4WorkspaceView: View {
         .onOpenURL { url in handleDeepLink(url) }
         .onChange(of: browserSessionIDs) {
             browserModel.prune(keeping: Set(browserSessionIDs))
+            _ = terminalWorkspace.prune(keeping: Set(browserSessionIDs))
         }
         .onAppear {
+            terminalWorkspace.bind(router: store)
             store.selectDefaultVisibleSessionIfNeeded()
             store.startDemoStreamIfNeeded()
             // UI-test seam: launch with -T4ShowInbox to boot with the inbox open.
@@ -272,6 +275,7 @@ struct T4WorkspaceView: View {
                     theme: theme,
                     browserModel: browserModel,
                     browserFixtureEnabled: browserFixtureEnabled,
+                    terminalWorkspace: terminalWorkspace,
                     inboxPresented: $showInbox,
                     onOpenInbox: { showInbox = true },
                     onOpenPalette: { showPalette = true }

@@ -10,6 +10,7 @@ struct T4WindowsSessionDetailView: View {
     let theme: ThemeStore
     let browserModel: T4WindowsBrowserWorkspaceModel
     let browserFixtureEnabled: Bool
+    let terminalWorkspace: T4WindowsTerminalWorkspaceModel
     let inboxPresented: Binding<Bool>
     let onOpenInbox: () -> Void
     let onOpenPalette: () -> Void
@@ -27,6 +28,7 @@ struct T4WindowsSessionDetailView: View {
     @State private var renaming = false
     @State private var renameText = ""
     @State private var ownershipBusy = false
+    @State private var showTerminal = ProcessInfo.processInfo.arguments.contains("-T4ShowTerminal")
 
     enum ActiveSheet: String, Identifiable {
         case files, agents, usage, review, artifacts, settings, browser, searchDiff
@@ -43,6 +45,7 @@ struct T4WindowsSessionDetailView: View {
         theme: ThemeStore,
         browserModel: T4WindowsBrowserWorkspaceModel,
         browserFixtureEnabled: Bool,
+        terminalWorkspace: T4WindowsTerminalWorkspaceModel,
         inboxPresented: Binding<Bool>,
         onOpenInbox: @escaping () -> Void,
         onOpenPalette: @escaping () -> Void
@@ -53,6 +56,8 @@ struct T4WindowsSessionDetailView: View {
         self.inboxPresented = inboxPresented
         self.browserModel = browserModel
         self.browserFixtureEnabled = browserFixtureEnabled
+        self.terminalWorkspace = terminalWorkspace
+        terminalWorkspace.bind(router: store)
         self.onOpenInbox = onOpenInbox
         self.onOpenPalette = onOpenPalette
         connectionModel = store.connectionModel
@@ -148,6 +153,11 @@ struct T4WindowsSessionDetailView: View {
 
     private var workspaceMenu: some View {
         Menu("Workspace") {
+            Button(showTerminal ? "Hide Terminal" : "Open Terminal") {
+                showTerminal.toggle()
+                if showTerminal { workspaceClosedForTerminal() }
+            }
+            Divider()
             T4TextButton("Files") { openSheet(.files) }
             T4TextButton("Agents") { openSheet(.agents) }
             T4TextButton("Review") { openSheet(.review) }
@@ -284,6 +294,7 @@ struct T4WindowsSessionDetailView: View {
 
     private var chatColumn: some View {
         VStack(spacing: 0) {
+            if !showTerminal || promptModel.pendingConfirmation != nil {
             ScrollView {
                 HStack(spacing: 0) {
                     Spacer(minLength: 16)
@@ -307,12 +318,23 @@ struct T4WindowsSessionDetailView: View {
                 }
             }
             .environment(\.scrollAnchorsToBottom, true)
+            }
+
+            T4WindowsTerminalDrawer(
+                session: session,
+                store: store,
+                theme: theme,
+                workspace: terminalWorkspace,
+                isOpen: showTerminal
+            )
 
             HStack(spacing: 0) {
                 Spacer(minLength: 14)
                 VStack(spacing: 7) {
                     pendingAskCard
-                    planStripSection
+                    if !showTerminal {
+                        planStripSection
+                    }
                     composer
                 }
                 .frame(maxWidth: 690)
@@ -616,6 +638,10 @@ struct T4WindowsSessionDetailView: View {
     private func openSheet(_ sheet: ActiveSheet) {
         inboxPresented.wrappedValue = false
         activeSheet = sheet
+    }
+
+    private func workspaceClosedForTerminal() {
+        inboxPresented.wrappedValue = false
     }
 
     private func paneWidth(_ preferred: Double) -> Double {
