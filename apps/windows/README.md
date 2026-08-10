@@ -13,6 +13,7 @@ Required:
 - Windows SDK 10.0.17763 or newer
 - Windows App Runtime 1.5 required by the pinned SwiftCrossUI/`swift-winui` graph
 - Bun on `PATH` (or its absolute path in `BUN_EXE`) for fixture integration tests
+- Microsoft Edge WebView2 Evergreen Runtime for the embedded browser and terminal surfaces
 - Root workspace dependencies installed with `pnpm install --frozen-lockfile`
 
 Install the SDK from PowerShell if it is missing:
@@ -214,6 +215,104 @@ python -m http.server 8765 --bind 127.0.0.1
 
 Deterministic browser captures may be stored under `apps\windows\.build\`;
 that directory is ignored and must not be committed.
+
+## Verify the embedded host terminal
+
+The Windows terminal uses a Windows-owned WinUI `WebView2` surface with
+bundled xterm.js 6.0.0, fit-addon, CSS, bridge, and license assets. It does not
+load a CDN, navigate the terminal surface to arbitrary pages, launch Windows
+Terminal, or create a client-owned ConPTY. `t4-host` remains the only PTY and
+shell-process authority. A custom VT parser/control was rejected because
+xterm.js already provides the more complete ANSI/VT, keyboard, mouse, resize,
+focus, and scrollback behavior behind the WebView2 seam already required by
+the native browser.
+
+No terminal-specific install runs at application startup. Install the
+dependencies listed in **Toolchain and runtime**, then prepare and build the
+pinned package graph:
+
+```powershell
+Set-Location apps\windows
+swift package resolve
+.\Scripts\prepare-dependencies.ps1
+swift build
+```
+
+Run the deterministic terminal contracts and the shared fixture-engine
+coverage:
+
+```powershell
+Set-Location apps\windows
+swift test --filter T4WindowsTerminalTests
+swift test --filter liveTerminalFlowAndReconnect
+Set-Location ..\..
+pnpm --filter @t4-code/fixture-server test -- engine.test.ts
+```
+
+For a live host-owned terminal, run the fixture and app in separate PowerShell
+terminals. `--auto-approve-terminal` approves only `term.open` in this local QA
+fixture; it does not weaken normal confirmation behavior.
+
+```powershell
+# Terminal 1, repository root
+bun scripts/run-fixture-host.mts 18788 basic-v1 --auto-approve-terminal
+
+# Terminal 2, apps\windows
+.\.build\debug\T4CodeWindows.exe `
+  -T4NoRestore `
+  -T4Theme=dark `
+  -T4WindowSize=1280x800 `
+  -T4ShowTerminal `
+  -T4PairCode 000000 `
+  -T4PairEndpoint ws://127.0.0.1:18788/fixture
+```
+
+Type `terminal-status <label>` in the fixture terminal to print observed open,
+input, resize, and close frames. Type `drop <label>` to force an unclean
+connection loss while keeping the fixture process and its terminal identities
+alive.
+
+Generate the six terminal visual captures from `apps\windows`:
+
+```powershell
+function Save-TerminalCapture {
+    param([string]$Theme, [string]$Size, [string]$Name)
+    $app = Start-Process .\.build\debug\T4CodeWindows.exe `
+        -ArgumentList @("-T4Demo", "-T4NoRestore", "-T4Theme=$Theme", "-T4WindowSize=$Size", "-T4ShowTerminal") `
+        -PassThru
+    try {
+        .\Scripts\capture-window.ps1 -OutputPath ".build\$Name" -SettleSeconds 3
+    } finally {
+        Stop-Process -Id $app.Id -ErrorAction SilentlyContinue
+    }
+}
+
+Save-TerminalCapture dark  900x600  terminal-dark-900x600.png
+Save-TerminalCapture light 900x600  terminal-light-900x600.png
+Save-TerminalCapture dark  1280x800 terminal-dark-1280x800.png
+Save-TerminalCapture light 1280x800 terminal-light-1280x800.png
+Save-TerminalCapture dark  1600x900 terminal-dark-1600x900.png
+Save-TerminalCapture light 1600x900 terminal-light-1600x900.png
+```
+
+The `-T4WindowSize` values are Windows logical geometry. PNG pixel dimensions
+reflect the active monitor's DPI scale. Captures remain ignored under
+`apps\windows\.build\`.
+
+Known terminal limits:
+
+- Four host terminals per session and 5,000 xterm scrollback lines.
+- The current HostWire contract has no `term.attach` command. A transient
+  reconnect retains known terminal identities and waits for host activity to
+  prove continuity. If the host lost its PTY process, close and reopen that
+  tab; Omperator does not claim a synthetic reattach.
+- Terminal input is paused while reconnecting and errors from stale or rejected
+  terminal identities are shown in the terminal status bar.
+- Clipboard paste and DEC mouse-reporting bytes require WebView2 focus and host
+  support for `term.input`. Missing `term.open`, `term.input`, or `term.resize`
+  capabilities are presented as unavailable or read-only rather than emulated.
+- `-T4Demo -T4ShowTerminal` is a read-only visual fixture. Use the live fixture
+  command above to prove HostWire output, input, resize, close, and reconnect.
 
 ## Pane behavior and fixture limits
 
