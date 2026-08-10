@@ -12,6 +12,26 @@ struct T4SessionStoreFixtureIntegrationTests {
         defer { fixture.stop() }
 
         let store = T4SessionStore()
+        let browserModel = T4WindowsBrowserWorkspaceModel()
+        _ = browserModel.mount(
+            sessionID: "session-stream",
+            initialURL: "https://browser.example/kept"
+        )
+        _ = browserModel.apply(.init(
+            sessionID: "session-stream",
+            event: .surfaceReady
+        ))
+        let browserBeforeDrop = browserModel.apply(.init(
+            sessionID: "session-stream",
+            event: .navigationState(
+                url: "https://browser.example/kept",
+                title: "Independent browser",
+                canGoBack: true,
+                canGoForward: false,
+                isLoading: false,
+                failure: nil
+            )
+        ))
         let identity = ClientIdentity(
             name: T4WindowsPlatform.clientName,
             version: "0.1",
@@ -72,6 +92,12 @@ struct T4SessionStoreFixtureIntegrationTests {
             await store.refresh()
             #expect(store.connected)
             #expect(store.sessions.first?.sessionId == session.sessionId)
+            #expect(
+                browserModel.snapshot(
+                    sessionID: session.sessionId,
+                    initialURL: "https://ignored.example"
+                ) == browserBeforeDrop
+            )
 
             await store.sendPrompt(
                 sessionId: session.sessionId,
@@ -88,6 +114,12 @@ struct T4SessionStoreFixtureIntegrationTests {
             #expect(!store.connected)
             #expect(store.client == nil)
             #expect(store.transcript(for: session.sessionId).isEmpty)
+            #expect(
+                browserModel.snapshot(
+                    sessionID: session.sessionId,
+                    initialURL: "https://ignored.example"
+                ) == browserBeforeDrop
+            )
         } catch {
             await store.disconnect()
             throw error

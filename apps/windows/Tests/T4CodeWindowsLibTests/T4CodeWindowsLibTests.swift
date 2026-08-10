@@ -6,11 +6,13 @@ func demoLaunchConfiguration() {
     let configuration = T4WindowsLaunchConfiguration(arguments: [
         "T4CodeWindows.exe",
         "-T4Demo",
+        "-T4BrowserFixture",
         "-T4Theme=light",
         "-T4WindowSize=1600x1000",
     ])
 
     #expect(configuration.demoMode)
+    #expect(configuration.browserFixtureEnabled)
     #expect(configuration.themeMode == .light)
     #expect(configuration.windowWidth == 1600)
     #expect(configuration.windowHeight == 1000)
@@ -21,10 +23,12 @@ func malformedLaunchConfiguration() {
     let configuration = T4WindowsLaunchConfiguration(arguments: [
         "T4CodeWindows.exe",
         "-T4Theme=sepia",
+        "-T4BrowserFixture",
         "-T4WindowSize=1600-by-1000",
     ])
 
     #expect(!configuration.demoMode)
+    #expect(!configuration.browserFixtureEnabled)
     #expect(configuration.themeMode == .system)
     #expect(configuration.windowWidth == T4WindowsLaunchConfiguration.defaultWindowWidth)
     #expect(configuration.windowHeight == T4WindowsLaunchConfiguration.defaultWindowHeight)
