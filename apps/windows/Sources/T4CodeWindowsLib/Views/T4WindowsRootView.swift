@@ -31,6 +31,12 @@ public struct T4WindowsRootView: View {
         }
         .colorScheme(isDark ? .dark : .light)
         .foregroundColor(theme.text)
+        .frame(
+            minWidth: 900,
+            maxWidth: .infinity,
+            minHeight: 600,
+            maxHeight: .infinity
+        )
     }
 
     private func onboarding(theme: T4WindowsTheme) -> some View {
@@ -80,17 +86,24 @@ private struct T4WindowsDemoWorkspace: View {
     }
 
     var body: some View {
-        ZStack {
-            theme.background
-            HStack(spacing: 0) {
-                rail
-                Divider(theme.line)
-                detail
+        GeometryReader { geometry in
+            ZStack {
+                theme.background
+                HStack(spacing: 0) {
+                    rail(height: geometry.size.height)
+                    Divider(theme.line)
+                        .frame(width: 1, height: geometry.size.height)
+                    detail(
+                        width: max(geometry.size.width - 301, 0),
+                        height: geometry.size.height
+                    )
+                }
             }
+            .frame(width: geometry.size.width, height: geometry.size.height)
         }
     }
 
-    private var rail: some View {
+    private func rail(height: Double) -> some View {
         HStack(spacing: 0) {
             Rectangle()
                 .fill(theme.accent)
@@ -113,12 +126,15 @@ private struct T4WindowsDemoWorkspace: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
+                .frame(height: 40)
 
                 TextField("Search sessions", text: $query)
                     .padding(.horizontal, 12)
                     .padding(.bottom, 10)
+                    .frame(height: 44)
 
                 Divider(theme.faintLine)
+                    .frame(height: 1)
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
@@ -126,9 +142,9 @@ private struct T4WindowsDemoWorkspace: View {
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(theme.text)
                             .lineLimit(1)
-                        .padding(.horizontal, 10)
-                        .padding(.top, 12)
-                        .padding(.bottom, 6)
+                            .padding(.horizontal, 10)
+                            .padding(.top, 12)
+                            .padding(.bottom, 6)
 
                         ForEach(filteredSessions) { session in
                             sessionRow(session)
@@ -144,30 +160,33 @@ private struct T4WindowsDemoWorkspace: View {
                     }
                     .padding(.horizontal, 8)
                 }
-                .frame(maxWidth: .infinity)
-                Spacer()
+                .frame(height: max(height - 145, 0))
 
                 Divider(theme.faintLine)
+                    .frame(height: 1)
 
                 HStack(spacing: 10) {
                     Circle()
                         .fill(theme.success)
                         .frame(width: 8, height: 8)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text("Native Windows")
+                        Text("WinUI")
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(theme.text)
+                            .frame(width: 120, alignment: .leading)
                         Text("HostWire client boundary")
                             .font(.system(size: 10))
                             .foregroundColor(theme.mutedText)
+                            .lineLimit(1)
                     }
-                    Spacer()
+                    .frame(width: 240, alignment: .leading)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
+                .frame(height: 59)
             }
         }
-        .frame(width: 300)
+        .frame(width: 300, height: height, alignment: .topLeading)
         .background(theme.surface)
     }
 
@@ -219,7 +238,7 @@ private struct T4WindowsDemoWorkspace: View {
         status == "Working" ? theme.accent : theme.success
     }
 
-    private var detail: some View {
+    private func detail(width: Double, height: Double) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -232,18 +251,21 @@ private struct T4WindowsDemoWorkspace: View {
                         .foregroundColor(theme.mutedText)
                         .lineLimit(1)
                 }
-                .frame(maxWidth: 300, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 Spacer()
                 HStack(spacing: 6) {
                     toolbarLabel("Agents")
                     toolbarLabel("Files")
                     toolbarLabel("Review")
                 }
+                .layoutPriority(1)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
+            .frame(width: width, height: 58)
 
             Divider(theme.line)
+                .frame(width: width, height: 1)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
@@ -272,14 +294,14 @@ private struct T4WindowsDemoWorkspace: View {
                         ))
                     }
                 }
-                .frame(maxWidth: 640, alignment: .leading)
                 .padding(.horizontal, 24)
                 .padding(.vertical, 20)
+                .frame(maxWidth: 720, alignment: .leading)
             }
-            .frame(maxWidth: .infinity)
-            Spacer()
+            .frame(width: width, height: max(height - 122, 0))
 
             Divider(theme.faintLine)
+                .frame(width: width, height: 1)
 
             HStack(spacing: 10) {
                 TextField("Message the selected session", text: $composerText)
@@ -293,9 +315,10 @@ private struct T4WindowsDemoWorkspace: View {
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 14)
+            .frame(width: width, height: 62)
             .background(theme.surface)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(width: width, height: height, alignment: .topLeading)
         .background(theme.background)
     }
 
@@ -321,7 +344,9 @@ private struct T4WindowsDemoWorkspace: View {
                     ? .system(size: 12, design: .monospaced)
                     : .system(size: 13))
                 .foregroundColor(theme.text)
-                .frame(maxWidth: 620, alignment: .leading)
+                .lineLimit(nil)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
