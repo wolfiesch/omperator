@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Omperator Browser Fixture — Home</title>
+  <style>
+    :root { color-scheme: dark; font-family: "Segoe UI", system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 1400px; color: #f4edf2; background: #151114; }
+    header { position: sticky; top: 0; padding: 18px 22px; background: #241b22; border-bottom: 1px solid #59414f; }
+    h1 { margin: 0 0 6px; font-size: 24px; }
+    p { color: #cabcc5; line-height: 1.55; }
+    nav { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+    a { color: #ff9bc8; font-weight: 650; }
+    main { max-width: 760px; padding: 24px 22px 80px; }
+    section { display: none; padding: 20px; background: #211a1f; border: 1px solid #59414f; border-radius: 12px; }
+    section.active { display: block; }
+    code { color: #ffe091; }
+    .spacer { height: 760px; margin-top: 20px; padding: 16px; border-left: 3px solid #ff78b5; background: #1b1519; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Native WebView2 fixture</h1>
+    <p id="route-label">Route: home</p>
+    <nav aria-label="Fixture navigation">
+      <a id="home-link" href="#home">Home</a>
+      <a id="details-link" href="#details">Details</a>
+      <a id="popup-link" href="#popup" target="_blank">Open inside this pane</a>
+      <a id="failure-link" href="http://127.0.0.1:65534/expected-failure">Expected failure</a>
+    </nav>
+  </header>
+  <main>
+    <section id="home">
+      <h2>Home</h2>
+      <p>This deterministic page is rendered by the Windows app's embedded WebView2 control.</p>
+      <p>Use <code>Details</code>, then the app toolbar's Back and Forward controls.</p>
+    </section>
+    <section id="details">
+      <h2>Details</h2>
+      <p id="details-marker">History navigation reached the second fixture route.</p>
+      <div class="spacer">Scroll target: this content proves the embedded surface remains usable beyond one viewport.</div>
+    </section>
+    <section id="popup">
+      <h2>Same-pane new-window navigation</h2>
+      <p id="popup-marker">A target=_blank link stayed inside Omperator instead of opening an external browser.</p>
+    </section>
+  </main>
+  <script>
+    function renderRoute() {
+      const route = history.state?.route || location.hash.slice(1) || "home";
+      const target = document.getElementById(route) || document.getElementById("home");
+      document.querySelectorAll("main section").forEach(section => section.classList.remove("active"));
+      target.classList.add("active");
+      document.getElementById("route-label").textContent = "Route: " + target.id;
+      document.title = "Omperator Browser Fixture — " + target.id[0].toUpperCase() + target.id.slice(1);
+      window.scrollTo(0, 0);
+    }
+    const popupPage = `<!doctype html>
+      <html lang="en"><head><meta charset="utf-8">
+      <title>Omperator Browser Fixture — Popup</title>
+      <style>
+        :root { color-scheme: dark; font-family: "Segoe UI", system-ui, sans-serif; }
+        body { margin: 0; padding: 28px; color: #f4edf2; background: #151114; }
+        main { max-width: 720px; padding: 24px; background: #211a1f; border: 1px solid #59414f; border-radius: 12px; }
+        p { color: #cabcc5; line-height: 1.55; }
+      </style></head><body><main>
+      <h1>Same-pane new-window navigation</h1>
+      <p id="popup-marker">A target=_blank link stayed inside Omperator instead of opening an external browser.</p>
+      </main></body></html>`;
+    document.getElementById("popup-link").href =
+      "data:text/html;charset=utf-8," + encodeURIComponent(popupPage);
+    document.querySelectorAll('nav a[href^="#"]:not([target])').forEach(link => {
+      link.addEventListener("click", event => {
+        event.preventDefault();
+        const route = link.getAttribute("href").slice(1);
+        history.pushState({ route }, "");
+        renderRoute();
+      });
+    });
+    if (!history.state?.route) {
+      history.replaceState({ route: location.hash.slice(1) || "home" }, "");
+    }
+    window.addEventListener("hashchange", renderRoute);
+    window.addEventListener("popstate", renderRoute);
+    renderRoute();
+  </script>
+</body>
+</html>

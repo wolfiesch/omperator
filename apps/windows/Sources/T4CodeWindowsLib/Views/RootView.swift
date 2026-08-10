@@ -11,7 +11,11 @@ struct RootView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            T4WorkspaceView(theme: theme, store: store)
+            T4WorkspaceView(
+                theme: theme,
+                store: store,
+                browserFixtureEnabled: configuration.browserFixtureEnabled
+            )
                 .environment(\.t4WindowWidth, geometry.size.width)
                 // WINDOWS-GAP: WinUIBackend does not reliably propagate an
                 // unconstrained root proposal through nested infinity frames.

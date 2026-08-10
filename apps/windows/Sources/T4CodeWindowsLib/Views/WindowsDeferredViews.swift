@@ -53,13 +53,8 @@ struct T4ConnectView: View {
 }
 
 
-/// WINDOWS-GAP: WebView2 browser and terminal surfaces remain deferred.
-/// Every requested non-browser/non-terminal pane uses the shared Linux SwiftCrossUI view.
-
-struct T4BrowserPaneView: View {
-    let session: SessionRef; let store: T4SessionStore; let theme: ThemeStore; let isPresented: Binding<Bool>
-    var body: some View { WindowsDeferredPane(title: "Browser", detail: "Browser support is deferred during the core workspace port.", theme: theme, isPresented: isPresented) }
-}
+/// WINDOWS-GAP: only the native terminal surface remains deferred.
+/// Every requested non-terminal pane uses a real shared or Windows-owned view.
 
 
 struct T4TerminalDrawer: View {

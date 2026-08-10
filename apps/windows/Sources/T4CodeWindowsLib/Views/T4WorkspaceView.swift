@@ -22,6 +22,7 @@ import HostWire
 struct T4WorkspaceView: View {
     let theme: ThemeStore
     let store: T4SessionStore
+    let browserFixtureEnabled: Bool
 
     @State private var showConnect = false
     /// WINDOWS-GAP: Swift 6.3 on Windows crashes while instantiating
@@ -31,10 +32,14 @@ struct T4WorkspaceView: View {
     @State private var pendingPairIssuedAt = 0.0
     @State private var showInbox = false
     @State private var showPalette = false
+    @State private var browserModel = T4WindowsBrowserWorkspaceModel()
 
     @Environment(\.t4WindowWidth) private var windowWidth
     private var t: Theme { theme.t }
     private var p: WindowsCorePalette { WindowsCorePalette(theme.effective) }
+    private var browserSessionIDs: [String] {
+        store.sessions.map(\.sessionId).sorted()
+    }
 
     private var pendingPair: PendingPair? {
         guard !pendingPairURL.isEmpty else { return nil }
@@ -44,9 +49,14 @@ struct T4WorkspaceView: View {
         )
     }
 
-    init(theme: ThemeStore, store: T4SessionStore) {
+    init(
+        theme: ThemeStore,
+        store: T4SessionStore,
+        browserFixtureEnabled: Bool
+    ) {
         self.theme = theme
         self.store = store
+        self.browserFixtureEnabled = browserFixtureEnabled
     }
 
     var body: some View {
@@ -84,6 +94,9 @@ struct T4WorkspaceView: View {
             T4ConnectView(store: store, theme: theme, isPresented: $showConnect, pendingPair: pendingPair)
         }
         .onOpenURL { url in handleDeepLink(url) }
+        .onChange(of: browserSessionIDs) {
+            browserModel.prune(keeping: Set(browserSessionIDs))
+        }
         .onAppear {
             store.selectDefaultVisibleSessionIfNeeded()
             store.startDemoStreamIfNeeded()
@@ -257,6 +270,8 @@ struct T4WorkspaceView: View {
                     session: session,
                     store: store,
                     theme: theme,
+                    browserModel: browserModel,
+                    browserFixtureEnabled: browserFixtureEnabled,
                     inboxPresented: $showInbox,
                     onOpenInbox: { showInbox = true },
                     onOpenPalette: { showPalette = true }

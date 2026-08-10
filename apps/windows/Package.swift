@@ -48,11 +48,15 @@ let package = Package(
             name: "T4CodeWindowsLib",
             dependencies: [
                 .product(name: "SwiftCrossUI", package: "swift-cross-ui"),
+                .product(name: "WinUIBackend", package: "swift-cross-ui"),
                 .product(name: "OpenCombine", package: "OpenCombine"),
                 .product(name: "Crypto", package: "swift-crypto"),
                 .product(name: "HostWire", package: "HostWire"),
             ],
-            path: "Sources/T4CodeWindowsLib"
+            path: "Sources/T4CodeWindowsLib",
+            resources: [
+                .process("Resources"),
+            ]
         ),
         .testTarget(
             name: "T4CodeWindowsLibTests",

@@ -8,6 +8,8 @@ struct T4WindowsSessionDetailView: View {
     let session: SessionRef
     let store: T4SessionStore
     let theme: ThemeStore
+    let browserModel: T4WindowsBrowserWorkspaceModel
+    let browserFixtureEnabled: Bool
     let inboxPresented: Binding<Bool>
     let onOpenInbox: () -> Void
     let onOpenPalette: () -> Void
@@ -39,6 +41,8 @@ struct T4WindowsSessionDetailView: View {
         session: SessionRef,
         store: T4SessionStore,
         theme: ThemeStore,
+        browserModel: T4WindowsBrowserWorkspaceModel,
+        browserFixtureEnabled: Bool,
         inboxPresented: Binding<Bool>,
         onOpenInbox: @escaping () -> Void,
         onOpenPalette: @escaping () -> Void
@@ -47,6 +51,8 @@ struct T4WindowsSessionDetailView: View {
         self.store = store
         self.theme = theme
         self.inboxPresented = inboxPresented
+        self.browserModel = browserModel
+        self.browserFixtureEnabled = browserFixtureEnabled
         self.onOpenInbox = onOpenInbox
         self.onOpenPalette = onOpenPalette
         connectionModel = store.connectionModel
@@ -644,6 +650,8 @@ struct T4WindowsSessionDetailView: View {
                 session: session,
                 store: store,
                 theme: theme,
+                browserModel: browserModel,
+                fixtureEnabled: browserFixtureEnabled,
                 isPresented: sheetBinding(.browser)
             )
             .frame(width: paneWidth(620))
