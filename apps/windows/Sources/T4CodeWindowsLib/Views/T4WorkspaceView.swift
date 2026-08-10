@@ -34,6 +34,7 @@ struct T4WorkspaceView: View {
 
     @Environment(\.t4WindowWidth) private var windowWidth
     private var t: Theme { theme.t }
+    private var p: WindowsCorePalette { WindowsCorePalette(theme.effective) }
 
     private var pendingPair: PendingPair? {
         guard !pendingPairURL.isEmpty else { return nil }
@@ -50,24 +51,26 @@ struct T4WorkspaceView: View {
 
     var body: some View {
         ZStack {
-            t.bg
+            p.canvas
 
-            HStack(spacing: 0) {
-                rail
-                Divider(t.line)
-                detail
-                // Inbox lives in-window too: a right-side panel (no floating
-                // sheet window, no modal grab).
-                if showInbox {
-                    Divider(t.line)
-                    T4InboxView(store: store, theme: theme, isPresented: $showInbox)
-                        // WINDOWS-GAP: keep the transcript and inbox actions
-                        // visible together at the minimum window width.
-                        .frame(width: windowWidth < 1000 ? 300 : (windowWidth < 1200 ? 340 : 380))
+            VStack(spacing: 0) {
+                appBar
+                if T4SessionStore.demoMode {
+                    demoBanner
                 }
+                HStack(spacing: 0) {
+                    rail
+                    Divider(p.line)
+                    detail
+                    if showInbox {
+                        Divider(p.line)
+                        T4InboxView(store: store, theme: theme, isPresented: $showInbox)
+                            .frame(width: windowWidth < 1000 ? 300 : (windowWidth < 1200 ? 340 : 380))
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
 
-            // Palette overlay (macOS: .overlay + transition).
             if showPalette {
                 T4PaletteView(
                     store: store,
@@ -147,6 +150,64 @@ struct T4WorkspaceView: View {
             }
         }
     }
+    private var appBar: some View {
+        HStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Text("T")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(p.accent)
+                Text("Omperator")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(p.text)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .frame(width: 256)
+
+            Rectangle().fill(p.line).frame(width: 1)
+            Spacer()
+
+            if T4SessionStore.demoMode {
+                Text("Sample data")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(p.textBody)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background { RoundedRectangle(cornerRadius: 6).fill(p.surface) }
+            }
+            T4TextButton(inboxButtonLabel) { showInbox = true }
+                .font(.system(size: 10))
+                .foregroundColor(p.textMuted)
+            T4TextButton("⌕") { showPalette = true }
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(p.textMuted)
+                .frame(width: 30)
+            T4TextButton(theme.effective == .dark ? "Light" : "Dark") { theme.toggle() }
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(p.textMuted)
+                .padding(.trailing, 10)
+        }
+        .frame(height: 34)
+        .background(p.appBar)
+        .overlay(alignment: .bottom) { Rectangle().fill(p.line).frame(height: 1) }
+    }
+
+    private var demoBanner: some View {
+        HStack(spacing: 5) {
+            Spacer()
+            Text("Sample data")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundColor(p.accent)
+            Text("· Explore freely. No live hosts, accounts, or files are connected.")
+                .font(.system(size: 9))
+                .foregroundColor(p.textMuted)
+            Spacer()
+        }
+        .frame(height: 28)
+        .background(p.banner)
+        .overlay(alignment: .bottom) { Rectangle().fill(p.line).frame(height: 1) }
+    }
+
 
     // MARK: - Sidebar column
 
@@ -154,49 +215,29 @@ struct T4WorkspaceView: View {
     /// the session list, and the shared connect bar.
     private var rail: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                // WINDOWS-GAP: WinUIBackend currently shrinks a single Text
-                // ahead of Spacer even through a fixed frame. Two intrinsic
-                // runs preserve the native product title.
-                HStack(spacing: 4) {
-                    Text("T4").fixedSize()
-                    Text("Code").fixedSize()
-                }
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(t.txt)
-                .frame(width: 100, alignment: .leading)
-                Spacer()
-                // LINUX-GAP: sun.max/moon SF Symbols → ☀/☾ glyphs
-                T4TextButton(theme.effective == .dark ? "☀" : "☾") { theme.toggle() }
-                    .font(.system(size: 13, weight: .semibold))
-                if store.connected {
-                    HStack(spacing: 5) {
-                        LiveDot(t: t)
-                        Text("Live").font(.system(size: 11, weight: .semibold)).foregroundColor(t.diffAdd)
-                    }
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            Text("")
+                .frame(height: 5)
 
-            TextField("Search sessions", text: Binding(
+            TextField("Filter sessions", text: Binding(
                 get: { store.query },
                 set: { store.query = $0 }
             ))
-            .padding(.horizontal, 12)
-            .padding(.bottom, 8)
+            .font(.system(size: 12))
+            .padding(.horizontal, 11)
+            .padding(.bottom, 7)
 
-            T4SessionsView(store: store, theme: theme) { session in
-                store.select(session)
-            }
+            T4WindowsSessionsView(
+                store: store,
+                theme: theme,
+                onSelect: { session in store.select(session) },
+                onInbox: { showInbox = true }
+            )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             connectBar
         }
-        // WINDOWS-GAP: WinUIBackend does not negotiate the fixed rail against
-        // an open detail pane, so preserve both at the supported minimum.
-        .frame(width: windowWidth < 1000 ? 220 : (windowWidth < 1100 ? 240 : 300))
-        .background(t.bg)
+        .frame(width: 256)
+        .background(p.rail)
     }
 
     // MARK: - Detail column
@@ -204,53 +245,28 @@ struct T4WorkspaceView: View {
     /// Detail header (toolbar replacement): model/session-control menu and
     /// the attention-inbox bell.
     private var detail: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                if let session = store.selectedSession {
-                    // Cross-agent type (TranscriptAgent): String-label form.
-                    T4ModelMenuButton(
-                        session: session,
-                        store: store,
-                        theme: t,
-                        label: T4ModelLabel.labelString(session.model ?? "choose model")
-                    )
-                }
-                Spacer()
-                // LINUX-GAP: bell SF Symbol + badge → short label with count
-                T4TextButton(inboxButtonLabel) { showInbox = true }
-                // LINUX-GAP: magnifyingglass toolbar item — the palette is
-                // reachable from the detail header on Linux.
-                T4TextButton("⌕") { showPalette = true }
+        Group {
+            if ProcessInfo.processInfo.environment["T4_STUB_DETAIL"] == "1" {
+                Text("stub detail")
+            } else if !store.hasLiveInventory && !T4SessionStore.demoMode && store.hasSavedConnection {
+                bootSplash
+            } else if !store.hasLiveInventory && !T4SessionStore.demoMode {
+                onboarding
+            } else if let session = store.selectedSession {
+                T4WindowsSessionDetailView(
+                    session: session,
+                    store: store,
+                    theme: theme,
+                    inboxPresented: $showInbox,
+                    onOpenInbox: { showInbox = true },
+                    onOpenPalette: { showPalette = true }
+                )
+            } else {
+                emptyState
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-
-            Divider(t.line)
-
-            Group {
-                if ProcessInfo.processInfo.environment["T4_STUB_DETAIL"] == "1" {
-                    // Perf-bisect seam: stub the detail to isolate rail cost.
-                    Text("stub detail")
-                } else if !store.hasLiveInventory && !T4SessionStore.demoMode && store.hasSavedConnection {
-                    bootSplash
-                } else if !store.hasLiveInventory && !T4SessionStore.demoMode {
-                    onboarding
-                } else if let session = store.selectedSession {
-                    // Cross-agent type (TranscriptAgent): T4SessionDetailView(session:store:theme:)
-                    T4SessionDetailView(
-                        session: session,
-                        store: store,
-                        theme: theme,
-                        inboxPresented: $showInbox
-                    )
-                } else {
-                    emptyState
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(t.bg)
+        .background(p.canvas)
     }
 
     private var inboxButtonLabel: String {
