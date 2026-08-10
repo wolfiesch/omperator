@@ -603,6 +603,10 @@ final class T4SessionStore: ObservableObject {
     /// UserDefaults flag set once the legacy plist credentials have been
     /// copied into the Keychain and the plist entries deleted.
     private static let keychainMigratedKey = "t4.keychainMigrated"
+    /// Auto-rc: the session that was open when the app last had one. A
+    /// relaunch or reconnect returns here (see restoreLastSessionIfAvailable)
+    /// instead of falling back to the default visible row.
+    private static let lastSessionIdKey = "t4.lastSessionId"
 
     private func receiveStreamingMessage(sessionId: String, text: String, reasoning: String) {
         var buffer = streamingMessages[sessionId] ?? StreamingAssistantBuffer()
@@ -1047,6 +1051,12 @@ final class T4SessionStore: ObservableObject {
     /// Select a session (rail tap or auto-select of the most recent).
     func select(_ session: SessionRef?) {
         selectedSession = session
+        // Auto-rc: remember the open session so a relaunch or reconnect lands
+        // back here (restoreLastSessionIfAvailable). Demo selections are
+        // sample rows, never host sessions — they must not be persisted.
+        if !Self.demoMode, let session {
+            UserDefaults.standard.set(session.sessionId, forKey: Self.lastSessionIdKey)
+        }
         if connected, let session { Task { await attach(sessionId: session.sessionId) } }
     }
 
@@ -2266,7 +2276,7 @@ final class T4SessionStore: ObservableObject {
     /// the most recent live session; a surviving one gets the fresh ref.
     private func reconcileSelection() {
         guard let selected = selectedSession else {
-            reconcileSelectionForVisibleList()
+            restoreLastSessionIfAvailable()
             return
         }
         if let fresh = sessions.first(where: { $0.sessionId == selected.sessionId }),
@@ -2275,6 +2285,26 @@ final class T4SessionStore: ObservableObject {
         } else {
             reconcileSelectionForVisibleList()
         }
+    }
+
+    /// Auto-rc: the selection is nil after a relaunch or reconnect until the
+    /// inventory lands. Return to the session that was open last time instead
+    /// of the default visible row, and reattach it (select() attaches when
+    /// connected; the host replays the transcript snapshot).
+    private func restoreLastSessionIfAvailable() {
+        guard !Self.demoMode,
+              let saved = UserDefaults.standard.string(forKey: Self.lastSessionIdKey),
+              sessions.contains(where: { $0.sessionId == saved }) else {
+            reconcileSelectionForVisibleList()
+            return
+        }
+        guard let target = sessions.first(where: {
+            $0.sessionId == saved && ($0.archivedAt != nil) == (sessionListView == .archived)
+        }) else {
+            reconcileSelectionForVisibleList()
+            return
+        }
+        select(target)
     }
 
     /// Fetch the host catalog (models, tools, …) once after connecting.
@@ -2556,6 +2586,9 @@ final class T4SessionStore: ObservableObject {
         Keychain.remove(forKey: Self.savedEndpointKey)
         Keychain.remove(forKey: Self.savedDeviceIdKey)
         Keychain.remove(forKey: Self.savedDeviceTokenKey)
+        // Explicit disconnect forgets the host, so the auto-rc "return here"
+        // memory goes with it (restore() has no endpoint to reconnect to).
+        UserDefaults.standard.removeObject(forKey: Self.lastSessionIdKey)
     }
 
     // MARK: - Collab guest mode
