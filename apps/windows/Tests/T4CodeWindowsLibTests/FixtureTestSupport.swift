@@ -124,6 +124,21 @@ final class WindowsFixtureServer {
         )
     }
 
+    func terminalObservations() async throws -> [WindowsFixtureTerminalObservation] {
+        let requestId = try sendControl("terminal-status")
+        let marker = "fixture control: terminal-status \(requestId) "
+        let line = try await waitForControlLine(containing: marker, timeout: 5)
+        guard let range = line.range(of: marker),
+              let data = String(line[range.upperBound...]).data(using: .utf8) else {
+            throw WindowsFixtureProbeError.invalidControlResponse(line)
+        }
+        do {
+            return try JSONDecoder().decode([WindowsFixtureTerminalObservation].self, from: data)
+        } catch {
+            throw WindowsFixtureProbeError.invalidControlResponse(line)
+        }
+    }
+
     func waitForConnectionCount(
         atLeast expected: Int,
         timeout: TimeInterval = 15
@@ -201,6 +216,16 @@ final class WindowsFixtureServer {
     deinit {
         stop()
     }
+}
+
+struct WindowsFixtureTerminalObservation: Codable, Equatable {
+    let kind: String
+    let sessionId: String
+    let terminalId: String
+    let cols: Int?
+    let rows: Int?
+    let data: String?
+    let reason: String?
 }
 
 enum WindowsFixtureProbeError: Error, CustomStringConvertible {

@@ -961,6 +961,144 @@ describe("deterministic fixture engine", () => {
     for (const frame of [...terminalOutput, ...terminalExit])
       expect(() => decodeServerFrame(frame)).not.toThrow();
   });
+  it("runs deterministic multi-terminal ANSI, input, resize, close, and reconnect flows", () => {
+    const engine = new FixtureEngine(loadScenario("basic-v1"));
+    const firstClient = engine.connect("terminal-a");
+    ready(engine, firstClient.id);
+
+    const openTerminal = (id: string, cols: number, rows: number) => {
+      const challenge = engine.receive(
+        firstClient.id,
+        command(engine.seed, "term.open", id, id, { cols, rows }),
+      )[0];
+      if (challenge?.type !== "confirmation") throw new Error("fixture did not challenge term.open");
+      return engine.receive(firstClient.id, {
+        v: "omp-app/1",
+        type: "confirm",
+        requestId: `${id}-confirm`,
+        confirmationId: challenge.confirmationId,
+        commandId: challenge.commandId,
+        hostId: challenge.hostId,
+        sessionId: challenge.sessionId,
+        decision: "approve",
+      });
+    };
+
+    const firstOpenFrames = openTerminal("terminal-open-1", 80, 24);
+    const firstOpen = firstOpenFrames.find(frame => frame.type === "response");
+    expect(firstOpen?.type === "response" ? firstOpen.ok : false).toBe(true);
+    expect(firstOpen?.type === "response" ? firstOpen.result : undefined).toEqual({
+      terminalId: "terminal-fixture",
+    });
+    const firstBanner = firstOpenFrames.find(frame => frame.type === "terminal.output");
+    expect(firstBanner?.type === "terminal.output" ? firstBanner.data : "").toContain("\u001b[1;35m");
+    expect(firstBanner?.type === "terminal.output" ? firstBanner.data : "").toContain(
+      "\r\u001b[2Kprogress 100%",
+    );
+
+    const secondOpenFrames = openTerminal("terminal-open-2", 100, 30);
+    const secondOpen = secondOpenFrames.find(frame => frame.type === "response");
+    expect(secondOpen?.type === "response" ? secondOpen.result : undefined).toEqual({
+      terminalId: "terminal-fixture-2",
+    });
+
+    const inputFrames = engine.receive(firstClient.id, {
+      v: "omp-app/1",
+      type: "terminal.input",
+      hostId: engine.seed.hostId,
+      sessionId: engine.seed.sessionId,
+      terminalId: "terminal-fixture",
+      data: "echo hello\r",
+    });
+    expect(
+      inputFrames
+        .filter(frame => frame.type === "terminal.output")
+        .map(frame => (frame.type === "terminal.output" ? frame.data : ""))
+        .join(""),
+    ).toContain("fixture output: echo hello");
+
+    engine.receive(firstClient.id, {
+      v: "omp-app/1",
+      type: "terminal.resize",
+      hostId: engine.seed.hostId,
+      sessionId: engine.seed.sessionId,
+      terminalId: "terminal-fixture",
+      cols: 132,
+      rows: 41,
+    });
+    const resize = engine.terminalObservations.findLast(event => event.kind === "resize");
+    expect(resize).toEqual({
+      kind: "resize",
+      sessionId: engine.seed.sessionId,
+      terminalId: "terminal-fixture",
+      cols: 132,
+      rows: 41,
+    });
+
+    engine.disconnect(firstClient.id);
+    const reconnected = engine.connect("terminal-b");
+    ready(engine, reconnected.id);
+    const resumedOutput = engine.receive(reconnected.id, {
+      v: "omp-app/1",
+      type: "terminal.input",
+      hostId: engine.seed.hostId,
+      sessionId: engine.seed.sessionId,
+      terminalId: "terminal-fixture-2",
+      data: "resumed",
+    });
+    expect(resumedOutput[0]).toMatchObject({
+      type: "terminal.output",
+      terminalId: "terminal-fixture-2",
+      data: "resumed",
+    });
+
+    const exit = engine.receive(reconnected.id, {
+      v: "omp-app/1",
+      type: "terminal.close",
+      hostId: engine.seed.hostId,
+      sessionId: engine.seed.sessionId,
+      terminalId: "terminal-fixture-2",
+      reason: "fixture complete",
+    });
+    expect(exit).toHaveLength(1);
+    expect(exit[0]).toMatchObject({
+      type: "terminal.exit",
+      terminalId: "terminal-fixture-2",
+      exitCode: 0,
+    });
+    expect(engine.terminalObservations.map(event => event.kind)).toEqual([
+      "open",
+      "open",
+      "input",
+      "resize",
+      "input",
+      "close",
+    ]);
+  });
+  it("auto-approves only explicitly selected fixture commands", () => {
+    const engine = new FixtureEngine(loadScenario("basic-v1"), undefined, {
+      autoApproveCommands: ["term.open"],
+    });
+    const client = engine.connect("terminal-auto-approve");
+    ready(engine, client.id);
+    const frames = engine.receive(
+      client.id,
+      command(engine.seed, "term.open", "terminal-auto-open", "terminal-auto-open", {
+        cols: 80,
+        rows: 24,
+      }),
+    );
+    expect(frames.some(frame => frame.type === "confirmation")).toBe(false);
+    expect(frames.find(frame => frame.type === "response")).toMatchObject({
+      type: "response",
+      ok: true,
+      result: { terminalId: "terminal-fixture" },
+    });
+    expect(frames.find(frame => frame.type === "terminal.output")).toMatchObject({
+      type: "terminal.output",
+      terminalId: "terminal-fixture",
+    });
+  });
   it("is deterministic across two identical runs", () => {
     const run = () => {
       const engine = new FixtureEngine(loadScenario("stream-v1"));
