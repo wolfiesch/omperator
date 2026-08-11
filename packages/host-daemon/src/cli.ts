@@ -137,7 +137,8 @@ export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): 
   let authorityMode: "bridge" | "official" = "bridge";
   let ompSessionsRoot: string | undefined;
   let profileId = "default";
-  let stateRoot = join(home, ".t4-code", "host");
+  const defaultStateRoot = join(home, ".t4-code", "host");
+  let stateRoot = defaultStateRoot;
   let remoteMode: "direct" | "serve" | undefined;
   let remoteAddress: string | undefined;
   let remotePort = 8787;
@@ -197,6 +198,8 @@ export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): 
   if (remoteTlsPort === remotePort) throw new Error("--remote-tls-port must differ from --remote-port");
   if (remoteMode === "direct" && trustedServeProxy)
     throw new Error("trusted Serve proxy is invalid in direct mode");
+  if (remoteMode && profileId === "default" && resolve(stateRoot) !== resolve(defaultStateRoot))
+    throw new Error("remote mode with a custom --state-root requires a non-default --profile");
   if (testControl) {
     // Seeding writes disposable sessions into the profile it serves, so it must
     // never reach the default profile a person actually works in, and it must

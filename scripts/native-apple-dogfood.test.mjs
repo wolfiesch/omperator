@@ -41,7 +41,7 @@ test("native Apple dogfood accepts only Tailnet IPv4 listeners", () => {
   }
 });
 
-test("native Apple dogfood definition preserves default-profile bridge authority", () => {
+test("native Apple dogfood definition uses an isolated host profile", () => {
   const definition = buildNativeAppleLaunchAgent({
     host: "/repo/packages/host-daemon/dist/t4-host",
     omp: "/runtime/omp",
@@ -49,7 +49,10 @@ test("native Apple dogfood definition preserves default-profile bridge authority
     address: "100.64.0.9",
     logs: "/Users/test/Library/Logs/T4 Code/appserver",
   });
-  assert.match(definition, /<string>--profile<\/string>\s*<string>default<\/string>/u);
+  assert.match(
+    definition,
+    /<string>--profile<\/string>\s*<string>native-apple-dogfood<\/string>/u,
+  );
   assert.match(definition, /<string>--remote-mode<\/string>\s*<string>direct<\/string>/u);
   assert.match(definition, /<string>--remote-tls-port<\/string>\s*<string>8788<\/string>/u);
   assert.doesNotMatch(definition, /--omp-authority|--omp-sessions-root|official/u);

@@ -1,3 +1,17 @@
+## Local host recovery hardening (unreleased)
+
+Omperator now refuses a remotely exposed host that combines a custom state
+root with the default profile, preventing development and dogfood services from
+claiming the installed app's local socket. The desktop also refreshes staged
+OMP runtime bytes when they no longer exactly match the bundled runtime, and an
+offline session's connection badge opens Hosts for direct recovery.
+
+The signed macOS artifact inspection now verifies that the runtime manifest
+inside both the ZIP and DMG matches the compatibility matrix's published
+runtime tag.
+
+---
+
 ## Native iPhone companion and host preview work (unreleased)
 
 The current integration branch adds a candidate native SwiftUI iPhone

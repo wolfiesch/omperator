@@ -92,17 +92,6 @@ async function verifySignedDeveloperIdRuntime(path: string): Promise<string> {
   }
 }
 
-async function readSignedRuntimeCodeHash(path: string): Promise<string> {
-  const display = await execFileAsync(
-    "/usr/bin/codesign",
-    ["--display", "--verbose=4", path],
-    { maxBuffer: 1024 * 1024 },
-  );
-  const output = `${display.stdout}\n${display.stderr}`;
-  const cdHash = /^CDHash=([0-9a-f]+)$/imu.exec(output)?.[1];
-  if (!cdHash) throw new Error("bundled OMP runtime code identity is invalid");
-  return cdHash;
-}
 
 export async function installBundledOmpRuntime(options: {
   readonly resourcesPath: string;
@@ -116,22 +105,6 @@ export async function installBundledOmpRuntime(options: {
   const destination = join(destinationRoot, "omp");
   const verifySignedRuntime = options.verifySignedRuntime ?? verifySignedDeveloperIdRuntime;
 
-  try {
-    const destinationCdHash = await verifySignedRuntime(destination);
-    const sourceCdHash = options.verifySignedRuntime
-      ? await options.verifySignedRuntime(source)
-      : await readSignedRuntimeCodeHash(source);
-    if (destinationCdHash === sourceCdHash) {
-      await chmod(destination, 0o755);
-      return destination;
-    }
-  } catch {
-    if (await matches(destination, manifest)) {
-      await chmod(destination, 0o755);
-      return destination;
-    }
-  }
-
   let sourceIntegrity: RuntimeIntegrity;
   try {
     sourceIntegrity = await inspectIntegrity(source);
@@ -143,6 +116,10 @@ export async function installBundledOmpRuntime(options: {
     }
   } catch {
     throw new Error("bundled OMP runtime failed its integrity check");
+  }
+  if (await matches(destination, sourceIntegrity)) {
+    await chmod(destination, 0o755);
+    return destination;
   }
   await mkdir(destinationRoot, { recursive: true, mode: 0o700 });
   const temporary = join(destinationRoot, `.omp-${randomUUID()}.partial`);

@@ -89,6 +89,7 @@ const NO_FILE_CHILDREN: Readonly<Record<string, FileChildren>> = {};
 
 export function SessionConnectionBadge({
   state,
+  onOpenHostHealth,
 }: {
   readonly state:
     | "connected"
@@ -96,6 +97,7 @@ export function SessionConnectionBadge({
     | "disconnected"
     | "pairing-required"
     | "error";
+  readonly onOpenHostHealth?: () => void;
 }) {
   const connected = state === "connected";
   const label = connected
@@ -108,12 +110,15 @@ export function SessionConnectionBadge({
           ? "Connection error"
           : "Offline";
   const busy = state === "connecting";
+  const opensHosts =
+    (state === "disconnected" || state === "error") && onOpenHostHealth !== undefined;
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <Badge
-            aria-label={label}
+            aria-label={opensHosts ? `${label}. Open Hosts` : label}
+            render={opensHosts ? <button onClick={onOpenHostHealth} type="button" /> : undefined}
             className="w-7 justify-center gap-1.5 px-0 sm:w-28 sm:px-2"
             variant="outline"
           >
@@ -148,24 +153,32 @@ export function SessionConnectionBadge({
             : state === "pairing-required"
               ? "Pair this device before live session updates can resume."
               : state === "error"
-                ? "The host connection failed. Open Hosts for diagnostics."
-                : "The session host is unreachable. Showing the last state received."}
+                ? opensHosts ? "The host connection failed. Select this status to open Hosts." : "The host connection failed."
+                : opensHosts ? "The session host is unreachable. Select this status to open Hosts." : "The session host is unreachable. Showing the last state received."}
       </TooltipPopup>
     </Tooltip>
   );
 }
 
 /** One stable activity/ownership/freshness slot beside the connection badge. */
-export function SessionStateBadge({ session }: { readonly session: WorkspaceSession }) {
+export function SessionStateBadge({
+  session,
+  onOpenHostHealth,
+}: {
+  readonly session: WorkspaceSession;
+  readonly onOpenHostHealth?: () => void;
+}) {
   const presentation = presentSessionState(session);
   const semantic =
     presentation.status === null ? null : STATUS_PILLS[presentation.status];
+  const opensHosts = session.freshness === "offline" && onOpenHostHealth !== undefined;
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <Badge
-            aria-label={presentation.label}
+            aria-label={opensHosts ? `${presentation.label}. Open Hosts` : presentation.label}
+            render={opensHosts ? <button onClick={onOpenHostHealth} type="button" /> : undefined}
             className={cn(
               "w-7 justify-center gap-1.5 px-0 sm:w-32 sm:px-2",
               semantic?.colorClass,
