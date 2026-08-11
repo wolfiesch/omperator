@@ -44,7 +44,7 @@ struct T4ConnectView: View {
     @State private var endpoint = ""
     @State private var pairingCode = ""
     @State private var certificatePin = ""
-    @State private var deviceName = platformDeviceName()
+    @State private var deviceName = T4SessionStore.demoMode ? "Windows workstation" : platformDeviceName()
     @State private var formError = ""
     @State private var isWorking = false
 

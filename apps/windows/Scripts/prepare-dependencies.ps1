@@ -61,11 +61,11 @@ Push-Location $SwiftCrossUICheckoutRoot
 try {
     $savedErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
-    & git apply --reverse --check -- $SwiftCrossUIPatchPath 2>$null
+    & git apply --reverse --check --unidiff-zero -- $SwiftCrossUIPatchPath 2>$null
     $alreadyApplied = $LASTEXITCODE -eq 0
 
     if (-not $alreadyApplied) {
-        & git apply --check -- $SwiftCrossUIPatchPath 2>$null
+        & git apply --check --unidiff-zero -- $SwiftCrossUIPatchPath 2>$null
         $canApply = $LASTEXITCODE -eq 0
     }
     $ErrorActionPreference = $savedErrorActionPreference
@@ -73,7 +73,7 @@ try {
     if ($alreadyApplied) {
         Write-Host "SwiftCrossUI density patch already applied."
     } elseif ($canApply) {
-        & git apply -- $SwiftCrossUIPatchPath
+        & git apply --unidiff-zero -- $SwiftCrossUIPatchPath
         if ($LASTEXITCODE -ne 0) {
             throw "Applying the SwiftCrossUI density patch failed."
         }

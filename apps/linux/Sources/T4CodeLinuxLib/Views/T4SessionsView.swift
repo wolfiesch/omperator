@@ -49,23 +49,23 @@ struct T4SessionsView: View {
                 railControls
 
                 if store.connecting {
-                    HStack(spacing: 6) {
+                    HStack(spacing: t4PlatformMetric(6)) {
                         ProgressView()
                         Text("Connecting\u{2026}")
                             .font(.bodyF(12))
                             .foregroundColor(t.txtMuted)
                     }
                     .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 6)
+                    .padding(.vertical, t4PlatformMetric(6))
                 }
                 if let error = store.lastError {
                     Text(error)
                         .font(.bodyF(12))
                         .foregroundColor(t.diffDel)
-                        .padding(.vertical, 4)
+                        .padding(.vertical, t4PlatformMetric(4))
                 }
                 if !store.pinnedSessions.isEmpty {
-                    HStack(spacing: 5) {
+                    HStack(spacing: t4PlatformMetric(5)) {
                         Text("Pinned")
                         .lineLimit(1)
                             .font(.system(size: 12, weight: .semibold))
@@ -75,8 +75,8 @@ struct T4SessionsView: View {
                             .font(.system(size: 10))
                             .foregroundColor(t.accent)
                     }
-                    .padding(.top, 8)
-                    .padding(.bottom, 4)
+                    .padding(.top, t4PlatformMetric(8))
+                    .padding(.bottom, t4PlatformMetric(4))
                     sessionRows(store.pinnedSessions, groupId: "__pinned__", pageSize: groupedPageSize)
                 }
                 // Linux perf bound: the rail is an eager ScrollView layout and
@@ -101,12 +101,18 @@ struct T4SessionsView: View {
                         .font(.bodyF(13))
                         .foregroundColor(t.txtMuted)
                         .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.vertical, 12)
+                        .padding(.vertical, t4PlatformMetric(12))
                 }
             }
-            .padding(.horizontal, 8)
-            .padding(.bottom, 12)
+            .padding(.leading, t4PlatformMetric(8))
+#if os(Windows)
+            .padding(.trailing, -t4PlatformMetric(4))
+#else
+            .padding(.trailing, 8)
+#endif
+            .padding(.bottom, t4PlatformMetric(12))
         }
+        .t4RailTextMeasurement()
         .onChange(of: store.groups.count) {
             // Linux perf bound: the rail is an eager ScrollView layout, so a
             // fully expanded multi-hundred-session inventory stalls the main
@@ -125,8 +131,24 @@ struct T4SessionsView: View {
         }
     }
 
+    private var railControlSpacing: Int {
+#if os(Windows)
+        return 0
+#else
+        return 10
+#endif
+    }
+    private var railControlTopPadding: Int {
+#if os(Windows)
+        return 1
+#else
+        return 4
+#endif
+    }
+
+
     private var railControls: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: railControlSpacing) {
             Picker(
                 of: [
                     SessionListViewOption(view: .current, label: "Current \(store.currentSessionCount)"),
@@ -142,15 +164,11 @@ struct T4SessionsView: View {
             // LINUX-GAP: GtkBackend only implements the .menu picker style;
             // .segmented falls back to a menu picker.
             .pickerStyle(.menu)
-#if os(Windows)
-            // GTK menu pickers expand to the rail width; WinUI keeps the
-            // native combo box at its intrinsic width unless constrained.
-            .environment(\.pickerMinimumWidth, t4PlatformMetric(276))
-#endif
+            .t4RailPickerHeight()
 
-            HStack(spacing: 8) {
+            HStack(spacing: t4PlatformMetric(8)) {
                 ScrollView(.horizontal) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: t4PlatformMetric(6)) {
                         ForEach(T4RailFilter.allCases, id: \.rawValue) { filter in
                             filterButton(filter)
                         }
@@ -186,10 +204,11 @@ struct T4SessionsView: View {
                         ))
                     }
                 }
-                ._buttonWidth(34)
+                ._buttonWidth(t4PlatformMetric(34))
             }
         }
-        .padding(.vertical, 4)
+        .padding(.top, railControlTopPadding)
+        .padding(.bottom, t4PlatformMetric(4))
     }
 
     private func filterButton(_ filter: T4RailFilter) -> some View {
@@ -200,9 +219,9 @@ struct T4SessionsView: View {
             .font(.system(size: 11, weight: .semibold))
             .lineLimit(1)
             .foregroundColor(selected ? t.accent : t.txtMuted)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .frame(minHeight: 32)
+            .padding(.horizontal, t4PlatformMetric(8))
+            .padding(.vertical, t4PlatformMetric(4))
+            .frame(minHeight: t4PlatformMetric(32))
             .background {
                 if selected {
                     RoundedRectangle(cornerRadius: 2).fill(t.accentDim)
@@ -219,7 +238,7 @@ struct T4SessionsView: View {
             sessionRow(session)
         }
         if sessions.count > visible.count {
-            HStack(spacing: 6) {
+            HStack(spacing: t4PlatformMetric(6)) {
                 Text("Show more")
                 Spacer()
                 Text("\(sessions.count - visible.count) remaining")
@@ -228,7 +247,7 @@ struct T4SessionsView: View {
             }
             .font(.system(size: 12, weight: .semibold))
             .foregroundColor(t.accent)
-            .padding(.vertical, 4)
+            .padding(.vertical, t4PlatformMetric(4))
             .onTapGesture { visibleLimitByGroupId[groupId] = limit + pageSize }
         }
     }
@@ -237,8 +256,8 @@ struct T4SessionsView: View {
     /// macOS contextMenu/swipeActions equivalent. The menu sits OUTSIDE the
     /// row's tap target: SwiftCrossUI tap gestures swallow child buttons.
     private func sessionRow(_ session: SessionRef) -> some View {
-        HStack(spacing: 6) {
-            HStack(spacing: 8) {
+        HStack(spacing: t4PlatformMetric(6)) {
+            HStack(spacing: t4PlatformMetric(8)) {
                 T4SessionRow(session: session, theme: t)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if store.pinnedSessionIds.contains(session.sessionId) {
@@ -253,18 +272,19 @@ struct T4SessionsView: View {
             Menu("⋯") {
                 rowContextMenu(for: session)
             }
+            .t4CompactRailMenu()
         }
         .padding(.vertical, 2)
     }
 
     private func groupHeader(_ group: T4SessionStore.Group) -> some View {
-        HStack(spacing: 6) {
-            HStack(spacing: 6) {
+        HStack(spacing: t4PlatformMetric(6)) {
+            HStack(spacing: t4PlatformMetric(6)) {
                 if store.railOrganization == .byProject {
                     Text(collapsedProjectIds.contains(group.projectId) ? "▸" : "▾")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundColor(t.txtLabel)
-                        .frame(width: 10)
+                        .frame(width: t4PlatformMetric(10))
                 } else {
                     // LINUX-GAP: fixed-width spacer keeps the tray icon aligned
                     Text("")
@@ -296,10 +316,11 @@ struct T4SessionsView: View {
                     T4TextButton("Move project up") { store.moveProject(group.projectId, direction: -1) }
                     T4TextButton("Move project down") { store.moveProject(group.projectId, direction: 1) }
                 }
+                .t4CompactRailMenu()
             }
         }
-        .padding(.top, 8)
-        .padding(.bottom, 4)
+        .padding(.top, t4PlatformMetric(8))
+        .padding(.bottom, t4PlatformMetric(4))
     }
 
     private var emptyMessage: String {
@@ -385,7 +406,7 @@ struct T4SessionsView: View {
 
     /// Rename prompt as a sheet (SwiftCrossUI alerts cannot host a text field).
     private var renameSheet: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: t4PlatformMetric(12)) {
             Text("Rename Session")
                     .lineLimit(1)
                 .font(.system(size: 15, weight: .semibold))
@@ -402,8 +423,8 @@ struct T4SessionsView: View {
                 T4TextButton("Rename") { submitRename() }
             }
         }
-        .padding(20)
-        .frame(width: 360)
+        .padding(t4PlatformMetric(20))
+        .frame(width: t4PlatformMetric(360))
         // LINUX-FIX: background ring, not overlay stroke (focus-eating).
         .background {
             ZStack {
@@ -440,14 +461,14 @@ struct T4SessionRow: View {
     let theme: Theme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: t4PlatformMetric(4)) {
             // LINUX-GAP: .firstTextBaseline alignment is unavailable
-            HStack(alignment: .top, spacing: 8) {
+            HStack(alignment: .top, spacing: t4PlatformMetric(8)) {
                 Text(session.title)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(theme.txt)
                     .lineLimit(1)
-                Spacer(minLength: 8)
+                Spacer(minLength: t4PlatformMetric(8))
                 if let control = session.sessionControl {
                     Text(control.t4Presentation.railLabel)
                         .font(.system(size: 10, weight: .semibold))
@@ -457,7 +478,7 @@ struct T4SessionRow: View {
                     StatusPill(status: session.status, theme: theme)
                 }
             }
-            HStack(spacing: 10) {
+            HStack(spacing: t4PlatformMetric(10)) {
                 if let model = session.model {
                     // Cross-agent type (TranscriptAgent): T4ModelLabel(selector:theme:size:)
                     T4ModelLabel(selector: model, theme: theme)
@@ -469,7 +490,7 @@ struct T4SessionRow: View {
                 Spacer(minLength: 0)
             }
             .lineLimit(1)
-            HStack(spacing: 6) {
+            HStack(spacing: t4PlatformMetric(6)) {
                 if session.pendingApproval == true { Tag(text: "approval", color: theme.diffAdd, theme: theme) }
                 if session.pendingUserInput == true { Tag(text: "input", color: theme.cTask, theme: theme) }
                 Text(session.updatedAt).font(.system(size: 10)).foregroundColor(theme.txtLabel)
@@ -477,7 +498,7 @@ struct T4SessionRow: View {
             }
             .lineLimit(1)
         }
-        .padding(.vertical, 3)
+        .padding(.vertical, t4PlatformMetric(3))
     }
 }
 
@@ -496,7 +517,7 @@ struct StatusPill: View {
         }
         .font(.system(size: 10, weight: .semibold))
         .foregroundColor(color)
-        .frame(width: 40, alignment: .leading)
+        .frame(width: t4PlatformMetric(34), alignment: .leading)
 #else
         Text(label.uppercased())
             .font(.system(size: 10, weight: .semibold))
@@ -519,14 +540,14 @@ struct ContextMeter: View {
     let theme: Theme
     var body: some View {
         let fraction = limit > 0 ? min(1.0, Double(used) / Double(limit)) : 0
-        HStack(spacing: 4) {
+        HStack(spacing: t4PlatformMetric(4)) {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(theme.lineFaint)
                     Capsule().fill(theme.accent.opacity(0.8)).frame(width: geo.size.width * fraction)
                 }
             }
-            .frame(width: 30, height: 4)
+            .frame(width: t4PlatformMetric(30), height: t4PlatformMetric(4))
             Text("\(used)/\(limit)").font(.system(size: 10)).foregroundColor(theme.txtLabel)
         }
     }
@@ -540,5 +561,34 @@ struct Tag: View {
         Text(text.uppercased())
             .font(.system(size: 9, weight: .semibold))
             .foregroundColor(color)
+    }
+}
+
+private extension Menu {
+    @MainActor
+    func t4CompactRailMenu() -> some View {
+#if os(Windows)
+        return _buttonWidth(t4PlatformMetric(20))
+            .environment(\.buttonHorizontalPadding, 1)
+#else
+        return self
+#endif
+    }
+}
+
+private extension View {
+    func t4RailTextMeasurement() -> some View {
+#if os(Windows)
+        return environment(\.t4TextMeasurementScale, 0.72)
+#else
+        return self
+#endif
+    }
+    func t4RailPickerHeight() -> some View {
+#if os(Windows)
+        return frame(height: t4PlatformMetric(26))
+#else
+        return self
+#endif
     }
 }

@@ -19,25 +19,22 @@ struct ComposerTips: View {
         ("■", "tap stop to interrupt a running turn"),
         ("☰", "use the model menu to pick a provider and thinking level"),
     ]
-    private var tipTopPadding: Int {
-#if os(Windows)
-        return 3
-#else
-        return 7
-#endif
+    private var captureTipIndex: Int? {
+        guard let argument = CommandLine.arguments.first(where: { $0.hasPrefix("-T4CaptureTip=") }),
+              let index = Int(argument.dropFirst("-T4CaptureTip=".count)),
+              tips.indices.contains(index)
+        else {
+            return nil
+        }
+        return index
     }
 
-    private var tipBottomPadding: Int {
-#if os(Windows)
-        return 4
-#else
-        return 8
-#endif
-    }
+    private let tipTopPadding = 7
+    private let tipBottomPadding = 8
 
 
     var body: some View {
-        let tip = tips[i % tips.count]
+        let tip = tips[captureTipIndex ?? (i % tips.count)]
         HStack(spacing: t4PlatformMetric(8)) {
             Text(tip.icon)
                 .font(.system(size: 12))
@@ -54,6 +51,7 @@ struct ComposerTips: View {
         .padding(.bottom, t4PlatformMetric(tipBottomPadding))
         .overlay(alignment: .top) { Rectangle().fill(t.lineFaint).frame(height: 1) }
         .task {
+            guard captureTipIndex == nil else { return }
             // LINUX-GAP: macOS cycles on a Combine timer; a task loop is the
             // SwiftCrossUI equivalent (cancelled when the view disappears).
             while !Task.isCancelled {

@@ -209,8 +209,9 @@ struct T4WorkspaceView: View {
                 .foregroundColor(t.txt)
                 .frame(width: 100, alignment: .leading)
                 Spacer()
-                T4TextButton(theme.effective == .dark ? "☀" : "☾") { theme.toggle() }
+                T4TextButton(theme.effective == .dark ? "✹" : "☾") { theme.toggle() }
                     .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(t.txtMuted)
                 if store.connected {
                     HStack(spacing: 5) {
                         LiveDot(t: t)
@@ -220,15 +221,14 @@ struct T4WorkspaceView: View {
                     }
                 }
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, t4PlatformMetric(12))
             .padding(.vertical, 4)
 
             TextField("Search sessions", text: Binding(
                 get: { store.query },
                 set: { store.query = $0 }
             ))
-            .padding(.leading, 12)
-            .padding(.trailing, 4)
+            .padding(.horizontal, t4PlatformMetric(12))
             .padding(.bottom, 4)
 
             T4SessionsView(store: store, theme: theme) { session in
@@ -261,7 +261,7 @@ struct T4WorkspaceView: View {
                 T4TextButton(inboxButtonLabel) { showInbox = true }
                 T4TextButton("⌕") { showPalette = true }
             }
-            .padding(.horizontal, 14)
+            .padding(.horizontal, t4PlatformMetric(14))
             .padding(.vertical, 5)
 
             Divider(t.line)

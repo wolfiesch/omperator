@@ -1,16 +1,18 @@
 diff --git a/Sources/SwiftCrossUI/Views/List.swift b/Sources/SwiftCrossUI/Views/List.swift
-index b5b19b05..e3a84542 100644
+index b5b19b05..1e1d60c7 100644
 --- a/Sources/SwiftCrossUI/Views/List.swift
 +++ b/Sources/SwiftCrossUI/Views/List.swift
-@@ -1,2 +1,7 @@
+@@ -1,2 +1,9 @@
  /// A view that displays a selectable list of views.
 +extension EnvironmentValues {
 +    /// Overrides the platform's default vertical padding for each list row.
 +    @Entry public var listRowVerticalPadding: Int? = nil
++    /// Scales text line boxes for platform-specific compact surfaces.
++    @Entry public var t4TextMeasurementScale = 1.0
 +}
 +
  public struct List<SelectionValue: Hashable, RowView: View>: TypeSafeView, View {
-@@ -168,2 +173,9 @@ public struct List<SelectionValue: Hashable, RowView: View>: TypeSafeView, View
+@@ -168,2 +175,9 @@ public struct List<SelectionValue: Hashable, RowView: View>: TypeSafeView, View
          let verticalBasePadding = baseRowPadding.axisTotals.y
 +#if os(Windows)
 +        let rowVerticalPadding = environment.listRowVerticalPadding ?? 4
@@ -20,7 +22,7 @@ index b5b19b05..e3a84542 100644
 +        let rowHorizontalPadding = 8
 +#endif
  
-@@ -173,6 +185,6 @@ public struct List<SelectionValue: Hashable, RowView: View>: TypeSafeView, View
+@@ -173,6 +187,6 @@ public struct List<SelectionValue: Hashable, RowView: View>: TypeSafeView, View
                  insets: EdgeInsets.Internal(
 -                    top: max(6 - baseRowPadding.top, 0),
 -                    bottom: max(6 - baseRowPadding.bottom, 0),
@@ -32,33 +34,40 @@ index b5b19b05..e3a84542 100644
 +                    trailing: max(rowHorizontalPadding - baseRowPadding.trailing, 0)
                  )
 diff --git a/Sources/SwiftCrossUI/Views/Picker.swift b/Sources/SwiftCrossUI/Views/Picker.swift
-index 2ded9817..9b0bcaae 100644
+index 2ded9817..32cf3846 100644
 --- a/Sources/SwiftCrossUI/Views/Picker.swift
 +++ b/Sources/SwiftCrossUI/Views/Picker.swift
-@@ -1 +1,6 @@
+@@ -1 +1,8 @@
 +extension EnvironmentValues {
 +    /// Overrides the platform picker's intrinsic minimum width.
 +    @Entry public var pickerMinimumWidth: Double? = nil
++    /// Overrides native button chrome for compact platform-owned actions.
++    @Entry public var buttonHorizontalPadding: Double? = nil
 +}
 +
  /// A control for selecting from a set of values.
 diff --git a/Sources/WinUIBackend/WinUIBackend.swift b/Sources/WinUIBackend/WinUIBackend.swift
-index 6252c91b..f4da4c4b 100644
+index 6252c91b..32c60c18 100644
 --- a/Sources/WinUIBackend/WinUIBackend.swift
 +++ b/Sources/WinUIBackend/WinUIBackend.swift
-@@ -14,2 +14,6 @@ import Mutex
+@@ -14,2 +14,11 @@ import Mutex
  // swiftlint:disable force_try
-+// Omperator renders against Linux screenshot geometry. WinUI's Segoe metrics
-+// and native control chrome are larger than the GTK equivalents for the same
-+// SwiftCrossUI values, so the Windows package carries this density correction.
++// Omperator renders against Linux screenshot geometry. WinUI's native
++// control chrome is larger for the same SwiftCrossUI values, so the Windows
++// package carries this density correction and the capture host's font set.
 +private let omperatorDensityScale = 2.0 / 3.0
++
++private enum OmperatorFontFamilies {
++    @MainActor static let sans = WinUI.FontFamily("DejaVu Sans")
++    @MainActor static let monospaced = WinUI.FontFamily("DejaVu Sans Mono")
++}
  
-@@ -84,3 +88,3 @@ public final class WinUIBackend:
+@@ -84,3 +93,3 @@ public final class WinUIBackend:
      public let defaultTableCellVerticalPadding = 4
 -    public let defaultPaddingAmount = 10
 +    public let defaultPaddingAmount = 7
      public let requiresToggleSwitchSpacer = false
-@@ -299,5 +303,7 @@ public final class WinUIBackend:
+@@ -299,5 +308,7 @@ public final class WinUIBackend:
          window.sizeChanged.addHandler { _, args in
 +            let scaleFactor = window.scaleFactor
              let size = SIMD2(
@@ -68,69 +77,74 @@ index 6252c91b..f4da4c4b 100644
 +                Int((Double(args!.size.height) / scaleFactor).rounded(.awayFromZero))
 +                    - window.contentHeightAdjustment
              )
-@@ -622,2 +628,13 @@ public final class WinUIBackend:
+@@ -622,2 +633,12 @@ public final class WinUIBackend:
              )
 +        } else if let button = widget as? CustomButton {
-+            let label = TextBlock()
-+            label.text = button.label
-+            label.fontSize = button.fontSize
-+            label.fontWeight = button.fontWeight
++            // Measure the realized label. Reconstructing it here with WinUI's
++            // default family makes DejaVu buttons negotiate Segoe geometry.
++            let label = button.content as! TextBlock
 +            try! label.measure(allocation)
 +            let labelSize = label.desiredSize
 +            return SIMD2(
 +                Int(labelSize.width) + 16,
-+                max(Int(labelSize.height) + 7, 20)
++                max(Int(labelSize.height) + 4, 16)
 +            )
          } else if widget is CustomCheckBox {
-@@ -628,3 +645,3 @@ public final class WinUIBackend:
+@@ -628,3 +649,3 @@ public final class WinUIBackend:
              return SIMD2(20, 20)
 -        } else if let picker = widget as? CustomComboBox, picker.padding == noPadding {
 +        } else if let picker = widget as? CustomComboBox {
              let label = TextBlock()
-@@ -633,2 +650,4 @@ public final class WinUIBackend:
+@@ -633,2 +654,6 @@ public final class WinUIBackend:
              label.fontWeight = picker.fontWeight
++            label.fontFamily = picker.fontFamily
++            label.fontStyle = picker.fontStyle
 +            label.lineHeight = picker.fontSize * 1.25
 +            label.lineStackingStrategy = .blockLineHeight
              try! label.measure(allocation)
-@@ -642,5 +661,5 @@ public final class WinUIBackend:
+@@ -642,5 +667,5 @@ public final class WinUIBackend:
              return SIMD2(
 -                Int(labelSize.width) + 50,
 -                // The default minimum picker height is 32 pixels
 -                max(Int(labelSize.height) + 12, 32)
-+                Int(labelSize.width) + 46,
++                Int(labelSize.width) + 38,
 +                // Compact Windows chrome matching the Linux picker density.
 +                max(Int(labelSize.height) + 5, 18)
              )
-@@ -654,3 +673,3 @@ public final class WinUIBackend:
+@@ -654,3 +679,3 @@ public final class WinUIBackend:
              // https://github.com/marcelwgn/microsoft-ui-xaml/blob/ff21f9b212cea2191b959649e45e52486c8465aa/src/controls/dev/ProgressRing/ProgressRing.xaml#L12
 -            return SIMD2(32, 32)
 +            return SIMD2(22, 22)
          } else if let datePicker = widget as? CustomDatePicker {
-@@ -720,4 +739,4 @@ public final class WinUIBackend:
+@@ -720,4 +745,4 @@ public final class WinUIBackend:
              adjustment = SIMD2(
 -                11 + 11 + 2,
 -                5 + 6 + 2
 +                7 + 7 + 2,
 +                3 + 4 + 2
              )
-@@ -728,4 +747,4 @@ public final class WinUIBackend:
+@@ -728,4 +753,4 @@ public final class WinUIBackend:
              adjustment = SIMD2(
 -                11 + 11 + 2,
 -                5 + 6 + 2
 +                7 + 7 + 2,
 +                3 + 4 + 2
              )
-@@ -737,3 +756,3 @@ public final class WinUIBackend:
+@@ -737,3 +762,3 @@ public final class WinUIBackend:
              // hardcoded a value obtained from one of my example apps.
 -            adjustment = SIMD2(64, 32)
 +            adjustment = SIMD2(43, 22)
          } else if widget is CalendarView {
-@@ -846,3 +865,3 @@ public final class WinUIBackend:
+@@ -789,2 +814,2 @@ public final class WinUIBackend:
+         var usedHeight = size.y
+-        let lineHeight = environment.resolvedFont.lineHeight
++        let lineHeight = environment.resolvedFont.lineHeight * environment.t4TextMeasurementScale
+@@ -846,3 +871,3 @@ public final class WinUIBackend:
      public func createButton() -> Widget {
 -        let button = Button()
 +        let button = CustomButton()
          button.click.addHandler { [weak internalState] _, _ in
-@@ -860,5 +879,6 @@ public final class WinUIBackend:
+@@ -860,5 +885,6 @@ public final class WinUIBackend:
      ) {
 -        let button = button as! WinUI.Button
 +        let button = button as! CustomButton
@@ -138,7 +152,7 @@ index 6252c91b..f4da4c4b 100644
          block.text = label
 +        button.label = label
          button.content = block
-@@ -892,5 +912,6 @@ public final class WinUIBackend:
+@@ -892,5 +918,6 @@ public final class WinUIBackend:
      ) {
 -        let button = button as! WinUI.Button
 +        let button = button as! CustomButton
@@ -146,7 +160,7 @@ index 6252c91b..f4da4c4b 100644
          block.text = label
 +        button.label = label
          button.content = block
-@@ -960,8 +981,3 @@ public final class WinUIBackend:
+@@ -960,8 +987,3 @@ public final class WinUIBackend:
      public func baseItemPadding(ofSelectableListView listView: Widget) -> EdgeInsets {
 -        EdgeInsets(
 -            top: 8,
@@ -156,7 +170,7 @@ index 6252c91b..f4da4c4b 100644
 -        )
 +        EdgeInsets()
      }
-@@ -970,7 +986,6 @@ public final class WinUIBackend:
+@@ -970,7 +992,6 @@ public final class WinUIBackend:
          SIMD2(
 -            80,
 -            40
@@ -166,53 +180,144 @@ index 6252c91b..f4da4c4b 100644
      }
 -
      public func setItems(
-@@ -1005,3 +1020,5 @@ public final class WinUIBackend:
+@@ -1005,3 +1026,5 @@ public final class WinUIBackend:
              listItem.content = item
 -            listItem.padding = Thickness(left: 16, top: 8, right: 12, bottom: 8)
 +            listItem.padding = Thickness(left: 0, top: 0, right: 0, bottom: 0)
 +            listItem.minHeight = 0
 +            listItem.height = Double(rowHeights[index])
              if items.count != listView.currentItems.count {
-@@ -1130,2 +1147,3 @@ public final class WinUIBackend:
+@@ -1130,2 +1153,3 @@ public final class WinUIBackend:
              environment.apply(to: picker)
 +            picker.minWidth = environment.pickerMinimumWidth ?? 0
              picker.actualForegroundColor =
-@@ -2098,4 +2116,13 @@ extension EnvironmentValues {
+@@ -2094,1 +2118,32 @@ extension EnvironmentValues {
+     }
++    @MainActor
++    var omperatorInputSurfaceBrush: WinUI.SolidColorBrush {
++        let brush = SolidColorBrush()
++        switch colorScheme {
++            case .light:
++                brush.color = UWP.Color(a: 255, r: 255, g: 250, b: 243)
++            case .dark:
++                brush.color = UWP.Color(a: 255, r: 42, g: 39, b: 63)
++        }
++        return brush
++    }
++
++    @MainActor
++    var omperatorPlaceholderBrush: WinUI.SolidColorBrush {
++        let brush = SolidColorBrush()
++        switch colorScheme {
++            case .light:
++                brush.color = UWP.Color(a: 255, r: 121, g: 117, b: 147)
++            case .dark:
++                brush.color = UWP.Color(a: 255, r: 110, g: 106, b: 134)
++        }
++        return brush
++    }
++
++    @MainActor
++    var omperatorClearBrush: WinUI.SolidColorBrush {
++        let brush = SolidColorBrush()
++        brush.color = UWP.Color(a: 0, r: 0, g: 0, b: 0)
++        return brush
++    }
++
+@@ -2098,4 +2153,39 @@ extension EnvironmentValues {
          let resolvedFont = resolvedFont
 -        control.fontSize = resolvedFont.pointSize
 +        control.fontSize = resolvedFont.pointSize * omperatorDensityScale
++        control.fontFamily = resolvedFont.winUIFontFamily
          control.fontWeight.weight = resolvedFont.winUIFontWeight
 +        control.minWidth = 0
 +        control.minHeight = 0
 +        if let button = control as? WinUI.Button {
-+            button.padding = Thickness(left: 7, top: 3, right: 7, bottom: 4)
++            let horizontalPadding = buttonHorizontalPadding ?? 7
++            button.padding = Thickness(
++                left: horizontalPadding,
++                top: 1,
++                right: horizontalPadding,
++                bottom: 1
++            )
 +        } else if let textField = control as? TextBoxProtocol {
++            let background = omperatorInputSurfaceBrush
++            let clear = omperatorClearBrush
 +            textField.padding = Thickness(left: 6, top: 2, right: 6, bottom: 3)
++            textField.background = background
++            textField.borderBrush = clear
++            textField.borderThickness = Thickness(left: 0, top: 0, right: 0, bottom: 0)
++            textField.cornerRadius = CornerRadius(topLeft: 6, topRight: 6, bottomRight: 6, bottomLeft: 6)
++            _ = textField.resources.insert("TextControlBackgroundPointerOver", background)
++            _ = textField.resources.insert("TextControlBackgroundFocused", background)
++            _ = textField.resources.insert("TextControlBorderBrushPointerOver", clear)
++            _ = textField.resources.insert("TextControlBorderBrushFocused", clear)
++            _ = textField.resources.insert("TextControlPlaceholderForeground", omperatorPlaceholderBrush)
 +        } else if let picker = control as? CustomComboBox {
++            let background = omperatorInputSurfaceBrush
++            let clear = omperatorClearBrush
 +            picker.padding = Thickness(left: 4, top: 2, right: 2, bottom: 2)
++            picker.background = background
++            picker.borderBrush = clear
++            picker.borderThickness = Thickness(left: 0, top: 0, right: 0, bottom: 0)
++            picker.cornerRadius = CornerRadius(topLeft: 6, topRight: 6, bottomRight: 6, bottomLeft: 6)
++            _ = picker.resources.insert("ComboBoxBackgroundPointerOver", background)
++            _ = picker.resources.insert("ComboBoxBackgroundPressed", background)
 +        }
          control.foreground = winUIForegroundBrush
-@@ -2116,6 +2143,10 @@ extension EnvironmentValues {
+@@ -2116,6 +2206,9 @@ extension EnvironmentValues {
          let resolvedFont = resolvedFont
 -        textBlock.fontSize = resolvedFont.pointSize
 +        textBlock.fontSize = resolvedFont.pointSize * omperatorDensityScale
++        textBlock.fontFamily = resolvedFont.winUIFontFamily
          textBlock.fontWeight.weight = resolvedFont.winUIFontWeight
          textBlock.foreground = winUIForegroundBrush
 -        textBlock.lineHeight = resolvedFont.lineHeight
 +        textBlock.lineHeight = resolvedFont.lineHeight * omperatorDensityScale
-+        // WinUI's default max-height strategy ignores compact line heights
-+        // whenever Segoe's natural metrics are taller. Honor the source
-+        // line height so Linux text stacks retain their normalized geometry.
++        // WinUI's natural line box is taller than GTK's normalized geometry.
 +        textBlock.lineStackingStrategy = .blockLineHeight
  
-@@ -2152,2 +2183,6 @@ extension Font.Resolved {
+@@ -2128,2 +2221,12 @@ extension EnvironmentValues {
+ extension Font.Resolved {
++    @MainActor
++    var winUIFontFamily: WinUI.FontFamily {
++        switch design {
++            case .monospaced:
++                OmperatorFontFamilies.monospaced
++            case .default:
++                OmperatorFontFamilies.sans
++        }
++    }
++
+     var winUIFontWeight: UInt16 {
+@@ -2131,13 +2234,13 @@ extension Font.Resolved {
+             case .ultraLight:
+-                100
+-            case .thin:
+                 200
+-            case .light:
++            case .thin:
+                 300
+-            case .regular:
++            case .light:
+                 400
+-            case .medium:
++            case .regular:
+                 500
+-            case .semibold:
++            case .medium:
+                 600
++            case .semibold:
++                700
+             case .bold:
+@@ -2152,2 +2255,6 @@ extension Font.Resolved {
  
 +final class CustomButton: WinUI.Button {
 +    var label = ""
 +}
 +
  final class CustomComboBox: ComboBox {
-@@ -2230,11 +2265,17 @@ public class CustomWindow: WinUI.Window {
+@@ -2230,11 +2337,17 @@ public class CustomWindow: WinUI.Window {
      var scaleFactor: Double {
 -        // I'm leaving this code here for future travellers. Be warned that this always
 -        // seems to return 100% even if the scale factor is set to 125% in settings.

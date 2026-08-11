@@ -171,7 +171,7 @@ struct T4WorkspaceView: View {
                 set: { store.query = $0 }
             ))
             .padding(.horizontal, 12)
-            .padding(.bottom, 8)
+            .padding(.bottom, t4PlatformMetric(8))
 
             T4SessionsView(store: store, theme: theme) { session in
                 store.select(session)

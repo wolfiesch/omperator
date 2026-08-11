@@ -74,23 +74,40 @@ struct T4SessionDetailView: View {
         if windowWidth < 1_100 { return 240 }
         return 330
     }
-    private var lowerSurfaceStagger: Int { t4PlatformMetric(6) }
+    private var planTopStagger: Int { t4PlatformMetric(10) }
+    private var hasPlanSurface: Bool {
+        !store.todoPhases(for: session.sessionId).isEmpty
+    }
+    private var hasAskSurface: Bool {
+        promptModel.pendingAsk?.sessionId == session.sessionId
+    }
+    private var composerTopStagger: Int {
+        (showTerminal || hasPlanSurface || hasAskSurface)
+            ? t4PlatformMetric(3)
+            : t4PlatformMetric(6)
+    }
+
 
 
 
     private var transcriptViewportHeight: Double {
-        var reserved = 74.0
+        let hasPlan = hasPlanSurface
+        let hasAsk = hasAskSurface
+        // A plain transcript needs the full realized composer and hint reserve.
+        // Lower surfaces reuse part of that stack spacing, so a smaller base
+        // keeps plan, ask, and terminal origins aligned with the Linux capture.
+        var reserved = (showTerminal || hasPlan || hasAsk) ? 76.0 : 101.0
         if showTerminal {
             // WinUI's drawer chrome realizes seven points taller than its
             // nominal frame; reserve the realized extent so lower surfaces
             // keep the Linux vertical origin.
             reserved += terminalDrawerHeight + 7
         }
-        if !store.todoPhases(for: session.sessionId).isEmpty {
+        if hasPlan {
             // The compact WinUI plan viewport realizes at 222 DIPs.
             reserved += planExpanded ? 222 : 34
         }
-        if let ask = promptModel.pendingAsk, ask.sessionId == session.sessionId {
+        if hasAsk {
             reserved += 140
         }
         return max(windowHeight - reserved, 160)
@@ -171,15 +188,7 @@ struct T4SessionDetailView: View {
 #endif
     }
 
-    private var showsHeaderModel: Bool {
-#if os(Windows)
-        // WINDOWS-GAP: the root toolbar already exposes the model picker.
-        // Omitting this duplicate leaves every pane action visible on resize.
-        return false
-#else
-        return true
-#endif
-    }
+    private var showsHeaderModel: Bool { true }
 
     var body: some View {
         // In-window pane sidebar: panes render beside the transcript column
@@ -266,8 +275,8 @@ struct T4SessionDetailView: View {
                 // WINDOWS-GAP: WinUIBackend has no transcript bottom anchor;
                 // pin live asks above the composer so they cannot open off-screen.
                 pendingAskCard
-                planStripSection.padding(.top, lowerSurfaceStagger)
-                composer.padding(.top, lowerSurfaceStagger)
+                planStripSection.padding(.top, planTopStagger)
+                composer.padding(.top, composerTopStagger)
 #else
                 planStripSection
                 composer
@@ -520,7 +529,7 @@ struct T4SessionDetailView: View {
     private var header: some View {
         // LINUX-GAP: macOS aligns on .firstTextBaseline; SwiftCrossUI only
         // has .top/.center/.bottom vertical alignments.
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: t4PlatformMetric(10)) {
             StatusPill(status: session.status, theme: t)
             if showsHeaderModel, let model = session.model {
                 T4ModelMenuButton(session: session, store: store, theme: t, label: T4ModelLabel.labelString(model))
