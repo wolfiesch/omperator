@@ -26,21 +26,30 @@ and release-proof requirements.
 iOS **cannot bundle a host**; it connects to an **existing** `t4-host` over the
 network (Tailnet address or pairing link), exactly like the Android client.
 
-## New-user flow (pairing)
+## New-user flow (public relay + pairing code)
 
-1. On the host machine: `t4-host pair` — mints a one-time 6-digit ticket from
-   the running host and prints the code, a `t4-code://pair/<host>/<code>` deep
-   link, and a terminal QR for it.
-2. On the phone: scan the QR (or open the link) — the app opens the Connect
-   sheet prefilled and pairs immediately; or enter host + code manually. Raw
-   endpoint + device credentials live under Advanced for already-paired
-   devices.
-3. Pairing grants a device token (`sessions.read`/`sessions.prompt`/
-   `sessions.manage`); the app persists it and auto-connects on every launch.
+1. On the host machine: the desktop app installs the gateway with the relay
+   adapter enabled (`T4_RELAY_URL`). The gateway mints a 6-digit one-time
+   pairing code (10-minute TTL) and displays it — no QR, no hostname typing.
+2. On the phone: open the app — it lists the computers registered at the
+   rendezvous (`scripts/rendezvous.mjs`, `https://wickrunner.com:8445` by
+   default). Tap yours, enter the code (prefilled by a `t4-code://pair/<hostId>/<code>`
+   deep link) — the app redeems it at the rendezvous for a control-room link,
+   joins the room on the public relay (`wss://wickrunner.com:8443`), presents
+   the code inside the sealed room, and runs host-wire inside an AES-256-GCM
+   pipe. The relay sees only encrypted envelopes; every session command,
+   prompt, file, and terminal byte stays end to end between the phone and
+   your computer.
+3. The room link persists in the Keychain: relaunches reconnect silently with
+   no code. If the host's gateway restarted (new room), a fresh code from the
+   desktop re-pairs.
 
-Tailscale is the transport; the 6-digit code is the trust boundary. The host's
-remote listener only accepts Tailnet addresses, and mutations additionally
-require the `prompt.lease` feature + a per-session prompt lease.
+Transport: the phone and the host both connect OUT to the relay — no inbound
+ports, no VPN, works on any network. A "private network" mode (Tailscale /
+direct endpoint) remains under Advanced and via `connectDiscoveryHost` for
+hosts that announce a tailnet origin. The rendezvous URL is baked as
+`https://wickrunner.com:8445`, overridable via the Info.plist key
+`T4RendezvousURL` or the `-T4RendezvousURL=` launch argument.
 
 ## What's vendored from Enclave
 
@@ -111,7 +120,7 @@ reconnect, dispatch), `packages/protocol/src` (`pair-link`, `server-event`).
 | Panes (files, terminals, reviews, artifacts) | (new) | **New** SwiftUI panes |
 | Hosts & usage | `TrustView.swift` | **Adapt** to host-wire hosts/usage |
 | Settings | (new) | **New** |
-| Pairing/connect | `QRScanner.swift`, `Screens.swift` (Pair) | **Adapt** to `t4-code://pair/` deep link + `/v1/ws` |
+| Pairing/connect | `QRScanner.swift`, `Screens.swift` (Pair) | **Replaced** by rendezvous discovery → gateway `/v1/ws` (owner auto-approval); `t4-code://pair/` deep link + raw endpoint under Advanced |
 
 ## Deletions (collab-guest-only, not host-reachable)
 

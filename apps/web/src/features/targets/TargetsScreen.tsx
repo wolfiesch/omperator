@@ -323,19 +323,32 @@ function PhoneSetupCard({ api }: { readonly api: PhoneSetupApi }) {
       {ready ? (
         <div className="mt-4 grid items-center gap-4 sm:grid-cols-[auto_1fr]">
           <div className="w-fit rounded-xl p-3 shadow-sm">
-            <QRCodeSVG aria-label="QR code for private Omperator phone access" level="M" size={164} value={state.url!} />
+            <QRCodeSVG aria-label="Alternative QR code for direct Omperator phone access" level="M" size={164} value={state.url!} />
           </div>
           <div className="flex min-w-0 flex-col gap-3">
-            <ol className="list-decimal space-y-1 pl-4 text-sm">
-              <li>Open Tailscale on your phone, sign in to the same account, and connect.</li>
-              <li>
-                For automatic reconnect, tap your Tailscale profile picture, open
-                {" "}<span className="font-medium">VPN On Demand</span>, and set both Wi-Fi and
-                Cellular to <span className="font-medium">Always</span>.
-              </li>
-              <li>Scan this code with your phone camera.</li>
-              <li>Choose <span className="font-medium">Add to Home Screen</span> in Safari if you want an app icon.</li>
-            </ol>
+            {state.pairCode !== undefined ? (
+              <ol className="list-decimal space-y-1 pl-4 text-sm">
+                <li>
+                  Enter this code in the Omperator app on your phone:
+                  <div className="mt-1.5">
+                    <code className="rounded-lg bg-secondary px-3 py-1.5 font-mono text-2xl font-semibold tracking-[0.35em]">{state.pairCode}</code>
+                  </div>
+                </li>
+                <li>or scan this QR code.</li>
+              </ol>
+            ) : (
+              <ol className="list-decimal space-y-1 pl-4 text-sm">
+                <li>Open Omperator on your phone; it will find this computer automatically.</li>
+                <li>Open Tailscale on your phone, sign in to the same account, and connect.</li>
+                <li>
+                  For automatic reconnect, tap your Tailscale profile picture, open
+                  {" "}<span className="font-medium">VPN On Demand</span>, and set both Wi-Fi and
+                  Cellular to <span className="font-medium">Always</span>.
+                </li>
+                <li>or scan this QR code to connect directly.</li>
+                <li>Choose <span className="font-medium">Add to Home Screen</span> in Safari if you want an app icon.</li>
+              </ol>
+            )}
             <div className="flex min-w-0 items-center gap-2">
               <code className="min-w-0 flex-1 truncate rounded bg-secondary px-2 py-1.5 text-xs">{state.url}</code>
               <Button onClick={() => void copy()} size="xs" variant="outline">
@@ -346,6 +359,12 @@ function PhoneSetupCard({ api }: { readonly api: PhoneSetupApi }) {
         </div>
       ) : state !== null && state.phase !== "unsupported" ? (
         <div className="mt-3">
+          {state.pairCode !== undefined ? (
+            <p className="mb-3 text-sm">
+              Phone access is ready — enter this code in the Omperator app on your phone:{" "}
+              <code className="rounded bg-secondary px-1.5 py-0.5 font-mono text-base font-semibold tracking-[0.2em]">{state.pairCode}</code>
+            </p>
+          ) : null}
           <Button disabled={busy || state.phase === "tailscale-required"} onClick={() => void configure()} size="sm">
             {busy && <Spinner />}{busy ? "Setting up…" : "Set up phone access"}
           </Button>

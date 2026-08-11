@@ -7,6 +7,7 @@ import { chmod, lstat, mkdir, open, readFile, rename, rm } from "node:fs/promise
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { normalizeRelayUrl, normalizeRendezvousUrl } from "./tailnet-gateway.mjs";
 
 export const SERVICE_LABEL = "net.t4code.app.tailnet-gateway";
 export const DEFAULT_GATEWAY_PORT = 4_194;
@@ -173,6 +174,12 @@ export function validateServiceConfig(input) {
     ...(input.hostDnsName === undefined || input.hostDnsName === ""
       ? {}
       : { hostDnsName: cleanText(input.hostDnsName, "host DNS name", 253).replace(/\.$/, "") }),
+    ...(input.rendezvousUrl === undefined || input.rendezvousUrl === ""
+      ? {}
+      : { rendezvousUrl: normalizeRendezvousUrl(input.rendezvousUrl) }),
+    ...(input.relayUrl === undefined || input.relayUrl === ""
+      ? {}
+      : { relayUrl: normalizeRelayUrl(input.relayUrl) }),
     ...(input.electronRunAsNode === true ? { electronRunAsNode: true } : {}),
     ...(routes === undefined ? {} : { profileRoutes: routes, startProfiles: input.startProfiles === true }),
   };
@@ -203,6 +210,8 @@ function gatewayEnvironment(config) {
     T4_HOST_LABEL: config.label,
     T4_DEPLOYMENT_IDENTITY: config.deploymentIdentity,
     ...(config.hostDnsName === undefined ? {} : { T4_HOST_DNS_NAME: config.hostDnsName }),
+    ...(config.rendezvousUrl === undefined ? {} : { T4_RENDEZVOUS_URL: config.rendezvousUrl }),
+    ...(config.relayUrl === undefined ? {} : { T4_RELAY_URL: config.relayUrl }),
     ...(config.electronRunAsNode ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
     ...(config.profileRoutes === undefined
       ? {}
@@ -626,6 +635,8 @@ export function validateCliOptions(command, options) {
           "appSocket",
           "label",
           "hostDnsName",
+          "rendezvousUrl",
+          "relayUrl",
           "deploymentIdentity",
           "profileRoutes",
           "startProfiles",
@@ -656,6 +667,10 @@ Install options:
   --start-profiles       Allow configured named profiles to start on demand
   --label TEXT          Host label shown by Omperator
   --host-dns-name NAME  MagicDNS name served by /v1/discovery (default: resolved from tailscale)
+  --rendezvous-url URL  Public rendezvous base URL this gateway announces to for
+                        zero-typing phone discovery (https; http allowed on loopback)
+  --relay-url URL       Public relay URL for the E2E control-plane adapter
+                        (ws(s); the phone reaches the host through this relay)
   --deployment-identity SHA256:HEX
                         Immutable identity for the exact deployed T4/OMP tuple (required)
   --electron-run-as-node
@@ -681,6 +696,8 @@ async function install(options, paths) {
     port: options.port ?? DEFAULT_GATEWAY_PORT,
     label: options.label ?? "OMP on this Tailnet host",
     hostDnsName: options.hostDnsName,
+    rendezvousUrl: options.rendezvousUrl,
+    relayUrl: options.relayUrl,
     deploymentIdentity: options.deploymentIdentity,
     electronRunAsNode: options.electronRunAsNode === true,
     ...(options.profileRoutes === undefined

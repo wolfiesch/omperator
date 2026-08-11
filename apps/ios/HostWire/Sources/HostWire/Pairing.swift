@@ -227,8 +227,10 @@ public enum Pairing {
 
     /// Parse `t4-code://pair/<hostHint>[/<code>]` (pair-link.parsePairDeepLink).
     /// The code segment is optional: a hint-only link yields a prefill with an
-    /// empty code for owner auto-approval. Returns nil for any deviation:
-    /// wrong scheme/host, extra components, or a malformed hint/code.
+    /// empty code for owner auto-approval. A hint that starts with `sha256:`
+    /// is a rendezvous hostId and means the public (relay) connect path.
+    /// Returns nil for any deviation: wrong scheme/host, extra components, or
+    /// a malformed hint/code.
     public static func parseDeepLink(_ string: String, issuedAtMs: Double) -> PendingPair? {
         guard let comps = URLComponents(string: string),
               comps.scheme == "t4-code",
@@ -240,7 +242,9 @@ public enum Pairing {
         guard segments.count == 1 || segments.count == 2 else { return nil }
         let hint = segments[0]
         let code = segments.count == 2 ? segments[1] : ""
-        guard hint.wholeMatch(of: #/[A-Za-z0-9][A-Za-z0-9._-]{0,127}/#) != nil,
+        // Colon allowed so a `sha256:<64 hex>` rendezvous hostId can travel as
+        // a hint; everything else stays alphanumeric plus . _ - (1..128 chars).
+        guard hint.wholeMatch(of: #/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}/#) != nil,
               code.isEmpty || code.wholeMatch(of: #/\d{6}/#) != nil
         else { return nil }
         return PendingPair(hostHint: hint, code: code, issuedAt: issuedAtMs)

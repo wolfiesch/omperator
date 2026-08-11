@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { projectSessionEntries, SessionEntryProjector } from "../discovery.ts";
 import { CollabGuestClient, type CollabGuestSnapshot } from "./client.ts";
-import { parseCollabLink, type CollabLink } from "./link.ts";
+import { parseCollabLink, readCollabLinkFromGateway, type CollabLink } from "./link.ts";
 import {
 	type CollabEvent,
 	type CollabGuestFrame,
@@ -223,6 +223,20 @@ export async function readCollabLinkForTranscript(
 	} catch {
 		return undefined;
 	}
+}
+
+/**
+ * Resolve the live room link for a session: the on-disk collab.json first
+ * (with its freshness window), then the tailnet gateway push registry. Never
+ * throws; returns undefined when there is no live room anywhere.
+ */
+export async function readCollabLink(
+	sessionId: SessionId,
+	path: string,
+): Promise<CollabLink | undefined> {
+	const fromFile = await readCollabLinkForTranscript(path);
+	if (fromFile) return fromFile;
+	return readCollabLinkFromGateway(sessionId);
 }
 
 export class CollabSessionBridge {

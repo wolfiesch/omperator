@@ -153,11 +153,13 @@ export interface PhoneSetupState {
   readonly phase: PhoneSetupPhase;
   readonly message: string;
   readonly url?: string;
+  /** Six-digit one-time pairing code minted by the gateway's relay adapter; absent when the relay is not configured. */
+  readonly pairCode?: string;
 }
 export interface PhoneSetupRequest {}
 export function decodePhoneSetupState(value: unknown): PhoneSetupState {
   const item = object(value, "phone setup state");
-  exact(item, ["phase", "message", "url"]);
+  exact(item, ["phase", "message", "url", "pairCode"]);
   if (!["unsupported", "tailscale-required", "not-configured", "ready", "error"].includes(item.phase as string)) {
     throw new Error("invalid phone setup phase");
   }
@@ -172,8 +174,19 @@ export function decodePhoneSetupState(value: unknown): PhoneSetupState {
     ) throw new Error("invalid phone setup URL");
     url = parsed.toString();
   }
+  let pairCode: string | undefined;
+  if (item.pairCode !== undefined) {
+    const code = controlFree(item.pairCode, "phone setup pair code", 6);
+    if (!/^\d{6}$/u.test(code)) throw new Error("invalid phone setup pair code");
+    pairCode = code;
+  }
   if (item.phase === "ready" && url === undefined) throw new Error("ready phone setup requires a URL");
-  return Object.freeze({ phase: item.phase as PhoneSetupPhase, message, ...(url === undefined ? {} : { url }) });
+  return Object.freeze({
+    phase: item.phase as PhoneSetupPhase,
+    message,
+    ...(url === undefined ? {} : { url }),
+    ...(pairCode === undefined ? {} : { pairCode }),
+  });
 }
 export interface LocalProfile {
   readonly profileId: string;

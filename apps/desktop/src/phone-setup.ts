@@ -14,6 +14,8 @@ import type { PhoneSetupState } from "@t4-code/protocol/desktop-ipc";
 
 const LOCAL_GATEWAY_PORT = 4_194;
 const TAILSCALE_HTTPS_PORT = 8_445;
+const RENDEZVOUS_URL_DEFAULT = "https://wickrunner.com:8445";
+const RELAY_URL_DEFAULT = "wss://wickrunner.com:8443";
 
 function gatewayOriginFromStatus(output: string): string | undefined {
   const match = /^allowed origin:\s*(\S+)\s*$/imu.exec(output);
@@ -123,11 +125,15 @@ export class PhoneSetupService {
   }
 
   private installGateway(origin: string, deploymentIdentity: string): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
+    const rendezvousUrl = process.env.T4_RENDEZVOUS_URL?.trim();
+    const relayUrl = process.env.T4_RELAY_URL?.trim();
     return this.runGatewayService([
       "install",
       "--origin", origin,
       "--web-root", join(this.resourcesPath, "web"),
       "--deployment-identity", deploymentIdentity,
+      "--rendezvous-url", rendezvousUrl || RENDEZVOUS_URL_DEFAULT,
+      "--relay-url", relayUrl || RELAY_URL_DEFAULT,
       "--electron-run-as-node",
     ]);
   }
@@ -166,6 +172,31 @@ export class PhoneSetupService {
       await new Promise<void>((resolve) => setTimeout(resolve, Math.min(250, remaining)));
     }
     return false;
+  }
+
+  private async fetchPairCode(): Promise<string | undefined> {
+    try {
+      const abort = new AbortController();
+      const timer = setTimeout(() => abort.abort(), 3_000);
+      try {
+        const response = await fetch(`http://127.0.0.1:${LOCAL_GATEWAY_PORT}/v1/pair-code`, { signal: abort.signal });
+        if (!response.ok) return undefined;
+        const body: unknown = await response.json();
+        if (body === null || typeof body !== "object" || Array.isArray(body)) return undefined;
+        const code = (body as Record<string, unknown>).code;
+        return typeof code === "string" && /^\d{6}$/u.test(code) ? code : undefined;
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch {
+      return undefined;
+    }
+  }
+
+  private readyMessage(pairCode: string | undefined): string {
+    return pairCode === undefined
+      ? "Phone access is ready — open Omperator on your phone; it will find this computer automatically."
+      : `Phone access is ready — enter the code on your phone: ${pairCode}`;
   }
 
   private async hasExpectedServe(executable: string, url: string): Promise<boolean> {
@@ -211,15 +242,19 @@ export class PhoneSetupService {
     } catch {
       return { phase: "tailscale-required", message: "Install and connect Tailscale on this Mac to enable private phone access." };
     }
+    let gatewayHealthy = false;
     try {
       const service = await this.runGatewayService(["status", "--deployment-identity", await this.identity()]);
       const expectedServe = await this.hasExpectedServe(facts.executable, facts.url);
-      if (
-        service.exitCode === 0
-        && /health:\s*healthy/iu.test(service.stdout)
-        && expectedServe
-      ) {
-        return { phase: "ready", message: "Phone access is ready on your private Tailscale network.", url: facts.url };
+      gatewayHealthy = service.exitCode === 0 && /health:\s*healthy/iu.test(service.stdout);
+      if (gatewayHealthy && expectedServe) {
+        const code = await this.fetchPairCode();
+        return {
+          phase: "ready",
+          message: this.readyMessage(code),
+          url: facts.url,
+          ...(code === undefined ? {} : { pairCode: code }),
+        };
       }
       if (expectedServe && /health:\s*unhealthy/iu.test(service.stdout)) {
         return {
@@ -229,7 +264,13 @@ export class PhoneSetupService {
         };
       }
     } catch {}
-    return { phase: "not-configured", message: "Set up private phone access, then scan the QR code with your phone.", url: facts.url };
+    const code = gatewayHealthy ? await this.fetchPairCode() : undefined;
+    return {
+      phase: "not-configured",
+      message: "Set up private phone access, then open Omperator on your phone; it will find this computer automatically.",
+      url: facts.url,
+      ...(code === undefined ? {} : { pairCode: code }),
+    };
   }
 
   private async configureInternal(): Promise<PhoneSetupState> {
@@ -265,7 +306,13 @@ export class PhoneSetupService {
         url: facts.url,
       };
     }
-    return { phase: "ready", message: "Phone access is ready on your private Tailscale network.", url: facts.url };
+    const code = await this.fetchPairCode();
+    return {
+      phase: "ready",
+      message: this.readyMessage(code),
+      url: facts.url,
+      ...(code === undefined ? {} : { pairCode: code }),
+    };
   }
 
   private async restoreInternal(): Promise<PhoneSetupState> {
@@ -280,10 +327,22 @@ export class PhoneSetupService {
       return { phase: "tailscale-required", message: error instanceof Error ? error.message : "Tailscale is unavailable." };
     }
     if (!await this.hasExpectedServe(facts.executable, facts.url)) {
-      return { phase: "not-configured", message: "Set up private phone access, then scan the QR code with your phone.", url: facts.url };
+      const code = await this.gatewayIsHealthy(deploymentIdentity) ? await this.fetchPairCode() : undefined;
+      return {
+        phase: "not-configured",
+        message: "Set up private phone access, then open Omperator on your phone; it will find this computer automatically.",
+        url: facts.url,
+        ...(code === undefined ? {} : { pairCode: code }),
+      };
     }
     if (await this.gatewayIsHealthy(deploymentIdentity)) {
-      return { phase: "ready", message: "Phone access is ready on your private Tailscale network.", url: facts.url };
+      const code = await this.fetchPairCode();
+      return {
+        phase: "ready",
+        message: this.readyMessage(code),
+        url: facts.url,
+        ...(code === undefined ? {} : { pairCode: code }),
+      };
     }
     const service = await this.installGateway(facts.url, deploymentIdentity);
     if (service.exitCode !== 0) {
@@ -296,6 +355,12 @@ export class PhoneSetupService {
         url: facts.url,
       };
     }
-    return { phase: "ready", message: "Phone access is ready on your private Tailscale network.", url: facts.url };
+    const code = await this.fetchPairCode();
+    return {
+      phase: "ready",
+      message: this.readyMessage(code),
+      url: facts.url,
+      ...(code === undefined ? {} : { pairCode: code }),
+    };
   }
 }

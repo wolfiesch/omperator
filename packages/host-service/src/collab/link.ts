@@ -42,6 +42,39 @@ export function base64UrlDecode(input: string): Uint8Array {
 	return bytes.subarray(0, index);
 }
 
+const DEFAULT_GATEWAY_URL = "http://127.0.0.1:4194";
+
+/**
+ * Read the room link for a session from the tailnet gateway's push registry
+ * (`GET <gateway>/v1/rooms`). The /enclave plugin registers live rooms there
+ * (nothing is scanned from disk), and the gateway serves the rooms this tailnet
+ * node has shared. Returns undefined on any failure — unreachable gateway, bad
+ * envelope, or no room for the session — never throws.
+ */
+export async function readCollabLinkFromGateway(
+	sessionId: string,
+	timeoutMs = 5_000,
+): Promise<CollabLink | undefined> {
+	const base = (process.env.ENCLAVE_GATEWAY_URL ?? DEFAULT_GATEWAY_URL).replace(/\/+$/u, "");
+	try {
+		const response = await fetch(`${base}/v1/rooms`, {
+			signal: AbortSignal.timeout(timeoutMs),
+			headers: { Accept: "application/json" },
+		});
+		if (!response.ok) return undefined;
+		const body = (await response.json()) as { rooms?: unknown };
+		if (!Array.isArray(body.rooms)) return undefined;
+		const room = (body.rooms as Record<string, unknown>[]).find(
+			candidate => candidate && candidate.sessionId === sessionId,
+		);
+		if (!room || typeof room.link !== "string") return undefined;
+		const link = parseCollabLink(room.link);
+		return typeof room.token === "string" ? { ...link, token: room.token } : link;
+	} catch {
+		return undefined;
+	}
+}
+
 function isWsAllowed(scheme: string, host: string): boolean {
 	if (scheme === "wss") return true;
 	// Plain ws only for loopback relays.

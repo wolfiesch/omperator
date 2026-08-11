@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { createServer } from "node:http";
 import { WebSocketServer } from "ws";
-import { parseCollabLink } from "../src/collab/link.ts";
+import { parseCollabLink, readCollabLinkFromGateway } from "../src/collab/link.ts";
 import { createCollabCipher, packEnvelope } from "../src/collab/crypto.ts";
 import { COLLAB_PROTO, type CollabGuestFrame } from "../src/collab/frames.ts";
 import { CollabGuestClient, type CollabGuestSnapshot } from "../src/collab/client.ts";
+import { CollabSessionBridge, readCollabLink } from "../src/collab/bridge.ts";
 
 const ROOM = "0123456789abcdefghijklmnopqrstuvwxyzAB";
 const KEY = new Uint8Array(32).fill(7);
@@ -279,5 +281,133 @@ describe("collab bridge /enclave extension", () => {
 
 		bridge.dispose();
 		server.close();
+	});
+});
+
+describe("collab gateway room discovery", () => {
+	test("bridges a room from the gateway registry when collab.json is absent", async () => {
+		const cipher = createCollabCipher(KEY);
+		// Real socket round trips: resolve on the actual frames instead of
+		// sleeping a fixed duration.
+		let resolveHello!: (frame: CollabGuestFrame) => void;
+		const helloSeen = new Promise<CollabGuestFrame>(resolve => {
+			resolveHello = resolve;
+		});
+
+		// Relay/host serving the room the gateway entry points at (locked:
+		// requires the room token, which the gateway entry carries).
+		const relay = new WebSocketServer({ port: 0 });
+		await new Promise<void>(resolve => relay.once("listening", resolve));
+		const relayPort = (relay.address() as { port: number }).port;
+		relay.on("connection", async (socket: any) => {
+			socket.binaryType = "arraybuffer";
+			socket.on("message", async (data: any) => {
+				const bytes = new Uint8Array(data as ArrayBuffer);
+				const plain = await cipher.open(bytes.subarray(4));
+				const frame = JSON.parse(new TextDecoder().decode(plain)) as CollabGuestFrame;
+				if (frame.t === "hello") {
+					resolveHello(frame);
+					if (frame.enclaveToken !== ENCLAVE_TOKEN) {
+						socket.send(packEnvelope(0, await cipher.seal(new TextEncoder().encode(JSON.stringify({ t: "error", message: "missing or invalid enclaveToken" })))));
+						socket.close();
+						return;
+					}
+					const welcome = {
+						t: "welcome",
+						proto: COLLAB_PROTO,
+						header: { id: "h", parentId: null, type: "session", timestamp: new Date().toISOString() },
+						state: { isStreaming: false },
+						agents: [],
+						entryCount: 1,
+					};
+					const chunk = {
+						t: "snapshot-chunk",
+						entries: [{ id: "e1", parentId: null, type: "message", timestamp: new Date().toISOString(), message: { role: "user", content: "hi" } }],
+						final: true,
+					};
+					socket.send(packEnvelope(0, await cipher.seal(new TextEncoder().encode(JSON.stringify(welcome)))));
+					socket.send(packEnvelope(0, await cipher.seal(new TextEncoder().encode(JSON.stringify(chunk)))));
+				}
+			});
+		});
+
+		// Mock gateway: serves the /v1/rooms envelope from its push registry.
+		const roomLink = `ws://localhost:${relayPort}/r/${ROOM}.${SECRET}`;
+		const gateway = createServer((req, res) => {
+			res.setHeader("content-type", "application/json");
+			if (req.url === "/v1/rooms") {
+				res.end(JSON.stringify({
+					rooms: [{ sessionId: "sid-gw", title: "Gateway room", roomId: ROOM, link: roomLink, token: ENCLAVE_TOKEN }],
+				}));
+				return;
+			}
+			res.statusCode = 404;
+			res.end("{}");
+		});
+		await new Promise<void>(resolve => gateway.listen(0, "127.0.0.1", resolve));
+		const gatewayPort = (gateway.address() as { port: number }).port;
+		const previous = process.env.ENCLAVE_GATEWAY_URL;
+		process.env.ENCLAVE_GATEWAY_URL = `http://127.0.0.1:${gatewayPort}`;
+
+		try {
+			// No collab.json: the transcript file does not exist, so the room
+			// link must come from the gateway registry.
+			const link = await readCollabLink("sid-gw" as never, "/tmp/no-such-session.jsonl");
+			expect(link).toBeDefined();
+			expect(link!.wsUrl).toBe(`ws://localhost:${relayPort}/r/${ROOM}`);
+			expect(link!.token).toBe(ENCLAVE_TOKEN);
+
+			let resolveRebase!: (entries: readonly unknown[]) => void;
+			const rebased = new Promise<readonly unknown[]>(resolve => {
+				resolveRebase = resolve;
+			});
+			const bridge = new CollabSessionBridge(
+				"sid-gw" as never,
+				"/tmp/no-such-session.jsonl",
+				link!,
+				"host-test" as never,
+				{
+					rebase: entries => resolveRebase(entries),
+					appendEntry: () => {},
+					appendEvent: () => {},
+					setStreaming: () => {},
+					fatal: () => {},
+				},
+				() => {},
+			);
+			bridge.start();
+
+			const [hello, entries] = await Promise.all([helloSeen, rebased]);
+			expect(hello).toMatchObject({ t: "hello", proto: 3, enclaveToken: ENCLAVE_TOKEN });
+			expect(entries).toHaveLength(1);
+			expect(entries[0]).toMatchObject({ data: { role: "user", text: "hi" } });
+
+			bridge.dispose();
+		} finally {
+			if (previous === undefined) delete process.env.ENCLAVE_GATEWAY_URL;
+			else process.env.ENCLAVE_GATEWAY_URL = previous;
+			relay.close();
+			gateway.close();
+		}
+	});
+
+	test("returns undefined when the gateway has no matching room", async () => {
+		const gateway = createServer((_req, res) => {
+			res.setHeader("content-type", "application/json");
+			res.end(JSON.stringify({
+				rooms: [{ sessionId: "other", roomId: ROOM, link: `ws://localhost:1/r/${ROOM}.${SECRET}` }],
+			}));
+		});
+		await new Promise<void>(resolve => gateway.listen(0, "127.0.0.1", resolve));
+		const gatewayPort = (gateway.address() as { port: number }).port;
+		const previous = process.env.ENCLAVE_GATEWAY_URL;
+		process.env.ENCLAVE_GATEWAY_URL = `http://127.0.0.1:${gatewayPort}`;
+		try {
+			await expect(readCollabLinkFromGateway("sid-gw")).resolves.toBeUndefined();
+		} finally {
+			if (previous === undefined) delete process.env.ENCLAVE_GATEWAY_URL;
+			else process.env.ENCLAVE_GATEWAY_URL = previous;
+			gateway.close();
+		}
 	});
 });

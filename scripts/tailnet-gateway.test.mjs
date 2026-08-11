@@ -17,6 +17,7 @@ import {
   normalizeDeploymentIdentity,
   normalizeNativeAllowedOrigins,
   normalizeProfileRoutes,
+  normalizeRendezvousUrl,
   supervisorCommandForRoute,
   optionsFromEnvironment,
   resolveAppSocket,
@@ -24,6 +25,8 @@ import {
   spawnTailscaleHostName,
   startTailnetGateway,
 } from "./tailnet-gateway.mjs";
+import { startRendezvous } from "./rendezvous.mjs";
+import { TestGuest, dec, startMockRelay } from "./relay-test-helpers.mjs";
 import { makeCanonicalTemporaryDirectory } from "./test-temporary-directory.mjs";
 
 const ALLOWED_ORIGIN = "https://host.example-tailnet.ts.net:8445";
@@ -539,6 +542,14 @@ test("gateway rejects cross-origin sockets and bridges only the web and native a
       assert.equal(await websocketMessage(allowed), `upstream:hello:${origin}`);
       allowed.close();
     }
+
+    // Native binaries send no Origin at all; the host-wire handshake (not the
+    // gateway) authenticates them. A missing Origin must be accepted.
+    const native = new WebSocket(`${running.url.replace("http", "ws")}/v1/ws`);
+    await websocketOpen(native);
+    native.send("hello:native");
+    assert.equal(await websocketMessage(native), "upstream:hello:native");
+    native.close();
   } finally {
     await running.close();
   }
@@ -859,4 +870,117 @@ test("profile supervisor argv is fixed and shell-free", () => {
         : ["--user", "start", "t4-fable.service"],
   });
   assert.doesNotMatch(supervisorCommandForRoute(route).argv.join(" "), /[;&|$()`]/u);
+});
+
+test("rendezvous url is validated as a plain HTTPS URL", () => {
+  assert.equal(
+    normalizeRendezvousUrl("https://wickrunner.com/rdv"),
+    "https://wickrunner.com",
+  );
+  for (const value of [
+    "http://wickrunner.com",
+    "https://user:pw@wickrunner.com",
+    "https://wickrunner.com?x=1",
+    "not a url",
+  ]) {
+    assert.throws(() => normalizeRendezvousUrl(value), /T4_RENDEZVOUS_URL/u);
+  }
+});
+
+test("gateway environment carries the rendezvous url", () => {
+  const options = optionsFromEnvironment({
+    T4_ALLOWED_ORIGIN: ALLOWED_ORIGIN,
+    T4_DEPLOYMENT_IDENTITY: DEPLOYMENT_IDENTITY,
+    T4_RENDEZVOUS_URL: "https://wickrunner.com/rdv",
+    XDG_RUNTIME_DIR: "/run/user/1000",
+  });
+  // Like T4_ALLOWED_ORIGIN, the raw env value flows through and is normalized
+  // by startTailnetGateway.
+  assert.equal(options.rendezvousUrl, "https://wickrunner.com/rdv");
+});
+
+test("gateway announces to the rendezvous and deregisters on close", async () => {
+  const rendezvous = await startRendezvous({ listenPort: 0 });
+  const rendezvousBase = `http://${rendezvous.host}:${rendezvous.port}`;
+  let running;
+  try {
+    running = await fixture("symlink", {
+      rendezvousUrl: rendezvousBase,
+      hostDnsName: "workstation.example-tailnet.ts.net.",
+    });
+    const deadline = Date.now() + 5_000;
+    let hosts = [];
+    for (;;) {
+      const response = await fetch(`${rendezvousBase}/v1/hosts`);
+      hosts = (await response.json()).hosts;
+      if (hosts.length > 0 || Date.now() >= deadline) break;
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+    }
+    assert.equal(hosts.length, 1);
+    assert.equal(hosts[0].hostId, DEPLOYMENT_IDENTITY);
+    assert.equal(hosts[0].hostname, "workstation.example-tailnet.ts.net");
+    assert.equal(hosts[0].origin, ALLOWED_ORIGIN);
+  } finally {
+    if (running) {
+      await running.close();
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+      const afterClose = await fetch(`${rendezvousBase}/v1/hosts`);
+      assert.deepEqual((await afterClose.json()).hosts, []);
+    }
+    await rendezvous.close();
+  }
+});
+
+test("gateway mints pairing codes and bridges host-wire over the relay", async () => {
+  const rendezvous = await startRendezvous({ listenPort: 0 });
+  const relay = await startMockRelay();
+  const rendezvousBase = `http://${rendezvous.host}:${rendezvous.port}`;
+  let running;
+  try {
+    running = await fixture("symlink", {
+      rendezvousUrl: rendezvousBase,
+      relayUrl: relay.url,
+      hostDnsName: "workstation.example-tailnet.ts.net.",
+    });
+    const pairResponse = await fetch(`${running.url}/v1/pair-code`);
+    assert.equal(pairResponse.status, 200);
+    const minted = await pairResponse.json();
+    assert.equal(minted.ok, true);
+    assert.match(minted.code, /^\d{6}$/u);
+    assert.equal(minted.hostId, DEPLOYMENT_IDENTITY);
+
+    // The phone redeems the code at the rendezvous for the control-room link.
+    const redeem = await fetch(`${rendezvousBase}/v1/pair`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ hostId: minted.hostId, code: minted.code }),
+    });
+    assert.equal(redeem.status, 200);
+    const { pairLink } = await redeem.json();
+
+    // Join the room, present the code, and drive host-wire through the
+    // gateway's E2E pipe into the appserver socket (the fixture echoes).
+    const phone = new TestGuest(pairLink);
+    await phone.connect();
+    await phone.sendPair(minted.code);
+    await phone.sendHostWire("hello through the gateway");
+    const frame = await phone.nextMessage();
+    assert.equal(frame.type, 0);
+    assert.equal(dec.decode(frame.body), "upstream:hello through the gateway");
+    phone.close();
+  } finally {
+    if (running) await running.close();
+    await rendezvous.close();
+    await relay.close();
+  }
+});
+
+test("pair-code endpoint is unavailable when the relay is not configured", async () => {
+  const running = await fixture("symlink");
+  try {
+    const response = await fetch(`${running.url}/v1/pair-code`);
+    assert.equal(response.status, 404);
+  } finally {
+    await running.close();
+  }
 });

@@ -126,7 +126,7 @@ import {
 	CollabSessionBridge,
 	projectCollabEntry,
 	projectCollabEvent,
-	readCollabLinkForTranscript,
+	readCollabLink,
 	type CollabBridgeHandlers,
 } from "./collab/bridge.ts";
 import type { CollabUiRequest } from "./collab/frames.ts";
@@ -3107,7 +3107,7 @@ export class LocalAppserver implements AppserverHandle {
 	private async ensureCollabBridge(sessionId: SessionId, path: string): Promise<void> {
 		if (this.#collabBridges.has(sessionId)) return;
 		if ((this.#collabDeadUntil.get(sessionId) ?? 0) > Date.now()) return;
-		const link = await readCollabLinkForTranscript(path);
+		const link = await readCollabLink(sessionId, path);
 		if (!link) return;
 		const bridge = new CollabSessionBridge(sessionId, path, link, this.hostId, this.collabBridgeHandlers(sessionId), () => {
 			this.disposeCollabBridge(sessionId, "collab room closed");
@@ -5265,7 +5265,7 @@ export class LocalAppserver implements AppserverHandle {
 		// Collab-shared session: join the live room the host runtime publishes,
 		// and never spawn a second runtime while bridged.
 		if (this.#collabBridges.has(sessionId)) {
-			const link = await readCollabLinkForTranscript(record.path).catch(() => undefined);
+			const link = await readCollabLink(sessionId, record.path).catch(() => undefined);
 			if (!link) this.disposeCollabBridge(sessionId, "collab host stopped");
 			else return;
 		} else {

@@ -1,12 +1,12 @@
 //  T4ConnectView.swift
-//  Connect to a T4 host over host-wire. The new-user path comes first: enter
-//  the host hint and, when required, the 6-digit pairing code shown by the
-//  host, tap Pair & Connect, and the store runs the pair.start handshake and
-//  persists the granted device token. Same-tailnet owner hosts auto-approve
-//  pairing with an empty code. Already-paired devices (or local/open hosts)
-//  can use the Advanced section to connect with raw endpoint + credentials,
-//  or just a raw endpoint. t4-code://pair/... deep links prefill the pair
-//  fields via the optional `pendingPair` parameter.
+//  Connect to a T4 host over host-wire. The new-user path comes first: pick
+//  your computer from the rendezvous discovery list and tap it — the store
+//  resolves the host gateway's /v1/discovery wsUrl and connects through the
+//  gateway (the welcome is .local, so no pairing round-trip). Already-paired
+//  devices (or local/open hosts) can use the Advanced section to connect with
+//  raw endpoint + credentials, or just a raw endpoint. t4-code://pair/...
+//  deep links prefill the pair fields via the optional `pendingPair`
+//  parameter.
 
 import SwiftUI
 import HostWire
@@ -31,13 +31,20 @@ struct T4ConnectView: View {
     @State private var pairCode: String = ""
     @State private var showAdvanced = false
 
+    // Rendezvous discovery: computers this device can reach, listed by the
+    // registry and filtered by a healthz probe.
+    @State private var discoveryHosts: [T4DiscoveryHost] = []
+    @State private var isLoadingHosts = false
+
+    // Public (rendezvous) pairing-code prompt for a tapped host. Prefilled
+    // from the deep link's code when one came in with the sheet.
+    @State private var codePromptHost: T4DiscoveryHost?
+    @State private var codePromptCode: String = ""
+
     // Advanced (raw) form — the original connect path.
     @State private var endpoint = "wss://"
     @State private var deviceId = ""
     @State private var deviceToken = ""
-    // Collab entry point: a tailnet gateway URL discovers rooms to join as
-    // a collab guest (GET <gateway>/v1/rooms).
-    @State private var gatewayURL = ""
 
     private var t: Theme { theme.t }
 
@@ -52,36 +59,45 @@ struct T4ConnectView: View {
         URL(string: trimmedEndpoint)?.scheme == "ws" || URL(string: trimmedEndpoint)?.scheme == "wss"
     }
 
-    private var trimmedGateway: String { gatewayURL.trimmingCharacters(in: .whitespacesAndNewlines) }
-    private var gatewayValid: Bool {
-        URL(string: trimmedGateway)?.scheme == "http" || URL(string: trimmedGateway)?.scheme == "https"
-    }
-
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("Computer (e.g. macbookpro.my-tailnet.ts.net)", text: $pairHost)
-                        .autocorrectionDisabled()
-                        #if os(iOS)
-                        .textInputAutocapitalization(.never)
-                        #endif
-                    Button {
-                        Task { await connectPlugAndPlay() }
-                    } label: {
-                        HStack {
-                            if store.connecting { ProgressView().tint(.white) }
-                            Text("Connect").fontWeight(.semibold)
+                    if isLoadingHosts {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                            Text("Looking for computers…")
+                                .font(.system(size: 13))
+                                .foregroundStyle(t.txtMuted)
                         }
-                        .frame(maxWidth: .infinity)
+                    } else if discoveryHosts.isEmpty {
+                        Text("No computers found — make sure Omperator is running on your computer")
+                            .font(.system(size: 13))
+                            .foregroundStyle(t.txtMuted)
+                    } else {
+                        ForEach(discoveryHosts) { host in
+                            Button {
+                                Task { await tapHost(host) }
+                            } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(host.label)
+                                        .fontWeight(.medium)
+                                        .foregroundStyle(t.txt)
+                                    Text(host.hostname)
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(t.txtMuted)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(store.connecting)
+                        }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(t.interactiveAccent)
-                    .disabled(!pairValid || store.connecting)
                 } header: {
                     Text("Connect to your computer")
                 } footer: {
-                    Text("Enter your computer's Tailnet name, or tap a link shared from it. No code needed — your own devices are trusted automatically.")
+                    Text("Tap a computer — a computer on your private network connects automatically; anything else shows a pairing code.")
                 }
 
                 // Build stamp: the git commit baked into the bundle by the
@@ -148,29 +164,6 @@ struct T4ConnectView: View {
                     Text("Use raw endpoint + device credentials for an already-paired host. Credentials are optional for an open host.")
                         .font(.system(size: 12))
                         .foregroundStyle(t.txtMuted)
-
-                    Divider().padding(.vertical, 6)
-                    TextField("https://gateway.my-tailnet.ts.net", text: $gatewayURL)
-                        .autocorrectionDisabled()
-                        #if os(iOS)
-                        .textInputAutocapitalization(.never)
-                        .keyboardType(.URL)
-                        #endif
-                    Button {
-                        Task { await connectCollabGateway() }
-                    } label: {
-                        HStack {
-                            if store.connecting { ProgressView().tint(.white) }
-                            Text("Join collab rooms").fontWeight(.semibold)
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(t.interactiveAccent)
-                    .disabled(!gatewayValid || store.connecting)
-                    Text("A tailnet gateway URL discovers rooms hosted by the collab /enclave plugin and joins them as a guest.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(t.txtMuted)
                 }
 
                 if let error = store.lastError {
@@ -190,35 +183,161 @@ struct T4ConnectView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        Task { await loadDiscoveryHosts() }
+                    } label: {
+                        if isLoadingHosts {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                    }
+                    .disabled(isLoadingHosts)
+                    .accessibilityLabel("Refresh")
+                }
             }
-            .onAppear { applyPendingPair() }
+            .onAppear {
+                applyPendingPair()
+                Task { await loadDiscoveryHosts() }
+            }
+            .sheet(item: $codePromptHost) { host in
+                codePrompt(host: host)
+            }
         }
     }
 
-    /// Plug-and-play connect: host hint -> tailnet gateway
-    /// (https://<host>:8445) -> /v1/rooms -> collab guest join. No PIN, no
-    /// port/IP typing; the daemon auto-approves your own Tailnet devices.
-    private func connectPlugAndPlay() async {
-        let host = trimmedHost
-        guard !host.isEmpty else { return }
-        let gateway: URL
-        if host.hasPrefix("http://") || host.hasPrefix("https://") {
-            gateway = URL(string: host)!
+    /// Tap a discovered computer. A saved public relay link rejoins silently
+    /// (the link is the credential — no code); otherwise the pairing-code
+    /// prompt appears, prefilled from the deep link when one arrived.
+    private func tapHost(_ host: T4DiscoveryHost) async {
+        if store.savedRelayLink(for: host.hostId) != nil {
+            await store.connectPublicHost(hostId: host.hostId, code: nil, name: platformDeviceName())
+            if store.connected { dismiss() }
         } else {
-            gateway = URL(string: "https://\(host):8445")!
+            codePromptHost = host
+            codePromptCode = pendingPair?.code ?? ""
         }
-        let name = platformDeviceName()
-        await store.connectCollab(gatewayURL: gateway, name: name)
+    }
+
+    /// The pairing-code sheet for a discovered host. A non-empty code goes
+    /// through the rendezvous (public path); an empty code first tries the
+    /// host's gateway (tailnet owner auto-approval) and keeps the prompt up
+    /// when that origin is unreachable, so the code stays reachable.
+    private func codePrompt(host: T4DiscoveryHost) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Connect to \(host.label)")
+                .font(.headline)
+            Text("Omperator on \(host.label) shows a 6-digit pairing code. Your own computer — reachable over your private network — connects without one.")
+                .font(.system(size: 12))
+                .foregroundStyle(t.txtMuted)
+            TextField("6-digit pairing code", text: $codePromptCode)
+                .autocorrectionDisabled()
+                #if os(iOS)
+                .keyboardType(.numberPad)
+                .textInputAutocapitalization(.never)
+                #endif
+                .font(.system(.body, design: .monospaced))
+            if let error = store.lastError {
+                Text(error)
+                    .font(.system(size: 12))
+                    .foregroundStyle(t.diffDel)
+            }
+            HStack {
+                Button("Cancel") { codePromptHost = nil }
+                Spacer()
+                Button("Connect over private network") {
+                    Task { await connectViaTailnet(host) }
+                }
+                Button {
+                    Task { await connectWithCode(host) }
+                } label: {
+                    HStack {
+                        if store.connecting { ProgressView().tint(.white) }
+                        Text("Connect").fontWeight(.semibold)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(t.interactiveAccent)
+                .disabled(store.connecting)
+            }
+        }
+        .padding(20)
+        .frame(width: 400)
+    }
+
+    /// Connect with the entered code: non-empty goes through the rendezvous;
+    /// empty falls back to the tailnet gateway (and keeps the prompt open —
+    /// with `lastError` explaining — when that origin is unreachable).
+    private func connectWithCode(_ host: T4DiscoveryHost) async {
+        let code = codePromptCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        if code.isEmpty {
+            await store.connectDiscoveryHost(host, name: platformDeviceName())
+        } else {
+            await store.connectPublicHost(hostId: host.hostId, code: code, name: platformDeviceName())
+        }
+        if store.connected {
+            codePromptHost = nil
+            dismiss()
+        }
+    }
+
+    /// Secondary prompt action: the tailnet gateway path (owner
+    /// auto-approval) without entering a pairing code.
+    private func connectViaTailnet(_ host: T4DiscoveryHost) async {
+        await store.connectDiscoveryHost(host, name: platformDeviceName())
+        if store.connected {
+            codePromptHost = nil
+            dismiss()
+        }
+    }
+
+    /// Connect to a discovered computer through its gateway.
+    private func connect(_ host: T4DiscoveryHost) async {
+        await store.connectDiscoveryHost(host, name: platformDeviceName())
         if store.connected { dismiss() }
     }
 
+    /// Load the rendezvous discovery list (on appear and via Refresh).
+    private func loadDiscoveryHosts() async {
+        guard !isLoadingHosts else { return }
+        isLoadingHosts = true
+        defer { isLoadingHosts = false }
+        discoveryHosts = await T4DiscoveryClient.discoverHosts()
+    }
+
     /// Prefill the connect fields from a deep link on first appearance — then
-    /// connect immediately: opening the link IS the consent gesture.
+    /// connect immediately: opening the link IS the consent gesture. Links
+    /// with a host hint connect through discovery when the host is known (a
+    /// fresh fetch — the on-appear list may still be loading); otherwise the
+    /// hint pairs directly, the pre-discovery path.
     private func applyPendingPair() {
         guard let pair = pendingPair, pairHost.isEmpty, pairCode.isEmpty else { return }
         pairHost = pair.hostHint
         pairCode = pair.code
-        Task { await connectPlugAndPlay() }
+        guard !trimmedHost.isEmpty else { return }
+        if trimmedHost.hasPrefix("sha256:") {
+            // A rendezvous hostId: the public (relay) connect path. The
+            // code is optional — an empty one means rejoin-if-saved, and
+            // connectPublicHost explains when neither exists.
+            Task {
+                await store.connectPublicHost(
+                    hostId: trimmedHost,
+                    code: trimmedCode.isEmpty ? nil : trimmedCode,
+                    name: platformDeviceName()
+                )
+                if store.connected { dismiss() }
+            }
+            return
+        }
+        Task {
+            let hosts = await T4DiscoveryClient.discoverHosts()
+            if let host = hosts.first(where: { $0.hostname.lowercased() == trimmedHost.lowercased() }) {
+                await connect(host)
+            } else {
+                await pairAndConnect()
+            }
+        }
     }
 
     /// Build the endpoint from the host hint. Explicit schemes pass through;
@@ -257,12 +376,6 @@ struct T4ConnectView: View {
             ),
             authentication: auth
         )
-        if store.connected { dismiss() }
-    }
-
-    private func connectCollabGateway() async {
-        guard let url = URL(string: trimmedGateway) else { return }
-        await store.connectCollab(gatewayURL: url, name: platformClientName)
         if store.connected { dismiss() }
     }
 }

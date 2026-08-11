@@ -1,0 +1,11 @@
+{
+  "name": "enclave",
+  "version": "1.0.1",
+  "private": true,
+  "description": "Share omp sessions to the Enclave iOS app (collab + control channel)",
+  "omp": {
+    "extensions": [
+      "enclave.ts"
+    ]
+  }
+}

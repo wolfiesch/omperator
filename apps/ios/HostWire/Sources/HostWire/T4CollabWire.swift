@@ -19,7 +19,7 @@ import Crypto
 // MARK: - Wire constants
 
 /// Collab wire constants (pi-wire/src/index.ts).
-enum T4CollabWire {
+public enum T4CollabWire {
     static let proto = 3
     /// Envelope header: [4B uint32 big-endian peerId]; guests always send 0.
     static let envelopeHeader = 4
@@ -28,7 +28,7 @@ enum T4CollabWire {
     static let defaultRelay = "wss://my.omp.sh"
     /// Relay close codes that are terminal — never reconnect: 4001 room
     /// closed, 4004 no such room, 4009 host taken, 4029 room full.
-    static let fatalCloseCodes: Set<Int> = [4001, 4004, 4009, 4029]
+    public static let fatalCloseCodes: Set<Int> = [4001, 4004, 4009, 4029]
 }
 
 // MARK: - base64url
@@ -53,23 +53,23 @@ enum T4Base64URL {
 // MARK: - Collab link
 
 /// Link parse outcome: a parsed link or a user-presentable rejection reason.
-enum T4CollabLinkParse {
+public enum T4CollabLinkParse {
     case ok(T4CollabLink)
     case err(String)
 }
 
 /// A parsed collab link: relay WebSocket URL plus the room key (and the
 /// optional 16-byte write token that upgrades a view-only link to full access).
-struct T4CollabLink {
-    let wsURL: URL
-    let key: SymmetricKey
-    let writeToken: Data?
+public struct T4CollabLink {
+    public let wsURL: URL
+    public let key: SymmetricKey
+    public let writeToken: Data?
 
     /// Accepts the compact bare form (`<roomId>.<key>` → default relay), a
     /// legacy `roomId#key` form, a scheme-less `host/r/<roomId>.<key>` (→ wss),
     /// or a full ws/wss URL. The key is base64url: 32 bytes = view-only,
     /// 48 bytes = full access (32B key + 16B write token).
-    static func parse(_ raw: String) -> T4CollabLinkParse {
+    public static func parse(_ raw: String) -> T4CollabLinkParse {
         var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "%23", with: "#", options: .caseInsensitive)
         guard !text.isEmpty else { return .err("Paste a collab link.") }
@@ -154,6 +154,60 @@ extension T4CollabWire {
               let obj = try? JSONSerialization.jsonObject(with: plain) as? [String: Any]
         else { return nil }
         return obj
+    }
+
+    /// Seal raw bytes as `[12B random IV][ciphertext+16B tag]` — WebCrypto's
+    /// AES-GCM layout, which is exactly CryptoKit's `SealedBox.combined`.
+    /// This is the byte-level codec for the relay control-plane pipe (raw
+    /// host-wire bytes in, raw bytes out); the JSON `seal`/`open` above are
+    /// the collab-guest variant. Only CryptoKit APIs that exist on Linux via
+    /// swift-crypto (AES.GCM, SymmetricKey) are used.
+    public static func sealRaw(_ bytes: Data, key: SymmetricKey) -> Data? {
+        guard let box = try? AES.GCM.seal(bytes, using: key) else { return nil }
+        return box.combined
+    }
+
+    /// Open a sealed payload (already stripped of the envelope header) into
+    /// raw bytes. Nil = bad key or corrupted frame — the caller must treat
+    /// that as a terminal fault, never a retry.
+    public static func openRaw(_ payload: Data, key: SymmetricKey) -> Data? {
+        guard payload.count > 12,
+              let box = try? AES.GCM.SealedBox(combined: payload),
+              let plain: Data = try? AES.GCM.open(box, using: key)
+        else { return nil }
+        return plain
+    }
+}
+
+// MARK: - Envelope
+
+extension T4CollabWire {
+    /// Pack a sealed payload into `[4B big-endian peerId][sealed]`. Guests
+    /// always send peerId 0; the relay rewrites it before forwarding to the
+    /// host.
+    public static func packEnvelope(peerId: UInt32, sealed: Data) -> Data {
+        var out = Data(capacity: T4CollabWire.envelopeHeader + sealed.count)
+        out.append(contentsOf: [
+            UInt8((peerId >> 24) & 0xFF),
+            UInt8((peerId >> 16) & 0xFF),
+            UInt8((peerId >> 8) & 0xFF),
+            UInt8(peerId & 0xFF),
+        ])
+        out.append(sealed)
+        return out
+    }
+
+    /// Unpack `[4B big-endian peerId][payload]`; nil when too short.
+    public static func unpackEnvelope(_ data: Data) -> (peerId: UInt32, payload: Data)? {
+        guard data.count > T4CollabWire.envelopeHeader else { return nil }
+        let peerId = data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> UInt32 in
+            var value: UInt32 = 0
+            for index in 0..<T4CollabWire.envelopeHeader {
+                value = (value << 8) | UInt32(raw[index])
+            }
+            return value
+        }
+        return (peerId, data.subdata(in: T4CollabWire.envelopeHeader..<data.count))
     }
 }
 

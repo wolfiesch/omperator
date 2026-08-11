@@ -53,6 +53,24 @@ describe("desktop IPC boundary", () => {
       "http://work-mac.example.ts.net:8445/",
     ]) expect(() => decodePhoneSetupState({ phase: "ready", message: "Ready", url })).toThrow();
   });
+  it("accepts an optional six-digit pairing code for phone setup", () => {
+    const state = {
+      phase: "ready",
+      message: "Phone access is ready — enter the code on your phone: 123456",
+      url: "https://work-mac.example.ts.net:8445/",
+      pairCode: "123456",
+    };
+    expect(decodePhoneSetupState(state)).toEqual(state);
+    expect(decodePhoneSetupState({ phase: "ready", message: "Ready", url: "https://work-mac.example.ts.net:8445/" }).pairCode).toBeUndefined();
+    for (const pairCode of ["12345", "1234567", "12a456", "12345a", ""]) {
+      expect(() => decodePhoneSetupState({
+        phase: "ready",
+        message: "Ready",
+        url: "https://work-mac.example.ts.net:8445/",
+        pairCode,
+      })).toThrow();
+    }
+  });
   it("keeps bounded actionable command errors while redacting secret-shaped details", () => {
     const error = commandResultError({
       code: "stale_revision",

@@ -10,6 +10,8 @@ import { dirname, extname, isAbsolute, join, parse, resolve, sep } from "node:pa
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import WebSocket, { WebSocketServer } from "ws";
+import { normalizeRelayUrl, startRelayControl } from "./relay-control.mjs";
+export { normalizeRelayUrl } from "./relay-control.mjs";
 
 const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 const MAX_PENDING_BYTES = 512 * 1024;
@@ -91,6 +93,90 @@ export function normalizeNativeAllowedOrigins(value = CAPACITOR_NATIVE_ORIGINS) 
     );
   }
   return [...CAPACITOR_NATIVE_ORIGINS];
+}
+
+export function normalizeRendezvousUrl(value) {
+  const text = requiredText(value, "T4_RENDEZVOUS_URL");
+  let url;
+  try {
+    url = new URL(text);
+  } catch {
+    throw new Error("T4_RENDEZVOUS_URL must be a valid HTTPS URL");
+  }
+  const loopbackHosts = new Set(["localhost", "127.0.0.1", "::1"]);
+  const isLoopback = loopbackHosts.has(url.hostname) || url.hostname === "[::1]";
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopback)) {
+    throw new Error("T4_RENDEZVOUS_URL must be HTTPS (or HTTP on loopback for local development)");
+  }
+  if (
+    url.host === "" ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.search !== "" ||
+    url.hash !== ""
+  ) {
+    throw new Error("T4_RENDEZVOUS_URL must be a plain URL with no credentials");
+  }
+  return url.origin;
+}
+
+/** How often a gateway re-announces itself to the rendezvous. */
+const RENDEZVOUS_ANNOUNCE_MS = 30_000;
+
+/**
+ * Announce this gateway to the rendezvous (POST /v1/hosts) so native clients
+ * can discover it without a QR code or hostname typing. Best-effort: a failed
+ * or missing rendezvous is not fatal — the announce is retried every
+ * RENDEZVOUS_ANNOUNCE_MS, and the rendezvous expires entries by TTL.
+ * Returns a stop function that deregisters the host announcement.
+ */
+export function startRendezvousAnnounce(options, resolveHostName) {
+  if (options.rendezvousUrl === undefined) return async () => {};
+  let stopped = false;
+  let resolvedHostname = "";
+  const announce = async () => {
+    if (stopped) return;
+    if (resolvedHostname === "") {
+      const name = await resolveHostName().catch(() => null);
+      if (typeof name !== "string" || name === "") return; // retry next tick
+      resolvedHostname = name;
+    }
+    try {
+      await fetch(`${options.rendezvousUrl}/v1/hosts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          hostId: options.deploymentIdentity,
+          hostname: resolvedHostname,
+          label: options.label,
+          origin: options.allowedOrigin,
+        }),
+        signal: AbortSignal.timeout(5_000),
+      });
+    } catch (err) {
+      try {
+        process?.stderr?.write?.(`gateway: rendezvous announce failed: ${String(err)}\n`);
+      } catch {
+        // stderr unavailable
+      }
+    }
+  };
+  void announce();
+  const timer = setInterval(() => void announce(), RENDEZVOUS_ANNOUNCE_MS);
+  timer.unref?.();
+  return async () => {
+    stopped = true;
+    clearInterval(timer);
+    if (resolvedHostname === "") return;
+    try {
+      await fetch(
+        `${options.rendezvousUrl}/v1/hosts/${encodeURIComponent(options.deploymentIdentity)}`,
+        { method: "DELETE", signal: AbortSignal.timeout(5_000) },
+      );
+    } catch {
+      // deregistration is best-effort; the rendezvous TTL expires the entry anyway
+    }
+  };
 }
 
 export function normalizeDeploymentIdentity(value) {
@@ -803,6 +889,12 @@ export async function startTailnetGateway(input) {
     nativeAllowedOrigins: normalizeNativeAllowedOrigins(input.nativeAllowedOrigins),
     label: input.label ?? "OMP on this Tailnet host",
     deploymentIdentity: normalizeDeploymentIdentity(input.deploymentIdentity),
+    ...(input.rendezvousUrl === undefined || input.rendezvousUrl === ""
+      ? {}
+      : { rendezvousUrl: normalizeRendezvousUrl(input.rendezvousUrl) }),
+    ...(input.relayUrl === undefined || input.relayUrl === ""
+      ? {}
+      : { relayUrl: normalizeRelayUrl(input.relayUrl) }),
     clusterOperatorEnabled: input.clusterOperatorEnabled === true,
     clusterWsUrl:
       input.clusterOperatorEnabled === true
@@ -854,6 +946,10 @@ export async function startTailnetGateway(input) {
     return discoveryHostName;
   };
   let closed = false;
+  // E2E control-plane adapter for the public (relay) model: hosts pairing
+  // rooms on the relay and mints the 6-digit codes the desktop displays.
+  // Only started when T4_RELAY_URL is configured.
+  let relayControl;
 
   // Registration secret: loaded once at startup (env or generated token).
   await ensureRegistryToken(options.environment ?? process.env);
@@ -931,6 +1027,35 @@ export async function startTailnetGateway(input) {
         replyText(response, 200, "application/json; charset=utf-8", body, request.method === "HEAD");
         return;
       }
+      if (pathname === "/v1/pair-code") {
+        // The desktop mints the 6-digit pairing code the phone redeems at the
+        // rendezvous. Only available when the relay control-plane adapter is
+        // running (T4_RELAY_URL configured).
+        if (!relayControl) {
+          replyText(
+            response,
+            404,
+            "application/json; charset=utf-8",
+            JSON.stringify({ ok: false, error: "relay control is not enabled" }),
+            request.method === "HEAD",
+          );
+          return;
+        }
+        try {
+          const minted = await relayControl.mintPairCode();
+          const body = JSON.stringify({ ok: true, hostId: minted.hostId, code: minted.code });
+          replyText(response, 200, "application/json; charset=utf-8", body, request.method === "HEAD");
+        } catch (error) {
+          replyText(
+            response,
+            503,
+            "application/json; charset=utf-8",
+            JSON.stringify({ ok: false, error: error instanceof Error ? error.message : "pairing unavailable" }),
+            request.method === "HEAD",
+          );
+        }
+        return;
+      }
       if (pathname === "/v1/rooms") {
         const body = JSON.stringify({ rooms: liveRegistryRooms() });
         response.setHeader("Cache-Control", "no-store");
@@ -960,7 +1085,13 @@ export async function startTailnetGateway(input) {
       rejectUpgrade(socket, "404 Not Found", "Not found");
       return;
     }
-    if (!allowedSocketOrigins.has(request.headers.origin)) {
+    // Browsers MUST send an allowed Origin (CSWSH guard). Native binaries
+    // (the Swift ports, t4 CLI) send no Origin at all and cannot be
+    // browser-forged, so a missing Origin is accepted — the host-wire
+    // handshake below still authenticates (pairing / device token / the
+    // gateway's local transport, which welcomes as .local).
+    const origin = request.headers.origin;
+    if (origin !== undefined && !allowedSocketOrigins.has(origin)) {
       rejectUpgrade(socket, "403 Forbidden", "Origin not allowed");
       return;
     }
@@ -1010,6 +1141,15 @@ export async function startTailnetGateway(input) {
     }
   }, options.heartbeatIntervalMs);
   heartbeat.unref();
+  const stopRendezvous = startRendezvousAnnounce(options, resolveDiscoveryHostName);
+  if (options.relayUrl !== undefined) {
+    relayControl = startRelayControl({
+      relayUrl: options.relayUrl,
+      rendezvousUrl: options.rendezvousUrl,
+      hostId: options.deploymentIdentity,
+      appSocketPath: options.appSocket,
+    });
+  }
 
   return {
     host: options.listenHost,
@@ -1018,6 +1158,8 @@ export async function startTailnetGateway(input) {
       closed = true;
       clearInterval(heartbeat);
       for (const browser of activeBrowsers.keys()) browser.terminate();
+      await relayControl?.stop();
+      await stopRendezvous();
       await new Promise((resolvePromise) => server.close(() => resolvePromise()));
       webSockets.close();
     },
@@ -1065,6 +1207,8 @@ export function optionsFromEnvironment(environment = process.env) {
     label: environment.T4_HOST_LABEL ?? "OMP on this Tailnet host",
     hostDnsName: environment.T4_HOST_DNS_NAME,
     deploymentIdentity: environment.T4_DEPLOYMENT_IDENTITY,
+    rendezvousUrl: environment.T4_RENDEZVOUS_URL,
+    relayUrl: environment.T4_RELAY_URL,
     clusterOperatorEnabled,
     clusterWsUrl,
     profileRoutes,

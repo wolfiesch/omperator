@@ -16,5 +16,12 @@ declare module "vitest" {
   }
   export function describe(name: string, fn: () => void): void;
   export function it(name: string, fn: () => void | Promise<void>): void;
+  export function afterEach(fn: () => void): void;
+  export const vi: {
+    stubEnv(name: string, value: string): void;
+    unstubAllEnvs(): void;
+    stubGlobal(name: string, value: unknown): void;
+    unstubAllGlobals(): void;
+  };
   export function expect<T>(value: T): Matchers;
 }

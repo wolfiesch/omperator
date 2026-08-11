@@ -176,6 +176,12 @@ private struct CollabRoomsResponse: Decodable {
     let rooms: [CollabRoom]
 }
 
+/// The host gateway's GET /v1/discovery response: the host-wire wsUrl the
+/// client connects to through the gateway.
+private struct GatewayDiscoveryResponse: Decodable {
+    let wsUrl: String
+}
+
 @MainActor
 final class T4SessionStore: ObservableObject {
     let connectionModel = T4ConnectionInventoryModel()
@@ -566,6 +572,10 @@ final class T4SessionStore: ObservableObject {
 
     var client: HostClient?
     var hostId: String = ""
+    /// The rendezvous hostId of the host this store is connected to through
+    /// the public (relay) control plane; nil for tailnet/endpoint connects.
+    /// Scopes the saved-relay-link cleanup on explicit disconnect.
+    private var connectedRelayHostId: String?
     private var streamingTasks: [String: Task<Void, Never>] = [:]
     private var liveTurnTasks: [String: Task<Void, Never>] = [:]
     private var toolStreamingTasks: [String: Task<Void, Never>] = [:]
@@ -1007,14 +1017,6 @@ final class T4SessionStore: ObservableObject {
             Keychain.set(String(seam.dropFirst("-T4Endpoint=".count)), forKey: Self.savedEndpointKey)
         }
         guard !connected, !connecting else { return }
-        // Plug-and-play first: a saved collab gateway restores the rooms
-        // inventory directly — no host-wire, no PIN, no ownership states.
-        if let gatewayString = UserDefaults.standard.string(forKey: Self.savedCollabGatewayKey),
-           let gateway = URL(string: gatewayString) {
-            let name = UserDefaults.standard.string(forKey: Self.savedCollabNameKey) ?? platformDeviceName()
-            await connectCollab(gatewayURL: gateway, name: name)
-            return
-        }
         guard let endpointString = Keychain.get(Self.savedEndpointKey),
               let endpoint = URL(string: endpointString) else { return }
         #if os(Linux)
@@ -1047,6 +1049,19 @@ final class T4SessionStore: ObservableObject {
         Keychain.set(endpoint.absoluteString, forKey: Self.savedEndpointKey)
         Keychain.set(authentication?.deviceId, forKey: Self.savedDeviceIdKey)
         Keychain.set(authentication?.deviceToken, forKey: Self.savedDeviceTokenKey)
+    }
+
+    /// Keychain key for a host's saved public relay link. The link IS the
+    /// reconnect credential for the public path — rejoining needs no code —
+    /// so it is keyed per rendezvous hostId (`t4.relayLink.<hostId>`).
+    private static func relayLinkKey(hostId: String) -> String {
+        "t4.relayLink.\(hostId)"
+    }
+
+    /// The saved pairLink for a rendezvous host, if any. A non-nil result
+    /// means the public path can rejoin silently (no pairing code).
+    func savedRelayLink(for hostId: String) -> String? {
+        Keychain.get(Self.relayLinkKey(hostId: hostId))
     }
 
     /// Select a session (rail tap or auto-select of the most recent).
@@ -2210,6 +2225,161 @@ final class T4SessionStore: ObservableObject {
         }
     }
 
+    /// Connect to a computer picked from rendezvous discovery. The host's
+    /// gateway serves the host-wire wsUrl at GET {origin}/v1/discovery;
+    /// connecting through the gateway with an empty code is owner
+    /// auto-approval — the welcome is .local, so no pairing round-trip
+    /// happens. Discovery failures land in lastError; the Advanced
+    /// (endpoint/pair) path remains the fallback.
+    func connectDiscoveryHost(_ host: T4DiscoveryHost, name: String) async {
+        let endpoint: URL
+        do {
+            var request = URLRequest(url: host.origin.appendingPathComponent("v1/discovery"))
+            request.timeoutInterval = 15
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                throw T4WireError.invalidFrame(
+                    path: "v1/discovery",
+                    reason: "HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)"
+                )
+            }
+            let wsUrlString = try JSONDecoder().decode(GatewayDiscoveryResponse.self, from: data).wsUrl
+            guard let url = URL(string: wsUrlString) else {
+                throw T4WireError.invalidFrame(path: "wsUrl", reason: "unparseable wsUrl")
+            }
+            endpoint = url
+        } catch {
+            lastError = "Couldn't reach \(host.label): \(error)"
+            return
+        }
+        await pairAndConnect(endpoint: endpoint, code: "", deviceName: name)
+    }
+
+    /// Connect to a computer through the public (rendezvous) control plane.
+    ///
+    /// With a `code`, the one-time pairing code is redeemed at
+    /// `{rendezvous}/v1/pair` for the E2E control-room link, the link is
+    /// persisted (the reconnect credential), and the pipe joins with the
+    /// code. With a nil `code` and a saved link for the host, this is a
+    /// silent rejoin — the link alone is the credential, no code round-trip.
+    /// With nil `code` and no saved link, `lastError` explains that a pairing
+    /// code is required. Public connections never call `persist(endpoint:)` —
+    /// a ws URL has no endpoint semantics; the saved relay link is the
+    /// reconnect credential.
+    func connectPublicHost(hostId: String, code: String?, name: String) async {
+        guard !connecting, !connected else { return }
+        connecting = true
+        defer { connecting = false }
+        let pairLink: String
+        if let code {
+            guard let redeemed = await redeemPairCode(hostId: hostId, code: code) else { return }
+            pairLink = redeemed
+        } else if let saved = savedRelayLink(for: hostId) {
+            pairLink = saved
+        } else {
+            lastError = "Enter the pairing code shown on your computer"
+            return
+        }
+
+        let parsed: T4CollabLink
+        switch T4CollabLink.parse(pairLink) {
+        case .err(let reason):
+            lastError = reason
+            Keychain.remove(forKey: Self.relayLinkKey(hostId: hostId))
+            return
+        case .ok(let value):
+            parsed = value
+        }
+
+        // Persist the link BEFORE the handshake: the code is single-use, so
+        // once redeemed the saved link is the only way back into the room —
+        // even if this process dies between redeem and welcome. A failed
+        // welcome removes it again below.
+        Keychain.set(pairLink, forKey: Self.relayLinkKey(hostId: hostId))
+
+        // New connection, new attach state — the previous connection's
+        // session.attach registrations don't carry over.
+        attachedSessions.removeAll()
+        let pipe = T4RelayPipe(link: parsed.wsURL, key: parsed.key)
+        let transport = T4RelayTransport(pipe: pipe, code: code)
+        let c = HostClient(transport: transport, config: HostClient.Config(
+            identity: ClientIdentity(
+                name: platformClientName,
+                version: "0.1",
+                build: "dev",
+                platform: platformClientPlatform
+            ),
+            authentication: nil,
+            requestedFeatures: Self.clientFeatures
+        ))
+        client = c
+        await c.setOnReconnected { [weak self] in
+            Task { await self?.handleTransportReconnected() }
+        }
+        do {
+            let welcome = try await c.connect()
+            hostId = welcome.hostId
+            hostInfo = HostInfo(hostId: welcome.hostId, ompVersion: welcome.ompVersion, appserverVersion: welcome.appserverVersion)
+            grantedCapabilities = welcome.grantedCapabilities
+            grantedFeatures = Set(welcome.grantedFeatures)
+            connected = welcome.authentication == .paired || welcome.authentication == .local
+            guard connected else {
+                // Welcome failure: the code is single-use, so the saved link
+                // can never rejoin this room.
+                t4log.error("connectPublicHost: auth not accepted (\(welcome.authentication.rawValue, privacy: .public))")
+                Keychain.remove(forKey: Self.relayLinkKey(hostId: hostId))
+                connectedRelayHostId = nil
+                return
+            }
+            connectedRelayHostId = hostId
+            clearErrorAfterSuccessfulConnection()
+            Task {
+                await refresh()
+                await loadCatalog()
+            }
+            Task { await observe() }
+        } catch {
+            t4log.error("connectPublicHost failed: \(error)")
+            lastError = "\(error)"
+            // Welcome failure burns the room: the code is single-use, so the
+            // saved link can never rejoin this room.
+            Keychain.remove(forKey: Self.relayLinkKey(hostId: hostId))
+            connectedRelayHostId = nil
+        }
+    }
+
+    /// Redeem a one-time pairing code at the rendezvous for the E2E room
+    /// link. POST {rendezvous}/v1/pair with {hostId, code}; the 200 body's
+    /// `pairLink` is the ws(s) URL of the control room. Wrong/expired/used
+    /// codes come back 404 and land in `lastError` as a friendly message.
+    private func redeemPairCode(hostId: String, code: String) async -> String? {
+        var request = URLRequest(url: T4DiscoveryClient.rendezvousBaseURL().appendingPathComponent("v1/pair"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 15
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["hostId": hostId, "code": code])
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                throw T4WireError.invalidFrame(
+                    path: "v1/pair",
+                    reason: "HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)"
+                )
+            }
+            guard let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let link = body["pairLink"] as? String, !link.isEmpty
+            else {
+                throw T4WireError.invalidFrame(path: "v1/pair", reason: "missing pairLink")
+            }
+            return link
+        } catch {
+            lastError = "Pairing code rejected — check the code and that the host is running (\(error))"
+            return nil
+        }
+    }
+
     /// Lowercase the device name into a host-safe id slug: alphanumerics
     /// kept, every other run collapsed to a single hyphen, trimmed. Falls
     /// back to "device" when the name has no usable characters.
@@ -2589,6 +2759,10 @@ final class T4SessionStore: ObservableObject {
         Keychain.remove(forKey: Self.savedEndpointKey)
         Keychain.remove(forKey: Self.savedDeviceIdKey)
         Keychain.remove(forKey: Self.savedDeviceTokenKey)
+        if let relayHostId = connectedRelayHostId {
+            Keychain.remove(forKey: Self.relayLinkKey(hostId: relayHostId))
+        }
+        connectedRelayHostId = nil
         // Explicit disconnect forgets the host, so the auto-rc "return here"
         // memory goes with it (restore() has no endpoint to reconnect to).
         UserDefaults.standard.removeObject(forKey: Self.lastSessionIdKey)

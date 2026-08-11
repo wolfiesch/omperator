@@ -86,6 +86,48 @@ test("host DNS name flows from config into both unit definitions when set", () =
   );
 });
 
+test("rendezvous url flows from config into both unit definitions when set", () => {
+  const withRendezvous = validateServiceConfig({
+    ...CONFIG,
+    rendezvousUrl: "https://wickrunner.com/rdv",
+  });
+  assert.equal(withRendezvous.rendezvousUrl, "https://wickrunner.com");
+  assert.match(renderSystemdUnit(withRendezvous), /Environment="T4_RENDEZVOUS_URL=https:\/\/wickrunner\.com"/u);
+  const darwinPaths = servicePaths({ platform: "darwin", homeDirectory: "/Users/alice", uid: 501 });
+  assert.match(
+    renderLaunchAgent(withRendezvous, darwinPaths),
+    /<key>T4_RENDEZVOUS_URL<\/key>\s+<string>https:\/\/wickrunner\.com<\/string>/u,
+  );
+  const without = validateServiceConfig(CONFIG);
+  assert.equal(without.rendezvousUrl, undefined);
+  assert.doesNotMatch(renderSystemdUnit(without), /T4_RENDEZVOUS_URL/u);
+  assert.throws(
+    () => validateServiceConfig({ ...CONFIG, rendezvousUrl: "http://public.example.com" }),
+    /T4_RENDEZVOUS_URL/u,
+  );
+});
+
+test("relay url flows from config into both unit definitions when set", () => {
+  const withRelay = validateServiceConfig({
+    ...CONFIG,
+    relayUrl: "wss://wickrunner.com:8443",
+  });
+  assert.equal(withRelay.relayUrl, "wss://wickrunner.com:8443");
+  assert.match(renderSystemdUnit(withRelay), /Environment="T4_RELAY_URL=wss:\/\/wickrunner\.com:8443"/u);
+  const darwinPaths = servicePaths({ platform: "darwin", homeDirectory: "/Users/alice", uid: 501 });
+  assert.match(
+    renderLaunchAgent(withRelay, darwinPaths),
+    /<key>T4_RELAY_URL<\/key>\s+<string>wss:\/\/wickrunner\.com:8443<\/string>/u,
+  );
+  const without = validateServiceConfig(CONFIG);
+  assert.equal(without.relayUrl, undefined);
+  assert.doesNotMatch(renderSystemdUnit(without), /T4_RELAY_URL/u);
+  assert.throws(
+    () => validateServiceConfig({ ...CONFIG, relayUrl: "https://example.com" }),
+    /T4_RELAY_URL/u,
+  );
+});
+
 test("profile route schema and generated environment are static and start-explicit", () => {
   const config = validateServiceConfig({
     ...CONFIG,
