@@ -406,6 +406,7 @@ export function deriveWorkspaceData(snapshot: DesktopRuntimeSnapshot): Workspace
       status,
       lifecycle,
       freshness,
+      ...(ref.hostOwned === undefined ? {} : { hostOwned: ref.hostOwned }),
       pendingApprovals,
       latestTurnCompletedAt: lastKnownWorking ? null : ref.updatedAt,
       createdAt: ref.updatedAt,

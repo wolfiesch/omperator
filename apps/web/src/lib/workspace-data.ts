@@ -48,6 +48,11 @@ export interface WorkspaceSession {
   /** Raw lifecycle reported by the runtime. Missing fixture data is treated as unknown. */
   readonly lifecycle?: SessionLifecycle;
   readonly freshness: SessionFreshness;
+  /**
+   * Durable host provenance, not a live lock result. False means this session
+   * is read-only here until attach resolves its external ownership.
+   */
+  readonly hostOwned?: boolean;
   /** Commands waiting on the user's go-ahead. */
   readonly pendingApprovals: number;
   readonly latestTurnCompletedAt: string | null;
