@@ -3,7 +3,7 @@
 ## Authority and scope
 
 - Migration branch: `shlummi/windows-linux-ui-migration`
-- Synchronized Linux source: `origin/linux-port` at `585729c7fac5216e567c38deaf57386bcb1c5910`
+- Synchronized Linux source: `origin/linux-port` at `f58729c7fac5216e567c38deaf57386bcb1c5910`
 - Structural Windows baseline: `98da2dd`
 - Authoritative implementation: `apps/linux/Sources/T4CodeLinuxLib/Views/`
 - Authoritative palette and view helpers: `Theme.swift` and `ViewExtras.swift` in that directory
