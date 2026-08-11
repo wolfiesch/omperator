@@ -13,7 +13,10 @@ public enum T4WindowsFonts {
         "DejaVuSansMono-Oblique",
         "DejaVuSansMono-BoldOblique",
     ]
-    private static var registered = false
+    @MainActor private static var registered = false
+
+    @MainActor
+    public static var areBundledFontsRegistered: Bool { registered }
 
     @MainActor
     public static func registerBundledFonts() {

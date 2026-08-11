@@ -114,6 +114,7 @@ struct T4UserBubble: View {
             HStack {
                 Spacer()
                 Text(entry.body)
+                    .t4TypographyProbe(.userBody)
                     .font(.system(size: 15))
                     .foregroundColor(theme.txt)
                     .textSelectionEnabled()
@@ -238,6 +239,7 @@ struct T4TranscriptRow: View {
                             .textSelectionEnabled()
                     } else {
                         Text(String(entry.body.prefix(Self.bodyCap)))
+                            .t4TypographyProbe(.toolResult)
                             .font(.term(12))
                             .foregroundColor(theme.txt)
                             .textSelectionEnabled()

@@ -493,7 +493,10 @@ struct T4SessionRow: View {
             HStack(spacing: t4PlatformMetric(6)) {
                 if session.pendingApproval == true { Tag(text: "approval", color: theme.diffAdd, theme: theme) }
                 if session.pendingUserInput == true { Tag(text: "input", color: theme.cTask, theme: theme) }
-                Text(session.updatedAt).font(.system(size: 10)).foregroundColor(theme.txtLabel)
+                Text(session.updatedAt)
+                    .t4TypographyProbe(.railSubtitle)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.txtLabel)
                     .lineLimit(1)
             }
             .lineLimit(1)

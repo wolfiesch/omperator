@@ -21,9 +21,18 @@ struct T4CodeLinuxApp: App {
         return (w, h)
     }
 
+    @ViewBuilder
+    private var root: some View {
+        if ProcessInfo.processInfo.arguments.contains("-T4TypographyFixture") {
+            T4TypographyFixtureView()
+        } else {
+            RootView()
+        }
+    }
+
     var body: some Scene {
         WindowGroup("T4 Code") {
-            RootView()
+            root
         }
         .defaultSize(width: Self.launchSize.width, height: Self.launchSize.height)
     }

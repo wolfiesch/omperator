@@ -912,6 +912,7 @@ struct T4SettingsPane: View {
             let keys = providerKeys()
             if keys.isEmpty {
                 Text("No provider keys set")
+                    .t4TypographyProbe(.settingsBody)
                     .font(.system(size: 12))
                     .foregroundColor(t.txtMuted)
             } else {

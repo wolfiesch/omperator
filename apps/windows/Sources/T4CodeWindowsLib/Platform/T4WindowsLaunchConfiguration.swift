@@ -14,6 +14,7 @@ public struct T4WindowsLaunchConfiguration: Equatable, Sendable {
 
     public let demoMode: Bool
     public let browserFixtureEnabled: Bool
+    public let typographyFixtureEnabled: Bool
     public let themeMode: T4WindowsThemeMode
     public let windowWidth: Int
     public let windowHeight: Int
@@ -22,6 +23,7 @@ public struct T4WindowsLaunchConfiguration: Equatable, Sendable {
         let demoMode = arguments.contains("-T4Demo")
         self.demoMode = demoMode
         browserFixtureEnabled = demoMode && arguments.contains("-T4BrowserFixture")
+        typographyFixtureEnabled = arguments.contains("-T4TypographyFixture")
         themeMode = arguments
             .first(where: { $0.hasPrefix("-T4Theme=") })
             .flatMap { T4WindowsThemeMode(rawValue: String($0.dropFirst("-T4Theme=".count))) }
