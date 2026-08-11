@@ -568,6 +568,8 @@ final class T4SessionStore: ObservableObject {
     private static let savedEndpointKey = "t4.endpoint"
     private static let savedDeviceIdKey = "t4.deviceId"
     private static let savedDeviceTokenKey = "t4.deviceToken"
+    /// Default local gateway: the host runs on this machine (loopback, port 4194).
+    private static let localGatewayEndpoint = "ws://127.0.0.1:4194/v1/ws"
     private static let railListViewKey = "t4.rail.listView"
     private static let railOrganizationKey = "t4.rail.organization"
     private static let railSortKey = "t4.rail.sort"
@@ -980,7 +982,26 @@ final class T4SessionStore: ObservableObject {
         }
         guard !connected, !connecting else { return }
         guard let endpointString = Keychain.get(Self.savedEndpointKey),
-              let endpoint = URL(string: endpointString) else { return }
+              let endpoint = URL(string: endpointString) else {
+            // Stupid-simple default: the host is this machine — auto-connect to
+            // the local gateway as an open host (the local transport welcomes
+            // as .local, no pairing prompt).
+            #if os(Linux)
+            if !connected, !connecting, let local = URL(string: Self.localGatewayEndpoint) {
+                await connect(
+                    endpoint: local,
+                    identity: ClientIdentity(
+                        name: platformClientName,
+                        version: "0.1",
+                        build: "dev",
+                        platform: platformClientPlatform
+                    ),
+                    authentication: nil
+                )
+            }
+            #endif
+            return
+        }
         #if os(Linux)
         T4Perf.mark("restore-keychain-read")
         #endif
