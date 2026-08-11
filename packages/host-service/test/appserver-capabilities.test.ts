@@ -20,6 +20,8 @@ describe("appserver capabilities and creation", () => {
 				"session.observer",
 				"session.unverified",
 				"artifacts.read",
+				"controller.lease",
+				"prompt.lease",
 			]);
 		});
 	

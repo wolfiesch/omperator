@@ -65,6 +65,16 @@ import {
 	SESSION_CANCEL_COMMAND,
 	SESSION_LIFECYCLE_COMMANDS,
 } from "./command-policy.ts";
+
+/** Connection-owned composer mutex commands handled by the appserver core. */
+const LEASE_COMMANDS = new Set([
+	"prompt.lease.acquire",
+	"prompt.lease.renew",
+	"prompt.lease.release",
+	"controller.lease.acquire",
+	"controller.lease.renew",
+	"controller.lease.release",
+]);
 import { executeReadCommand, isReadCommand } from "./read-command-handler.ts";
 import {
 	artifactDescriptorForRoot,
@@ -87,6 +97,7 @@ import {
 	unixSocketActive,
 } from "./identity.ts";
 import { ImageUploadError, ImageUploadStore } from "./image-upload-store.ts";
+import { LeaseRegistry, type Lease, type LeaseKind } from "./leases.ts";
 import { SessionOwnershipStore } from "./session-ownership-store.ts";
 import { OMP_AUTHORITY_BRIDGE_PROTOCOL } from "./omp-authority-bridge-contract.ts";
 import {
@@ -750,10 +761,9 @@ export function appserverSupportedFeatures(
 	// the copy would open blank.
 	if (options.sessionAuthority?.fork && options.discovery?.load) implementedFeatures.add("session.fork");
 	if (options.sessionOwnershipPath) implementedFeatures.add("session.transfer");
-	if (includeRemotePolicy) {
-		implementedFeatures.add("controller.lease");
-		implementedFeatures.add("prompt.lease");
-	}
+	// Composer mutexes are appserver core, independent of any remote model.
+	implementedFeatures.add("controller.lease");
+	implementedFeatures.add("prompt.lease");
 	const authority = options.operationsAuthority;
 	if (options.runtimeAdapters) implementedFeatures.add("runtime.adapters");
 	if (options.workspaceAuthority && options.projectRootForProject && options.workspaceTargetPathForProject)
@@ -945,6 +955,8 @@ export class LocalAppserver implements AppserverHandle {
 	#appserverBuild: string;
 	#supportedFeatures: Set<string>;
 	#remoteSupportedFeatures: Set<string>;
+	/** Connection-owned composer mutexes (prompt.lease / controller.lease). */
+	#leases: LeaseRegistry;
 	#supportedCapabilities: Set<string>;
 	#claimLocklessSessions: boolean;
 	#runtimeAdapters?: RuntimeAdapterRegistry;
@@ -1090,6 +1102,7 @@ export class LocalAppserver implements AppserverHandle {
 		this.#appserverBuild = options.appserverBuild ?? "local";
 		this.#supportedFeatures = new Set(appserverSupportedFeatures(options));
 		this.#remoteSupportedFeatures = new Set(appserverSupportedFeatures(options, true));
+		this.#leases = new LeaseRegistry(() => this.#clock.now().getTime());
 		const requested = appserverSupportedCapabilities(options);
 		const implemented = new Set([
 			"sessions.read",
@@ -1285,6 +1298,55 @@ export class LocalAppserver implements AppserverHandle {
 		if (command.command === "session.fast.set") return { type, enabled: command.args.enabled };
 		return { type };
 	}
+
+	/** Connection-owned composer mutexes (prompt.lease / controller.lease). */
+	private handleLeaseCommand(command: CommandFrame, ws: AppWs | undefined): CommandOutcome {
+		const kind: LeaseKind = command.command.startsWith("prompt.") ? "prompt" : "controller";
+		const sessionId = command.sessionId ?? "";
+		const owner = ws?.connectionId ?? "";
+		const leaseId = typeof command.args?.leaseId === "string" ? command.args.leaseId : "";
+		if (command.command.endsWith(".acquire")) {
+			try {
+				const lease = this.#leases.acquire(sessionId, kind, owner);
+				return {
+					frame: response(this.hostId, command, true, {
+						leaseId: lease.leaseId,
+						kind: lease.kind,
+						expiresAt: lease.expiresAt,
+					}),
+				};
+			} catch {
+				return {
+					frame: response(this.hostId, command, false, undefined, {
+						code: "lease_busy",
+						message: "session is busy",
+					}),
+				};
+			}
+		}
+		try {
+			if (command.command.endsWith(".renew")) {
+				const lease = this.#leases.renew(leaseId, owner);
+				return {
+					frame: response(this.hostId, command, true, {
+						leaseId: lease.leaseId,
+						kind: lease.kind,
+						expiresAt: lease.expiresAt,
+					}),
+				};
+			}
+			this.#leases.release(leaseId, owner);
+			return { frame: response(this.hostId, command, true, { leaseId, released: true }) };
+		} catch {
+			return {
+				frame: response(this.hostId, command, false, undefined, {
+					code: "lease_verify_failed",
+					message: "lease is not held by this connection",
+				}),
+			};
+		}
+	}
+
 	async start(): Promise<void> {
 		if (this.#started) return;
 		this.#inventoryGeneration += 1;
@@ -1968,7 +2030,11 @@ export class LocalAppserver implements AppserverHandle {
 				},
 				idempotency,
 			);
-		const trackSessionOperation = Boolean(command.sessionId && !SESSION_LIFECYCLE_COMMANDS.has(command.command));
+		const trackSessionOperation = Boolean(
+			command.sessionId &&
+			!SESSION_LIFECYCLE_COMMANDS.has(command.command) &&
+			!LEASE_COMMANDS.has(command.command),
+		);
 		if (trackSessionOperation && !this.beginSessionOperation(command.sessionId!))
 			return this.finish(
 				command,
@@ -1980,6 +2046,10 @@ export class LocalAppserver implements AppserverHandle {
 				},
 				idempotency,
 			);
+		// Composer leases are connection-owned appserver-local ops: no
+		// supervisor or RPC hop, and never blocked behind a session mutation.
+		if (LEASE_COMMANDS.has(command.command))
+			return this.finish(command, this.handleLeaseCommand(command, ws), idempotency);
 		const controller = new AbortController();
 		if (ws) this.#abortControllers.get(ws)?.add(controller);
 		let outcome: CommandOutcome;
@@ -4713,6 +4783,7 @@ export class LocalAppserver implements AppserverHandle {
 			}
 		}
 		await this.#imageUploads.cleanupConnection(ws.connectionId);
+		this.#leases.releaseAllForConnection(ws.connectionId);
 		this.#connections.forget(ws);
 		for (const sessionId of detachedSessions)
 			if (!this.hasAttachedClient(sessionId)) this.cleanupObserverState(sessionId);
