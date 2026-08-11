@@ -84,6 +84,7 @@ These remain visible in the generated comparisons and require maintainer judgmen
 9. Native intrinsic text/control measurement leaves small row-packing and label/value-gap differences inside some secondary panes, especially at responsive widths.
 10. Windows color conversion/compositing rounds a few shared sRGB tokens by one channel level (for example, `(42,39,64)` to `(43,40,64)`).
 11. The authoritative 1920x1080 Linux assets are Lanczos-normalized to 1600x900 while Windows is captured natively at 1600x900, so resampling contributes one-pixel edge and antialiasing differences.
+12. The Windows rail footer exposes `Pair`/`Saved hosts` so the retained Windows Credential Manager host flow remains reachable. The authoritative Linux screenshots show connection status only; this is an intentional Windows-only functional control.
 
 ## Genuine backend limitations
 
