@@ -10,7 +10,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const LABEL = "dev.oh-my-pi.appserver";
-const PROFILE = "default";
+const PROFILE = "native-apple-dogfood"
 const REMOTE_PORT = 8_787;
 const REMOTE_TLS_PORT = 8_788;
 const help = `Usage: pnpm dogfood:native:apple <start|status|restore> [--omp <absolute-path>] [--address <tailscale-ipv4>]

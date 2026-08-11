@@ -122,14 +122,19 @@ describe("truthful session state presentation", () => {
 
   it("opens host diagnostics directly from an offline session", () => {
     const offline = renderToStaticMarkup(
-      <SessionConnectionBadge onOpenHostHealth={() => {}} state="disconnected" />,
+      <SessionConnectionBadge onOpenHostHealth={() => { }} state="disconnected" />,
     );
 
     expect(offline).toContain("<button");
     expect(offline).toContain("Offline. Open Hosts");
+    const inertOffline = renderToStaticMarkup(
+      <SessionConnectionBadge state="disconnected" />,
+    );
+    expect(inertOffline).not.toContain("<button");
+    expect(inertOffline).not.toContain("open Hosts");
     const offlineWithoutRuntime = renderToStaticMarkup(
       <SessionStateBadge
-        onOpenHostHealth={() => {}}
+        onOpenHostHealth={() => { }}
         session={{ ...BASE_SESSION, freshness: "offline" }}
       />,
     );

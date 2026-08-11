@@ -18,6 +18,11 @@ function requireString(value, label) {
   }
   return value;
 }
+function requireRuntimeTag(value, label) {
+  const tag = requireString(value, label);
+  if (!RUNTIME_TAG_PATTERN.test(tag)) throw new Error(`${label} is invalid`);
+  return tag;
+}
 
 export function validatePackagedRuntimeManifest(manifest, expectedTag) {
   if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
@@ -27,16 +32,16 @@ export function validatePackagedRuntimeManifest(manifest, expectedTag) {
   if (manifest.platform !== "darwin" || manifest.arch !== "arm64" || manifest.executable !== "omp") {
     throw new Error("packaged runtime manifest must describe the macOS arm64 OMP executable");
   }
-  const tag = requireString(manifest.tag, "packaged runtime tag");
-  if (!RUNTIME_TAG_PATTERN.test(tag)) throw new Error("packaged runtime tag is invalid");
+  const tag = requireRuntimeTag(manifest.tag, "packaged runtime tag");
+  const publishedTag = requireRuntimeTag(expectedTag, "published runtime tag");
   if (!Number.isSafeInteger(manifest.size) || manifest.size < 1) {
     throw new Error("packaged runtime size must be a positive integer");
   }
   if (!SHA256_PATTERN.test(requireString(manifest.sha256, "packaged runtime sha256"))) {
     throw new Error("packaged runtime sha256 must be a lowercase SHA-256 digest");
   }
-  if (tag !== expectedTag) {
-    throw new Error(`packaged runtime tag ${tag} does not match published runtime ${expectedTag}`);
+  if (tag !== publishedTag) {
+    throw new Error(`packaged runtime tag ${tag} does not match published runtime ${publishedTag}`);
   }
   return Object.freeze({ ...manifest });
 }
@@ -225,13 +230,10 @@ export function inspectMacosRelease(
     JSON.parse(readFileSync(resolve(identityPath), "utf8")),
   );
   const matrix = JSON.parse(readFileSync(resolve(matrixPath), "utf8"));
-  const expectedRuntimeTag = requireString(
+  const expectedRuntimeTag = requireRuntimeTag(
     matrix?.publishedRuntime?.sourceTag,
     "published runtime sourceTag",
   );
-  if (!RUNTIME_TAG_PATTERN.test(expectedRuntimeTag)) {
-    throw new Error("published runtime sourceTag is invalid");
-  }
   const root = mkdtempSync(join(tmpdir(), "t4-macos-release-"));
   const zipRoot = join(root, "zip");
   const mountPoint = join(root, "dmg");

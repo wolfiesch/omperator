@@ -104,4 +104,12 @@ test("packaged runtime manifest must match the published runtime tag", () => {
     () => validatePackagedRuntimeManifest(manifest, "t4code-17.0.5-appserver-18"),
     /does not match published runtime/u,
   );
+  assert.throws(
+    () => validatePackagedRuntimeManifest(manifest, { tag: manifest.tag }),
+    /published runtime tag must be a non-empty string/u,
+  );
+  assert.throws(
+    () => validatePackagedRuntimeManifest(manifest, "not-a-runtime-tag"),
+    /published runtime tag is invalid/u,
+  );
 });

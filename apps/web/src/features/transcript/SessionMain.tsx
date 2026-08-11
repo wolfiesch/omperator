@@ -153,8 +153,8 @@ export function SessionConnectionBadge({
             : state === "pairing-required"
               ? "Pair this device before live session updates can resume."
               : state === "error"
-                ? "The host connection failed. Open Hosts for diagnostics."
-                : "The session host is unreachable. Select this status to open Hosts."}
+                ? opensHosts ? "The host connection failed. Select this status to open Hosts." : "The host connection failed."
+                : opensHosts ? "The session host is unreachable. Select this status to open Hosts." : "The session host is unreachable. Showing the last state received."}
       </TooltipPopup>
     </Tooltip>
   );
