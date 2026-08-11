@@ -74,6 +74,7 @@ struct T4SessionDetailView: View {
         if windowWidth < 1_100 { return 240 }
         return 330
     }
+    private var lowerSurfaceStagger: Int { t4PlatformMetric(6) }
 
 
 
@@ -102,6 +103,14 @@ struct T4SessionDetailView: View {
         return 12
 #endif
     }
+    private var composerVerticalPadding: Int {
+#if os(Windows)
+        return 3
+#else
+        return 5
+#endif
+    }
+
 
 #if os(Windows)
     init(
@@ -257,9 +266,12 @@ struct T4SessionDetailView: View {
                 // WINDOWS-GAP: WinUIBackend has no transcript bottom anchor;
                 // pin live asks above the composer so they cannot open off-screen.
                 pendingAskCard
-#endif
+                planStripSection.padding(.top, lowerSurfaceStagger)
+                composer.padding(.top, lowerSurfaceStagger)
+#else
                 planStripSection
                 composer
+#endif
             }
             .padding(.horizontal, lowerSurfaceHorizontalPadding)
             .padding(.bottom, t4PlatformMetric(6))
@@ -663,7 +675,7 @@ struct T4SessionDetailView: View {
                     sendOrStop
                 }
                 .padding(.horizontal, t4PlatformMetric(8))
-                .padding(.vertical, t4PlatformMetric(5))
+                .padding(.vertical, t4PlatformMetric(composerVerticalPadding))
             }
             if draft.isEmpty && session.sessionControl == nil {
                 ComposerTips(t: t)

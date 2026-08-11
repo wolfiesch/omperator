@@ -19,6 +19,22 @@ struct ComposerTips: View {
         ("■", "tap stop to interrupt a running turn"),
         ("☰", "use the model menu to pick a provider and thinking level"),
     ]
+    private var tipTopPadding: Int {
+#if os(Windows)
+        return 3
+#else
+        return 7
+#endif
+    }
+
+    private var tipBottomPadding: Int {
+#if os(Windows)
+        return 4
+#else
+        return 8
+#endif
+    }
+
 
     var body: some View {
         let tip = tips[i % tips.count]
@@ -34,8 +50,8 @@ struct ComposerTips: View {
             Spacer()
         }
         .padding(.horizontal, t4PlatformMetric(10))
-        .padding(.top, t4PlatformMetric(7))
-        .padding(.bottom, t4PlatformMetric(8))
+        .padding(.top, t4PlatformMetric(tipTopPadding))
+        .padding(.bottom, t4PlatformMetric(tipBottomPadding))
         .overlay(alignment: .top) { Rectangle().fill(t.lineFaint).frame(height: 1) }
         .task {
             // LINUX-GAP: macOS cycles on a Combine timer; a task loop is the
