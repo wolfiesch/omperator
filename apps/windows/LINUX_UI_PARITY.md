@@ -59,7 +59,7 @@ Captures use deterministic launch arguments, offscreen `SWP_NOACTIVATE` placemen
 - Restored the shared Linux rail, detail, transcript, composer, ask, plan, palette, inbox, and secondary-pane views.
 - Matched the normalized 250 px rail boundary at the 1600 px comparison width.
 - Kept all toolbar actions visible by removing the duplicate model picker from the shared Windows detail header and constraining native picker minima.
-- Restored the composer at `1280x800` and `900x600` with bottom anchoring intact.
+- Restored the composer at `1280x800` and `900x600`; at `1600x900` the ask stack now shares Linux's `y=797` collapsed-plan origin and the expanded plan body retains Linux's 214 px height.
 - Corrected WinUI list minimum rows, list padding, text line-height behavior, fixed-frame negotiation, picker/button padding, and native density scaling.
 - Preserved transcript bottom anchoring and explicit release of auto-scroll after user movement.
 - Mounted real WebView2 and xterm.js surfaces rather than copying the deferred placeholders from `98da2dd`.
@@ -76,6 +76,10 @@ These remain visible in the generated comparisons and require maintainer judgmen
 5. Web content is rendered by WebView2 rather than WebKitGTK, so page font rasterization and scrollbar chrome differ.
 6. Terminal content is rendered by xterm.js rather than VTE, so monospace glyph rasterization, cursor, selection, and scrollbar chrome differ.
 7. Hover, pressed, keyboard-focus, selection, drag, and animated transition frames are not represented by the static `PrintWindow` matrix.
+8. WinUI layout quantization still moves a few lower-surface bounds by 1–5 px: the expanded plan header/body, composer field, and hint-strip edges are the visible cases.
+9. Native intrinsic text/control measurement leaves small row-packing and label/value-gap differences inside some secondary panes, especially at responsive widths.
+10. Windows color conversion/compositing rounds a few shared sRGB tokens by one channel level (for example, `(42,39,64)` to `(43,40,64)`).
+11. The authoritative 1920x1080 Linux assets are Lanczos-normalized to 1600x900 while Windows is captured natively at 1600x900, so resampling contributes one-pixel edge and antialiasing differences.
 
 ## Genuine backend limitations
 
@@ -103,7 +107,7 @@ Saved-host captures use an in-memory fixture summary and never read or display c
 ## Verification evidence
 
 - `swift build`: passed with the existing Swift 6 actor-isolation warnings.
-- `swift test -v`: 47 tests in 7 suites passed.
+- `swift test`: 47 tests in 7 suites passed.
 - Browser-focused suite: 9 tests passed.
 - Terminal-focused suite: 14 tests passed.
 - Credential-focused suites: 5 tests passed, including the real Windows Credential Manager lifecycle.
