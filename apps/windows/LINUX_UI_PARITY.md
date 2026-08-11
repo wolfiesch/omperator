@@ -57,6 +57,20 @@ Canonical file pattern:
 
 Captures use deterministic launch arguments, offscreen `SWP_NOACTIVATE` placement, and `PrintWindow`. Every completed capture reports an unchanged foreground window and `applicationForeground=false`.
 
+## Native typography evidence
+
+The native comparison fixture renders the same representative display title, assistant paragraph, user paragraph, tool-result paragraph, rail subtitle, and settings body through GTK/Pango and WinUI/DirectWrite. It does not replace either platform renderer.
+
+- Linux Pango resolved `DejaVu Sans Book`, `DejaVu Sans Bold`, and `DejaVu Sans Mono Book`; WinUI resolved `DejaVu Sans` / `DejaVu Sans Mono` with matching weights and reported no fallback.
+- The Linux and bundled Windows files are byte-identical: `DejaVuSans.ttf` (`ae7b7855…37280`), `DejaVuSans-Bold.ttf` (`5c1247ac…e895`), and `DejaVuSansMono.ttf` (`c805f943…04d88`).
+- All six roles have matching family, face, weight, style, line count, word wrapping, and line breaks in Moon and Dawn. Body, rail, settings, and tool-result normalized line heights match exactly. The display-title native WinUI line box remains `0.833333` px shorter; its baseline and one-line placement align visually.
+- WinUI character spacing is a renderer-specific advance correction (`70/1000 em` for 15 pt body roles, `50/1000 em` for smaller sans roles, and `116/1000 em` for monospace). Linux/Pango metrics remain unmodified.
+- Native-property report: `reports/typography-parity-final.json`.
+- Indexed review sheet: `contact-sheets/typography-parity-contact-sheet.png`.
+- Moon/Dawn side-by-side, 50% overlay, absolute-difference, and enlarged role crops use the `comparisons/typography-fixture-final-*` prefix.
+
+Typography acceptance criterion: after normalization, any family, file, face, weight, style, line-count, word-wrap, baseline, or occupied-geometry change is a regression. Only edge-level antialiasing, hinting, and subpixel-intensity differences attributable to Pango/FreeType versus DirectWrite/ClearType are accepted without another correction.
+
 ## Fixed differences
 
 - Removed the independent neutral/macOS-derived Windows core visual layer.
