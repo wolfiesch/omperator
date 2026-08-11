@@ -54,6 +54,7 @@ struct T4WindowsWebView2: WinUIElementRepresentable {
             var initialized = false
             var coreEventsInstalled = false
             var pendingInitialContent: InitialContent?
+            var fixtureDisplayURL: String?
             var pendingCommand: T4WindowsBrowserNativeCommand?
             var activeNavigationID: UInt64?
             var stoppedNavigationID: UInt64?
@@ -104,6 +105,11 @@ struct T4WindowsWebView2: WinUIElementRepresentable {
                 entry = makeEntry(sessionID: activation.sessionID)
                 entry.pendingInitialContent = activation.fixtureHTML.map(InitialContent.html)
                     ?? .url(activation.initialURL)
+                if activation.fixtureHTML != nil {
+                    entry.fixtureDisplayURL = activation.initialURL.hasSuffix("/")
+                        ? activation.initialURL
+                        : activation.initialURL + "/"
+                }
                 entries[activation.sessionID] = entry
             }
 
@@ -209,7 +215,8 @@ struct T4WindowsWebView2: WinUIElementRepresentable {
                 core.navigationStarting.addHandler { [weak self, weak entry] _, args in
                     guard let self, let entry, let args else { return }
                     entry.activeNavigationID = args.navigationId
-                    self.emit(.navigationStarted(url: args.uri), sessionID: sessionID)
+                    let url = args.uri == "about:blank" ? (entry.fixtureDisplayURL ?? args.uri) : args.uri
+                    self.emit(.navigationStarted(url: url), sessionID: sessionID)
                 }
             )
             entry.coreEvents.append(
@@ -396,7 +403,9 @@ struct T4WindowsWebView2: WinUIElementRepresentable {
         ) {
             emit(
                 .navigationState(
-                    url: core.source,
+                    url: core.source == "about:blank"
+                        ? (entries[sessionID]?.fixtureDisplayURL ?? core.source)
+                        : core.source,
                     title: core.documentTitle,
                     canGoBack: core.canGoBack,
                     canGoForward: core.canGoForward,

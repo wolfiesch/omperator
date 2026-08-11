@@ -135,6 +135,40 @@ struct T4PaletteView: View {
 
     private var t: Theme { theme.t }
 
+    private func paletteMetric(_ value: Int) -> Int {
+#if os(Windows)
+        return Int((Double(value) * (2.0 / 3.0)).rounded())
+#else
+        return value
+#endif
+    }
+
+    private func paletteMetric(_ value: Double) -> Double {
+#if os(Windows)
+        // The floating overlay bypasses the root's WinUI viewport correction.
+        // Two-thirds restores the normalized Linux geometry at 125% DPI.
+        return value * (2.0 / 3.0)
+#else
+        return value
+#endif
+    }
+
+    private var paletteSearchVerticalPadding: Int {
+#if os(Windows)
+        return 2
+#else
+        return 12
+#endif
+    }
+
+    private var paletteSessionVerticalPadding: Int {
+#if os(Windows)
+        return 0
+#else
+        return 8
+#endif
+    }
+
     init(
         store: T4SessionStore,
         theme: ThemeStore,
@@ -183,8 +217,14 @@ struct T4PaletteView: View {
                 .onTapGesture { close() }
 
             panel
+#if os(Windows)
+                // A fixed, corrected extent avoids WinUI's max-only frame
+                // expansion while retaining the Linux panel proportions.
+                .frame(width: paletteMetric(520.0), height: paletteMetric(420.0))
+#else
                 .frame(maxWidth: 520, maxHeight: 420)
-                .padding(.horizontal, 40)
+#endif
+                .padding(.horizontal, paletteMetric(40))
         }
         .onAppear {
             query = ""
@@ -201,7 +241,7 @@ struct T4PaletteView: View {
     private var panel: some View {
         VStack(spacing: 0) {
             searchField
-            Rectangle().fill(t.line).frame(height: 1)
+            Rectangle().fill(t.line).frame(height: paletteMetric(1.0))
             results
         }
         // LINUX-GAP: .glass(t, 18, panel: true, border: true) →
@@ -210,14 +250,16 @@ struct T4PaletteView: View {
         // eats clicks; the search field inside could never take focus).
         .background {
             ZStack {
-                RoundedRectangle(cornerRadius: 18).fill(t.glassBorder)
-                RoundedRectangle(cornerRadius: 18).fill(t.panel).padding(1)
+                RoundedRectangle(cornerRadius: paletteMetric(18)).fill(t.glassBorder)
+                RoundedRectangle(cornerRadius: paletteMetric(18))
+                    .fill(t.panel)
+                    .padding(paletteMetric(1))
             }
         }
     }
 
     private var searchField: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: paletteMetric(10)) {
             // LINUX-GAP: magnifyingglass SF Symbol → "⌕" glyph
             Text("⌕")
                 .font(.system(size: 15, weight: .semibold))
@@ -229,8 +271,8 @@ struct T4PaletteView: View {
                 T4TextButton("✕") { query = "" }
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, paletteMetric(16))
+        .padding(.vertical, paletteSearchVerticalPadding)
     }
 
     private var results: some View {
@@ -252,7 +294,7 @@ struct T4PaletteView: View {
                     emptyState
                 }
             }
-            .padding(.vertical, 6)
+            .padding(.vertical, paletteMetric(6))
         }
     }
 
@@ -261,9 +303,9 @@ struct T4PaletteView: View {
             .font(.system(size: 11, weight: .bold))
             .foregroundColor(t.txtGhost)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 16)
-            .padding(.top, 10)
-            .padding(.bottom, 4)
+            .padding(.horizontal, paletteMetric(16))
+            .padding(.top, paletteMetric(10))
+            .padding(.bottom, paletteMetric(4))
             .background(t.panel)
     }
 
@@ -287,11 +329,11 @@ struct T4PaletteView: View {
     }
 
     private func sessionRow(_ s: SessionRef, selected: Bool) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: paletteMetric(12)) {
             Circle()
                 .fill(statusColor(s.status))
-                .frame(width: 8, height: 8)
-            VStack(alignment: .leading, spacing: 2) {
+                .frame(width: paletteMetric(8.0), height: paletteMetric(8.0))
+            VStack(alignment: .leading, spacing: paletteMetric(2)) {
                 Text(s.title)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(t.txt)
@@ -306,30 +348,30 @@ struct T4PaletteView: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(t.txtLabel)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.horizontal, paletteMetric(16))
+        .padding(.vertical, paletteSessionVerticalPadding)
     }
 
     private func actionRow(_ a: PaletteAction, selected: Bool) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: paletteMetric(12)) {
             Text(a.glyph)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(t.txtMuted)
-                .frame(width: 18)
+                .frame(width: paletteMetric(18.0))
             Text(a.title)
                 .font(.system(size: 14))
                 .foregroundColor(t.txt)
             Spacer()
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.horizontal, paletteMetric(16))
+        .padding(.vertical, paletteMetric(8))
     }
 
     private var emptyState: some View {
         Text("No matches")
             .font(.system(size: 13))
             .foregroundColor(t.txtGhost)
-            .padding(.vertical, 24)
+            .padding(.vertical, paletteMetric(24))
     }
 
     // MARK: - Helpers

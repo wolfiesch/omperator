@@ -31,7 +31,7 @@ struct T4InboxView: View {
     var body: some View {
         VStack(spacing: 0) {
             // Header (replaces the navigation toolbar + Done item).
-            HStack(spacing: 10) {
+            HStack(spacing: t4PlatformMetric(10)) {
                 Text("Inbox")
                     .lineLimit(1)
                     .font(.system(size: 15, weight: .semibold))
@@ -40,14 +40,14 @@ struct T4InboxView: View {
                 T4TextButton("Done") { isPresented = false }
                     .font(.system(size: 14, weight: .semibold))
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
+            .padding(.horizontal, t4PlatformMetric(20))
+            .padding(.vertical, t4PlatformMetric(14))
 
             Divider(t.line)
 
             if store.attentionSessions.isEmpty {
                 Spacer()
-                VStack(spacing: 10) {
+                VStack(spacing: t4PlatformMetric(10)) {
                     // LINUX-GAP: bell.slash SF Symbol → "⍾" (bell) glyph
                     Text("⍾")
                         .font(.system(size: 28))
@@ -60,7 +60,7 @@ struct T4InboxView: View {
                         .font(.system(size: 12))
                         .foregroundColor(t.txtMuted)
                         .multilineTextAlignment(.center)
-                        .padding(.horizontal, 32)
+                        .padding(.horizontal, t4PlatformMetric(32))
                 }
                 Spacer()
             } else {
@@ -68,8 +68,11 @@ struct T4InboxView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(store.attentionSessions) { item in
                             row(item)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 4)
+                                #if os(Windows)
+                                .frame(height: t4PlatformMetric(43))
+                                #endif
+                                .padding(.horizontal, t4PlatformMetric(14))
+                                .padding(.vertical, t4PlatformMetric(4))
                                 .onTapGesture {
                                     store.select(item.session)
                                     isPresented = false
@@ -77,7 +80,7 @@ struct T4InboxView: View {
                             Divider(t.lineFaint)
                         }
                     }
-                    .padding(.vertical, 6)
+                    .padding(.vertical, t4PlatformMetric(6))
                 }
             }
         }
@@ -92,17 +95,17 @@ struct T4InboxView: View {
     /// reason label + project + updated time below.
     private func row(_ item: T4SessionStore.AttentionSession) -> some View {
         let session = item.session
-        return VStack(alignment: .leading, spacing: 6) {
+        return VStack(alignment: .leading, spacing: t4PlatformMetric(6)) {
             // LINUX-GAP: .firstTextBaseline alignment is unavailable
-            HStack(alignment: .top, spacing: 8) {
+            HStack(alignment: .top, spacing: t4PlatformMetric(8)) {
                 Text(session.title)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(t.txt)
                     .lineLimit(1)
-                Spacer(minLength: 8)
+                Spacer(minLength: t4PlatformMetric(8))
                 StatusPill(status: session.status, theme: t)
             }
-            HStack(spacing: 8) {
+            HStack(spacing: t4PlatformMetric(8)) {
                 Text(item.reasonLabel.uppercased())
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(reasonColor(item.reason))
@@ -116,7 +119,7 @@ struct T4InboxView: View {
                     .foregroundColor(t.txtLabel)
             }
         }
-        .padding(.vertical, 3)
+        .padding(.vertical, t4PlatformMetric(3))
     }
 
     private func reasonColor(_ reason: T4SessionStore.AttentionSession.Reason) -> Color {

@@ -12,10 +12,15 @@ struct T4BrowserPaneView: View {
 
     @State private var activeSessionID = ""
 
-    private var palette: WindowsCorePalette { WindowsCorePalette(theme.effective) }
+    private var t: Theme { theme.t }
     private var fixtureHTML: String? {
         fixtureEnabled ? T4WindowsBrowserFixture.html : nil
     }
+    private var captureFailure: Bool {
+        T4SessionStore.demoMode
+            && ProcessInfo.processInfo.arguments.contains("-T4BrowserFailure")
+    }
+
     private var initialURL: String {
         store.browserURL(for: session.sessionId)
     }
@@ -74,16 +79,12 @@ struct T4BrowserPaneView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider(palette.line)
-            navigationBar
-            Divider(palette.line)
-            statusBar
-            Divider(palette.line)
+            toolbar
+            Divider(t.line)
             browserSurface
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(palette.canvas)
+        .background(t.bg)
         .onAppear {
             activateSessionIfNeeded()
         }
@@ -95,146 +96,108 @@ struct T4BrowserPaneView: View {
         }
     }
 
-    private var header: some View {
-        HStack(spacing: 8) {
-            Text("Browser")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(palette.text)
-            Text(session.title)
-                .font(.system(size: 10))
-                .foregroundColor(palette.textMuted)
-                .lineLimit(1)
-            Spacer()
-            Button("Close") {
-                isPresented.wrappedValue = false
+    private var toolbar: some View {
+        HStack(spacing: 4) {
+            navButton("◀", enabled: snapshot.canGoBack && snapshot.surfaceState == .ready) {
+                issue(.back)
             }
-            ._buttonWidth(54)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(palette.surfaceSubtle)
-    }
+            navButton("▶", enabled: snapshot.canGoForward && snapshot.surfaceState == .ready) {
+                issue(.forward)
+            }
+            navButton("⟳", enabled: snapshot.surfaceState == .ready) {
+                issue(.reload)
+            }
+            navButton("⌂", enabled: snapshot.surfaceState == .ready) {
+                issue(.navigate(initialURL))
+            }
 
-    private var navigationBar: some View {
-        HStack(spacing: 5) {
-            Button("‹") { issue(.back) }
-                ._buttonWidth(30)
-                .disabled(!snapshot.canGoBack || snapshot.surfaceState != .ready)
-            Button("›") { issue(.forward) }
-                ._buttonWidth(30)
-                .disabled(!snapshot.canGoForward || snapshot.surfaceState != .ready)
-            Button("↻") { issue(.reload) }
-                ._buttonWidth(30)
-                .disabled(snapshot.surfaceState != .ready)
-            Button("×") { issue(.stop) }
-                ._buttonWidth(30)
-                .disabled(!snapshot.isLoading || snapshot.surfaceState != .ready)
-            TextField("URL", text: address)
-                .onSubmit { issue(.navigate(snapshot.address)) }
-                .padding(.horizontal, 7)
-                .frame(minHeight: 30)
+            TextField("Enter URL", text: address)
+                .font(.term(13))
+                .textContentType(.url)
+                .foregroundColor(t.txt)
+                .padding(4)
                 .background {
-                    RoundedRectangle(cornerRadius: 6).fill(palette.surface)
+                    RoundedRectangle(cornerRadius: t.r).fill(t.glassFill)
                 }
-            Button("Go") { issue(.navigate(snapshot.address)) }
-                ._buttonWidth(38)
+                .onSubmit { issue(.navigate(snapshot.address)) }
+
+            if snapshot.isLoading {
+                ProgressView()
+            }
+
+            T4TextButton("Done") { isPresented.wrappedValue = false }
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(t.interactiveAccent)
         }
-        .font(.system(size: 11, weight: .semibold))
-        .padding(.horizontal, 8)
-        .padding(.vertical, 7)
-        .background(palette.surfaceSubtle)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 5)
+        .background(t.bg)
     }
 
-    private var statusBar: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 7) {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 6, height: 6)
-                Text(statusLabel)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(palette.textMuted)
-                Text(snapshot.title)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(palette.textBody)
-                    .lineLimit(1)
-                Spacer()
-            }
-            if let error = snapshot.errorMessage {
-                Text(error)
-                    .font(.system(size: 9))
-                    .foregroundColor(palette.danger)
-                    .lineLimit(2)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .frame(minHeight: 31)
-        .background(palette.canvas)
+    private func navButton(_ glyph: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        T4TextButton(glyph, action: action)
+            .font(.system(size: 14))
+            .foregroundColor(enabled ? t.txt : t.txtGhost)
+            .disabled(!enabled)
+            .frame(width: 20, height: 20)
     }
+
 
     private var browserSurface: some View {
         ZStack {
-            GeometryReader { geometry in
-                T4WindowsWebView2(bridge: browserModel.surfaceBridge)
-                .frame(width: geometry.size.width, height: geometry.size.height)
+            if !captureFailure {
+                GeometryReader { geometry in
+                    T4WindowsWebView2(bridge: browserModel.surfaceBridge)
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                }
             }
 
-            switch snapshot.surfaceState {
-            case .initializing:
+            if captureFailure {
                 browserMessage(
-                    title: "Starting WebView2",
-                    detail: "Preparing the native browser surface."
+                    title: "Browser unavailable",
+                    detail: "WebView2 could not initialize for this session."
                 )
-            case .unavailable(let message):
-                browserMessage(title: "Browser unavailable", detail: message)
-            case .idle, .ready:
-                EmptyView()
+            } else if let error = snapshot.errorMessage {
+                browserMessage(title: "Browser error", detail: error)
+            } else {
+                switch snapshot.surfaceState {
+                case .initializing:
+                    browserMessage(
+                        title: "Starting WebView2",
+                        detail: "Preparing the native browser surface."
+                    )
+                case .unavailable(let message):
+                    browserMessage(title: "Browser unavailable", detail: message)
+                case .idle, .ready:
+                    EmptyView()
+                }
             }
         }
         .frame(minHeight: 220, maxHeight: .infinity)
-        .background(palette.canvas)
+        .background(t.bg2)
     }
 
     private func browserMessage(title: String, detail: String) -> some View {
         VStack(spacing: 7) {
             Text(title)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(palette.text)
+                .foregroundColor(t.txt)
             Text(detail)
                 .font(.system(size: 10))
-                .foregroundColor(palette.textMuted)
+                .foregroundColor(t.txtMuted)
                 .multilineTextAlignment(.center)
         }
         .padding(16)
         .frame(maxWidth: 300)
         .background {
-            RoundedRectangle(cornerRadius: 10).fill(palette.surface)
+            RoundedRectangle(cornerRadius: 10).fill(t.panel)
         }
     }
 
-    private var statusLabel: String {
-        if snapshot.errorMessage != nil { return "ERROR" }
-        if snapshot.isLoading { return "LOADING" }
-        switch snapshot.surfaceState {
-        case .idle: return "IDLE"
-        case .initializing: return "STARTING"
-        case .ready: return "READY"
-        case .unavailable: return "UNAVAILABLE"
-        }
-    }
 
-    private var statusColor: Color {
-        if snapshot.errorMessage != nil { return palette.danger }
-        if snapshot.isLoading { return palette.working }
-        switch snapshot.surfaceState {
-        case .idle, .initializing: return palette.textFaint
-        case .ready: return palette.success
-        case .unavailable: return palette.danger
-        }
-    }
 
     private func activateSessionIfNeeded() {
+        guard !captureFailure else { return }
         if activeSessionID != session.sessionId {
             activeSessionID = session.sessionId
             _ = browserModel.mount(
@@ -250,7 +213,7 @@ struct T4BrowserPaneView: View {
             sessionID: session.sessionId,
             initialURL: snapshot.currentURL,
             fixtureHTML: fixtureHTML,
-            backgroundHex: palette.isDark ? 0x0F0F11 : 0xFFFFFF
+            backgroundHex: theme.effective == .dark ? 0x232136 : 0xFAF4ED
         ))
     }
 

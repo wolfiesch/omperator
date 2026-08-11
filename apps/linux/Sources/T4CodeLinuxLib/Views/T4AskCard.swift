@@ -27,18 +27,54 @@ struct T4AskCard: View {
     @State private var textSent = false
 
     private var t: Theme { theme }
+    private var cardSpacing: Int {
+#if os(Windows)
+        return 4
+#else
+        return 10
+#endif
+    }
+    private var cardPadding: Int {
+#if os(Windows)
+        return 7
+#else
+        return 12
+#endif
+    }
+    private var headerTextSpacing: Int {
+#if os(Windows)
+        return -2
+#else
+        return 2
+#endif
+    }
+    private var optionSpacing: Int {
+#if os(Windows)
+        return 5
+#else
+        return 7
+#endif
+    }
+    private var optionVerticalPadding: Int {
+#if os(Windows)
+        return 3
+#else
+        return 9
+#endif
+    }
+
     private var isEditor: Bool { ask.request.options.isEmpty }
     private var isPlan: Bool {
         ask.request.question?.localizedCaseInsensitiveContains("plan") == true
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: cardSpacing) {
             header
             if isEditor { editor } else { options }
             if isEditor { actions }
         }
-        .padding(12)
+        .padding(cardPadding)
         .glass(t, 16, active: true)
     }
 
@@ -46,7 +82,7 @@ struct T4AskCard: View {
         HStack(alignment: .top, spacing: 7) {
             Text(isPlan ? "☑" : (isEditor ? "✎" : "?"))
                 .font(.system(size: 14)).foregroundColor(t.accent)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: headerTextSpacing) {
                 Text(isPlan ? "PLAN REVIEW" : (isEditor ? "INPUT REQUESTED" : "ASK"))
                     .font(.labl(9)).foregroundColor(t.accent)
                 if let question = ask.request.question, !question.isEmpty {
@@ -58,7 +94,7 @@ struct T4AskCard: View {
     }
 
     private var options: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: optionSpacing) {
             ForEach(ask.request.options) { option in
                 optionRow(option)
             }
@@ -77,7 +113,7 @@ struct T4AskCard: View {
                 .foregroundColor(chosen ? t.accent : t.txtBody)
             Spacer()
         }
-        .padding(.horizontal, 11).padding(.vertical, 9)
+        .padding(.horizontal, 11).padding(.vertical, optionVerticalPadding)
         .background {
             // Ring lives in the background — an overlay stroke would sit on
             // top of the tap gesture and eat the click.

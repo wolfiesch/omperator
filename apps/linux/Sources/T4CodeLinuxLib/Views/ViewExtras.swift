@@ -8,6 +8,25 @@
 //  tokens, matching the macOS fallback (macOS 15) path of GlassBG.
 
 import SwiftCrossUI
+/// Projects Linux layout constants into WinUI DIPs. The authoritative
+/// screenshots are normalized from 1920 to 1600 while WinUI renders at 125%
+/// desktop DPI, so Windows needs two-thirds of each fixed layout metric.
+func t4PlatformMetric(_ value: Int) -> Int {
+#if os(Windows)
+    Int((Double(value) * (2.0 / 3.0)).rounded())
+#else
+    value
+#endif
+}
+
+func t4PlatformMetric(_ value: Double) -> Double {
+#if os(Windows)
+    value * (2.0 / 3.0)
+#else
+    value
+#endif
+}
+
 
 extension View {
     /// Glass card: translucent fill (panel for popovers, glassFill otherwise),

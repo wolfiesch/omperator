@@ -22,20 +22,20 @@ struct ComposerTips: View {
 
     var body: some View {
         let tip = tips[i % tips.count]
-        HStack(spacing: 8) {
+        HStack(spacing: t4PlatformMetric(8)) {
             Text(tip.icon)
                 .font(.system(size: 12))
                 .foregroundColor(t.txtGhost)
-                .frame(width: 16)
+                .frame(width: t4PlatformMetric(16))
             Text(tip.text)
                 .font(.bodyF(12))
                 .foregroundColor(t.txtMuted)
                 .lineLimit(1)
             Spacer()
         }
-        .padding(.horizontal, 10)
-        .padding(.top, 7)
-        .padding(.bottom, 8)
+        .padding(.horizontal, t4PlatformMetric(10))
+        .padding(.top, t4PlatformMetric(7))
+        .padding(.bottom, t4PlatformMetric(8))
         .overlay(alignment: .top) { Rectangle().fill(t.lineFaint).frame(height: 1) }
         .task {
             // LINUX-GAP: macOS cycles on a Combine timer; a task loop is the

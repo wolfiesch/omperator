@@ -45,6 +45,11 @@ struct T4SessionDetailView: View {
     private let transcriptModel: T4TranscriptProjectionModel
     private let promptModel: T4PromptLeaseModel
     private let inboxPresented: Binding<Bool>?
+#if os(Windows)
+    private let browserModel: T4WindowsBrowserWorkspaceModel
+    private let browserFixtureEnabled: Bool
+    private let terminalWorkspace: T4WindowsTerminalWorkspaceModel
+#endif
     @State private var draft = ""
     @State private var sending = false
     @State private var showFacts = false
@@ -60,23 +65,76 @@ struct T4SessionDetailView: View {
     @State private var ownershipBusy = false
 #if os(Windows)
     @Environment(\.t4WindowWidth) private var windowWidth
+    @Environment(\.t4WindowHeight) private var windowHeight
 #endif
     private var t: Theme { theme.t }
+#if os(Windows)
+    private var terminalDrawerHeight: Double {
+        if windowWidth < 800 { return 180 }
+        if windowWidth < 1_100 { return 240 }
+        return 330
+    }
 
+
+
+    private var transcriptViewportHeight: Double {
+        var reserved = 74.0
+        if showTerminal {
+            // WinUI's drawer chrome realizes seven points taller than its
+            // nominal frame; reserve the realized extent so lower surfaces
+            // keep the Linux vertical origin.
+            reserved += terminalDrawerHeight + 7
+        }
+        if !store.todoPhases(for: session.sessionId).isEmpty {
+            // The compact WinUI plan viewport realizes at 222 DIPs.
+            reserved += planExpanded ? 222 : 34
+        }
+        if let ask = promptModel.pendingAsk, ask.sessionId == session.sessionId {
+            reserved += 140
+        }
+        return max(windowHeight - reserved, 160)
+    }
+#endif
+    private var lowerSurfaceHorizontalPadding: Int {
+#if os(Windows)
+        return 6
+#else
+        return 12
+#endif
+    }
+
+#if os(Windows)
     init(
         session: SessionRef,
         store: T4SessionStore,
         theme: ThemeStore,
-        inboxPresented: Binding<Bool>? = nil
+        inboxPresented: Binding<Bool>? = nil,
+        browserModel: T4WindowsBrowserWorkspaceModel,
+        browserFixtureEnabled: Bool,
+        terminalWorkspace: T4WindowsTerminalWorkspaceModel
     ) {
         self.session = session
         self.store = store
         self.theme = theme
         self.inboxPresented = inboxPresented
+        self.browserModel = browserModel
+        self.browserFixtureEnabled = browserFixtureEnabled
+        self.terminalWorkspace = terminalWorkspace
         self.connectionModel = store.connectionModel
         self.transcriptModel = store.transcriptModel
         self.promptModel = store.promptModel
     }
+#else
+    init(session: SessionRef, store: T4SessionStore, theme: ThemeStore) {
+        self.session = session
+        self.store = store
+        self.theme = theme
+        self.inboxPresented = nil
+        self.connectionModel = store.connectionModel
+        self.transcriptModel = store.transcriptModel
+        self.promptModel = store.promptModel
+    }
+#endif
 
     private func sheetBinding(_ sheet: ActiveSheet) -> Binding<Bool> {
         Binding(get: { activeSheet == sheet }, set: { if !$0 { activeSheet = nil } })
@@ -93,12 +151,15 @@ struct T4SessionDetailView: View {
 
     private func paneWidth(_ preferred: Double) -> Double {
 #if os(Windows)
-        // WINDOWS-GAP: WinUIBackend preserves fixed child widths instead of
-        // negotiating the two sidebars at the 900-point minimum window.
-        if windowWidth < 1000 { return min(preferred, 300) }
-        if windowWidth < 1200 { return min(preferred, 360) }
-#endif
+        // Windows renders fixed SwiftCrossUI frames at the monitor's 125%
+        // raster scale. Two-thirds lands on Linux's 5:6 normalized width.
+        let scaled = preferred * (2.0 / 3.0)
+        if windowWidth < 1_000 { return min(scaled, 240) }
+        if windowWidth < 1_200 { return min(scaled, 300) }
+        return scaled
+#else
         return preferred
+#endif
     }
 
     private var showsHeaderModel: Bool {
@@ -118,7 +179,7 @@ struct T4SessionDetailView: View {
         // (SwiftCrossUI's SplitView is internal to the framework, so a
         // draggable divider is a later improvement; defaults are sensible).
         if let sheet = activeSheet {
-            HStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 0) {
                 detailColumn
                 Divider(t.line)
                 paneSidebar(sheet)
@@ -153,35 +214,45 @@ struct T4SessionDetailView: View {
         VStack(spacing: 0) {
             // The ownership state lives in the composer (below), not a pinned
             // banner — the card scrolled away and duplicated the message.
+#if os(Windows)
+            // WINDOWS-FIX: WinUI otherwise measures the vertical ScrollView at
+            // its full transcript height, which pushes the composer below the
+            // window and lets unwrapped rows widen the whole detail column.
+            GeometryReader { geometry in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 9) {
+                        transcriptContent
+                    }
+                    .padding()
+                    .frame(width: geometry.size.width)
+                }
+                .t4AnchorToBottom(contentID: session.sessionId)
+                .environment(\.scrollAnchorsToBottom, true)
+                .frame(width: geometry.size.width, height: geometry.size.height)
+            }
+            .frame(height: transcriptViewportHeight)
+            T4WindowsTerminalDrawer(
+                session: session,
+                store: store,
+                theme: theme,
+                workspace: terminalWorkspace,
+                isOpen: showTerminal
+            )
+#else
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    loadEarlierSection
-                    header
-                    if let challenge = promptModel.pendingConfirmation {
-                        confirmationBanner(challenge)
-                    }
-                    if showFacts { facts }
-                    Divider()
-                    T4TranscriptView(entries: store.transcript(for: session.sessionId),
-                                     liveTurn: transcriptModel.liveTurns[session.sessionId],
-                                     streamingMessage: transcriptModel.streamingMessages[session.sessionId],
-                                     liveTools: transcriptModel.liveTools[session.sessionId] ?? LiveToolProjection(),
-                                     theme: t)
-#if !os(Windows)
+                    transcriptContent
                     pendingAskCard
-#endif
                 }
                 .padding()
             }
-            // Stay pinned to the newest transcript content while the
-            // scrollbar is near the bottom; scrolling up releases the pin,
-            // scrolling back near the bottom re-engages it.
             .environment(\.scrollAnchorsToBottom, true)
             T4TerminalDrawer(session: session, store: store, theme: theme, isOpen: showTerminal)
+#endif
             // Floating glass: plan strip + composer hover over the
             // transcript. macOS uses `.safeAreaInset(edge: .bottom)`;
             // Linux docks them in the outer column below the drawer.
-            VStack(spacing: 8) {
+            VStack(spacing: t4PlatformMetric(8)) {
 #if os(Windows)
                 // WINDOWS-GAP: WinUIBackend has no transcript bottom anchor;
                 // pin live asks above the composer so they cannot open off-screen.
@@ -190,9 +261,25 @@ struct T4SessionDetailView: View {
                 planStripSection
                 composer
             }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 6)
+            .padding(.horizontal, lowerSurfaceHorizontalPadding)
+            .padding(.bottom, t4PlatformMetric(6))
         }
+    }
+
+    @ViewBuilder
+    private var transcriptContent: some View {
+        loadEarlierSection
+        header
+        if let challenge = promptModel.pendingConfirmation {
+            confirmationBanner(challenge)
+        }
+        if showFacts { facts }
+        Divider()
+        T4TranscriptView(entries: store.transcript(for: session.sessionId),
+                         liveTurn: transcriptModel.liveTurns[session.sessionId],
+                         streamingMessage: transcriptModel.streamingMessages[session.sessionId],
+                         liveTools: transcriptModel.liveTools[session.sessionId] ?? LiveToolProjection(),
+                         theme: t)
     }
 
     @ViewBuilder
@@ -228,16 +315,38 @@ struct T4SessionDetailView: View {
             T4SettingsPane(store: store, theme: theme, isPresented: sheetBinding(.settings))
                 .frame(width: paneWidth(400))
         case .browser:
+#if os(Windows)
+            T4BrowserPaneView(
+                session: session,
+                store: store,
+                theme: theme,
+                browserModel: browserModel,
+                fixtureEnabled: browserFixtureEnabled,
+                isPresented: sheetBinding(.browser)
+            )
+            .frame(width: paneWidth(620))
+#else
             T4BrowserPaneView(
                 session: session,
                 store: store,
                 theme: theme,
                 isPresented: sheetBinding(.browser)
             )
-            .frame(width: 620)
+            .frame(width: paneWidth(620))
+#endif
         case .searchDiff:
+#if os(Windows)
+            VStack(spacing: 0) {
+                Spacer()
+                T4SearchPane(session: session, store: store, theme: theme, isPresented: sheetBinding(.searchDiff))
+                    .frame(width: paneWidth(440))
+                Spacer()
+            }
+            .frame(maxHeight: .infinity)
+#else
             T4SearchPane(session: session, store: store, theme: theme, isPresented: sheetBinding(.searchDiff))
                 .frame(width: paneWidth(440))
+#endif
         }
     }
 
@@ -260,8 +369,10 @@ struct T4SessionDetailView: View {
     /// -T4ShowAsk: demo ask pinned to the current demo session.
     /// Live launches never synthesize host input.
     private func applyAskSeam() {
-        if T4SessionStore.demoMode,
-           ProcessInfo.processInfo.arguments.contains("-T4ShowAsk") {
+#if os(Windows)
+        guard T4SessionStore.demoMode else { return }
+#endif
+        if ProcessInfo.processInfo.arguments.contains("-T4ShowAsk") {
             promptModel.pendingAsk = T4SessionStore.PendingAsk(
                 sessionId: session.sessionId,
                 request: AskRequest(askId: "demo-ask", question: "Apply the plan and make these changes?",
@@ -479,27 +590,35 @@ struct T4SessionDetailView: View {
             }
             .font(.system(size: 16))
             .foregroundColor(showFacts ? t.accent : t.txtMuted)
-            .frame(width: 34, height: 34)
+            .frame(width: 34, height: toolbarButtonHeight)
             T4TextButton("Files") {
                 openSheet(.files)
             }
             .font(.system(size: 11))
             .foregroundColor(t.txtMuted)
-            .frame(width: 34, height: 34)
+            .frame(width: 34, height: toolbarButtonHeight)
             T4TextButton(showTerminal ? "❯_" : "❯") {
                 withAnimation { showTerminal.toggle() }
             }
             .font(.system(size: 15))
             .foregroundColor(showTerminal ? t.cBash : t.txtMuted)
-            .frame(width: 34, height: 34)
+            .frame(width: 34, height: toolbarButtonHeight)
             T4TextButton("Web") {
                 openSheet(.browser)
             }
             .font(.system(size: 11))
             .foregroundColor(t.txtMuted)
-            .frame(width: 34, height: 34)
+            .frame(width: 34, height: toolbarButtonHeight)
         }
     }
+    private var toolbarButtonHeight: Double {
+#if os(Windows)
+        26
+#else
+        34
+#endif
+    }
+
 
     private var facts: some View {
         let rows: [(String, String)] = [
@@ -532,7 +651,7 @@ struct T4SessionDetailView: View {
             if let control = session.sessionControl {
                 ownershipComposer(control)
             } else {
-                HStack(spacing: 4) {
+                HStack(spacing: t4PlatformMetric(4)) {
                     // LINUX-GAP: macOS shows a PhotosPicker (paperclip) here and
                     // a dictation mic after the field — no PhotosPicker or
                     // Dictation on Linux.
@@ -543,7 +662,8 @@ struct T4SessionDetailView: View {
                         .onSubmit(perform: send)
                     sendOrStop
                 }
-                .padding(.horizontal, 8).padding(.vertical, 5)
+                .padding(.horizontal, t4PlatformMetric(8))
+                .padding(.vertical, t4PlatformMetric(5))
             }
             if draft.isEmpty && session.sessionControl == nil {
                 ComposerTips(t: t)
@@ -558,7 +678,7 @@ struct T4SessionDetailView: View {
     @ViewBuilder
     private func ownershipComposer(_ control: SessionControlState) -> some View {
         let presentation = control.t4Presentation
-        HStack(spacing: 10) {
+        HStack(spacing: t4PlatformMetric(10)) {
             Text("●")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(t.cAdvisor)
@@ -595,8 +715,8 @@ struct T4SessionDetailView: View {
                 .disabled(ownershipBusy)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, t4PlatformMetric(12))
+        .padding(.vertical, t4PlatformMetric(10))
     }
 
     private var placeholder: String {
@@ -613,7 +733,7 @@ struct T4SessionDetailView: View {
             }
             .font(.system(size: 15))
             .foregroundColor(t.txt)
-            .frame(width: 34, height: 34)
+            .frame(width: t4PlatformMetric(34), height: t4PlatformMetric(34))
         } else {
             T4TextButton("➤") {
                 send()
@@ -621,7 +741,7 @@ struct T4SessionDetailView: View {
             .font(.system(size: 20))
             .foregroundColor(canSend ? t.accent : t.txtGhost)
             .disabled(!canSend)
-            .frame(width: 34, height: 34)
+            .frame(width: t4PlatformMetric(34), height: t4PlatformMetric(34))
         }
     }
 

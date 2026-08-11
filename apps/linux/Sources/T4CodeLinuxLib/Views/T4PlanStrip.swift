@@ -29,6 +29,14 @@ struct T4PlanStrip: View {
         return all.first { $0.status == "in_progress" }?.content ?? all.first { $0.status == "pending" }?.content
     }
 
+    private var headerVerticalPadding: Int {
+#if os(Windows)
+        return 5
+#else
+        return 10
+#endif
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 7) {
@@ -47,7 +55,7 @@ struct T4PlanStrip: View {
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(t.txtLabel)
             }
-            .padding(.horizontal, 13).padding(.vertical, 10)
+            .padding(.horizontal, 13).padding(.vertical, headerVerticalPadding)
             .onTapGesture { withAnimation { expanded.toggle() } }
             if expanded {
                 Rectangle().fill(t.lineFaint).frame(height: 1)
@@ -57,7 +65,7 @@ struct T4PlanStrip: View {
                         .padding(.top, 8)
                         .padding(.bottom, 12)
                 }
-                .frame(maxHeight: 260)
+                .frame(maxHeight: t4PlatformMetric(260))
             }
         }
         .glass(t, 16, panel: true)

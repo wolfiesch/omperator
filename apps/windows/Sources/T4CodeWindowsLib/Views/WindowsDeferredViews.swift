@@ -49,11 +49,25 @@ struct T4ConnectView: View {
     @State private var isWorking = false
 
     private var t: Theme { theme.t }
+    private var visibleSavedHosts: [WindowsSavedHostSummary] {
+        if store.savedHosts.isEmpty,
+           T4SessionStore.demoMode,
+           ProcessInfo.processInfo.arguments.contains("-T4ShowSavedHosts") {
+            return [
+                WindowsSavedHostSummary(
+                    id: "capture-saved-host",
+                    endpoint: "wss://studio-host.example.test/v1/ws"
+                )
+            ]
+        }
+        return store.savedHosts
+    }
+
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: t4PlatformMetric(10)) {
+            HStack(spacing: t4PlatformMetric(8)) {
+                VStack(alignment: .leading, spacing: t4PlatformMetric(2)) {
                     Text("Hosts")
                         .font(.disp(18))
                         .foregroundColor(t.txt)
@@ -62,7 +76,7 @@ struct T4ConnectView: View {
                         .foregroundColor(t.txtMuted)
                 }
                 Spacer()
-                Button("Close") {
+                T4TextButton("Close") {
                     isPresented.wrappedValue = false
                 }
                 .font(.bodyF(12))
@@ -72,7 +86,7 @@ struct T4ConnectView: View {
             Divider(t.line)
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: t4PlatformMetric(12)) {
                     savedHosts
                     Divider(t.lineFaint)
                     pairForm
@@ -87,8 +101,8 @@ struct T4ConnectView: View {
                     .multilineTextAlignment(.leading)
             }
         }
-        .padding(18)
-        .frame(width: 560, height: 620)
+        .padding(t4PlatformMetric(18))
+        .frame(width: t4PlatformMetric(600), height: t4PlatformMetric(680))
         .background(t.bg2)
         .onAppear {
             guard let pendingPair else { return }
@@ -98,46 +112,46 @@ struct T4ConnectView: View {
     }
 
     private var savedHosts: some View {
-        VStack(alignment: .leading, spacing: 9) {
+        VStack(alignment: .leading, spacing: t4PlatformMetric(8)) {
             Text("Saved hosts")
                 .font(.bodyF(13))
                 .foregroundColor(t.txt)
-            if store.savedHosts.isEmpty {
+            if visibleSavedHosts.isEmpty {
                 Text("No saved hosts yet.")
                     .font(.bodyF(12))
                     .foregroundColor(t.txtMuted)
             } else {
-                ForEach(store.savedHosts) { host in
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 8) {
+                ForEach(visibleSavedHosts) { host in
+                    VStack(alignment: .leading, spacing: t4PlatformMetric(8)) {
+                        HStack(spacing: t4PlatformMetric(8)) {
                             Circle()
                                 .fill(store.activeSavedHostID == host.id ? t.diffAdd : t.txtGhost)
-                                .frame(width: 7, height: 7)
+                                .frame(width: t4PlatformMetric(7), height: t4PlatformMetric(7))
                             Text(host.endpoint)
                                 .font(.term(11))
                                 .foregroundColor(t.txtBody)
                                 .lineLimit(1)
                             Spacer()
                         }
-                        HStack(spacing: 12) {
-                            Button("Reconnect") {
+                        HStack(spacing: t4PlatformMetric(12)) {
+                            T4TextButton("Reconnect") {
                                 reconnect(host.id)
                             }
                             .font(.bodyF(12))
                             .foregroundColor(t.accent)
-                            .disabled(isWorking)
-                            Button("Forget") {
+                            .disabled(isWorking || host.id == "capture-saved-host")
+                            T4TextButton("Forget") {
                                 forget(host.id)
                             }
                             .font(.bodyF(12))
                             .foregroundColor(t.diffDel)
-                            .disabled(isWorking)
+                            .disabled(isWorking || host.id == "capture-saved-host")
                             Spacer()
                         }
                     }
-                    .padding(10)
+                    .padding(t4PlatformMetric(8))
                     .background {
-                        RoundedRectangle(cornerRadius: 9)
+                        RoundedRectangle(cornerRadius: t4PlatformMetric(8))
                             .fill(t.bg)
                     }
                 }
@@ -146,39 +160,39 @@ struct T4ConnectView: View {
     }
 
     private var pairForm: some View {
-        VStack(alignment: .leading, spacing: 9) {
+        VStack(alignment: .leading, spacing: t4PlatformMetric(8)) {
             Text("Pair a new host")
                 .font(.bodyF(13))
                 .foregroundColor(t.txt)
             TextField("Host or ws(s) endpoint", text: $endpoint)
                 .font(.bodyF(12))
-                .padding(9)
+                .padding(t4PlatformMetric(6))
                 .background {
-                    RoundedRectangle(cornerRadius: 8).fill(t.bg)
+                    RoundedRectangle(cornerRadius: t4PlatformMetric(8)).fill(t.bg)
                 }
             SecureField("6-digit pairing code", text: $pairingCode)
                 .font(.bodyF(12))
-                .padding(9)
+                .padding(t4PlatformMetric(6))
                 .background {
-                    RoundedRectangle(cornerRadius: 8).fill(t.bg)
+                    RoundedRectangle(cornerRadius: t4PlatformMetric(8)).fill(t.bg)
                 }
             TextField("Device name", text: $deviceName)
                 .font(.bodyF(12))
-                .padding(9)
+                .padding(t4PlatformMetric(6))
                 .background {
-                    RoundedRectangle(cornerRadius: 8).fill(t.bg)
+                    RoundedRectangle(cornerRadius: t4PlatformMetric(8)).fill(t.bg)
                 }
             TextField("TLS certificate fingerprint for wss", text: $certificatePin)
                 .font(.term(11))
-                .padding(9)
+                .padding(t4PlatformMetric(6))
                 .background {
-                    RoundedRectangle(cornerRadius: 8).fill(t.bg)
+                    RoundedRectangle(cornerRadius: t4PlatformMetric(8)).fill(t.bg)
                 }
             Text("The device token stays in Windows Credential Manager and is never shown here.")
                 .font(.bodyF(11))
                 .foregroundColor(t.txtMuted)
-            HStack(spacing: 10) {
-                Button(isWorking ? "Connecting\u{2026}" : "Pair and connect") {
+            HStack(spacing: t4PlatformMetric(8)) {
+                T4TextButton(isWorking ? "Connecting\u{2026}" : "Pair and connect") {
                     pair()
                 }
                 .font(.bodyF(12))

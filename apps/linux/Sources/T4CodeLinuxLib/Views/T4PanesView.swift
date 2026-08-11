@@ -81,7 +81,7 @@ struct T4UsagePane: View {
     /// Title + leading refresh (macOS toolbar's leading ToolbarItem) and
     /// trailing Done (macOS toolbar's trailing ToolbarItem).
     private func paneHeader(title: String) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: t4PlatformMetric(8)) {
             T4TextButton("⟳") { Task { await load() } }
                 .disabled(loading || !store.connected)
                 .font(.system(size: 13, weight: .semibold))
@@ -93,8 +93,8 @@ struct T4UsagePane: View {
             T4TextButton("Done") { isPresented = false }
                 .font(.system(size: 14, weight: .semibold))
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, t4PlatformMetric(12))
+        .padding(.vertical, t4PlatformMetric(8))
     }
 
     /// Flattened row list mirroring the macOS section structure: generated
@@ -161,10 +161,13 @@ struct T4UsagePane: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        #if os(Windows)
+        .environment(\.listRowVerticalPadding, 0)
+        #endif
     }
 
     private func limitRow(_ limit: UsageLimit) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: t4PlatformMetric(4)) {
             HStack {
                 Text(limit.label)
                     .font(.system(size: 13, weight: .semibold))
@@ -176,7 +179,7 @@ struct T4UsagePane: View {
                         .foregroundColor(statusColor(status))
                 }
             }
-            HStack(spacing: 6) {
+            HStack(spacing: t4PlatformMetric(6)) {
                 Text(amountLabel(limit.amount))
                     .font(.system(size: 12))
                     .foregroundColor(t.txtBody)
@@ -192,7 +195,7 @@ struct T4UsagePane: View {
                 Spacer()
                 if let frac = limit.amount.usedFraction {
                     ProgressBar(value: frac, tint: t.accent, track: t.lineFaint)
-                        .frame(width: 64, height: 4)
+                        .frame(width: t4PlatformMetric(64), height: t4PlatformMetric(4))
                 }
             }
             if let window = limit.window {
@@ -201,15 +204,15 @@ struct T4UsagePane: View {
                     .foregroundColor(t.txtLabel)
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, t4PlatformMetric(2))
     }
 
     private func capacityRow(_ provider: String, _ window: UsageCapacityWindow) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: t4PlatformMetric(4)) {
             Text("\(provider) · \(window.window)")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(t.txt)
-            HStack(spacing: 6) {
+            HStack(spacing: t4PlatformMetric(6)) {
                 Text("\(Int(window.usedAccounts))/\(window.accounts)")
                     .font(.system(size: 12))
                     .foregroundColor(t.txtBody)
@@ -219,10 +222,10 @@ struct T4UsagePane: View {
                 Spacer()
                 ProgressBar(value: window.accounts > 0 ? window.usedAccounts / Double(window.accounts) : 0,
                             tint: t.cTask, track: t.lineFaint)
-                    .frame(width: 64, height: 4)
+                    .frame(width: t4PlatformMetric(64), height: t4PlatformMetric(4))
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, t4PlatformMetric(2))
     }
 
     private func load() async {
@@ -338,7 +341,7 @@ struct T4ReviewPane: View {
     /// Title + leading refresh (macOS toolbar's leading ToolbarItem, disabled
     /// while loading, disconnected, or with no review frame) and trailing Done.
     private var paneHeader: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: t4PlatformMetric(8)) {
             T4TextButton("⟳") { Task { await load() } }
                 .disabled(loading || !store.connected || reviews.isEmpty)
                 .font(.system(size: 13, weight: .semibold))
@@ -351,8 +354,8 @@ struct T4ReviewPane: View {
             T4TextButton("Done") { isPresented = false }
                 .font(.system(size: 14, weight: .semibold))
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, t4PlatformMetric(12))
+        .padding(.vertical, t4PlatformMetric(8))
     }
 
     /// Flattened row list: meta rows (Review/Status/Path), then the findings
@@ -396,8 +399,8 @@ struct T4ReviewPane: View {
         let message = finding.string("message") ?? ""
         let line = finding.number("line").map { Int($0) }
         let path = finding.string("path")
-        return VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
+        return VStack(alignment: .leading, spacing: t4PlatformMetric(4)) {
+            HStack(spacing: t4PlatformMetric(6)) {
                 Text(severity)
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(severityColor(severity))
@@ -418,7 +421,7 @@ struct T4ReviewPane: View {
                 .font(.system(size: 13))
                 .foregroundColor(t.txt)
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, t4PlatformMetric(2))
     }
 
     private func load() async {
@@ -496,10 +499,13 @@ struct T4ArtifactsPane: View {
                     artifactRow(item.descriptor)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                #if os(Windows)
+                .environment(\.listRowVerticalPadding, 0)
+                #endif
             }
             if let error {
                 paneError(error, t)
-                    .padding(.bottom, 12)
+                    .padding(.bottom, t4PlatformMetric(12))
             }
         }
         .background(t.bg)
@@ -508,7 +514,7 @@ struct T4ArtifactsPane: View {
     /// Title + trailing Done (macOS toolbar; the artifacts pane has no
     /// refresh button).
     private var paneHeader: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: t4PlatformMetric(8)) {
             Spacer()
             Text("Artifacts")
                     .lineLimit(1)
@@ -518,12 +524,12 @@ struct T4ArtifactsPane: View {
             T4TextButton("Done") { isPresented = false }
                 .font(.system(size: 14, weight: .semibold))
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, t4PlatformMetric(12))
+        .padding(.vertical, t4PlatformMetric(8))
     }
 
     private var emptyState: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: t4PlatformMetric(10)) {
             // LINUX-GAP: Image(systemName: "paperclip") — text glyph stand-in.
             Text("❖")
                 .font(.system(size: 28))
@@ -535,21 +541,21 @@ struct T4ArtifactsPane: View {
                 .font(.system(size: 12))
                 .foregroundColor(t.txtMuted)
                 .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
+                .padding(.horizontal, t4PlatformMetric(32))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func artifactRow(_ d: ArtifactDescriptor) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: t4PlatformMetric(8)) {
             // macOS wraps the row in a Button with a custom label; SwiftCrossUI
             // Button takes a String label only, so the whole row is tappable.
-            HStack(spacing: 8) {
+            HStack(spacing: t4PlatformMetric(8)) {
                 // LINUX-GAP: Image(systemName: kindIcon(d.kind)) — text glyph.
                 Text(kindIcon(d.kind))
                     .font(.system(size: 14))
                     .foregroundColor(kindColor(d.kind))
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: t4PlatformMetric(2)) {
                     Text(d.name ?? "#\(d.artifactId)")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(t.txt)
@@ -575,7 +581,7 @@ struct T4ArtifactsPane: View {
                 preview(for: d)
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, t4PlatformMetric(2))
     }
 
     @ViewBuilder
@@ -602,10 +608,10 @@ struct T4ArtifactsPane: View {
                     .font(.term(12))
                     .foregroundColor(t.txtBody)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
+                    .padding(t4PlatformMetric(8))
                     // LINUX-GAP: `.background(in: RoundedRectangle(...))` shape
                     // fill — SwiftCrossUI backgrounds take a view instead.
-                    .background(RoundedRectangle(cornerRadius: 8).fill(t.glassFill))
+                    .background(RoundedRectangle(cornerRadius: t4PlatformMetric(8)).fill(t.glassFill))
             } else {
                 Text("Could not decode text content.")
                     .font(.system(size: 12))
@@ -745,7 +751,7 @@ struct T4SettingsPane: View {
     /// Title + leading refresh (macOS toolbar's leading ToolbarItem) and
     /// trailing Done.
     private var paneHeader: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: t4PlatformMetric(8)) {
             T4TextButton("⟳") { Task { await load() } }
                 .disabled(loading || !store.connected)
                 .font(.system(size: 13, weight: .semibold))
@@ -758,21 +764,25 @@ struct T4SettingsPane: View {
             T4TextButton("Done") { isPresented = false }
                 .font(.system(size: 14, weight: .semibold))
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, t4PlatformMetric(12))
+        .padding(.vertical, t4PlatformMetric(8))
     }
 
     private var settingsList: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: t4PlatformMetric(22)) {
                 modelsSection
                 behaviorSection
                 providersSection
                 connectionSection
                 appearanceSection
             }
-            .padding(.horizontal, 18)
+            .padding(.horizontal, t4PlatformMetric(18))
+#if os(Windows)
+            .padding(.vertical, t4PlatformMetric(4))
+#else
             .padding(.vertical, 16)
+#endif
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(t.bg)
@@ -782,22 +792,22 @@ struct T4SettingsPane: View {
     /// card's padding does the grouping work the separators used to fake.
     @ViewBuilder
     private func settingsCard<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: t4PlatformMetric(8)) {
             Text(title.uppercased())
                 .font(.system(size: 11, weight: .semibold))
                 // LINUX-GAP: .tracking(0.8) (no letter-spacing modifier).
                 .foregroundColor(t.txtLabel)
-                .padding(.leading, 4)
-            VStack(alignment: .leading, spacing: 2) { content() }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
+                .padding(.leading, t4PlatformMetric(4))
+            VStack(alignment: .leading, spacing: t4PlatformMetric(2)) { content() }
+                .padding(.horizontal, t4PlatformMetric(14))
+                .padding(.vertical, t4PlatformMetric(10))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(t.bg2)
                 // LINUX-GAP: .clipShape(RoundedRectangle(cornerRadius: 12,
                 // style: .continuous)) → cornerRadius + stroke overlay.
-                .cornerRadius(12)
+                .cornerRadius(t4PlatformMetric(12))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 12)
+                    RoundedRectangle(cornerRadius: t4PlatformMetric(12))
                         .stroke(t.lineFaint, style: StrokeStyle(width: 0.5))
                 }
         }
@@ -807,7 +817,11 @@ struct T4SettingsPane: View {
     @ViewBuilder
     private func cardRow<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         HStack { content() }
+#if os(Windows)
+            .padding(.vertical, t4PlatformMetric(2))
+#else
             .padding(.vertical, 6)
+#endif
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -943,27 +957,27 @@ struct T4SettingsPane: View {
                 .font(.system(size: 14, weight: .semibold))
                 .disabled(saving || newKeyProvider.isEmpty || newKeyValue.isEmpty)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.horizontal, t4PlatformMetric(12))
+            .padding(.vertical, t4PlatformMetric(8))
             Divider(t.line)
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: t4PlatformMetric(12)) {
                 // LINUX-GAP: Form + Section grouping → plain labeled fields.
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: t4PlatformMetric(4)) {
                     Text("Provider")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(t.txtLabel)
                     TextField("e.g. openai", text: $newKeyProvider)
-                        .padding(8)
+                        .padding(t4PlatformMetric(8))
                         .background {
                             RoundedRectangle(cornerRadius: t.r).fill(t.glassFill)
                         }
                 }
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: t4PlatformMetric(4)) {
                     Text("API key")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(t.txtLabel)
                     SecureField("sk-…", text: $newKeyValue)
-                        .padding(8)
+                        .padding(t4PlatformMetric(8))
                         .background {
                             RoundedRectangle(cornerRadius: t.r).fill(t.glassFill)
                         }
@@ -974,10 +988,10 @@ struct T4SettingsPane: View {
                         .foregroundColor(t.cAdvisor)
                 }
             }
-            .padding(14)
+            .padding(t4PlatformMetric(14))
             Spacer()
         }
-        .frame(minWidth: 360, minHeight: 240)
+        .frame(minWidth: t4PlatformMetric(360), minHeight: t4PlatformMetric(240))
         .background(t.bg)
     }
 
@@ -1228,7 +1242,7 @@ private func row(_ key: String, _ value: String, _ t: Theme) -> some View {
         Text(key.uppercased())
             .font(.system(size: 10, weight: .semibold))
             .foregroundColor(t.txtLabel)
-            .frame(width: 96, alignment: .leading)
+            .frame(width: t4PlatformMetric(96), alignment: .leading)
         Text(value)
             .font(.system(size: 13))
             .foregroundColor(t.txtBody)
@@ -1238,7 +1252,7 @@ private func row(_ key: String, _ value: String, _ t: Theme) -> some View {
 /// Inline error banner for a pane (store.lastError style).
 @MainActor
 private func paneError(_ message: String, _ t: Theme) -> some View {
-    VStack(spacing: 6) {
+    VStack(spacing: t4PlatformMetric(6)) {
         // LINUX-GAP: Image(systemName: "exclamationmark.triangle.fill") —
         // text glyph stand-in.
         Text("⚠")
@@ -1248,7 +1262,7 @@ private func paneError(_ message: String, _ t: Theme) -> some View {
             .font(.system(size: 12))
             .foregroundColor(t.txtBody)
             .multilineTextAlignment(.center)
-            .padding(.horizontal, 24)
+            .padding(.horizontal, t4PlatformMetric(24))
     }
 }
 

@@ -31,9 +31,17 @@ struct T4TranscriptView: View {
     private var visibleEntries: ArraySlice<TranscriptEntry> {
         entries.suffix(visibleLimit)
     }
+    private var rowSpacing: Int {
+#if os(Windows)
+        5
+#else
+        14
+#endif
+    }
+
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: rowSpacing) {
             if entries.count > visibleEntries.count {
                 HStack {
                     Spacer()
@@ -81,6 +89,22 @@ struct T4TranscriptView: View {
 struct T4UserBubble: View {
     let entry: TranscriptEntry
     let theme: Theme
+    private var verticalPadding: Int {
+#if os(Windows)
+        6
+#else
+        9
+#endif
+    }
+
+    private var topPadding: Int {
+#if os(Windows)
+        4
+#else
+        6
+#endif
+    }
+
 
     var body: some View {
         // Cap the bubble at ~85% of the transcript width (the desktop
@@ -94,7 +118,7 @@ struct T4UserBubble: View {
                     .foregroundColor(theme.txt)
                     .textSelectionEnabled()
                     .padding(.horizontal, 12)
-                    .padding(.vertical, 9)
+                    .padding(.vertical, verticalPadding)
                     .background {
                         RoundedRectangle(cornerRadius: 14)
                             .fill(theme.glassFill)
@@ -106,7 +130,7 @@ struct T4UserBubble: View {
                     .frame(maxWidth: proxy.size.width * 0.85, alignment: .trailing)
             }
         }
-        .padding(.top, 6)
+        .padding(.top, topPadding)
     }
 }
 
@@ -145,6 +169,14 @@ struct T4TranscriptRow: View {
     let entry: TranscriptEntry
     let theme: Theme
     @State private var expanded = false
+    private var headerVerticalPadding: Int {
+#if os(Windows)
+        4
+#else
+        8
+#endif
+    }
+
 
     /// Tool-kind identity from the entry kind/headline.
     private var tool: (name: String, icon: String, color: Color) {
@@ -193,7 +225,7 @@ struct T4TranscriptRow: View {
                         .foregroundColor(theme.txtLabel)
                 }
             }
-            .padding(.horizontal, 10).padding(.vertical, 8)
+            .padding(.horizontal, 10).padding(.vertical, headerVerticalPadding)
 
             if expanded && !entry.body.isEmpty {
                 Group {

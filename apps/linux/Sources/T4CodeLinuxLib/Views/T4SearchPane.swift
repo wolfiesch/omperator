@@ -81,7 +81,7 @@ struct T4SearchPane: View {
     var body: some View {
         VStack(spacing: 0) {
             // Header (replaces the navigation toolbar + Done item).
-            HStack(spacing: 10) {
+            HStack(spacing: t4PlatformMetric(10)) {
                 Text("Search & Diff")
                     // Capture seams: open Diff directly, or prefill and run a
                     // file search without adding non-production pane data.
@@ -103,8 +103,8 @@ struct T4SearchPane: View {
                 T4TextButton("Done") { isPresented = false }
                     .font(.system(size: 14, weight: .semibold))
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
+            .padding(.horizontal, t4PlatformMetric(20))
+            .padding(.vertical, t4PlatformMetric(14))
 
             Divider(t.line)
 
@@ -119,7 +119,7 @@ struct T4SearchPane: View {
             )
             // LINUX-GAP: macOS uses .segmented; GtkBackend supports only .menu.
             .pickerStyle(.menu)
-            .padding(12)
+            .padding(t4PlatformMetric(12))
 
             if mode == .search {
                 searchBar
@@ -132,9 +132,10 @@ struct T4SearchPane: View {
             }
         }
 #if os(Windows)
-        // WINDOWS-GAP: the Windows pane is hosted in the live detail column,
-        // so it follows the parent instead of imposing the Linux sheet size.
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Keep the Linux sheet's normalized height while allowing the Windows
+        // pane width to stay flexible, avoiding the Linux sheet's clipped title.
+        .frame(maxWidth: .infinity)
+        .frame(height: t4PlatformMetric(520))
 #else
         .frame(width: 560, height: 520)
 #endif
@@ -155,7 +156,7 @@ struct T4SearchPane: View {
     // MARK: Search
 
     private var searchBar: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: t4PlatformMetric(8)) {
             // LINUX-GAP: magnifyingglass SF Symbol → "⌕" glyph
             Text("⌕")
                 .font(.system(size: 13))
@@ -173,10 +174,10 @@ struct T4SearchPane: View {
                 }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background { RoundedRectangle(cornerRadius: 10).fill(t.lineFaint) }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, t4PlatformMetric(12))
+        .padding(.vertical, t4PlatformMetric(8))
+        .background { RoundedRectangle(cornerRadius: t4PlatformMetric(10)).fill(t.lineFaint) }
+        .padding(.horizontal, t4PlatformMetric(12))
     }
 
     @ViewBuilder
@@ -191,7 +192,7 @@ struct T4SearchPane: View {
                 .font(.system(size: 13))
                 .foregroundColor(t.cAdvisor)
                 .multilineTextAlignment(.center)
-                .padding(20)
+                .padding(t4PlatformMetric(20))
             Spacer()
         } else if let results = searchResults, results.matches.isEmpty {
             Spacer()
@@ -206,19 +207,19 @@ struct T4SearchPane: View {
                         Text("Results truncated — refine your query.")
                             .font(.system(size: 10))
                             .foregroundColor(t.txtLabel)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 6)
+                            .padding(.horizontal, t4PlatformMetric(14))
+                            .padding(.vertical, t4PlatformMetric(6))
                     }
                     ForEach(results.matches) { match in
                         resultRow(match)
                         Divider(t.lineFaint)
-                            .padding(.leading, 36)
+                            .padding(.leading, t4PlatformMetric(36))
                     }
                 }
             }
         } else {
             Spacer()
-            VStack(spacing: 8) {
+            VStack(spacing: t4PlatformMetric(8)) {
                 Text("⌕")
                     .font(.system(size: 28))
                     .foregroundColor(t.txtLabel)
@@ -238,12 +239,12 @@ struct T4SearchPane: View {
         let dir = directory(match.path)
         let expanded = expandedPath == match.path
         return VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
+            HStack(spacing: t4PlatformMetric(10)) {
                 Text(isDir ? "▣" : fileIcon(for: name))
                     .font(.system(size: 15))
                     .foregroundColor(isDir ? t.accent : t.txtMuted)
-                    .frame(width: 22)
-                VStack(alignment: .leading, spacing: 1) {
+                    .frame(width: t4PlatformMetric(22))
+                VStack(alignment: .leading, spacing: t4PlatformMetric(1)) {
                     Text(name)
                         .font(.system(size: 14))
                         .foregroundColor(t.txt)
@@ -260,8 +261,8 @@ struct T4SearchPane: View {
                     .font(.system(size: 11))
                     .foregroundColor(t.txtLabel)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .padding(.horizontal, t4PlatformMetric(14))
+            .padding(.vertical, t4PlatformMetric(8))
             .onTapGesture { Task { await toggle(match.path) } }
             if expanded {
                 contentPreview(match.path)
@@ -273,14 +274,14 @@ struct T4SearchPane: View {
     @ViewBuilder
     private func contentPreview(_ path: String) -> some View {
         if loadingContent.contains(path) {
-            HStack(spacing: 6) {
+            HStack(spacing: t4PlatformMetric(6)) {
                 ProgressView()
                 Text("Loading…")
                     .font(.system(size: 11))
                     .foregroundColor(t.txtMuted)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .padding(.horizontal, t4PlatformMetric(14))
+            .padding(.vertical, t4PlatformMetric(8))
             .background(t.lineFaint)
         } else if let content = fileContent[path] {
             ScrollView(.horizontal) {
@@ -290,15 +291,15 @@ struct T4SearchPane: View {
                     .textSelectionEnabled()
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .padding(.horizontal, t4PlatformMetric(14))
+            .padding(.vertical, t4PlatformMetric(8))
             .background(t.lineFaint)
         } else {
             Text("Couldn’t read this file.")
                 .font(.system(size: 11))
                 .foregroundColor(t.cAdvisor)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
+                .padding(.horizontal, t4PlatformMetric(14))
+                .padding(.vertical, t4PlatformMetric(8))
                 .background(t.lineFaint)
         }
     }
@@ -355,8 +356,8 @@ struct T4SearchPane: View {
     // MARK: Diff
 
     private var diffBar: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 8) {
+        VStack(spacing: t4PlatformMetric(6)) {
+            HStack(spacing: t4PlatformMetric(8)) {
                 // LINUX-GAP: arrow.triangle.branch SF Symbol → "⎇" glyph
                 Text("⎇")
                     .font(.system(size: 13))
@@ -370,18 +371,18 @@ struct T4SearchPane: View {
                     T4TextButton("⟳") { Task { await runDiff(turnId) } }
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background { RoundedRectangle(cornerRadius: 10).fill(t.lineFaint) }
+            .padding(.horizontal, t4PlatformMetric(12))
+            .padding(.vertical, t4PlatformMetric(8))
+            .background { RoundedRectangle(cornerRadius: t4PlatformMetric(10)).fill(t.lineFaint) }
 
             Text("Leave blank for the working-tree diff; set a turn id for that turn’s review snapshot.")
                 .font(.system(size: 10))
                 .foregroundColor(t.txtLabel)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 14)
+                .padding(.horizontal, t4PlatformMetric(14))
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.horizontal, t4PlatformMetric(12))
+        .padding(.vertical, t4PlatformMetric(6))
     }
 
     @ViewBuilder
@@ -398,17 +399,17 @@ struct T4SearchPane: View {
                 Text(SyntaxHighlighter.diff(patchText, theme: t, fontSize: 12))
                     .textSelectionEnabled()
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
+                    .padding(t4PlatformMetric(12))
             }
         } else if !diffChanges.isEmpty {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(diffChanges) { change in
-                        HStack(spacing: 8) {
+                        HStack(spacing: t4PlatformMetric(8)) {
                             Text(changeIcon(change.status))
                                 .font(.system(size: 13))
                                 .foregroundColor(changeColor(change.status))
-                                .frame(width: 20)
+                                .frame(width: t4PlatformMetric(20))
                             Text(change.path)
                                 .font(.system(size: 13, design: .monospaced))
                                 .foregroundColor(t.txt)
@@ -418,12 +419,12 @@ struct T4SearchPane: View {
                                 .font(.system(size: 10, design: .monospaced))
                                 .foregroundColor(t.txtLabel)
                         }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 6)
+                        .padding(.horizontal, t4PlatformMetric(14))
+                        .padding(.vertical, t4PlatformMetric(6))
                         Divider(t.lineFaint)
                     }
                 }
-                .padding(.vertical, 6)
+                .padding(.vertical, t4PlatformMetric(6))
             }
         } else if let diffError {
             Spacer()
@@ -431,11 +432,11 @@ struct T4SearchPane: View {
                 .font(.system(size: 13))
                 .foregroundColor(t.cAdvisor)
                 .multilineTextAlignment(.center)
-                .padding(20)
+                .padding(t4PlatformMetric(20))
             Spacer()
         } else {
             Spacer()
-            VStack(spacing: 8) {
+            VStack(spacing: t4PlatformMetric(8)) {
                 Text("⎇")
                     .font(.system(size: 28))
                     .foregroundColor(t.txtLabel)

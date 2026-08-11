@@ -189,6 +189,7 @@ struct T4WindowsTerminalWebView2: WinUIElementRepresentable {
             )
         }
 
+
         private func start(_ entry: Entry) {
             entry.started = true
             emit(.initializing, identity: entry.identity)
@@ -348,7 +349,8 @@ struct T4WindowsTerminalWebView2: WinUIElementRepresentable {
             entry.lastOutput = activation.output
 
             if activation.focusEpoch != entry.lastFocusEpoch,
-               activeIdentity == entry.identity {
+               activeIdentity == entry.identity,
+               !ProcessInfo.processInfo.arguments.contains("-T4HeadlessCapture") {
                 entry.lastFocusEpoch = activation.focusEpoch
                 _ = try? entry.webView.focus(.programmatic)
                 post(.focus(instanceID: entry.instanceID), to: core, identity: entry.identity)

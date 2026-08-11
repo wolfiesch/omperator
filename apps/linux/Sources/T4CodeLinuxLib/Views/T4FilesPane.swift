@@ -60,7 +60,7 @@ private struct FileViewer: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 8) {
+            HStack(alignment: .top, spacing: t4PlatformMetric(8)) {
                 // LINUX-GAP: Image(systemName: "doc.text") — text glyph.
                 Text("¶")
                     .font(.system(size: 13))
@@ -76,8 +76,8 @@ private struct FileViewer: View {
                         .foregroundColor(t.txtLabel)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .padding(.horizontal, t4PlatformMetric(16))
+            .padding(.vertical, t4PlatformMetric(10))
             Divider(t.line)
             if loading {
                 Spacer()
@@ -90,7 +90,7 @@ private struct FileViewer: View {
                     .font(.system(size: 13))
                     .foregroundColor(t.cAdvisor)
                     .multilineTextAlignment(.center)
-                    .padding(20)
+                    .padding(t4PlatformMetric(20))
                 Spacer()
             } else if let content {
                 ScrollView {
@@ -99,7 +99,7 @@ private struct FileViewer: View {
                         .foregroundColor(t.txt)
                         .textSelectionEnabled()
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(12)
+                        .padding(t4PlatformMetric(12))
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -191,7 +191,7 @@ struct T4FilesPane: View {
 
     /// Title + trailing Done (macOS navigationTitle + toolbar).
     private var header: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: t4PlatformMetric(8)) {
             Spacer()
             Text("Files")
                     .lineLimit(1)
@@ -201,14 +201,14 @@ struct T4FilesPane: View {
             T4TextButton("Done") { isPresented = false }
                 .font(.system(size: 14, weight: .semibold))
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, t4PlatformMetric(12))
+        .padding(.vertical, t4PlatformMetric(8))
     }
 
     /// Breadcrumb of path segments; tap any crumb to pop back to that depth.
     private var breadcrumb: some View {
         ScrollView(.horizontal) {
-            HStack(spacing: 4) {
+            HStack(spacing: t4PlatformMetric(4)) {
                 // LINUX-GAP: tuple keypaths (\.offset / \.element) don't
                 // typecheck in SwiftCrossUI's ForEach, and `pathStack.indices`
                 // resolves to Swift 6.3's new `indices(where:)` (RangeSet) —
@@ -218,8 +218,8 @@ struct T4FilesPane: View {
                     crumbButton(index: index)
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .padding(.horizontal, t4PlatformMetric(14))
+            .padding(.vertical, t4PlatformMetric(8))
         }
     }
 
@@ -228,7 +228,7 @@ struct T4FilesPane: View {
     private func crumbButton(index: Int) -> some View {
         let path = pathStack[index]
         let isLast = index == pathStack.count - 1
-        return HStack(spacing: 4) {
+        return HStack(spacing: t4PlatformMetric(4)) {
             if index > 0 {
                 // LINUX-GAP: Image(systemName: "chevron.right") — text glyph.
                 Text("›")
@@ -258,14 +258,14 @@ struct T4FilesPane: View {
             return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
         }
         return List(sorted, selection: $selection) { row in
-            HStack(spacing: 10) {
+            HStack(spacing: t4PlatformMetric(10)) {
                 // LINUX-GAP: Image(systemName: "folder.fill" / icon) — text
                 // glyphs.
                 Text(row.isDirectory ? "▣" : icon(for: row.name))
                     .font(.system(size: 15))
                     .foregroundColor(row.isDirectory ? t.accent : t.txtMuted)
-                    .frame(width: 22)
-                VStack(alignment: .leading, spacing: 1) {
+                    .frame(width: t4PlatformMetric(22))
+                VStack(alignment: .leading, spacing: t4PlatformMetric(1)) {
                     Text(row.name)
                         .font(.system(size: 14))
                         .foregroundColor(t.txt)

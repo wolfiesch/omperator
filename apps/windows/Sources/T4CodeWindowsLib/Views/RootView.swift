@@ -11,19 +11,22 @@ struct RootView: View {
 
     var body: some View {
         GeometryReader { geometry in
+            let viewportScale = t4WindowsViewportScale()
+            let viewportWidth = geometry.size.width * viewportScale
+            let viewportHeight = geometry.size.height * viewportScale
             T4WorkspaceView(
                 theme: theme,
                 store: store,
                 browserFixtureEnabled: configuration.browserFixtureEnabled
             )
-                .environment(\.t4WindowWidth, geometry.size.width)
-                // WINDOWS-GAP: WinUIBackend does not reliably propagate an
-                // unconstrained root proposal through nested infinity frames.
-                // Pin only the realized window extent; child geometry remains
-                // identical to the Linux two-column workspace.
+                .environment(\.t4WindowWidth, viewportWidth)
+                .environment(\.t4WindowHeight, viewportHeight)
+                // WINDOWS-GAP: WinUIBackend forwards post-resize Win32 pixels
+                // while XAML lays out in DIPs. Pin the corrected realized
+                // extent; the shared workspace remains unchanged.
                 .frame(
-                    width: geometry.size.width,
-                    height: geometry.size.height
+                    width: viewportWidth,
+                    height: viewportHeight
                 )
         }
         .colorScheme(theme.effective == .dark ? .dark : .light)

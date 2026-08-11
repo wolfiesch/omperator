@@ -142,6 +142,11 @@ struct T4SessionsView: View {
             // LINUX-GAP: GtkBackend only implements the .menu picker style;
             // .segmented falls back to a menu picker.
             .pickerStyle(.menu)
+#if os(Windows)
+            // GTK menu pickers expand to the rail width; WinUI keeps the
+            // native combo box at its intrinsic width unless constrained.
+            .environment(\.pickerMinimumWidth, t4PlatformMetric(276))
+#endif
 
             HStack(spacing: 8) {
                 ScrollView(.horizontal) {
@@ -435,7 +440,7 @@ struct T4SessionRow: View {
     let theme: Theme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             // LINUX-GAP: .firstTextBaseline alignment is unavailable
             HStack(alignment: .top, spacing: 8) {
                 Text(session.title)
@@ -491,7 +496,7 @@ struct StatusPill: View {
         }
         .font(.system(size: 10, weight: .semibold))
         .foregroundColor(color)
-        .frame(width: 64, alignment: .leading)
+        .frame(width: 40, alignment: .leading)
 #else
         Text(label.uppercased())
             .font(.system(size: 10, weight: .semibold))
@@ -521,7 +526,7 @@ struct ContextMeter: View {
                     Capsule().fill(theme.accent.opacity(0.8)).frame(width: geo.size.width * fraction)
                 }
             }
-            .frame(width: 44, height: 4)
+            .frame(width: 30, height: 4)
             Text("\(used)/\(limit)").font(.system(size: 10)).foregroundColor(theme.txtLabel)
         }
     }

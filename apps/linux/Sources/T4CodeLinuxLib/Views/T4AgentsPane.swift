@@ -50,6 +50,9 @@ struct T4AgentsPane: View {
                     row(agent)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                #if os(Windows)
+                .environment(\.listRowVerticalPadding, 0)
+                #endif
             }
         }
         .background(t.bg)
@@ -58,7 +61,7 @@ struct T4AgentsPane: View {
     /// Title + trailing Done (macOS navigationTitle + toolbar; the agents
     /// pane has no refresh button).
     private var header: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: t4PlatformMetric(8)) {
             Spacer()
             Text("Agents")
                     .lineLimit(1)
@@ -68,12 +71,12 @@ struct T4AgentsPane: View {
             T4TextButton("Done") { isPresented = false }
                 .font(.system(size: 14, weight: .semibold))
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, t4PlatformMetric(12))
+        .padding(.vertical, t4PlatformMetric(8))
     }
 
     private var emptyState: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: t4PlatformMetric(10)) {
             // LINUX-GAP: Image(systemName: "person.3.sequence") — text glyph.
             Text("☰")
                 .font(.system(size: 28))
@@ -86,7 +89,7 @@ struct T4AgentsPane: View {
                 .font(.system(size: 12))
                 .foregroundColor(t.txtMuted)
                 .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
+                .padding(.horizontal, t4PlatformMetric(32))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -94,7 +97,7 @@ struct T4AgentsPane: View {
     /// One agent row: id + lifecycle state (plain text, colored by state) on
     /// top, a progress bar when progress is known, and a one-line detail.
     private func row(_ agent: T4SessionStore.AgentState) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: t4PlatformMetric(6)) {
             // LINUX-GAP: .firstTextBaseline alignment doesn't exist — .top.
             HStack(alignment: .top) {
                 // LINUX-GAP: Image(systemName: stateIcon(agent.state)) —
@@ -102,12 +105,12 @@ struct T4AgentsPane: View {
                 Text(stateIcon(agent.state))
                     .font(.system(size: 13))
                     .foregroundColor(stateColor(agent.state))
-                    .frame(width: 18)
+                    .frame(width: t4PlatformMetric(18))
                 Text(agent.agentId)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(t.txt)
                     .lineLimit(1)
-                Spacer(minLength: 8)
+                Spacer(minLength: t4PlatformMetric(8))
                 // LINUX-GAP: .textCase(.uppercase) — manual uppercasing.
                 Text(agent.state.uppercased())
                     .font(.system(size: 10, weight: .semibold))
@@ -123,7 +126,11 @@ struct T4AgentsPane: View {
                     .lineLimit(2)
             }
         }
+#if os(Windows)
+        .padding(.vertical, t4PlatformMetric(2))
+#else
         .padding(.vertical, 4)
+#endif
     }
 
     /// Text glyph stand-ins for the macOS SF Symbol lifecycle icons.
@@ -166,6 +173,6 @@ private struct ProgressBar: View {
                     .frame(width: geo.size.width * min(1, max(0, value)))
             }
         }
-        .frame(height: 4)
+        .frame(height: t4PlatformMetric(4))
     }
 }
