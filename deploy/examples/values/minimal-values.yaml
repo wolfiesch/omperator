@@ -1,0 +1,86 @@
+# Minimal enabled t4-cluster configuration: core control plane only.
+#
+# Every value below is a documentation placeholder. The StorageClasses, image
+# digests, ConfigMap, origins, and CIDRs must be replaced with identities that
+# already exist in the target cluster. Applying this file unchanged fails, and
+# is meant to.
+#
+# No optional adapter is enabled here. The core install never requires the SSH
+# gateway, model gateway, image pre-pull DaemonSet, ingress, observability
+# objects, or a CI provider.
+enabled: true
+
+clusterHost:
+  name: t4-cluster
+  runtimeProfiles: [default]
+  # Exact credential-free HTTPS origins allowed to reach the gateway.
+  allowedOrigins: [https://t4.example.test]
+
+kubernetes:
+  # Replace when the API server rejects the conventional audience.
+  apiAudience: https://kubernetes.default.svc
+
+images:
+  controller:
+    repository: registry.example/t4-cluster-operator
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  server:
+    repository: registry.example/t4-cluster-server
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  sessionRuntime:
+    repository: registry.example/t4-session-runtime
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+
+server:
+  publicApi:
+    # Explicit public identities. Never inferred from an ingress request.
+    restBaseURL: https://t4.example.test/v1
+    ompAppWebSocketURL: wss://t4.example.test/v1/ws
+    build:
+      version: "0.1.0"
+      revision: "0000000000000000000000000000000000000000"
+      builtAt: "2026-07-30T00:00:00Z"
+  # Tailscale Serve or the Tailscale Kubernetes operator terminates in front of
+  # the gateway; only these transports may assert identity headers.
+  trustedProxyCIDRs: [192.0.2.0/24]
+
+storage:
+  # Administrator-created, backend-neutral. The chart installs no CSI driver.
+  adminRWXStorageClass: replace-with-rwx-class
+  runtimeStateStorageClass: replace-with-fenced-runtime-class
+  runtimeStateSize: 10Gi
+  runtimeStateAccessMode: ReadWriteOncePod
+  # Required for quiesced checkpoints, backup, and restore. Driver must match
+  # both StorageClasses and must pass scripts/cluster-ci/storage-conformance.sh.
+  volumeSnapshotClass: replace-with-snapshot-class
+
+session:
+  # Existing same-namespace ConfigMap; the chart never creates it. Every
+  # provider in models.yml must use auth: none.
+  omp:
+    configMap: omp-runtime-config
+    modelsKey: models.yml
+    settingsKey: config.yml
+
+networkPolicy:
+  enabled: true
+  # Empty destination lists fail closed. Pin the cluster's real endpoints.
+  kubernetesApiCIDRs: [192.0.2.10/32]
+  modelRouteCIDRs: [198.51.100.20/32]
+  modelRoutePorts: [443]
+  dns:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    podSelector:
+      matchLabels:
+        k8s-app: kube-dns
+  # Empty selectors fail closed, which leaves the gateway unreachable. Set both
+  # to the identity of the proxy that terminates in front of the server.
+  gatewayIngress:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: tailscale
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: tailscale

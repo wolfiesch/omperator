@@ -147,3 +147,48 @@ func assertRequestSet(t *testing.T, requests []ctrl.Request, want []types.Namesp
 		}
 	}
 }
+
+func TestWorkspaceSessionWatchAndAttachmentCountExcludeDeletingSessions(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := clusterv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	now := metav1.Now()
+	workspace := &clusterv1alpha1.T4Workspace{ObjectMeta: metav1.ObjectMeta{Name: "workspace-a", Namespace: "team", UID: "workspace-uid"}}
+	objects := []client.Object{
+		&clusterv1alpha1.T4Session{ObjectMeta: metav1.ObjectMeta{Name: "attached", Namespace: "team"}, Spec: clusterv1alpha1.T4SessionSpec{WorkspaceRef: workspace.Name}},
+		&clusterv1alpha1.T4Session{ObjectMeta: metav1.ObjectMeta{Name: "deleting", Namespace: "team", DeletionTimestamp: &now, Finalizers: []string{"test"}}, Spec: clusterv1alpha1.T4SessionSpec{WorkspaceRef: workspace.Name}},
+		&clusterv1alpha1.T4Session{ObjectMeta: metav1.ObjectMeta{Name: "other-workspace", Namespace: "team"}, Spec: clusterv1alpha1.T4SessionSpec{WorkspaceRef: "workspace-b"}},
+		&clusterv1alpha1.T4Session{ObjectMeta: metav1.ObjectMeta{Name: "other-namespace", Namespace: "other"}, Spec: clusterv1alpha1.T4SessionSpec{WorkspaceRef: workspace.Name}},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithIndex(&clusterv1alpha1.T4Session{}, workspaceSessionRefIndexField, indexWorkspaceSessionByWorkspaceRef).
+		WithObjects(objects...).Build()
+	reconciler := &WorkspaceReconciler{Client: c}
+	count, err := reconciler.workspaceAttachmentCount(t.Context(), workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("attachment count = %d, want only the non-deleting same-namespace session", count)
+	}
+	requests := workspaceRequestForSession(t.Context(), objects[0])
+	if len(requests) != 1 || requests[0].NamespacedName != (types.NamespacedName{Namespace: workspace.Namespace, Name: workspace.Name}) {
+		t.Fatalf("session watch requests = %#v", requests)
+	}
+	if indexed := indexWorkspaceSessionByWorkspaceRef(objects[0]); len(indexed) != 1 || indexed[0] != workspace.Name {
+		t.Fatalf("workspace reference index = %#v", indexed)
+	}
+}
+
+func TestWorkspaceFilesystemRootIsBoundedDeterministicAndNotAClientPath(t *testing.T) {
+	workspace := &clusterv1alpha1.T4Workspace{ObjectMeta: metav1.ObjectMeta{Name: "customer.project.with-a-very-long-name-that-must-be-bounded", UID: "workspace-uid"}}
+	first := WorkspaceFilesystemRoot(workspace)
+	workspace.Generation = 99
+	if second := WorkspaceFilesystemRoot(workspace); second != first {
+		t.Fatalf("filesystem root changed with metadata generation: %q -> %q", first, second)
+	}
+	if len(first) == 0 || len(first) > 63 || first[0] == '/' {
+		t.Fatalf("filesystem root is not a bounded relative identifier: %q", first)
+	}
+}

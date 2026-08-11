@@ -55,6 +55,29 @@ spec:
                   type: string
                   enum: [Ready]
 `
+func TestLoadCandidatesRejectsUncompilableMetadataCEL(t *testing.T) {
+	directory := t.TempDir()
+	invalid := strings.Replace(candidateCRD,
+		"          required: [spec]\n          properties:",
+		"          required: [spec]\n          x-kubernetes-validations:\n            - rule: \"!has(self.metadata.annotations)\"\n              message: metadata annotations are bounded\n          properties:",
+		1,
+	)
+	if err := os.WriteFile(filepath.Join(directory, "widget.yaml"), []byte(invalid), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := loadCandidates(directory)
+	if err == nil || !strings.Contains(err.Error(), "CRD validation failed") {
+		t.Fatalf("uncompilable metadata CEL error = %v", err)
+	}
+}
+func TestChartCRDsCompile(t *testing.T) {
+	directory := filepath.Join("..", "..", "..", "..", "deploy", "charts", "t4-cluster", "crds")
+	if _, err := loadCandidates(directory); err != nil {
+		t.Fatal(err)
+	}
+}
+
+
 
 func TestValidateFixturesRejectsProposedSpecTighteningAndCEL(t *testing.T) {
 	for _, test := range []struct {
@@ -309,6 +332,9 @@ func TestValidateCompatibilityRejectsVersionAndConversionChanges(t *testing.T) {
     - name: v1beta1
       served: false
       storage: false
+      schema:
+        openAPIV3Schema:
+          type: object
 `, 1)
 	changedConversion := strings.Replace(candidateCRD, "  versions:\n", "  conversion:\n    strategy: Webhook\n    webhook:\n      conversionReviewVersions: [v1]\n      clientConfig:\n        url: https://conversion.example.test\n  versions:\n", 1)
 	for _, test := range []struct {
@@ -324,6 +350,26 @@ func TestValidateCompatibilityRejectsVersionAndConversionChanges(t *testing.T) {
 			err := validateCompatibility(proposed, installed)
 			if err == nil || !strings.Contains(err.Error(), test.expect) {
 				t.Fatalf("compatibility error %q does not contain %q", err, test.expect)
+			}
+		})
+	}
+}
+
+func TestValidateCompatibilityRejectsUnexpectedStoredVersions(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		storedVersions string
+	}{
+		{name: "missing", storedVersions: "[]"},
+		{name: "legacy version remains", storedVersions: "[v1alpha1, v1beta1]"},
+		{name: "different version", storedVersions: "[v1beta1]"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			installedCRD := candidateCRD + "\nstatus:\n  storedVersions: " + test.storedVersions + "\n"
+			proposed, installed := writeCompatibilityCRDs(t, candidateCRD, installedCRD)
+			err := validateCompatibility(proposed, installed)
+			if err == nil || !strings.Contains(err.Error(), "status.storedVersions") {
+				t.Fatalf("stored-version compatibility error %q is not actionable", err)
 			}
 		})
 	}
@@ -474,6 +520,9 @@ func writeCompatibilityCRDs(t *testing.T, proposed, installed string) (string, s
 	}
 	if err := os.WriteFile(filepath.Join(proposedDirectory, "widget.yaml"), []byte(proposed), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(installed, "\nstatus:") {
+		installed += "\nstatus:\n  storedVersions: [v1alpha1]\n"
 	}
 	if err := os.WriteFile(filepath.Join(installedDirectory, "widget.yaml"), []byte(installed), 0o644); err != nil {
 		t.Fatal(err)

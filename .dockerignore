@@ -5,6 +5,11 @@
 **/.cluster-ci/registry-auth
 artifacts
 **/artifacts
+.artifacts
+apps/ios/.build
+**/dist
+**/dist-*
+apps/mobile/android/build
 node_modules
 **/node_modules
 .env

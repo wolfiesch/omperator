@@ -13,6 +13,7 @@
     "test": "vp test run --passWithNoTests"
   },
   "dependencies": {
+    "@t4-code/portable-core": "workspace:*",
     "openapi-fetch": "0.17.0"
   },
   "devDependencies": {

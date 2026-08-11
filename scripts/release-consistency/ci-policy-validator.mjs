@@ -87,9 +87,9 @@ export function validateCiPolicy(context) {
       const proofStep = namedCurrentStep("Run current bridge compatibility proof");
       const uploadStep = namedCurrentStep("Upload current bridge evidence");
       for (const command of [
-        `source_repository="$(jq -er '.verifiedRuntime.sourceRepository' compat/omp-app-matrix.json)"`,
+        `source_repository="$(jq -er '.portableRuntime.sourceRepository' compat/omp-app-matrix.json)"`,
         `test "$source_repository" = "https://github.com/wolfiesch/oh-my-pi"`,
-        `sha="$(jq -er '.verifiedRuntime.sourceCommit' compat/omp-app-matrix.json)"`,
+        `sha="$(jq -er '.portableRuntime.sourceCommit' compat/omp-app-matrix.json)"`,
         '[[ "$sha" =~ ^[0-9a-f]{40}$ ]]',
         `echo "repository=wolfiesch/oh-my-pi" >> "$GITHUB_OUTPUT"`,
         `echo "sha=$sha" >> "$GITHUB_OUTPUT"`,
@@ -234,7 +234,7 @@ export function validateCiPolicy(context) {
     "path: artifacts/legacy-bridge-continuity/",
     "if-no-files-found: error",
     "current-bridge-continuity:",
-    `sha="$(jq -er '.verifiedRuntime.sourceCommit' compat/omp-app-matrix.json)"`,
+    `sha="$(jq -er '.portableRuntime.sourceCommit' compat/omp-app-matrix.json)"`,
     "repository: ${{ steps.current-authority.outputs.repository }}",
     "ref: ${{ steps.current-authority.outputs.sha }}",
     "T4_CURRENT_OMP_SOURCE_DIR: ${{ github.workspace }}/.current-continuity/omp",

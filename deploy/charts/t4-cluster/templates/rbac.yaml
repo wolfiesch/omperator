@@ -16,7 +16,10 @@ rules:
     resources: [t4workspaces/finalizers, t4sessions/finalizers]
     verbs: [update]
   - apiGroups: ['']
-    resources: [pods, services, persistentvolumeclaims]
+    resources: [pods, services, persistentvolumeclaims, secrets, serviceaccounts]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [roles, rolebindings]
     verbs: [get, list, watch, create, update, patch, delete]
   - apiGroups: ['']
     resources: [configmaps]
@@ -41,7 +44,10 @@ rules:
     verbs: [get, list, watch]
   - apiGroups: [cluster.t4.dev]
     resources: [t4workspaces, t4sessions]
-    verbs: [get, list, watch, create, delete]
+    verbs: [get, list, watch, create, update, delete]
+  - apiGroups: ['']
+    resources: [configmaps]
+    verbs: [get, create, update]
   - apiGroups: ['']
     resources: [pods, services, endpoints]
     verbs: [get, list, watch]
@@ -63,12 +69,26 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "session-access-manager") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterrolebindings]
+    verbs: [get, create, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
   name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "storage-reader") | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 rules:
   - apiGroups: [storage.k8s.io]
-    resources: [storageclasses]
+    resources: [storageclasses, volumeattachments]
+    verbs: [get, list, watch]
+  - apiGroups: ['']
+    resources: [persistentvolumes]
     verbs: [get, list, watch]
 ---
 apiVersion: v1
@@ -83,14 +103,6 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server") | quote }}
-  labels:
-    {{- include "t4-cluster.labels" . | nindent 4 }}
-automountServiceAccountToken: false
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "session") | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 automountServiceAccountToken: false
@@ -153,15 +165,15 @@ roleRef:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "session-token-reviewer") | quote }}
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "session-access-manager") | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "session") | quote }}
+    name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "controller") | quote }}
     namespace: {{ .Release.Namespace | quote }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "session-token-reviewer") | quote }}
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "session-access-manager") | quote }}
 {{- end }}

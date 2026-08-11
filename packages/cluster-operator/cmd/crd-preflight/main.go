@@ -13,6 +13,7 @@ import (
 
 	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	crdvalidation "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/validation"
 	structuralschema "k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/schema/cel"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/schema/pruning"
@@ -176,6 +177,23 @@ func validateCompatibility(candidateDirectory, installedDirectory string) error 
 		if !found {
 			compatibilityErrors = append(compatibilityErrors, fmt.Errorf("installed CRD %s is removed", name))
 			continue
+		}
+		storageVersions := make([]string, 0, 1)
+		for _, version := range proposed.Spec.Versions {
+			if version.Storage {
+				if !version.Served {
+					compatibilityErrors = append(compatibilityErrors, fmt.Errorf("candidate CRD %s marks storage version %s as unserved", name, version.Name))
+				}
+				storageVersions = append(storageVersions, version.Name)
+			}
+		}
+		if len(storageVersions) != 1 {
+			compatibilityErrors = append(compatibilityErrors, fmt.Errorf("candidate CRD %s must declare exactly one storage version; found %v", name, storageVersions))
+		} else if !reflect.DeepEqual(current.Status.StoredVersions, storageVersions) {
+			compatibilityErrors = append(compatibilityErrors, fmt.Errorf(
+				"installed CRD %s status.storedVersions is %v; expected exactly %v before mutation",
+				name, current.Status.StoredVersions, storageVersions,
+			))
 		}
 		if current.Spec.Scope != proposed.Spec.Scope {
 			compatibilityErrors = append(compatibilityErrors, fmt.Errorf("CRD %s changes scope from %s to %s", name, current.Spec.Scope, proposed.Spec.Scope))
@@ -551,6 +569,20 @@ func loadCandidates(directory string) (map[groupVersionKind]*candidateSchema, er
 	}
 	result := make(map[groupVersionKind]*candidateSchema)
 	for name, crd := range crds {
+		internalCRD := &apiextensions.CustomResourceDefinition{}
+		if err := apiextensionsv1.Convert_v1_CustomResourceDefinition_To_apiextensions_CustomResourceDefinition(crd, internalCRD, nil); err != nil {
+			return nil, fmt.Errorf("%s: convert CRD: %w", name, err)
+		}
+		// CRD manifests do not carry the API-server-populated status. Seed the
+		// storage version so static schema/CEL validation models a create.
+		for _, version := range internalCRD.Spec.Versions {
+			if version.Storage {
+				internalCRD.Status.StoredVersions = append(internalCRD.Status.StoredVersions, version.Name)
+			}
+		}
+		if validationErrors := crdvalidation.ValidateCustomResourceDefinition(context.Background(), internalCRD); len(validationErrors) > 0 {
+			return nil, fmt.Errorf("%s: CRD validation failed: %w", name, validationErrors.ToAggregate())
+		}
 		for index := range crd.Spec.Versions {
 			version := &crd.Spec.Versions[index]
 			if !version.Served {

@@ -1,0 +1,147 @@
+{
+  "schemaVersion": 1,
+  "protocol": {
+    "name": "cmux.machine-provider",
+    "version": 1,
+    "muxHandoffProtocol": 10
+  },
+  "source": {
+    "repository": "https://github.com/manaflow-ai/cmux",
+    "commit": "192e44428c16b98210c951ec4bd5a86bc7139014",
+    "cratePath": "cmux-tui/crates/cmux-tui-machine-protocol",
+    "crateGitTree": "983bee74116c7d5f5832a7695379c870cd41ef60",
+    "files": [
+      {
+        "path": "vendor/cmux-machine-provider-v1/upstream/cmux-tui/crates/cmux-tui-machine-protocol/Cargo.toml",
+        "size": 420,
+        "sha256": "9b57c40fc3d4a26c9ba4b3ef432e95c2bb9d6cf90b8ad2bad85e2c43ea80dd02",
+        "upstreamPath": "cmux-tui/crates/cmux-tui-machine-protocol/Cargo.toml",
+        "gitBlob": "afe2fe1e84f3209f8026e484b239f33965d04de7"
+      },
+      {
+        "path": "vendor/cmux-machine-provider-v1/upstream/cmux-tui/crates/cmux-tui-machine-protocol/src/lib.rs",
+        "size": 72133,
+        "sha256": "63265fa12394d7bf0942421bdfdc835fbbc808ffa2c8a349362f47148b2644be",
+        "upstreamPath": "cmux-tui/crates/cmux-tui-machine-protocol/src/lib.rs",
+        "gitBlob": "0ce9dc54a626890d95a2dce00219feced7f14c0f"
+      }
+    ],
+    "canonicalTreeSha256": "ecf8ea6183275110d6270bd6d563d39eb3cecf7296a7c8e44e21f9ca6a46ca63"
+  },
+  "workspaceEvidence": {
+    "path": "vendor/cmux-machine-provider-v1/upstream/cmux-tui/Cargo.toml",
+    "size": 2247,
+    "sha256": "b16c08d406c87a312b2bcdcdb23f4eb01dd3614a5e891e4363576587fa8ec19c",
+    "upstreamPath": "cmux-tui/Cargo.toml",
+    "gitBlob": "d94793ccf1b1dde3ce82b58a76f04b24bf1c840a",
+    "rustVersion": "1.88",
+    "edition": "2024",
+    "crateDeclaredLicense": "MIT"
+  },
+  "repositoryLicenseEvidence": {
+    "path": "licenses/CMUX-UPSTREAM-LICENSE.txt",
+    "size": 36050,
+    "sha256": "f306eceb0a2964828e2fc3315a2924d1a685f538d5b5d5f4b5bb17d4da2865ea",
+    "upstreamPath": "LICENSE",
+    "gitBlob": "d10fe411b3ae74c27d15742e3ccb723b232a4b4c",
+    "repositoryDefault": "GPL-3.0-or-later"
+  },
+  "generator": {
+    "path": "scripts/cmux-machine-protocol-fixtures/src/main.rs",
+    "size": 11441,
+    "sha256": "fb480a6ca5ab27e8ee1e77b7932e5bf5ed9278598ed822a9ff0ebd0309e05dd8",
+    "cargoManifest": {
+      "path": "scripts/cmux-machine-protocol-fixtures/Cargo.toml",
+      "size": 234,
+      "sha256": "35e4e3a799bba6839c4c157b85ef887c44905a77d7341442d7f91b27443456c6"
+    },
+    "cargoLock": {
+      "path": "scripts/cmux-machine-protocol-fixtures/Cargo.lock",
+      "size": 3093,
+      "sha256": "001a795aa52d72806d92dcb0e9405d93283df83c835d8605be1445656123fd97"
+    },
+    "usesVerbatimUpstreamTypes": true
+  },
+  "fixtures": {
+    "root": "vendor/cmux-machine-provider-v1/fixtures",
+    "format": "one-lf-terminated-json-frame-per-ndjson-file",
+    "files": [
+      {
+        "path": "vendor/cmux-machine-provider-v1/fixtures/control/close-machine.request.ndjson",
+        "size": 138,
+        "sha256": "6d0db5e318f22abe75cad1b1c305937c755fede7be963119b36d5f3e72e38675"
+      },
+      {
+        "path": "vendor/cmux-machine-provider-v1/fixtures/control/close-machine.success.ndjson",
+        "size": 95,
+        "sha256": "4bd66032669d04dde32f8e27865030bf39d53aeca9503f87b7365a4bc2d9c9f8"
+      },
+      {
+        "path": "vendor/cmux-machine-provider-v1/fixtures/control/durable-notice.event.ndjson",
+        "size": 200,
+        "sha256": "8cba630afec646a5abdc610227c019b2db2e5a216daad959a0954b2fa72606c4"
+      },
+      {
+        "path": "vendor/cmux-machine-provider-v1/fixtures/control/failure.response.ndjson",
+        "size": 158,
+        "sha256": "ef0f4358d45e37a97839e35477d3d94fa5252e8be8a60434673a51ae56405a2d"
+      },
+      {
+        "path": "vendor/cmux-machine-provider-v1/fixtures/control/hello.request.ndjson",
+        "size": 216,
+        "sha256": "023d1a3d0ddc71ad3f2818048be298af5a95ff8af7e7a5830500ef9a9767c61c"
+      },
+      {
+        "path": "vendor/cmux-machine-provider-v1/fixtures/control/hello.success.ndjson",
+        "size": 341,
+        "sha256": "dcff73118cd542030ff0e79f45d45cc7710000c767c8f0ae0aa0ff02963123bd"
+      },
+      {
+        "path": "vendor/cmux-machine-provider-v1/fixtures/control/negotiate-client-capabilities.request.ndjson",
+        "size": 172,
+        "sha256": "4d77d6b2265ff8e502b3660b7bc112dc46dafdeb1671b9b37f403a65d33f0d93"
+      },
+      {
+        "path": "vendor/cmux-machine-provider-v1/fixtures/control/negotiate-client-capabilities.success.ndjson",
+        "size": 131,
+        "sha256": "902a1391fcc9ce8623e90fc46d2a4a19c417faa7695479a770e6ae1015292599"
+      },
+      {
+        "path": "vendor/cmux-machine-provider-v1/fixtures/control/open-machine.request.ndjson",
+        "size": 164,
+        "sha256": "419d20ef006ecb46d8b7ee1b80f6533b29c69bbdb06b6a8628840336970e5d37"
+      },
+      {
+        "path": "vendor/cmux-machine-provider-v1/fixtures/control/open-machine.success.ndjson",
+        "size": 303,
+        "sha256": "899985f20617b2df358b51f3711099dffa0851128a53ff40a2c75f34e730731a"
+      },
+      {
+        "path": "vendor/cmux-machine-provider-v1/fixtures/control/snapshot.request.ndjson",
+        "size": 124,
+        "sha256": "e21750ab14b93b725a0646786ddec7848aaba51db063f3959ec93e370b817068"
+      },
+      {
+        "path": "vendor/cmux-machine-provider-v1/fixtures/control/snapshot.success.ndjson",
+        "size": 784,
+        "sha256": "e6112d44141e9e55a44690ee7ec7939cb3276b672022bfcf41d628473e807368"
+      },
+      {
+        "path": "vendor/cmux-machine-provider-v1/fixtures/stream/transport-handshake-accepted.ndjson",
+        "size": 18,
+        "sha256": "b1b367dc6a7d077581f77f16169a6696bac3d68ffd5c93189ac60fac027e57a3"
+      },
+      {
+        "path": "vendor/cmux-machine-provider-v1/fixtures/stream/transport-handshake.ndjson",
+        "size": 156,
+        "sha256": "751d9fd3b160482054ffaed37a25c066c8573b9807a6e29a53d1567cf18c679f"
+      }
+    ],
+    "canonicalCorpusSha256": "bdcb88ee9f46f300b400165cdb2dac2eebc186cb6b78c068ccab3caae4460f23",
+    "postHandshakeProtocol": "cmux-v10-opaque-jsonl"
+  },
+  "usage": {
+    "toolingAndConformanceOnly": true,
+    "packagedInProduct": false
+  }
+}

@@ -359,14 +359,12 @@ export class LinuxSystemdUserManager extends BaseManager {
     runtime: RuntimeSnapshot,
     hadPreviousDefinition: boolean,
   ): Promise<void> {
-    await this.runner.run(["systemctl", "--user", "daemon-reload"]).catch(() => undefined);
+    await runChecked(this.runner, ["systemctl", "--user", "daemon-reload"]);
     if (runtime.state === "running")
-      await this.runner.run(["systemctl", "--user", "restart", this.label]).catch(() => undefined);
+      await runChecked(this.runner, ["systemctl", "--user", "restart", this.label]);
     else if (!hadPreviousDefinition || !runtime.registered)
-      await this.runner
-        .run(["systemctl", "--user", "disable", "--now", this.label])
-        .catch(() => undefined);
-    else await this.runner.run(["systemctl", "--user", "stop", this.label]).catch(() => undefined);
+      await runChecked(this.runner, ["systemctl", "--user", "disable", "--now", this.label]);
+    else await runChecked(this.runner, ["systemctl", "--user", "stop", this.label]);
   }
   protected override async afterUninstall(): Promise<void> {
     await runChecked(this.runner, ["systemctl", "--user", "daemon-reload"]);
@@ -436,13 +434,11 @@ export class MacLaunchAgentManager extends BaseManager {
     hadPreviousDefinition: boolean,
   ): Promise<void> {
     const target = `${this.domain}/${this.label}`;
-    await this.runner.run(["launchctl", "bootout", target]).catch(() => undefined);
+    await runChecked(this.runner, ["launchctl", "bootout", target]);
     if (runtime.registered && hadPreviousDefinition) {
-      await this.runner
-        .run(["launchctl", "bootstrap", this.domain, this.definitionPath])
-        .catch(() => undefined);
+      await runChecked(this.runner, ["launchctl", "bootstrap", this.domain, this.definitionPath]);
       if (runtime.state === "running")
-        await this.runner.run(["launchctl", "kickstart", "-k", target]).catch(() => undefined);
+        await runChecked(this.runner, ["launchctl", "kickstart", "-k", target]);
     }
   }
   override async start(): Promise<void> {
@@ -581,3 +577,5 @@ export const serviceInternals = {
   validateSpec,
   sanitizeDiagnostic,
 } as const;
+
+export * from "./portable-host.ts";

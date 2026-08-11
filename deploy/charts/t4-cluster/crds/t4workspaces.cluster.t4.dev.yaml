@@ -41,7 +41,19 @@ spec:
               x-kubernetes-validations:
                 - rule: "!has(self.repository) || !has(self.repository.commit) || (has(self.repository.ref) && self.repository.ref != '')"
                   message: repository commit requires an explicit ref
+                - rule: "!has(oldSelf.storageClassName) || (has(self.storageClassName) && self.storageClassName == oldSelf.storageClassName)"
+                  message: storageClassName is immutable once set
+                - rule: "!has(oldSelf.restoreSnapshotRef) || (has(self.restoreSnapshotRef) && self.restoreSnapshotRef == oldSelf.restoreSnapshotRef)"
+                  message: restoreSnapshotRef is immutable once set
               properties:
+                publicId:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  pattern: '^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$'
+                  x-kubernetes-validations:
+                    - rule: self == oldSelf
+                      message: publicId is immutable
                 hostRef:
                   type: string
                   minLength: 1
@@ -58,7 +70,10 @@ spec:
                   type: string
                   minLength: 1
                   maxLength: 256
-                  pattern: '^[A-Za-z0-9][A-Za-z0-9._:@/-]*$'
+                  pattern: '^[^\x00-\x1F\x7F]+$'
+                  x-kubernetes-validations:
+                    - rule: self == oldSelf
+                      message: owner is immutable
                 repository:
                   type: object
                   required: [repositoryId]
@@ -81,13 +96,31 @@ spec:
                   type: string
                   minLength: 2
                   maxLength: 32
-                  pattern: '^[1-9][0-9]*(Ei|Pi|Ti|Gi|Mi|Ki|E|P|T|G|M|K)$'
+                  pattern: '^(0|[1-9][0-9]*)(Ei|Pi|Ti|Gi|Mi|Ki|E|P|T|G|M|K)?$'
+                allowCrashConsistentRestore:
+                  type: boolean
+                  default: false
+                restorePublicIdPolicy:
+                  type: string
+                  default: Preserve
+                  enum: [Preserve, Replace]
+                storageClassName:
+                  type: string
+                  minLength: 1
+                  maxLength: 253
+                  pattern: '^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$'
+                restoreSnapshotRef:
+                  type: object
+                  required: [name]
+                  properties:
+                    name:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                      pattern: '^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$'
                 retentionPolicy:
                   type: string
                   enum: [Retain, Delete]
-                  x-kubernetes-validations:
-                    - rule: self == oldSelf
-                      message: retentionPolicy is immutable
             status:
               type: object
               properties:
@@ -106,6 +139,30 @@ spec:
                   type: string
                   minLength: 1
                   maxLength: 32
+                selectedStorageClassName:
+                  type: string
+                  minLength: 1
+                  maxLength: 253
+                  pattern: '^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$'
+                filesystemRoot:
+                  type: string
+                  minLength: 1
+                  maxLength: 63
+                  pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+                attachmentCount:
+                  type: integer
+                  format: int32
+                  minimum: 0
+                  maximum: 100000
+                snapshotRef:
+                  type: object
+                  required: [name]
+                  properties:
+                    name:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                      pattern: '^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$'
                 phase:
                   type: string
                   enum: [Pending, Ready, Failed, Terminating, Unknown]

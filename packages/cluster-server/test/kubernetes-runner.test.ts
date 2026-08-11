@@ -37,9 +37,9 @@ function snapshot(hostUid: string, versions: readonly [string, string, string]):
 		sessions: [{
 			apiVersion: "cluster.t4.dev/v1alpha1",
 			kind: "T4Session",
-			metadata: { name: "session-one", uid: "session-uid", resourceVersion: versions[2] },
+			metadata: { name: "session-one", uid: "session-uid", resourceVersion: versions[2], generation: 1 },
 			spec: { hostRef: "primary", workspaceRef: "workspace-one", title: "Session", runtimeProfile: "default", guiEnabled: true },
-			status: { phase: "Running", serviceName: "session-one" },
+			status: { phase: "Ready", runtimeGeneration: "gen_session_one", serviceName: "session-one", podName: "session-one-pod", conditions: [{ type: "RouteReady", status: "True", observedGeneration: 1 }] },
 		}],
 		resourceVersion: versions[2],
 		resourceVersions: { t4clusterhosts: versions[0], t4workspaces: versions[1], t4sessions: versions[2] },

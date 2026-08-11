@@ -684,7 +684,7 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("run: pnpm test:legacy-bridge-continuity"));
   assert.ok(ciWorkflow.includes("path: artifacts/legacy-bridge-continuity/"));
   assert.ok(
-    ciWorkflow.includes("sha=\"$(jq -er '.verifiedRuntime.sourceCommit' compat/omp-app-matrix.json)\""),
+    ciWorkflow.includes("sha=\"$(jq -er '.portableRuntime.sourceCommit' compat/omp-app-matrix.json)\""),
   );
   assert.ok(
     ciWorkflow.includes("T4_CURRENT_OMP_SOURCE_DIR: ${{ github.workspace }}/.current-continuity/omp"),

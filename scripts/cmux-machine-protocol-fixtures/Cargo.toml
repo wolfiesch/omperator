@@ -1,0 +1,11 @@
+[package]
+name = "cmux-machine-protocol-fixtures"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.150"
+subtle = "=2.6.1"
+zeroize = "=1.9.0"

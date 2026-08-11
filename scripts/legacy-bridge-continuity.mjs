@@ -69,9 +69,25 @@ function gitSource(cwd) {
   const fingerprint = createHash("sha256").update(
     commandOutput("git", ["diff", "--binary", "--no-ext-diff", "HEAD"], cwd),
   );
-  for (const line of changedLines.filter((entry) => entry.startsWith("?? ")).sort()) {
-    const path = line.slice(3);
-    const blob = commandOutput("git", ["hash-object", "--", path], cwd).trim();
+  const untracked = commandOutput(
+    "git",
+    ["ls-files", "--others", "--exclude-standard", "-z"],
+    cwd,
+  ).split("\0").filter(Boolean).sort();
+  for (const path of untracked) {
+    let blob;
+    if (path.endsWith("/")) {
+      const directory = resolve(cwd, path);
+      const nestedRoot = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+        cwd: directory,
+        encoding: "utf8",
+      });
+      blob = nestedRoot.status === 0 && resolve(nestedRoot.stdout.trim()) === directory
+        ? createHash("sha256").update(JSON.stringify(gitSource(directory))).digest("hex")
+        : "ignored-directory";
+    } else {
+      blob = commandOutput("git", ["hash-object", "--", path], cwd).trim();
+    }
     fingerprint.update(`\0${path}\0${blob}`);
   }
   return {

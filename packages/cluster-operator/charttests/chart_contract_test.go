@@ -1,10 +1,12 @@
 package charttests
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -24,7 +26,7 @@ func TestChartIsDefaultOff(t *testing.T) {
 
 func TestEnabledChartRendersHARestrictedWorkloads(t *testing.T) {
 	output := helmTemplate(t, enabledValues()...)
-	assertCount(t, output, "kind: Deployment", 2)
+	assertCount(t, output, "apiVersion: apps/v1\nkind: Deployment", 2)
 	assertContains(t, output,
 		"replicas: 2",
 		"replicas: 3",
@@ -61,6 +63,20 @@ func TestEnabledChartRendersHARestrictedWorkloads(t *testing.T) {
 		"value: \"tailscale\"",
 		"name: T4_CLUSTER_TRUSTED_PROXY_CIDRS",
 		"value: \"192.0.2.0/24\"",
+		"name: T4_PUBLIC_REST_BASE_URL",
+		"value: \"https://omp.example.test/v1\"",
+		"name: T4_PUBLIC_OMP_APP_WEBSOCKET_URL",
+		"value: \"wss://omp.example.test/v1/ws\"",
+		"name: T4_BUILD_REVISION",
+		"value: \"fixture-revision\"",
+		"name: T4_ADMISSION_MAX_ACTIVE_RUNTIMES",
+		"value: \"10\"",
+		"name: T4_ADMISSION_BROWSER_ENABLED",
+		"value: \"false\"",
+		"name: T4_ADMISSION_MAX_GPU_UNITS",
+		"value: \"0\"",
+		"name: T4_ADMISSION_CREATION_BURST",
+		"value: \"10\"",
 		"name: kubernetes-api-access",
 		"audience: \"https://kubernetes.default.svc\"",
 		"expirationSeconds: 3600",
@@ -71,6 +87,38 @@ func TestEnabledChartRendersHARestrictedWorkloads(t *testing.T) {
 	if strings.Contains(output, "kind: PersistentVolumeClaim") || strings.Contains(output, "nfs:") || strings.Contains(output, "hostPath:") {
 		t.Fatal("portable chart rendered storage backend or workload PVC")
 	}
+}
+
+func TestIdentityAdaptersUseOnlyExplicitReferencedConfiguration(t *testing.T) {
+	output := helmTemplate(t, append(enabledValues(),
+		"--set-string", "server.identity.adapters[0]=oidc",
+		"--set-string", "server.identity.adapters[1]=mtls",
+		"--set-string", "server.identity.configMapRef.name=cluster-request-identity",
+		"--set-string", "server.identity.configMapRef.key=adapters.json",
+		"--set-string", "networkPolicy.identityProviderCIDRs[0]=203.0.113.24/32",
+	)...)
+	server := documentContainingKind(t, output, "Deployment", "name: \"release-name-t4-cluster-server\"")
+	assertContains(t, server,
+		"name: T4_CLUSTER_IDENTITY_CONFIG_FILE",
+		"value: /var/run/t4-identity/config.json",
+		"name: request-identity",
+		"name: \"cluster-request-identity\"",
+		"key: \"adapters.json\"",
+		"path: config.json",
+		"readOnly: true",
+	)
+	if strings.Contains(server, "name: T4_CLUSTER_IDENTITY_PROVIDER") {
+		t.Fatal("legacy identity provider remained enabled beside referenced adapter configuration")
+	}
+	identityEgress := documentContainingKind(t, output, "NetworkPolicy", "name: \"release-name-t4-cluster-server-egress\"")
+	assertContains(t, identityEgress, "203.0.113.24/32", "port: 443")
+	helmTemplateMustFail(t, append(enabledValues(),
+		"--set-string", "server.identity.adapters[0]=oidc",
+	)...)
+	helmTemplateMustFail(t, append(enabledValues(),
+		"--set-string", "server.identity.configMapRef.name=identity-config",
+		"--set-string", "server.identity.secretRef.name=identity-secret",
+	)...)
 }
 
 func TestLongReleaseNamesRenderDNSLabelResourceNames(t *testing.T) {
@@ -88,8 +136,8 @@ func TestLongReleaseNamesRenderDNSLabelResourceNames(t *testing.T) {
 		"server",
 		"metrics",
 		"controller-metrics",
-		"session",
 		"session-token-reviewer",
+		"session-access-manager",
 		"storage-reader",
 	}
 	foundSuffixes := make(map[string]bool, len(requiredSuffixes))
@@ -141,35 +189,162 @@ func TestEachDeploymentUsesZeroUnavailableAndConfiguredAPIAudience(t *testing.T)
 	assertContains(t, server, "audience: \"t4-cluster-internal\"")
 }
 
+func TestSSHGatewayUsesStableSecretsStrictDispatchAndHA(t *testing.T) {
+	values := append(enabledValues(),
+		"--set", "sshGateway.enabled=true",
+		"--set", "images.sshGateway.digest="+fakeDigest,
+		"--set-string", "sshGateway.existingHostKeySecret=ssh-host-key",
+		"--set-string", "sshGateway.existingAuthorizedKeysSecret=ssh-authorized-keys",
+		"--set-string", "networkPolicy.sshIngressCIDRs[0]=198.51.100.0/24",
+		"--set", "sshGateway.commands.provider=true",
+		"--set-string", "sshGateway.handlerModule=@t4-code/cluster-ssh-handler",
+		"--set-string", "sshGateway.existingProviderAssertionSecret=provider-assertion",
+		"--set-string", "sshGateway.providerInternalWebSocketURL=wss://provider.example.test:9443/internal/provider",
+		"--set-string", "networkPolicy.sshBackendCIDRs[0]=203.0.113.0/24",
+		"--set", "networkPolicy.sshBackendPorts[0]=9443",
+	)
+	output := helmTemplate(t, values...)
+	assertKindCount(t, output, "Deployment", 3)
+	gateway := documentContainingKind(t, output, "Deployment", "name: \"release-name-t4-cluster-ssh-gateway\"")
+	assertContains(t, gateway,
+		"replicas: 3",
+		"maxUnavailable: 0",
+		"image: \"ghcr.io/lycaonllc/t4-ssh-gateway@"+fakeDigest+"\"",
+		"containerPort: 2222",
+		"readOnlyRootFilesystem: true",
+		"allowPrivilegeEscalation: false",
+		"secretName: \"ssh-host-key\"",
+		"secretName: \"ssh-authorized-keys\"",
+		"defaultMode: 0400",
+		"defaultMode: 0444",
+		"name: T4_SSH_GATEWAY_HANDLER_MODULE",
+		"name: T4_SSH_GATEWAY_ENABLE_PROVIDER",
+		"name: T4_SSH_GATEWAY_ENABLE_RELAY",
+		"name: T4_SSH_GATEWAY_ENABLE_ATTACH",
+		"name: T4_SSH_GATEWAY_ENABLE_VERSION",
+	)
+	assertContains(t, gateway,
+		"name: T4_PROVIDER_INTERNAL_HMAC_FILE",
+		"/var/run/secrets/t4-provider-assertion/keyring.json",
+		"secretName: \"provider-assertion\"",
+		"key: \"keyring.json\"",
+		"path: keyring.json",
+		"wss://provider.example.test:9443/internal/provider",
+	)
+	server := documentContainingKind(t, output, "Deployment", "name: \"release-name-t4-cluster-server\"")
+	assertContains(t, server,
+		"name: T4_PROVIDER_INTERNAL_AUDIENCE",
+		"provider.example.test:9443/internal/provider",
+		"/var/run/secrets/t4-provider-assertion/keyring.json",
+	)
+	service := documentContainingKind(t, output, "Service", "name: \"release-name-t4-cluster-ssh-gateway\"")
+	assertContains(t, service, "type: LoadBalancer", "port: 22", "targetPort: ssh")
+	networkPolicy := documentContainingKind(t, output, "NetworkPolicy", "name: \"release-name-t4-cluster-ssh-ingress\"")
+	assertContains(t, networkPolicy, "cidr: \"198.51.100.0/24\"", "port: 2222")
+	sshEgress := documentContainingKind(t, output, "NetworkPolicy", "name: \"release-name-t4-cluster-ssh-egress\"")
+	assertContains(t, sshEgress,
+		"app.kubernetes.io/component: ssh-gateway",
+		"app.kubernetes.io/component: server",
+		"cidr: \"203.0.113.0/24\"",
+		"port: 8080",
+		"port: 9443",
+	)
+	serverIngress := documentContainingKind(t, output, "NetworkPolicy", "name: \"release-name-t4-cluster-gateway-ingress\"")
+	assertContains(t, serverIngress, "app.kubernetes.io/component: ssh-gateway", "port: 8080")
+
+	root := repoRoot(t)
+	sshdConfig := mustRead(t, filepath.Join(root, "cluster", "images", "ssh-gateway", "sshd_config"))
+	assertContains(t, sshdConfig,
+		"AuthenticationMethods publickey",
+		"ExposeAuthInfo yes",
+		"ForceCommand /usr/local/bin/bun /opt/t4/packages/ssh-gateway/src/bin.ts",
+		"DisableForwarding yes",
+		"PermitTTY yes",
+	)
+	entrypoint := mustRead(t, filepath.Join(root, "cluster", "images", "ssh-gateway", "entrypoint.sh"))
+	if strings.Contains(entrypoint, "ssh-keygen") {
+		t.Fatal("SSH gateway startup generates replica-local host identity")
+	}
+	if strings.Contains(entrypoint, "test ! -L") {
+		t.Fatal("SSH gateway rejects Kubernetes atomic Secret projection symlinks")
+	}
+	assertContains(t, entrypoint, "readlink -f", "\"$resolved_root\"/*")
+	assertContains(t, entrypoint, "test -s \"$host_key\"", "test -s \"$authorized_keys\"", "/usr/sbin/sshd -t")
+}
+
+func TestSSHGatewayRequiresStableIdentitySecrets(t *testing.T) {
+	base := append(enabledValues(),
+		"--set", "sshGateway.enabled=true",
+		"--set", "images.sshGateway.digest="+fakeDigest,
+	)
+	helmTemplateMustFail(t, base...)
+	helmTemplateMustFail(t, append(base,
+		"--set-string", "sshGateway.existingHostKeySecret=ssh-host-key",
+	)...)
+}
+
+func TestSSHGatewayRequiresBackendHandlerForOperationalCommands(t *testing.T) {
+	base := append(enabledValues(),
+		"--set", "sshGateway.enabled=true",
+		"--set", "images.sshGateway.digest="+fakeDigest,
+		"--set-string", "sshGateway.existingHostKeySecret=ssh-host-key",
+		"--set-string", "sshGateway.existingAuthorizedKeysSecret=ssh-authorized-keys",
+		"--set", "sshGateway.commands.provider=true",
+	)
+	helmTemplateMustFail(t, base...)
+	output := helmTemplate(t, append(base,
+		"--set-string", "sshGateway.handlerModule=@t4-code/cluster-ssh-handler",
+		"--set-string", "sshGateway.existingProviderAssertionSecret=provider-assertion",
+	)...)
+	gateway := documentContainingKind(t, output, "Deployment", "name: \"release-name-t4-cluster-ssh-gateway\"")
+	assertContains(t, gateway,
+		"name: T4_SSH_GATEWAY_HANDLER_MODULE",
+		"value: \"@t4-code/cluster-ssh-handler\"",
+		"name: T4_SSH_GATEWAY_ENABLE_PROVIDER",
+		"value: \"1\"",
+		"name: T4_PROVIDER_INTERNAL_WS_URL",
+		"value: \"ws://release-name-t4-cluster-server.t4-system.svc:8080/internal/provider\"",
+		"name: T4_PROVIDER_INTERNAL_HMAC_FILE",
+	)
+}
+
 func TestValuesSchemaRejectsUnsafeNamesProfilesCIDRsAndHalfSelectors(t *testing.T) {
 	for name, values := range map[string][]string{
-		"cluster host name":                {"--set-string", "clusterHost.name=Bad_Name"},
-		"storage class name":               {"--set-string", "storage.adminRWXStorageClass=Bad_Name"},
-		"runtime profile":                  {"--set-string", "clusterHost.runtimeProfiles[0]=-bad"},
-		"Woodpecker Secret name":           {"--set-string", "woodpecker.existingSecret=Bad_Name", "--set-string", "woodpecker.configMap=woodpecker-config"},
-		"Woodpecker ConfigMap name":        {"--set-string", "woodpecker.existingSecret=woodpecker-token", "--set-string", "woodpecker.configMap=Bad_Name"},
-		"Woodpecker key":                   {"--set-string", "woodpecker.existingSecret=woodpecker-token", "--set-string", "woodpecker.configMap=woodpecker-config", "--set-string", "woodpecker.tokenKey=bad/key"},
-		"Woodpecker audience":              {"--set-string", "woodpecker.serviceAccountAudience=/bad", "--set-string", "woodpecker.configMap=woodpecker-config"},
-		"IPv4 default route":               {"--set-string", "server.trustedProxyCIDRs[0]=0.0.0.0/0"},
-		"IPv6 default route":               {"--set-string", "server.trustedProxyCIDRs[0]=::/0"},
-		"gateway half selector":            {"--set-string", "networkPolicy.gatewayIngress.namespaceSelector.matchLabels.scope=gateway"},
-		"observability half selector":      {"--set-string", "networkPolicy.observability.podSelector.matchLabels.scope=metrics"},
-		"OMP ConfigMap name":               {"--set-string", "session.omp.configMap=Bad_Name"},
-		"OMP models key":                   {"--set-string", "session.omp.modelsKey=bad/key"},
-		"removed OMP credential Secret":    {"--set-string", "session.omp.credentialSecret=omp-runtime-credential"},
-		"removed OMP credential key":       {"--set-string", "session.omp.credentialKey=MODEL_API_KEY"},
-		"removed OMP auth mode":            {"--set", "session.omp.allowUnauthenticated=true"},
-		"identical OMP projection keys":    {"--set-string", "session.omp.settingsKey=provider-models"},
-		"model route port zero":            {"--set", "networkPolicy.modelRoutePorts[0]=0"},
-		"model route port above TCP range": {"--set", "networkPolicy.modelRoutePorts[0]=65536"},
-		"duplicate model route port":       {"--set", "networkPolicy.modelRoutePorts[0]=19481", "--set", "networkPolicy.modelRoutePorts[1]=19481"},
-		"noninteger model route port":      {"--set-string", "networkPolicy.modelRoutePorts[0]=https"},
-		"model route half selector":        {"--set-string", "networkPolicy.modelRoute.namespaceSelector.matchLabels.scope=linkedin-bot"},
-		"CI provider port zero":            {"--set", "networkPolicy.ciProviderPorts[0]=0"},
-		"CI provider port above TCP range": {"--set", "networkPolicy.ciProviderPorts[0]=65536"},
-		"duplicate CI provider port":       {"--set", "networkPolicy.ciProviderPorts[0]=8080", "--set", "networkPolicy.ciProviderPorts[1]=8080"},
-		"noninteger CI provider port":      {"--set-string", "networkPolicy.ciProviderPorts[0]=http"},
-		"CI provider half selector":        {"--set-string", "networkPolicy.ciProvider.namespaceSelector.matchLabels.scope=linkedin-bot"},
+		"cluster host name":                  {"--set-string", "clusterHost.name=Bad_Name"},
+		"storage class name":                 {"--set-string", "storage.adminRWXStorageClass=Bad_Name"},
+		"runtime profile":                    {"--set-string", "clusterHost.runtimeProfiles[0]=-bad"},
+		"Woodpecker Secret name":             {"--set-string", "woodpecker.existingSecret=Bad_Name", "--set-string", "woodpecker.configMap=woodpecker-config"},
+		"Woodpecker ConfigMap name":          {"--set-string", "woodpecker.existingSecret=woodpecker-token", "--set-string", "woodpecker.configMap=Bad_Name"},
+		"Woodpecker key":                     {"--set-string", "woodpecker.existingSecret=woodpecker-token", "--set-string", "woodpecker.configMap=woodpecker-config", "--set-string", "woodpecker.tokenKey=bad/key"},
+		"Woodpecker audience":                {"--set-string", "woodpecker.serviceAccountAudience=/bad", "--set-string", "woodpecker.configMap=woodpecker-config"},
+		"provider URL uppercase host":        {"--set-string", "sshGateway.providerInternalWebSocketURL=wss://Provider.Example/internal/provider"},
+		"provider URL explicit default port": {"--set-string", "sshGateway.providerInternalWebSocketURL=wss://provider.example:443/internal/provider"},
+		"IPv4 default route":                 {"--set-string", "server.trustedProxyCIDRs[0]=0.0.0.0/0"},
+		"IPv6 default route":                 {"--set-string", "server.trustedProxyCIDRs[0]=::/0"},
+		"build version leading whitespace":   {"--set-string", "server.publicApi.build.version= 0.1.33"},
+		"build revision trailing whitespace": {"--set-string", "server.publicApi.build.revision=fixture-revision "},
+		"negative active runtime quota":      {"--set", "server.admission.maxActiveRuntimes=-1"},
+		"unsafe workspace capacity":          {"--set", "server.admission.maxWorkspaceCapacityBytes=9007199254740992"},
+		"zero creation burst":                {"--set", "server.admission.creationRate.burst=0"},
+		"unbounded retry after":              {"--set", "server.admission.creationRate.maximumRetryAfterSeconds=301"},
+		"gateway half selector":              {"--set-string", "networkPolicy.gatewayIngress.namespaceSelector.matchLabels.scope=gateway"},
+		"observability half selector":        {"--set-string", "networkPolicy.observability.podSelector.matchLabels.scope=metrics"},
+		"OMP ConfigMap name":                 {"--set-string", "session.omp.configMap=Bad_Name"},
+		"OMP models key":                     {"--set-string", "session.omp.modelsKey=bad/key"},
+		"removed OMP credential Secret":      {"--set-string", "session.omp.credentialSecret=omp-runtime-credential"},
+		"removed OMP credential key":         {"--set-string", "session.omp.credentialKey=MODEL_API_KEY"},
+		"removed OMP auth mode":              {"--set", "session.omp.allowUnauthenticated=true"},
+		"identical OMP projection keys":      {"--set-string", "session.omp.settingsKey=provider-models"},
+		"model route port zero":              {"--set", "networkPolicy.modelRoutePorts[0]=0"},
+		"model route port above TCP range":   {"--set", "networkPolicy.modelRoutePorts[0]=65536"},
+		"duplicate model route port":         {"--set", "networkPolicy.modelRoutePorts[0]=19481", "--set", "networkPolicy.modelRoutePorts[1]=19481"},
+		"noninteger model route port":        {"--set-string", "networkPolicy.modelRoutePorts[0]=https"},
+		"model route half selector":          {"--set-string", "networkPolicy.modelRoute.namespaceSelector.matchLabels.scope=linkedin-bot"},
+		"CI provider port zero":              {"--set", "networkPolicy.ciProviderPorts[0]=0"},
+		"CI provider port above TCP range":   {"--set", "networkPolicy.ciProviderPorts[0]=65536"},
+		"duplicate CI provider port":         {"--set", "networkPolicy.ciProviderPorts[0]=8080", "--set", "networkPolicy.ciProviderPorts[1]=8080"},
+		"noninteger CI provider port":        {"--set-string", "networkPolicy.ciProviderPorts[0]=http"},
+		"CI provider half selector":          {"--set-string", "networkPolicy.ciProvider.namespaceSelector.matchLabels.scope=linkedin-bot"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			helmTemplateMustFail(t, append(enabledValues(), values...)...)
@@ -216,7 +391,7 @@ func TestBuiltInModelGatewayAloneReceivesProviderCredential(t *testing.T) {
 		"--set", "networkPolicy.modelGatewayUpstreamCIDRs[0]=203.0.113.8/32",
 	)
 	output := helmTemplate(t, values...)
-	assertCount(t, output, "kind: Deployment", 3)
+	assertCount(t, output, "apiVersion: apps/v1\nkind: Deployment", 3)
 	gateway := documentContainingKind(t, output, "Deployment", "name: \"release-name-t4-cluster-model-gateway\"")
 	assertContains(t, gateway,
 		"image: \"ghcr.io/lycaonllc/t4-model-gateway@"+fakeDigest+"\"",
@@ -230,6 +405,16 @@ func TestBuiltInModelGatewayAloneReceivesProviderCredential(t *testing.T) {
 		"automountServiceAccountToken: false",
 		"readOnlyRootFilesystem: true",
 	)
+	assertContains(t, gateway,
+		"replicas: 2",
+		"maxUnavailable: 0",
+		"topologySpreadConstraints:",
+		"podAntiAffinity:",
+		"k3s-worker-02",
+	)
+	if strings.Contains(gateway, "kubernetes-api-access") || strings.Contains(gateway, "serviceAccountToken:") {
+		t.Fatal("model gateway received a runtime or Kubernetes credential")
+	}
 	controller := documentContainingKind(t, output, "Deployment", "name: \"release-name-t4-cluster-controller\"")
 	server := documentContainingKind(t, output, "Deployment", "name: \"release-name-t4-cluster-server\"")
 	if strings.Contains(controller, "model-provider") || strings.Contains(server, "model-provider") {
@@ -246,6 +431,8 @@ func TestBuiltInModelGatewayAloneReceivesProviderCredential(t *testing.T) {
 		"kind: Service\nmetadata:\n  name: \"release-name-t4-cluster-model-gateway\"",
 		"kind: PodDisruptionBudget\nmetadata:\n  name: \"release-name-t4-cluster-model-gateway\"",
 	)
+	modelGatewayPDB := documentContainingKind(t, output, "PodDisruptionBudget", "name: \"release-name-t4-cluster-model-gateway\"")
+	assertContains(t, modelGatewayPDB, "minAvailable: 2")
 }
 
 func TestBuiltInModelGatewayRequiresPinnedPrivateRoute(t *testing.T) {
@@ -382,31 +569,37 @@ func TestRBACSeparatesControllerMutationFromServerProjection(t *testing.T) {
 	output := helmTemplate(t, enabledValues()...)
 	controllerRole := documentContaining(t, output, "name: \"release-name-t4-cluster-controller\"")
 	serverRole := documentContaining(t, output, "name: \"release-name-t4-cluster-server\"")
-	assertContains(t, controllerRole, "persistentvolumeclaims", "pods", "services", "t4sessions/status", "leases")
+	assertContains(t, controllerRole, "persistentvolumeclaims", "pods", "services", "secrets", "serviceaccounts", "t4sessions/status", "leases")
 	assertContains(t, controllerRole,
 		"resources: [configmaps]",
 		"resourceNames: [\"omp-runtime-config\"]",
 		"verbs: [get]",
+		"resources: [roles, rolebindings]",
+		"verbs: [get, list, watch, create, update, patch, delete]",
 	)
-	if strings.Contains(controllerRole, "resources: [secrets]") {
-		t.Fatal("controller role can read provider credential Secrets")
-	}
-	assertContains(t, serverRole, "t4clusterhosts", "t4workspaces", "t4sessions", "create", "list", "watch")
+	assertContains(t, serverRole, "t4clusterhosts", "t4workspaces", "t4sessions", "create", "update", "delete", "list", "watch")
+	assertContains(t, serverRole, "resources: [configmaps]", "verbs: [get, create, update]")
 	if strings.Contains(serverRole, "secrets") || strings.Contains(serverRole, "persistentvolumeclaims") || strings.Contains(serverRole, "t4sessions/status") {
 		t.Fatal("server role can read secrets or mutate controller-owned infrastructure/status")
 	}
-}
-func TestUnauthenticatedOMPControllerCannotReadSecrets(t *testing.T) {
-	output := helmTemplate(t, enabledValues()...)
-	controllerRole := documentContaining(t, output, "name: \"release-name-t4-cluster-controller\"")
-	if strings.Contains(controllerRole, "resources: [secrets]") {
-		t.Fatal("unauthenticated OMP controller can read Secrets")
+	if strings.Contains(output, "name: \"release-name-t4-cluster-session-writer\"") ||
+		strings.Contains(output, "name: \"release-name-t4-cluster-session\"") {
+		t.Fatal("chart retained static cross-session ServiceAccount or writer RBAC")
 	}
+	accessManager := documentContainingKind(t, output, "ClusterRole", "name: \"release-name-t4-cluster-session-access-manager\"")
+	assertContains(t, accessManager, "resources: [clusterrolebindings]", "verbs: [get, create, delete]")
+}
+func TestControllerCanRevokeGenerationAuthAndReadFenceEvidence(t *testing.T) {
+	output := helmTemplate(t, enabledValues()...)
+	controllerRole := documentContainingKind(t, output, "Role", "name: \"release-name-t4-cluster-controller\"")
+	assertContains(t, controllerRole, "resources: [pods, services, persistentvolumeclaims, secrets, serviceaccounts]", "create", "delete", "resources: [leases]")
+	storageReader := documentContainingKind(t, output, "ClusterRole", "name: \"release-name-t4-cluster-storage-reader\"")
+	assertContains(t, storageReader, "storageclasses", "volumeattachments", "persistentvolumes", "get", "list", "watch")
 }
 
 func TestChartUsesOnlyProjectedServiceAccountIdentityForInternalPeers(t *testing.T) {
 	output := helmTemplate(t, enabledValues()...)
-	assertKindCount(t, output, "ServiceAccount", 3)
+	assertKindCount(t, output, "ServiceAccount", 2)
 	assertCount(t, output, "kind: Secret", 0)
 	server := documentContainingKind(t, output, "Deployment", "name: \"release-name-t4-cluster-server\"")
 	assertContains(t, server,
@@ -419,8 +612,8 @@ func TestChartUsesOnlyProjectedServiceAccountIdentityForInternalPeers(t *testing
 	)
 	controller := documentContainingKind(t, output, "Deployment", "name: \"release-name-t4-cluster-controller\"")
 	assertContains(t, controller,
-		"name: T4_SESSION_SERVICE_ACCOUNT",
-		"value: \"release-name-t4-cluster-session\"",
+		"name: T4_SESSION_TOKEN_REVIEWER_CLUSTER_ROLE",
+		"value: \"release-name-t4-cluster-session-token-reviewer\"",
 		"name: T4_CLUSTER_SERVER_SERVICE_ACCOUNT",
 		"value: \"release-name-t4-cluster-server\"",
 	)
@@ -570,7 +763,7 @@ func TestCRDsRemainExplicitAcrossUpgradeAndUninstall(t *testing.T) {
 	}
 }
 
-func TestWorkspaceRetentionPolicyIsImmutable(t *testing.T) {
+func TestRESTLifecycleCRDFieldsAreBoundedAndWorkspaceRetentionIsMutable(t *testing.T) {
 	root := repoRoot(t)
 	raw := mustRead(t, filepath.Join(root, "deploy", "charts", "t4-cluster", "crds", "t4workspaces.cluster.t4.dev.yaml"))
 	var crd apiextensionsv1.CustomResourceDefinition
@@ -600,21 +793,118 @@ func TestWorkspaceRetentionPolicyIsImmutable(t *testing.T) {
 		}
 	}
 
-	immutable := false
 	for _, validation := range retentionPolicy.XValidations {
-		if validation.Rule == "self == oldSelf" && validation.Message == "retentionPolicy is immutable" {
-			immutable = true
+		if validation.Rule == "self == oldSelf" {
+			t.Fatal("spec.retentionPolicy must remain mutable for the REST lifecycle contract")
 		}
 	}
-	if !immutable {
-		t.Fatal("spec.retentionPolicy lacks the immutable CEL transition rule and clear message")
+	workspaceSpec := crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"]
+	if publicID, ok := workspaceSpec.Properties["publicId"]; !ok || publicID.MaxLength == nil || *publicID.MaxLength != 128 {
+		t.Fatal("workspace CRD lacks a bounded publicId")
+	}
+	owner := workspaceSpec.Properties["owner"]
+	if owner.Pattern == "^[A-Za-z0-9][A-Za-z0-9._:@/-]*$" || !strings.Contains(owner.Pattern, `\x00`) {
+		t.Fatalf("workspace owner schema does not admit bounded UTF-8 principals while excluding controls: %q", owner.Pattern)
 	}
 
-	api := mustRead(t, filepath.Join(root, "packages", "cluster-operator", "api", "v1alpha1", "types.go"))
-	assertContains(t, api,
-		"// +kubebuilder:validation:Enum=Retain;Delete\ntype RetentionPolicy string",
-		"// +kubebuilder:validation:XValidation:rule=\"self == oldSelf\",message=\"retentionPolicy is immutable\"\n\tRetentionPolicy RetentionPolicy",
-	)
+	raw = mustRead(t, filepath.Join(root, "deploy", "charts", "t4-cluster", "crds", "t4sessions.cluster.t4.dev.yaml"))
+	if err := yaml.Unmarshal([]byte(raw), &crd); err != nil {
+		t.Fatalf("decode session CRD: %v", err)
+	}
+	sessionSpec := crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"]
+	assertSchemaProperties := []string{"publicId", "publicHostProfileId", "desiredState", "browserPolicy", "idlePolicy", "cmuxSessionName"}
+	for _, property := range assertSchemaProperties {
+		if _, ok := sessionSpec.Properties[property]; !ok {
+			t.Fatalf("session CRD lacks bounded REST lifecycle field spec.%s", property)
+		}
+	}
+	publicProfile := sessionSpec.Properties["publicHostProfileId"]
+	if publicProfile.MaxLength == nil || *publicProfile.MaxLength != 128 {
+		t.Fatal("session CRD publicHostProfileId is not bounded to the REST opaque ID contract")
+	}
+	cmuxName := sessionSpec.Properties["cmuxSessionName"]
+	if cmuxName.MaxLength == nil || *cmuxName.MaxLength != 63 || cmuxName.Pattern == "" {
+		t.Fatal("session CRD cmuxSessionName is not bounded and validated")
+	}
+	sessionStatus := crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["status"]
+	runtimeGeneration := sessionStatus.Properties["runtimeGeneration"]
+	if runtimeGeneration.MaxLength == nil || *runtimeGeneration.MaxLength != 128 || runtimeGeneration.Pattern == "" {
+		t.Fatal("session CRD runtimeGeneration is not bounded controller-owned status")
+	}
+}
+
+func TestRuntimeStateStorageCRDsRemainAdditiveBoundedAndSeparated(t *testing.T) {
+	root := repoRoot(t)
+	load := func(name string) apiextensionsv1.CustomResourceDefinition {
+		t.Helper()
+		var crd apiextensionsv1.CustomResourceDefinition
+		if err := yaml.Unmarshal([]byte(mustRead(t, filepath.Join(root, "deploy", "charts", "t4-cluster", "crds", name))), &crd); err != nil {
+			t.Fatalf("decode %s: %v", name, err)
+		}
+		return crd
+	}
+
+	host := load("t4clusterhosts.cluster.t4.dev.yaml")
+	hostSpec := host.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"]
+	profile, ok := hostSpec.Properties["runtimeStateStorageProfile"]
+	if !ok || profile.Properties["storageClassName"].MaxLength == nil || profile.Properties["size"].MaxLength == nil {
+		t.Fatal("host runtime-state storage profile is absent or unbounded")
+	}
+	positiveSizeOnly := false
+	for _, validation := range profile.XValidations {
+		positiveSizeOnly = positiveSizeOnly ||
+			strings.Contains(validation.Rule, "quantity(self.size)") &&
+				strings.Contains(validation.Rule, "isGreaterThan") &&
+				strings.Contains(validation.Rule, "quantity('0')")
+	}
+	if !positiveSizeOnly {
+		t.Fatal("chart CRD does not reject zero runtime-state storage size while admitting positive quantities")
+	}
+	if slices.Contains(hostSpec.Required, "runtimeStateStorageProfile") {
+		t.Fatal("runtime-state storage profile is not additive for legacy hosts")
+	}
+
+	workspace := load("t4workspaces.cluster.t4.dev.yaml")
+	workspaceSpec := workspace.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"]
+	workspaceStatus := workspace.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["status"]
+	for _, field := range []string{"storageClassName", "restoreSnapshotRef"} {
+		if _, ok := workspaceSpec.Properties[field]; !ok || slices.Contains(workspaceSpec.Required, field) {
+			t.Fatalf("workspace spec.%s is absent or required", field)
+		}
+	}
+	for _, field := range []string{"selectedStorageClassName", "filesystemRoot", "attachmentCount", "snapshotRef"} {
+		if _, ok := workspaceStatus.Properties[field]; !ok {
+			t.Fatalf("workspace status lacks infrastructure field %s", field)
+		}
+	}
+
+	session := load("t4sessions.cluster.t4.dev.yaml")
+	sessionSpec := session.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"]
+	sessionStatus := session.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["status"]
+	if _, ok := sessionSpec.Properties["runtimeStateRestoreSnapshotRef"]; !ok || slices.Contains(sessionSpec.Required, "runtimeStateRestoreSnapshotRef") {
+		t.Fatal("session runtime-state restore reference is absent or required")
+	}
+	for _, field := range []string{
+		"runtimeGeneration", "generationSecretEpoch", "generationSecretName", "fenceState", "fencingPodUid", "fencingGeneration", "fencingVolumeIdentity",
+		"runtimeStatePVCName", "runtimeStateVolumeIdentity", "runtimeStateStorageClassName", "runtimeStateCapacity", "runtimeStateFilesystemRoot", "runtimeStateSnapshotRef",
+	} {
+		property, ok := sessionStatus.Properties[field]
+		if !ok || property.Type == "string" && property.MaxLength == nil && len(property.Enum) == 0 {
+			t.Fatalf("session status field %s is absent or unbounded", field)
+		}
+	}
+
+	for name, status := range map[string]apiextensionsv1.JSONSchemaProps{"workspace": workspaceStatus, "session": sessionStatus} {
+		encoded, err := json.Marshal(status)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, forbidden := range []string{"prompt", "transcript", "credential", "browserData", "browserProfile"} {
+			if strings.Contains(strings.ToLower(string(encoded)), strings.ToLower(forbidden)) {
+				t.Fatalf("%s status exposes forbidden data field %q", name, forbidden)
+			}
+		}
+	}
 }
 
 func TestImageContractsArePinnedAndAuthorityCompatible(t *testing.T) {
@@ -630,14 +920,14 @@ func TestImageContractsArePinnedAndAuthorityCompatible(t *testing.T) {
 		}
 	}
 	assertContains(t, session,
-		"d83b688817651d39bfab00676db6109a2d1ccec5",
-		"t4code-17.0.5-appserver-19",
+		"c4d3ecdc35234d1aa470c3e1101d9a4ca45b64c5",
+		"provenance/omp-runtime-v1.json",
 		"t4-omp-authority/1",
 		"session-entrypoint.sh",
 		"chromium",
 		"Xvfb",
 	)
-	assertContains(t, entrypoint, "packages/cluster-server/src/session-host-main.ts")
+	assertContains(t, entrypoint, "/usr/local/lib/t4/session-host-main/session-host-main.js")
 	for name, content := range map[string]string{"server": server, "session": session, "model gateway": modelGateway} {
 		assertContains(t, content, "pnpm install --frozen-lockfile")
 		if strings.Contains(content, "bun install --ignore-scripts --lockfile-only") {
@@ -648,8 +938,8 @@ func TestImageContractsArePinnedAndAuthorityCompatible(t *testing.T) {
 		t.Fatal("session runtime permits overriding a labeled runtime pin")
 	}
 	assertContains(t, session,
-		"refs/tags/t4code-17.0.5-appserver-19",
-		"git checkout --detach \"d83b688817651d39bfab00676db6109a2d1ccec5\"",
+		"git fetch --depth=1 origin \"${omp_commit}\"",
+		"git checkout --detach FETCH_HEAD",
 		"snapshot.debian.org/archive/debian/20250721T000000Z",
 	)
 	assertContains(t, server, "snapshot.debian.org/archive/debian/20250721T000000Z")
@@ -660,22 +950,27 @@ func TestImageContractsArePinnedAndAuthorityCompatible(t *testing.T) {
 	assertContains(t, server, "packages/cluster-server/src/main.ts")
 	assertContains(t, modelGateway, "packages/model-gateway/src/main.ts")
 	assertContains(t, entrypoint,
-		"T4_CLUSTER_SERVER_SERVICE_ACCOUNT",
-		"/var/run/secrets/kubernetes.io/serviceaccount/token",
-		"/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
-		"/var/run/secrets/kubernetes.io/serviceaccount/namespace",
+		`[[ "${T4_WRITER_LEASE_PATH}" == "${root}/private/writer-lease" ]]`,
+		`[[ "${T4_CMUX_SOCKET_MODE}" == "0660" ]]`,
 		"T4_OMP_CONFIG_SOURCE_DIR",
 		"unexpected_arguments",
 		`[[ "$#" -eq 0 ]]`,
-		`export HOME="${T4_SESSION_STATE_ROOT}/home"`,
-		`export PI_CODING_AGENT_DIR="${HOME}/.omp/profiles/${T4_SESSION_NAME}/agent"`,
+		`export HOME="${T4_OMP_HOME}"`,
+		`export PI_CODING_AGENT_DIR="${T4_AUTHORITY_STATE_DIR}/agent"`,
+		`export CMUX_STATE_DIR="${T4_CMUX_STATE_DIR}"`,
+		`export CMUX_SOCKET_PATH="${T4_CMUX_SOCKET_PATH}"`,
+		`acquire_writer_lease "${T4_WRITER_LEASE_PATH}"`,
+		"writer_lease_live_duplicate",
 		`install -m 0600 "${models_source}"`,
 		`install -m 0600 "${settings_source}"`,
 		`"${PI_CODING_AGENT_DIR}/models.yml"`,
 		`"${PI_CODING_AGENT_DIR}/config.yml"`,
-		`/usr/local/bin/bun /opt/t4/cluster/images/session-runtime/assert-omp-credentials-absent.ts`,
+		`/usr/local/bin/bun /usr/local/lib/t4/assert-omp-credentials-absent.js`,
 		"omp_credential_state_present",
 	)
+	if strings.Contains(entrypoint, "T4_CLUSTER_SERVER_SERVICE_ACCOUNT") || strings.Contains(entrypoint, "T4_KUBERNETES_TOKEN_PATH") {
+		t.Fatal("authority entrypoint requires credential-sidecar Kubernetes identity")
+	}
 }
 
 func TestSessionEntrypointFailsClosedBeforeGUIWithoutPrivateOMPInputs(t *testing.T) {
@@ -696,9 +991,8 @@ func TestSessionEntrypointFailsClosedBeforeGUIWithoutPrivateOMPInputs(t *testing
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			source := filepath.Join(root, "omp-source")
-			projection := filepath.Join(root, "kubernetes")
 			bin := filepath.Join(root, "bin")
-			for _, directory := range []string{source, projection, bin} {
+			for _, directory := range []string{source, bin} {
 				if err := os.MkdirAll(directory, 0o700); err != nil {
 					t.Fatal(err)
 				}
@@ -710,11 +1004,6 @@ func TestSessionEntrypointFailsClosedBeforeGUIWithoutPrivateOMPInputs(t *testing
 			}
 			if test.writeSettings {
 				if err := os.WriteFile(filepath.Join(source, "config.yml"), []byte(test.settings), 0o600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			for _, name := range []string{"token", "ca.crt", "namespace"} {
-				if err := os.WriteFile(filepath.Join(projection, name), []byte("projected"), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -730,14 +1019,23 @@ func TestSessionEntrypointFailsClosedBeforeGUIWithoutPrivateOMPInputs(t *testing
 			command := exec.Command("bash", arguments...)
 			command.Env = append(os.Environ(),
 				"PATH="+bin+":"+os.Getenv("PATH"),
-				"T4_SESSION_STATE_ROOT=/workspace/.t4/sessions/session-a",
+				"T4_RUNTIME_ID=runtime-session-a",
+				"T4_RUNTIME_UID=runtime-resource-uid",
+				"T4_SESSION_STATE_ID=runtime-session-a",
+				"T4_RUNTIME_GENERATION=gen_abcdefghijklmnopqrstuvwx",
+				"T4_SESSION_STATE_ROOT=/runtime-state/runtime-session-a",
 				"T4_SESSION_NAME=session-a",
-				"T4_AUTHORITY_STATE_DIR=/workspace/.t4/sessions/session-a/authority",
-				"T4_BROWSER_STATE_DIR=/workspace/.t4/sessions/session-a/browser",
-				"T4_CLUSTER_SERVER_SERVICE_ACCOUNT=t4-cluster-server",
-				"T4_KUBERNETES_TOKEN_PATH="+filepath.Join(projection, "token"),
-				"T4_KUBERNETES_CA_PATH="+filepath.Join(projection, "ca.crt"),
-				"T4_KUBERNETES_NAMESPACE_PATH="+filepath.Join(projection, "namespace"),
+				"T4_AUTHORITY_STATE_DIR=/runtime-state/runtime-session-a/authority",
+				"T4_CMUX_STATE_DIR=/runtime-state/runtime-session-a/cmux",
+				"T4_BROWSER_STATE_DIR=/runtime-state/runtime-session-a/browser",
+				"T4_ARTIFACT_ROOT=/runtime-state/runtime-session-a/artifacts",
+				"T4_PRIVATE_RUNTIME_DIR=/runtime-state/runtime-session-a/private",
+				"T4_OMP_HOME=/runtime-state/runtime-session-a/home",
+				"T4_WRITER_LEASE_PATH=/runtime-state/runtime-session-a/private/writer-lease",
+				"T4_HOST_RUNTIME_DIR=/run/t4/runtime-session-a",
+				"T4_CMUX_SOCKET_PATH=/run/t4/runtime-session-a/cmux/c.sock",
+				"T4_CMUX_SOCKET_MODE=0660",
+				"T4_WORKSPACE_ROOT=/workspace",
 				"T4_OMP_CONFIG_SOURCE_DIR="+source,
 				"T4_TEST_XVFB_MARKER="+marker,
 			)
@@ -754,6 +1052,94 @@ func TestSessionEntrypointFailsClosedBeforeGUIWithoutPrivateOMPInputs(t *testing
 			}
 		})
 	}
+}
+
+func TestResilienceMatrixAndOptionalRuntimePrePull(t *testing.T) {
+	output := helmTemplate(t, enabledValues()...)
+	controllerPDB := documentContainingKind(t, output, "PodDisruptionBudget", "name: \"release-name-t4-cluster-controller\"")
+	assertContains(t, controllerPDB, "maxUnavailable: 0", "app.kubernetes.io/component: controller")
+	controllerDeployment := documentContainingKind(t, output, "Deployment", "name: \"release-name-t4-cluster-controller\"")
+	assertContains(t, controllerDeployment, "replicas: 2", "maxUnavailable: 0", "maxSurge: 1", "minReadySeconds: 10", "topologySpreadConstraints:", "podAntiAffinity:")
+	serverPDB := documentContainingKind(t, output, "PodDisruptionBudget", "name: \"release-name-t4-cluster-server\"")
+	assertContains(t, serverPDB, "minAvailable: 2")
+	serverHPA := documentContainingKind(t, output, "HorizontalPodAutoscaler", "name: \"release-name-t4-cluster-server\"")
+	assertContains(t, serverHPA,
+		"minReplicas: 3",
+		"maxReplicas: 9",
+		"averageUtilization: 70",
+		"averageUtilization: 75",
+		"stabilizationWindowSeconds: 300",
+	)
+
+	prePullOutput := helmTemplate(t, append(enabledValues(), "--set", "imagePrePull.enabled=true")...)
+	prePull := documentContainingKind(t, prePullOutput, "DaemonSet", "name: \"release-name-t4-cluster-runtime-prepull\"")
+	assertContains(t, prePull,
+		"image: \"ghcr.io/lycaonllc/t4-session-runtime@"+fakeDigest+"\"",
+		"automountServiceAccountToken: false",
+		"readOnlyRootFilesystem: true",
+		"k3s-worker-02",
+	)
+	if strings.Contains(prePull, "secretKeyRef:") || strings.Contains(prePull, "serviceAccountToken:") || strings.Contains(prePull, "hostPath:") {
+		t.Fatal("runtime pre-pull DaemonSet received credentials or host storage")
+	}
+	helmTemplateMustFail(t, append(enabledValues(), "--set", "server.autoscaling.minReplicas=1")...)
+	helmTemplateMustFail(t, append(enabledValues(), "--set", "server.autoscaling.minReplicas=9", "--set", "server.autoscaling.maxReplicas=3")...)
+}
+
+func TestSSHGatewayRendersEquivalentHAAndReadinessDrain(t *testing.T) {
+	output := helmTemplate(t, append(enabledValues(),
+		"--set", "sshGateway.enabled=true",
+		"--set", "images.sshGateway.digest="+fakeDigest,
+		"--set-string", "sshGateway.existingHostKeySecret=ssh-host-key",
+		"--set-string", "sshGateway.existingAuthorizedKeysSecret=ssh-authorized-keys",
+	)...)
+	deployment := documentContainingKind(t, output, "Deployment", "name: \"release-name-t4-cluster-ssh-gateway\"")
+	assertContains(t, deployment,
+		"replicas: 3",
+		"maxUnavailable: 0",
+		"topologySpreadConstraints:",
+		"podAntiAffinity:",
+		"preStop:",
+		"touch /run/sshd/draining",
+		"test ! -e /run/sshd/draining",
+		"k3s-worker-02",
+	)
+	pdb := documentContainingKind(t, output, "PodDisruptionBudget", "name: \"release-name-t4-cluster-ssh-gateway\"")
+	assertContains(t, pdb, "minAvailable: 2")
+	hpa := documentContainingKind(t, output, "HorizontalPodAutoscaler", "name: \"release-name-t4-cluster-ssh-gateway\"")
+	assertContains(t, hpa, "minReplicas: 3", "maxReplicas: 9")
+}
+
+func TestPrometheusRulesCoverEveryActionableOperationalFailure(t *testing.T) {
+	output := helmTemplate(t, append(enabledValues(), "--set", "observability.prometheusRule.enabled=true")...)
+	rules := documentContainingKind(t, output, "PrometheusRule", "name: \"release-name-t4-cluster\"")
+	alerts := []string{
+		"OmperatorServerBelowQuorum",
+		"OmperatorControllerLeaderAbsent",
+		"OmperatorReconcileErrors",
+		"OmperatorRuntimeStartFailures",
+		"OmperatorRuntimeFenceFailures",
+		"OmperatorStorageOperationFailures",
+		"OmperatorProviderTicketFailures",
+		"OmperatorProviderSnapshotFailures",
+		"OmperatorGatewayErrorRate",
+		"OmperatorGatewayNotReady",
+		"OmperatorRuntimeNotReady",
+		"OmperatorCmuxProtocolMismatch",
+		"OmperatorOmpBridgeMismatch",
+		"OmperatorBrowserStreamDroppedFrames",
+		"OmperatorWakeTimeouts",
+		"OmperatorDrainFailures",
+	}
+	for index, alert := range alerts {
+		runbookID := "P5-05-RB-0" + strconv.Itoa(index+1)
+		if index < 9 {
+			runbookID = "P5-05-RB-00" + strconv.Itoa(index+1)
+		}
+		assertContains(t, rules, "alert: "+alert, "runbook_id: "+runbookID)
+	}
+	assertCount(t, rules, "severity:", len(alerts))
+	assertCount(t, rules, "runbook_id:", len(alerts))
 }
 
 func helmTemplate(t *testing.T, extra ...string) string {
@@ -786,10 +1172,17 @@ func enabledValues() []string {
 	return []string{
 		"--set", "enabled=true",
 		"--set", "storage.adminRWXStorageClass=portable-rwx",
+		"--set", "storage.runtimeStateStorageClass=portable-runtime-rwop",
+		"--set", "storage.volumeSnapshotClass=portable-snapshots",
 		"--set", "images.controller.digest=" + fakeDigest,
 		"--set", "images.server.digest=" + fakeDigest,
 		"--set", "images.sessionRuntime.digest=" + fakeDigest,
 		"--set", "server.trustedProxyCIDRs[0]=192.0.2.0/24",
+		"--set-string", "server.publicApi.restBaseURL=https://omp.example.test/v1",
+		"--set-string", "server.publicApi.ompAppWebSocketURL=wss://omp.example.test/v1/ws",
+		"--set-string", "server.publicApi.build.version=0.1.33",
+		"--set-string", "server.publicApi.build.revision=fixture-revision",
+		"--set-string", "server.publicApi.build.builtAt=2026-07-29T12:00:00Z",
 		"--set", "session.omp.configMap=omp-runtime-config",
 		"--set", "session.omp.modelsKey=provider-models",
 		"--set", "session.omp.settingsKey=agent-settings",

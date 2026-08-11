@@ -59,7 +59,7 @@ class FakeBridgeChild implements OmpAuthorityBridgeChild {
 const ready = {
 	v: OMP_AUTHORITY_BRIDGE_PROTOCOL,
 	type: "ready" as const,
-	methods: ["host.info", "session.list", "operation.termOpen", "terminal.input", "terminal.resize", "terminal.close", "lock.status", "usage.read"] as const,
+	methods: ["host.info", "authority.flush", "authority.quiesce", "session.list", "operation.termOpen", "terminal.input", "terminal.resize", "terminal.close", "lock.status", "usage.read"] as const,
 	ompVersion: "17.0.5",
 	ompBuild: "bridge-test",
 };
@@ -99,6 +99,25 @@ describe("OMP authority bridge client", () => {
 		expect(await listed).toEqual([]);
 		await client.stop();
 	});
+	test("awaits exact bridge flush and quiesce acknowledgements", async () => {
+		const child = new FakeBridgeChild();
+		const client = new OmpAuthorityBridgeClient({ executable: "/opt/omp" }, () => child);
+		const started = client.start();
+		child.server(ready);
+		await started;
+		const flushing = client.flush();
+		const flush = child.request(0);
+		expect(flush).toMatchObject({ method: "authority.flush", params: {} });
+		child.server({ v: OMP_AUTHORITY_BRIDGE_PROTOCOL, type: "response", id: flush.id, ok: true, result: { durable: true } });
+		await flushing;
+		const quiescing = client.quiesce();
+		const quiesce = child.request(1);
+		expect(quiesce).toMatchObject({ method: "authority.quiesce", params: {} });
+		child.server({ v: OMP_AUTHORITY_BRIDGE_PROTOCOL, type: "response", id: quiesce.id, ok: true, result: { quiesced: true } });
+		await quiescing;
+		await client.stop();
+	});
+
 
 	test("assembles every bounded page from one bridge inventory snapshot", async () => {
 		const child = new FakeBridgeChild();

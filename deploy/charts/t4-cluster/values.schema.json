@@ -8,8 +8,10 @@
     "images",
     "controller",
     "server",
+    "sshGateway",
     "session",
     "modelGateway",
+    "imagePrePull",
     "storage",
     "woodpecker",
     "ingress",
@@ -47,10 +49,11 @@
     },
     "images": {
       "type": "object",
-      "required": ["controller", "server", "sessionRuntime", "modelGateway"],
+      "required": ["controller", "server", "sshGateway", "sessionRuntime", "modelGateway"],
       "properties": {
         "controller": { "$ref": "#/definitions/image" },
         "server": { "$ref": "#/definitions/image" },
+        "sshGateway": { "$ref": "#/definitions/image" },
         "sessionRuntime": { "$ref": "#/definitions/image" },
         "modelGateway": { "$ref": "#/definitions/image" }
       }
@@ -65,19 +68,76 @@
     },
     "controller": {
       "type": "object",
-      "required": ["replicas", "resources"],
+      "required": ["replicas", "runtimeActivityPollSeconds", "resources"],
       "properties": {
         "replicas": { "type": "integer", "const": 2 },
+        "runtimeActivityPollSeconds": { "type": "integer", "minimum": 1, "maximum": 30 },
         "resources": { "type": "object" }
       }
     },
     "server": {
       "type": "object",
-      "required": ["replicas", "terminationGracePeriodSeconds", "identityProvider", "trustedProxyAddresses", "trustedProxyCIDRs", "resources"],
+      "additionalProperties": false,
+      "required": ["replicas", "terminationGracePeriodSeconds", "autoscaling", "identity", "trustedProxyAddresses", "trustedProxyCIDRs", "publicApi", "admission", "resources"],
       "properties": {
         "replicas": { "type": "integer", "minimum": 2, "maximum": 9 },
         "terminationGracePeriodSeconds": { "type": "integer", "minimum": 30, "maximum": 300 },
-        "identityProvider": { "type": "string", "const": "tailscale" },
+        "autoscaling": { "$ref": "#/definitions/autoscaling" },
+        "identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["adapters", "configMapRef", "secretRef"],
+          "properties": {
+            "adapters": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "uniqueItems": true,
+              "items": { "type": "string", "enum": ["tailscale", "oidc", "mtls"] }
+            },
+            "configMapRef": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "key"],
+              "properties": {
+                "name": { "type": "string", "pattern": "^$|^[a-z0-9](?:[-a-z0-9]{0,251}[a-z0-9])?$" },
+                "key": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" }
+              }
+            },
+            "secretRef": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "key"],
+              "properties": {
+                "name": { "type": "string", "pattern": "^$|^[a-z0-9](?:[-a-z0-9]{0,251}[a-z0-9])?$" },
+                "key": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" }
+              }
+            }
+          },
+          "allOf": [
+            {
+              "not": {
+                "properties": {
+                  "configMapRef": { "properties": { "name": { "minLength": 1 } } },
+                  "secretRef": { "properties": { "name": { "minLength": 1 } } }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "configMapRef": { "properties": { "name": { "const": "" } } },
+                  "secretRef": { "properties": { "name": { "const": "" } } }
+                }
+              },
+              "then": {
+                "properties": {
+                  "adapters": { "maxItems": 1, "items": { "const": "tailscale" } }
+                }
+              }
+            }
+          ]
+        },
         "trustedProxyAddresses": {
           "type": "array",
           "maxItems": 64,
@@ -90,8 +150,159 @@
           "uniqueItems": true,
           "items": { "$ref": "#/definitions/nonDefaultRouteCIDR" }
         },
+        "publicApi": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["restBaseURL", "ompAppWebSocketURL", "build"],
+          "properties": {
+            "restBaseURL": { "type": "string", "maxLength": 2048, "pattern": "^$|^https://[^/@\\s?#]+/v1$" },
+            "ompAppWebSocketURL": { "type": "string", "maxLength": 2048, "pattern": "^$|^wss://[^/@\\s?#]+/v1/ws$" },
+            "build": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["version", "revision", "builtAt"],
+              "properties": {
+                "version": { "type": "string", "maxLength": 64, "pattern": "^$|^[A-Za-z0-9][A-Za-z0-9._+:/~-]*$" },
+                "revision": { "type": "string", "maxLength": 128, "pattern": "^$|^[A-Za-z0-9][A-Za-z0-9._+:/~-]*$" },
+                "builtAt": { "type": "string", "maxLength": 64 }
+              }
+            }
+          }
+        },
+        "admission": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["maxActiveRuntimes", "maxRetainedRuntimes", "maxWorkspaceCapacityBytes", "maxCpuMillis", "maxMemoryBytes", "maxGpuUnits", "browserEnabled", "runtimeResources", "creationRate"],
+          "properties": {
+            "maxActiveRuntimes": { "type": "integer", "minimum": 0, "maximum": 100000 },
+            "maxRetainedRuntimes": { "type": "integer", "minimum": 0, "maximum": 100000 },
+            "maxWorkspaceCapacityBytes": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+            "maxCpuMillis": { "type": "integer", "minimum": 0, "maximum": 1000000000 },
+            "maxMemoryBytes": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+            "maxGpuUnits": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+            "browserEnabled": { "type": "boolean" },
+            "runtimeResources": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["cpuMillis", "memoryBytes", "gpuUnits"],
+              "properties": {
+                "cpuMillis": { "type": "integer", "minimum": 0, "maximum": 1000000000 },
+                "memoryBytes": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                "gpuUnits": { "type": "integer", "minimum": 0, "maximum": 1000000 }
+              }
+            },
+            "creationRate": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["windowSeconds", "burst", "maximumRetryAfterSeconds"],
+              "properties": {
+                "windowSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
+                "burst": { "type": "integer", "minimum": 1, "maximum": 100000 },
+                "maximumRetryAfterSeconds": { "type": "integer", "minimum": 1, "maximum": 300 }
+              }
+            }
+          }
+        },
         "resources": { "type": "object" }
       }
+    },
+    "sshGateway": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "replicas", "terminationGracePeriodSeconds", "autoscaling", "handlerModule", "commands", "existingHostKeySecret", "hostKeyKey", "existingAuthorizedKeysSecret", "authorizedKeysKey", "existingProviderAssertionSecret", "providerAssertionKeyringKey", "providerInternalWebSocketURL", "existingTrustedCASecret", "trustedCAKey", "existingPrincipalsSecret", "principalsKey", "service", "resources"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "handlerModule": {
+          "type": "string",
+          "maxLength": 512,
+          "pattern": "^$|^(?:file:///|/|@?[A-Za-z0-9])[A-Za-z0-9@._/+:-]*$",
+          "not": { "pattern": "(^|/)\\.\\.(/|$)" }
+        },
+        "commands": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["provider", "relay", "attach", "version"],
+          "properties": {
+            "provider": { "type": "boolean" },
+            "relay": { "type": "boolean" },
+            "attach": { "type": "boolean" },
+            "version": { "type": "boolean" }
+          }
+        },
+        "replicas": { "type": "integer", "minimum": 2, "maximum": 9 },
+        "terminationGracePeriodSeconds": { "type": "integer", "minimum": 15, "maximum": 300 },
+        "autoscaling": { "$ref": "#/definitions/autoscaling" },
+        "existingHostKeySecret": { "$ref": "#/definitions/optionalDNSSubdomain" },
+        "hostKeyKey": { "$ref": "#/definitions/configKey" },
+        "existingAuthorizedKeysSecret": { "$ref": "#/definitions/optionalDNSSubdomain" },
+        "authorizedKeysKey": { "$ref": "#/definitions/configKey" },
+        "existingProviderAssertionSecret": { "$ref": "#/definitions/optionalDNSSubdomain" },
+        "providerAssertionKeyringKey": { "$ref": "#/definitions/configKey" },
+        "providerInternalWebSocketURL": {
+          "type": "string",
+          "maxLength": 512,
+          "pattern": "^$|^wss?://[a-z0-9.-]+(?::[0-9]{1,5})?/internal/provider$",
+          "not": { "pattern": "^(?:ws://[^/]+:80|wss://[^/]+:443)/internal/provider$" }
+        },
+        "existingTrustedCASecret": { "$ref": "#/definitions/optionalDNSSubdomain" },
+        "trustedCAKey": { "$ref": "#/definitions/configKey" },
+        "existingPrincipalsSecret": { "$ref": "#/definitions/optionalDNSSubdomain" },
+        "principalsKey": { "$ref": "#/definitions/configKey" },
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "port", "annotations", "loadBalancerSourceRanges"],
+          "properties": {
+            "type": { "type": "string", "enum": ["LoadBalancer", "ClusterIP", "NodePort"] },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "annotations": { "type": "object", "additionalProperties": { "type": "string" } },
+            "loadBalancerSourceRanges": {
+              "type": "array",
+              "maxItems": 64,
+              "uniqueItems": true,
+              "items": { "$ref": "#/definitions/nonDefaultRouteCIDR" }
+            }
+          }
+        },
+        "resources": { "type": "object" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "enabled": { "const": true } } },
+          "then": {
+            "properties": {
+              "existingHostKeySecret": { "minLength": 1 },
+              "existingAuthorizedKeysSecret": { "minLength": 1 }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "commands": {
+                "anyOf": [
+                  { "properties": { "provider": { "const": true } } },
+                  { "properties": { "relay": { "const": true } } },
+                  { "properties": { "attach": { "const": true } } }
+                ]
+              }
+            }
+          },
+          "then": { "properties": { "handlerModule": { "minLength": 1 } } }
+        },
+        {
+          "if": { "properties": { "commands": { "properties": { "provider": { "const": true } } } } },
+          "then": { "properties": { "existingProviderAssertionSecret": { "minLength": 1 } } }
+        },
+        {
+          "if": { "properties": { "existingTrustedCASecret": { "minLength": 1 } } },
+          "then": { "properties": { "existingPrincipalsSecret": { "minLength": 1 } } }
+        },
+        {
+          "if": { "properties": { "existingPrincipalsSecret": { "minLength": 1 } } },
+          "then": { "properties": { "existingTrustedCASecret": { "minLength": 1 } } }
+        }
+      ]
     },
     "session": {
       "type": "object",
@@ -147,14 +358,38 @@
         "resources": { "type": "object" }
       }
     },
+    "imagePrePull": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "resources"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "resources": { "type": "object" }
+      }
+    },
     "storage": {
       "type": "object",
-      "required": ["adminRWXStorageClass"],
+      "required": ["adminRWXStorageClass", "runtimeStateStorageClass", "runtimeStateSize", "runtimeStateAccessMode", "volumeSnapshotClass"],
       "properties": {
         "adminRWXStorageClass": {
           "allOf": [{ "$ref": "#/definitions/optionalDNSSubdomain" }]
+        },
+        "runtimeStateStorageClass": {
+          "allOf": [{ "$ref": "#/definitions/optionalDNSSubdomain" }]
+        },
+        "runtimeStateSize": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*(Ei|Pi|Ti|Gi|Mi|Ki|E|P|T|G|M|K)$"
+        },
+        "runtimeStateAccessMode": {
+          "type": "string",
+          "enum": ["ReadWriteOncePod", "ReadWriteOnce"]
+        },
+        "volumeSnapshotClass": {
+          "allOf": [{ "$ref": "#/definitions/optionalDNSSubdomain" }]
         }
-      }
+      },
+      "additionalProperties": false
     },
     "woodpecker": {
       "type": "object",
@@ -199,10 +434,15 @@
     },
     "networkPolicy": {
       "type": "object",
-      "required": ["enabled", "kubernetesApiCIDRs", "modelRouteCIDRs", "modelRoutePorts", "modelRoute", "modelGatewayUpstreamCIDRs", "modelGatewayUpstreamPorts", "ciProviderCIDRs", "ciProviderPorts", "ciProvider", "dns", "gatewayIngress", "observability"],
+      "required": ["enabled", "kubernetesApiCIDRs", "identityProviderCIDRs", "sshIngressCIDRs", "sshBackendCIDRs", "sshBackendPorts", "sshBackend", "modelRouteCIDRs", "modelRoutePorts", "modelRoute", "modelGatewayUpstreamCIDRs", "modelGatewayUpstreamPorts", "ciProviderCIDRs", "ciProviderPorts", "ciProvider", "dns", "gatewayIngress", "observability"],
       "properties": {
         "enabled": { "type": "boolean" },
         "kubernetesApiCIDRs": { "$ref": "#/definitions/cidrList" },
+        "identityProviderCIDRs": { "$ref": "#/definitions/cidrList" },
+        "sshIngressCIDRs": { "$ref": "#/definitions/cidrList" },
+        "sshBackendCIDRs": { "$ref": "#/definitions/cidrList" },
+        "sshBackendPorts": { "$ref": "#/definitions/tcpPortList" },
+        "sshBackend": { "$ref": "#/definitions/pairedSelectors" },
         "modelRouteCIDRs": { "$ref": "#/definitions/cidrList" },
         "modelRoutePorts": { "$ref": "#/definitions/tcpPortList" },
         "modelRoute": { "$ref": "#/definitions/pairedSelectors" },
@@ -358,8 +598,21 @@
         }
       ]
     },
+    "autoscaling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "minReplicas", "maxReplicas", "targetCPUUtilizationPercentage", "targetMemoryUtilizationPercentage"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "minReplicas": { "type": "integer", "minimum": 2, "maximum": 9 },
+        "maxReplicas": { "type": "integer", "minimum": 2, "maximum": 32 },
+        "targetCPUUtilizationPercentage": { "type": "integer", "minimum": 10, "maximum": 100 },
+        "targetMemoryUtilizationPercentage": { "type": "integer", "minimum": 10, "maximum": 100 }
+      }
+    },
     "image": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["repository", "digest", "pullPolicy"],
       "properties": {
         "repository": { "type": "string", "minLength": 1, "maxLength": 256 },
@@ -377,9 +630,30 @@
             "anyOf": [
               { "properties": { "trustedProxyAddresses": { "minItems": 1 } } },
               { "properties": { "trustedProxyCIDRs": { "minItems": 1 } } }
-            ]
+            ],
+            "properties": {
+              "publicApi": {
+                "properties": {
+                  "restBaseURL": { "minLength": 12 },
+                  "ompAppWebSocketURL": { "minLength": 12 },
+                  "build": {
+                    "properties": {
+                      "version": { "minLength": 1 },
+                      "revision": { "minLength": 1 },
+                      "builtAt": { "minLength": 1, "format": "date-time" }
+                    }
+                  }
+                }
+              }
+            }
           },
-          "storage": { "properties": { "adminRWXStorageClass": { "minLength": 1 } } },
+          "storage": {
+            "properties": {
+              "adminRWXStorageClass": { "minLength": 1 },
+              "runtimeStateStorageClass": { "minLength": 1 },
+              "volumeSnapshotClass": { "minLength": 1 }
+            }
+          },
           "session": {
             "properties": {
               "omp": {
@@ -450,6 +724,31 @@
                   "secretName": { "maxLength": 0 }
                 }
               }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "server": {
+            "properties": {
+              "identity": {
+                "properties": {
+                  "adapters": { "contains": { "const": "oidc" } }
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "networkPolicy": {
+            "properties": {
+              "enabled": { "const": true },
+              "identityProviderCIDRs": { "minItems": 1 }
             }
           }
         }

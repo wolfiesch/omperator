@@ -62,10 +62,14 @@ const session = {
 	},
 	status: {
 		observedGeneration: 5,
-		phase: "Running",
+		runtimeGeneration: "gen_controller_owned_0001",
+		phase: "Ready",
 		podName: "session-one-pod",
 		serviceName: "session-one",
-		conditions: [{ type: "Available", status: "True", reason: "PodReady", message: "ready", observedGeneration: 5 }],
+		conditions: [
+			{ type: "Available", status: "True", reason: "CompositeReady", message: "ready", observedGeneration: 5 },
+			{ type: "RouteReady", status: "True", reason: "CompositeReadinessProven", message: "ready", observedGeneration: 5 },
+		],
 	},
 };
 
@@ -91,6 +95,40 @@ describe("Kubernetes infrastructure projection", () => {
 		expect(JSON.stringify(projection.workspaceList())).not.toContain("credentialPath");
 		expect(JSON.stringify(projection.workspaceList())).not.toContain("pvcRef");
 		expect(JSON.stringify(projection.workspaceList())).not.toContain("repositoryId");
+	});
+
+	it("projects controller-owned runtime generation independently of Kubernetes metadata generation", () => {
+		const projection = new ClusterInfrastructureProjection({ epoch: "replica-uid-1", namespace: "development" });
+		projection.replace({ host, workspaces: [workspace], sessions: [session], resourceVersion: "102" });
+		const first = projection.restProjection(PRINCIPAL).runtimes[0]!;
+		expect(first.generation).toBe("gen_controller_owned_0001");
+		projection.applyWatch({
+			type: "MODIFIED",
+			object: { ...session, metadata: { ...session.metadata, generation: 99, resourceVersion: "103" } },
+		});
+		expect(projection.restProjection(PRINCIPAL).runtimes[0]!.generation).toBe(first.generation);
+		projection.applyWatch({
+			type: "MODIFIED",
+			object: {
+				...session,
+				metadata: { ...session.metadata, generation: 99, resourceVersion: "104" },
+				status: { ...session.status, runtimeGeneration: "gen_controller_owned_0002" },
+			},
+		});
+		expect(projection.restProjection(PRINCIPAL).runtimes[0]!.generation).toBe("gen_controller_owned_0002");
+	});
+
+	it("omits runtimes and direct routes without a valid controller-owned generation", () => {
+		const projection = new ClusterInfrastructureProjection({ epoch: "replica-uid-1", namespace: "development" });
+		const missingGeneration = { ...session, status: { ...session.status, runtimeGeneration: undefined } };
+		projection.replace({ host, workspaces: [workspace], sessions: [missingGeneration], resourceVersion: "102" });
+		projection.setSessionAuthority("session-one", authority("omp-session-private"));
+		expect(projection.restProjection(PRINCIPAL).runtimes).toEqual([]);
+		expect(projection.cmuxWebSocketRoute("session-one", PRINCIPAL)).toBeUndefined();
+
+		const invalidGeneration = { ...session, status: { ...session.status, runtimeGeneration: "metadata-5" } };
+		projection.replace({ host, workspaces: [workspace], sessions: [invalidGeneration], resourceVersion: "103" });
+		expect(projection.restProjection(PRINCIPAL).runtimes).toEqual([]);
 	});
 
 	it("keeps workspace cursors separate and reconnect replacement idempotent", () => {
@@ -121,6 +159,8 @@ describe("Kubernetes infrastructure projection", () => {
 		projection.setSessionAuthority("session-one", authority("omp-session-private"));
 		expect(projection.sessionRoute("session-one")).toEqual({
 			clusterSessionId: "session-one",
+			routeGeneration: expect.stringMatching(/^route_/u),
+			runtimeGeneration: "gen_controller_owned_0001",
 			upstreamSessionId: "omp-session-private",
 			url: "ws://session-one.development.svc:8787/v1/ws",
 		});
@@ -138,6 +178,91 @@ describe("Kubernetes infrastructure projection", () => {
 		expect(projection.sessionRefs()).toEqual([]);
 	});
 
+	it("retracts every endpoint before a draining generation can be resolved", () => {
+		const projection = new ClusterInfrastructureProjection({ epoch: "replica-uid-1", namespace: "development" });
+		projection.replace({ host, workspaces: [workspace], sessions: [session], resourceVersion: "102" });
+		projection.setSessionAuthority("session-one", authority("omp-session-private"));
+		expect(projection.sessionEndpoints()).toHaveLength(1);
+		projection.applyWatch({
+			type: "MODIFIED",
+			object: {
+				...session,
+				metadata: { ...session.metadata, resourceVersion: "103" },
+				status: {
+					...session.status,
+					phase: "Provisioning",
+					serviceName: undefined,
+					conditions: session.status.conditions.map(item => item.type === "RouteReady" ? { ...item, status: "False", reason: "RouteDraining" } : item),
+				},
+			},
+		});
+		expect(projection.sessionEndpoints()).toEqual([]);
+		expect(projection.sessionRoute("session-one")).toBeUndefined();
+		expect(projection.cmuxWebSocketRoute("session-one", PRINCIPAL)).toBeUndefined();
+	});
+
+	it("invalidates authority and notifies subscribers when UID or generation changes behind a stable name and service", () => {
+		const projection = new ClusterInfrastructureProjection({ epoch: "replica-uid-1", namespace: "development" });
+		projection.replace({ host, workspaces: [workspace], sessions: [session], resourceVersion: "102" });
+		projection.setSessionAuthority("session-one", authority("omp-session-private"));
+		const before = projection.sessionRoute("session-one")!;
+		let notifications = 0;
+		projection.subscribeSessions(() => { notifications++; });
+		projection.applyWatch({
+			type: "MODIFIED",
+			object: {
+				...session,
+				metadata: { ...session.metadata, uid: "session-uid-replaced", generation: 6, resourceVersion: "103" },
+				status: { ...session.status, observedGeneration: 6, conditions: session.status.conditions.map(item => item.type === "RouteReady" ? { ...item, observedGeneration: 6 } : item) },
+			},
+		});
+		expect(projection.sessionRoute("session-one")).toBeUndefined();
+		const endpoint = projection.sessionEndpoints()[0]!;
+		expect(endpoint).toMatchObject({
+			clusterSessionId: "session-one",
+			url: before.url,
+		});
+		expect(endpoint.routeGeneration).not.toBe(before.routeGeneration);
+		expect(notifications).toBe(1);
+	});
+
+	it("rotates route authority when the internal pod incarnation changes under the same service", () => {
+		const projection = new ClusterInfrastructureProjection({ epoch: "replica-uid-1", namespace: "development" });
+		projection.replace({ host, workspaces: [workspace], sessions: [session], resourceVersion: "102" });
+		projection.setSessionAuthority("session-one", authority("omp-session-private"));
+		const before = projection.sessionEndpoints()[0]!;
+		projection.applyWatch({
+			type: "MODIFIED",
+			object: {
+				...session,
+				metadata: { ...session.metadata, resourceVersion: "103" },
+				status: { ...session.status, podName: "session-one-pod-recreated" },
+			},
+		});
+		expect(projection.sessionRoute("session-one")).toBeUndefined();
+		const after = projection.sessionEndpoints()[0]!;
+		expect(after.url).toBe(before.url);
+		expect(after.routeGeneration).not.toBe(before.routeGeneration);
+	});
+
+	it("invalidates missed-delete authority during relist even when name, service, and resource version repeat", () => {
+		const projection = new ClusterInfrastructureProjection({ epoch: "replica-uid-1", namespace: "development" });
+		projection.replace({ host, workspaces: [workspace], sessions: [session], resourceVersion: "102" });
+		projection.setSessionAuthority("session-one", authority("omp-session-private"));
+		const before = projection.sessionEndpoints()[0]!.routeGeneration;
+		let notifications = 0;
+		projection.subscribeSessions(() => { notifications++; });
+		const replacement = {
+			...session,
+			metadata: { ...session.metadata, uid: "session-uid-after-missed-delete", generation: 1 },
+			status: { ...session.status, observedGeneration: 1, conditions: session.status.conditions.map(item => ({ ...item, observedGeneration: 1 })) },
+		};
+		projection.replace({ host, workspaces: [workspace], sessions: [replacement], resourceVersion: "102" });
+		expect(projection.sessionRoute("session-one")).toBeUndefined();
+		expect(projection.sessionEndpoints()[0]!.routeGeneration).not.toBe(before);
+		expect(notifications).toBe(1);
+	});
+
 	it("accepts only HTTPS browser origins and exposes GUI infrastructure authorization", () => {
 		const projection = new ClusterInfrastructureProjection({ epoch: "replica-uid-1", namespace: "development" });
 		projection.replace({
@@ -150,9 +275,14 @@ describe("Kubernetes infrastructure projection", () => {
 		expect(projection.sessionGuiState("session-one", PRINCIPAL)).toBe("Ready");
 		projection.applyWatch({
 			type: "MODIFIED",
-			object: { ...session, metadata: { ...session.metadata, resourceVersion: "105" }, spec: { ...session.spec, guiEnabled: false } },
+			object: { ...session, metadata: { ...session.metadata, resourceVersion: "105" }, spec: { ...session.spec, guiEnabled: true, browserPolicy: "Disabled" } },
 		});
 		expect(projection.sessionGuiState("session-one", PRINCIPAL)).toBe("Unavailable");
+		projection.applyWatch({
+			type: "MODIFIED",
+			object: { ...session, metadata: { ...session.metadata, resourceVersion: "106" }, spec: { ...session.spec, guiEnabled: false, browserPolicy: "Allowed" } },
+		});
+		expect(projection.sessionGuiState("session-one", PRINCIPAL)).toBe("Ready");
 		expect(projection.sessionGuiState("session-one", "other@example.com")).toBeUndefined();
 	});
 
@@ -200,6 +330,76 @@ describe("Kubernetes infrastructure projection", () => {
 		});
 		expect(projection.hostId).toBe(clusterHostIdFromUid("replacement-host-uid"));
 		expect(projection.sessionRoute("session-one")).toBeUndefined();
+	});
+
+	it("resolves direct cmux routes only by stable public id, owner, readiness, and immutable generation", () => {
+		const projection = new ClusterInfrastructureProjection({ epoch: "replica-uid-1", namespace: "development" });
+		const routedSession = { ...session, spec: { ...session.spec, publicId: "runtime-public" } };
+		projection.replace({ host, workspaces: [workspace], sessions: [routedSession], resourceVersion: "102" });
+		projection.setSessionAuthority("session-one", authority("omp-session-private"));
+		const runtimeId = projection.restProjection(PRINCIPAL).runtimes[0]!.id;
+		const first = projection.cmuxWebSocketRoute(runtimeId, PRINCIPAL);
+		expect(first).toMatchObject({
+			principal: PRINCIPAL,
+			runtimeId,
+			generation: "gen_controller_owned_0001",
+			routeGeneration: expect.stringMatching(/^route_/u),
+		});
+		expect(JSON.stringify(first)).not.toContain("session-one");
+		expect(JSON.stringify(first)).not.toContain("service");
+		expect(projection.cmuxWebSocketRoute(runtimeId, "other@example.com")).toBeUndefined();
+		expect(projection.cmuxWebSocketRoute("session-one", PRINCIPAL)).toBeUndefined();
+
+		projection.applyWatch({
+			type: "MODIFIED",
+			object: { ...workspace, metadata: { ...workspace.metadata, resourceVersion: "103" }, spec: { ...workspace.spec, owner: "other@example.com" } },
+		});
+		expect(projection.cmuxWebSocketRoute(runtimeId, PRINCIPAL)).toBeUndefined();
+
+		const replacementWorkspace = { ...workspace, metadata: { ...workspace.metadata, resourceVersion: "104" } };
+		const replacementSession = {
+			...routedSession,
+			metadata: { ...session.metadata, uid: "replacement-session-uid", resourceVersion: "105" },
+			status: { ...session.status, runtimeGeneration: "gen_controller_owned_0002" },
+		};
+		projection.replace({ host, workspaces: [replacementWorkspace], sessions: [replacementSession], resourceVersion: "105" });
+		projection.setSessionAuthority("session-one", authority("omp-session-private"));
+		const replaced = projection.cmuxWebSocketRoute(runtimeId, PRINCIPAL);
+		expect(replaced?.generation).not.toBe(first?.generation);
+		expect(replaced?.routeGeneration).not.toBe(first?.routeGeneration);
+	});
+
+	it("notifies direct cmux revocation when attached workspace readiness changes by watch or replace", () => {
+		const projection = new ClusterInfrastructureProjection({ epoch: "replica-uid-1", namespace: "development" });
+		const routedSession = { ...session, spec: { ...session.spec, publicId: "runtime-public" } };
+		projection.replace({ host, workspaces: [workspace], sessions: [routedSession], resourceVersion: "102" });
+		projection.setSessionAuthority("session-one", authority("omp-session-private"));
+		expect(projection.cmuxWebSocketRoute("runtime-public", PRINCIPAL)).toBeDefined();
+		let notifications = 0;
+		projection.subscribeSessions(() => { notifications++; });
+
+		const pending = {
+			...workspace,
+			metadata: { ...workspace.metadata, resourceVersion: "103" },
+			status: { ...workspace.status, phase: "Pending" },
+		};
+		projection.applyWatch({ type: "MODIFIED", object: pending });
+		expect(projection.cmuxWebSocketRoute("runtime-public", PRINCIPAL)).toBeUndefined();
+		expect(notifications).toBe(1);
+
+		const ready = { ...workspace, metadata: { ...workspace.metadata, resourceVersion: "104" } };
+		projection.applyWatch({ type: "MODIFIED", object: ready });
+		expect(projection.cmuxWebSocketRoute("runtime-public", PRINCIPAL)).toBeDefined();
+		expect(notifications).toBe(2);
+
+		const failedWorkspace = {
+			...ready,
+			metadata: { ...ready.metadata, resourceVersion: "105" },
+			status: { ...ready.status, phase: "Failed" },
+		};
+		projection.replace({ host, workspaces: [failedWorkspace], sessions: [routedSession], resourceVersion: "105" });
+		expect(projection.cmuxWebSocketRoute("runtime-public", PRINCIPAL)).toBeUndefined();
+		expect(notifications).toBe(3);
 	});
 
 	it("fails closed at explicit projection limits", () => {

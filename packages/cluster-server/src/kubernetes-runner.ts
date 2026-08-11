@@ -1,10 +1,12 @@
 import { KubernetesApiClient, KubernetesApiError } from "./kubernetes-client.ts";
 import { ClusterInfrastructureProjection, KubernetesAuthorityInvalidatedError } from "./kubernetes-projection.ts";
+import type { LifecycleProjectionNotifier } from "./lifecycle-events.ts";
 
 export interface KubernetesProjectionRunnerOptions {
 	readonly client: KubernetesApiClient;
 	readonly projection: ClusterInfrastructureProjection;
 	readonly hostName: string;
+	readonly lifecycleNotifier?: Pick<LifecycleProjectionNotifier, "synchronize">;
 	readonly onSynchronized?: () => void;
 	readonly onError?: (error: unknown) => void;
 	readonly retryMs?: number;
@@ -27,6 +29,7 @@ export class KubernetesProjectionRunner {
 	#abort?: AbortController;
 	#running?: Promise<void>;
 	#relist?: Promise<void>;
+	#notifications: Promise<void> = Promise.resolve();
 	constructor(options: KubernetesProjectionRunnerOptions) { this.#options = options; }
 
 	async start(): Promise<void> {
@@ -35,6 +38,7 @@ export class KubernetesProjectionRunner {
 		const signal = this.#abort.signal;
 		const initial = await this.#options.client.listInfrastructure(this.#options.hostName, signal);
 		this.#options.projection.replace(initial);
+		await this.#options.lifecycleNotifier?.synchronize();
 		this.#synchronized.clear();
 		for (const resource of ["t4clusterhosts", "t4workspaces", "t4sessions"]) this.#synchronized.add(resource);
 		this.#options.onSynchronized?.();
@@ -44,6 +48,7 @@ export class KubernetesProjectionRunner {
 	async stop(): Promise<void> {
 		this.#abort?.abort(new Error("Kubernetes projection runner stopped"));
 		await this.#running?.catch(() => undefined);
+		await this.#notifications;
 		this.#running = undefined;
 		this.#abort = undefined;
 		this.#relist = undefined;
@@ -75,6 +80,7 @@ export class KubernetesProjectionRunner {
 					version,
 					event => {
 						this.#options.projection.applyWatch(event);
+						this.#notifyLifecycle();
 						version = event.object.metadata.resourceVersion ?? version;
 					},
 					generation.signal,
@@ -114,6 +120,7 @@ export class KubernetesProjectionRunner {
 					try {
 						const snapshot = await this.#options.client.listInfrastructure(this.#options.hostName, signal);
 						this.#options.projection.replace(snapshot);
+						await this.#options.lifecycleNotifier?.synchronize();
 						return;
 					} catch (error) {
 						if (signal.aborted) throw error;
@@ -126,4 +133,11 @@ export class KubernetesProjectionRunner {
 		}
 		await this.#relist;
 	}
+	#notifyLifecycle(): void {
+		const notifier = this.#options.lifecycleNotifier;
+		if (!notifier) return;
+		this.#notifications = notifier.synchronize()
+			.catch(error => { this.#options.onError?.(error); });
+	}
+
 }

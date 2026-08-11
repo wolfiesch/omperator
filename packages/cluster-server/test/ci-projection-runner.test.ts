@@ -35,7 +35,7 @@ function projection(): ClusterInfrastructureProjection {
 	value.replace({
 		host: { apiVersion: "cluster.t4.dev/v1alpha1", kind: "T4ClusterHost", metadata: { name: "primary", uid: "host-uid", resourceVersion: "1" }, spec: {} },
 		workspaces: [{ apiVersion: "cluster.t4.dev/v1alpha1", kind: "T4Workspace", metadata: { name: "workspace-one", resourceVersion: "2" }, spec: { hostRef: "primary", owner: "owner@example.com", displayName: "Workspace", retentionPolicy: "Retain", size: "20Gi" }, status: { phase: "Ready" } }],
-		sessions: [{ apiVersion: "cluster.t4.dev/v1alpha1", kind: "T4Session", metadata: { name: correlation.sessionId, resourceVersion: "3" }, spec: { hostRef: "primary", workspaceRef: "workspace-one", title: "Session", runtimeProfile: "default", guiEnabled: true, ci: { repositoryId: correlation.repositoryId, ref: correlation.ref, commit: correlation.commit } }, status: { phase: "Running", serviceName: "session-one" } }],
+		sessions: [{ apiVersion: "cluster.t4.dev/v1alpha1", kind: "T4Session", metadata: { name: correlation.sessionId, uid: "session-one-uid", resourceVersion: "3", generation: 1 }, spec: { hostRef: "primary", workspaceRef: "workspace-one", title: "Session", runtimeProfile: "default", guiEnabled: true, ci: { repositoryId: correlation.repositoryId, ref: correlation.ref, commit: correlation.commit } }, status: { phase: "Ready", runtimeGeneration: "gen_session_one", serviceName: "session-one", podName: "session-one-pod", conditions: [{ type: "RouteReady", status: "True", observedGeneration: 1 }] } }],
 		resourceVersion: "3",
 	});
 	value.setSessionAuthority(correlation.sessionId, authority);

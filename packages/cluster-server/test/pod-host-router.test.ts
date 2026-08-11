@@ -2,7 +2,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { WebSocketPodHostConnector } from "../src/pod-host-router.ts";
+import { WebSocketPodHostConnector, rewriteServerAddress } from "../src/pod-host-router.ts";
 
 const welcome = {
 	v: "omp-app/1",
@@ -54,7 +54,7 @@ it("pod connector reads the current projected identity and presents it in the ex
 			identityTokenFile: path,
 			webSocketFactory: () => socket as unknown as WebSocket,
 		});
-		const pending = connector.connect({ clusterSessionId: "session-one", url: "ws://session-one:8787/v1/ws" }, () => undefined);
+		const pending = connector.connect({ clusterSessionId: "session-one", runtimeGeneration: "gen_session_one", routeGeneration: "route-one", url: "ws://session-one:8787/v1/ws" }, () => undefined);
 		socket.emit("open");
 		const hello = JSON.parse(await socket.sent.promise);
 		expect(hello.authentication).toEqual({ deviceId: "cluster-server", deviceToken: token });
@@ -74,7 +74,7 @@ it("closes and rejects a malformed frame before the authenticated welcome", asyn
 		await writeFile(path, `header.payload.${"s".repeat(64)}`, { mode: 0o400 });
 		const socket = new MemoryWebSocket();
 		const connector = new WebSocketPodHostConnector({ identityTokenFile: path, webSocketFactory: () => socket as unknown as WebSocket });
-		const pending = connector.connect({ clusterSessionId: "session-one", url: "ws://session-one:8787/v1/ws" }, () => undefined);
+		const pending = connector.connect({ clusterSessionId: "session-one", runtimeGeneration: "gen_session_one", routeGeneration: "route-one", url: "ws://session-one:8787/v1/ws" }, () => undefined);
 		socket.emit("open");
 		await socket.sent.promise;
 		socket.emit("message", { data: "{" });
@@ -94,7 +94,7 @@ it("keeps idle authority sockets alive without forwarding heartbeat pongs", asyn
 		const socket = new MemoryWebSocket();
 		const frames: unknown[] = [];
 		const connector = new WebSocketPodHostConnector({ identityTokenFile: path, keepAliveMs: 10, webSocketFactory: () => socket as unknown as WebSocket });
-		const pending = connector.connect({ clusterSessionId: "session-one", url: "ws://session-one:8787/v1/ws" }, frame => frames.push(frame));
+		const pending = connector.connect({ clusterSessionId: "session-one", runtimeGeneration: "gen_session_one", routeGeneration: "route-one", url: "ws://session-one:8787/v1/ws" }, frame => frames.push(frame));
 		socket.emit("open");
 		await socket.sent.promise;
 		socket.emit("message", { data: JSON.stringify(welcome) });
@@ -112,4 +112,56 @@ it("keeps idle authority sockets alive without forwarding heartbeat pongs", asyn
 		vi.useRealTimers();
 		await rm(directory, { recursive: true, force: true });
 	}
+});
+
+it("rewrites only transcript page entry address fields and preserves opaque entry content", () => {
+	const frame = {
+		v: "omp-app/1",
+		type: "response",
+		requestId: "request-page",
+		commandId: "command-page",
+		hostId: "private-host",
+		sessionId: "private-session",
+		ok: true,
+		command: "transcript.page",
+		result: {
+			entries: [{
+				id: "entry-one",
+				parentId: null,
+				hostId: "private-host",
+				sessionId: "private-session",
+				kind: "message",
+				timestamp: "2026-07-20T00:00:00.000Z",
+				data: { text: "literal private-session", correlationId: "private-session" },
+			}],
+			hasMore: false,
+			generation: "private-session-generation",
+		},
+	} as never;
+	const rewritten = rewriteServerAddress(frame, {
+		clusterSessionId: "session-one",
+		runtimeGeneration: "gen_session_one",
+		routeGeneration: "route-one",
+		upstreamSessionId: "private-session",
+		url: "ws://session-one:8787/v1/ws",
+	}, "cluster-host") as unknown as Record<string, unknown>;
+	expect(rewritten).toMatchObject({
+		hostId: "cluster-host",
+		sessionId: "session-one",
+		result: {
+			entries: [{
+				hostId: "cluster-host",
+				sessionId: "session-one",
+				data: { text: "literal private-session", correlationId: "private-session" },
+			}],
+			generation: "private-session-generation",
+		},
+	});
+	const structured = structuredClone(rewritten) as {
+		result: { entries: Array<{ data?: unknown }>; generation?: unknown };
+	};
+	delete structured.result.entries[0]!.data;
+	delete structured.result.generation;
+	expect(JSON.stringify(structured)).not.toContain("private-host");
+	expect(JSON.stringify(structured)).not.toContain("private-session");
 });

@@ -43,7 +43,20 @@ spec:
                   message: CI metadata must contain an allowlisted repository id, ref, and commit
                 - rule: "!has(self.initialPromptSecretRef) || self.initialPromptSecretRef.name != ''"
                   message: initial prompt Secret reference must name a Secret
+                - rule: "!has(oldSelf.publicId) || (has(self.publicId) && self.publicId == oldSelf.publicId)"
+                  message: publicId is immutable once set
+                - rule: "!has(oldSelf.publicHostProfileId) || (has(self.publicHostProfileId) && self.publicHostProfileId == oldSelf.publicHostProfileId)"
+                  message: publicHostProfileId is immutable once set
+                - rule: "!has(oldSelf.cmuxSessionName) || (has(self.cmuxSessionName) && self.cmuxSessionName == oldSelf.cmuxSessionName)"
+                  message: cmuxSessionName is immutable once set
+                - rule: "!has(oldSelf.runtimeStateRestoreSnapshotRef) || (has(self.runtimeStateRestoreSnapshotRef) && self.runtimeStateRestoreSnapshotRef == oldSelf.runtimeStateRestoreSnapshotRef)"
+                  message: runtimeStateRestoreSnapshotRef is immutable once set
               properties:
+                publicId:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  pattern: '^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$'
                 hostRef:
                   type: string
                   minLength: 1
@@ -57,6 +70,9 @@ spec:
                   minLength: 1
                   maxLength: 253
                   pattern: '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'
+                  x-kubernetes-validations:
+                    - rule: self == oldSelf
+                      message: workspaceRef is immutable
                 title:
                   type: string
                   minLength: 1
@@ -66,6 +82,70 @@ spec:
                   minLength: 1
                   maxLength: 64
                   pattern: '^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$'
+                  x-kubernetes-validations:
+                    - rule: self == oldSelf
+                      message: runtimeProfile is immutable
+                publicHostProfileId:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  pattern: '^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$'
+                desiredState:
+                  type: string
+                  enum: [Running, Sleeping, Stopped]
+                  default: Running
+                browserPolicy:
+                  type: string
+                  enum: [Allowed, Disabled]
+                  default: Disabled
+                idlePolicy:
+                  type: object
+                  required: [enabled]
+                  x-kubernetes-validations:
+                    - rule: "self.enabled ? has(self.idleSeconds) : !has(self.idleSeconds)"
+                      message: idleSeconds is required only when idle policy is enabled
+                  properties:
+                    enabled:
+                      type: boolean
+                    idleSeconds:
+                      type: integer
+                      format: int32
+                      minimum: 60
+                      maximum: 2592000
+                cmuxSessionName:
+                  type: string
+                  minLength: 1
+                  maxLength: 63
+                  pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$'
+                runtimeStateRestoreSnapshotRef:
+                  type: object
+                  required: [name]
+                  properties:
+                    name:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                      pattern: '^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$'
+                allowCrashConsistentRestore:
+                  type: boolean
+                  default: false
+                checkpoint:
+                  type: object
+                  required: [id]
+                  properties:
+                    id:
+                      type: string
+                      minLength: 1
+                      maxLength: 64
+                      pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+                    consistency:
+                      type: string
+                      default: Quiesced
+                      enum: [Quiesced, CrashConsistent]
+                restorePublicIdPolicy:
+                  type: string
+                  default: Preserve
+                  enum: [Preserve, Replace]
                 initialPromptSecretRef:
                   type: object
                   required: [name]
@@ -103,20 +183,135 @@ spec:
                   type: integer
                   format: int64
                   minimum: 0
+                runtimeGeneration:
+                  type: string
+                  minLength: 8
+                  maxLength: 128
+                  pattern: '^gen_[A-Za-z0-9_-]{4,124}$'
+                generationSecretEpoch:
+                  type: string
+                  minLength: 8
+                  maxLength: 128
+                  pattern: '^gen_[A-Za-z0-9_-]{4,124}$'
+                generationSecretName:
+                  type: string
+                  minLength: 1
+                  maxLength: 63
+                  pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+                fenceState:
+                  type: string
+                  enum: [NoPriorWriter, DrainRequired, ShutdownRequested, FenceVerifying, FenceProven, FenceUncertain]
+                fencingPodUid:
+                  type: string
+                  maxLength: 128
+                fencingGeneration:
+                  type: string
+                  minLength: 8
+                  maxLength: 128
+                  pattern: '^gen_[A-Za-z0-9_-]{4,124}$'
+                fencingVolumeIdentity:
+                  type: string
+                  minLength: 64
+                  maxLength: 64
+                  pattern: '^[0-9a-f]{64}$'
+                cmuxSessionName:
+                  type: string
+                  minLength: 1
+                  maxLength: 63
+                  pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$'
+                runtimeStatePVCName:
+                  type: string
+                  minLength: 1
+                  maxLength: 63
+                  pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+                runtimeStateVolumeIdentity:
+                  type: string
+                  minLength: 64
+                  maxLength: 64
+                  pattern: '^[0-9a-f]{64}$'
+                runtimeStateStorageClassName:
+                  type: string
+                  minLength: 1
+                  maxLength: 253
+                  pattern: '^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$'
+                runtimeStateCapacity:
+                  type: string
+                  minLength: 1
+                  maxLength: 32
+                runtimeStateFilesystemRoot:
+                  type: string
+                  minLength: 1
+                  maxLength: 63
+                  pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+                runtimeStateSnapshotRef:
+                  type: object
+                  required: [name]
+                  properties:
+                    name:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                      pattern: '^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$'
+                checkpoint:
+                  type: object
+                  required: [requestId, runtimeGeneration, consistency, durableAcks]
+                  properties:
+                    requestId:
+                      type: string
+                      maxLength: 64
+                    runtimeGeneration:
+                      type: string
+                      minLength: 8
+                      maxLength: 128
+                      pattern: '^gen_[A-Za-z0-9_-]{4,124}$'
+                    consistency:
+                      type: string
+                      enum: [Quiesced, CrashConsistent]
+                    durableAcks:
+                      type: object
+                      required: [omp, cmux, browser]
+                      properties:
+                        omp: {type: boolean}
+                        cmux: {type: boolean}
+                        browser: {type: boolean}
+                    workspaceSnapshotRef:
+                      type: object
+                      required: [name]
+                      properties:
+                        name:
+                          type: string
+                          minLength: 1
+                          maxLength: 253
+                          pattern: '^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$'
+                    runtimeStateSnapshotRef:
+                      type: object
+                      required: [name]
+                      properties:
+                        name:
+                          type: string
+                          minLength: 1
+                          maxLength: 253
+                          pattern: '^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$'
+                    completedAt:
+                      type: string
+                      format: date-time
                 podName:
                   type: string
                   minLength: 1
                   maxLength: 63
+                podUid:
+                  type: string
+                  maxLength: 128
                 serviceName:
                   type: string
                   minLength: 1
                   maxLength: 63
                 phase:
                   type: string
-                  enum: [Pending, Running, Failed, Terminating, Unknown]
+                  enum: [Pending, Provisioning, Starting, Ready, Running, Sleeping, Stopped, Deleting, Failed, Terminating, Unavailable, Degraded, Unknown]
                 conditions:
                   type: array
-                  maxItems: 8
+                  maxItems: 12
                   x-kubernetes-list-type: map
                   x-kubernetes-list-map-keys: [type]
                   items:
@@ -125,7 +320,7 @@ spec:
                     properties:
                       type:
                         type: string
-                        enum: [Available, WorkspaceReady, HostReady, RuntimeConfigured]
+                        enum: [Available, WorkspaceReady, HostReady, RuntimeConfigured, Fenced, StorageReady, RouteReady, TicketsRevoked, GenerationAuthRevoked]
                       status:
                         type: string
                         enum: ['True', 'False', Unknown]

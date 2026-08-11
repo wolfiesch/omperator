@@ -1,0 +1,150 @@
+{
+  "schemaVersion": "t4-cluster-slo-evidence/1",
+  "note": "Startup and failover SLO ledger for the portable t4-cluster distribution. Every observation below is unmeasured. No number in this file describes anything that has been run. Targets name the objective and the exact scenario; their values are unset because no numeric objective has been agreed in this repository, and inventing one here would be indistinguishable from a measurement. scripts/cluster-ci/measure-slo.sh is the runnable harness that converts an unmeasured entry into a measured one.",
+  "source": {
+    "repository": "usr-bin-roygbiv/t4-code",
+    "commit": null,
+    "chart": {
+      "name": "t4-cluster",
+      "version": "0.1.0",
+      "appVersion": "0.2.1"
+    }
+  },
+  "build": null,
+  "images": [
+    { "component": "controller", "reference": null, "digest": null },
+    { "component": "cluster-server", "reference": null, "digest": null },
+    { "component": "session-runtime", "reference": null, "digest": null }
+  ],
+  "environments": [],
+  "targets": [
+    {
+      "id": "control-plane-cold-start",
+      "scenario": "From the Helm install returning, until both the controller and server Deployments report Available with all replicas ready, on a cluster where no chart image is present in any node's image store.",
+      "metric": "Wall-clock seconds from install completion to both Deployments Available.",
+      "statistic": "p95",
+      "comparator": "at-most",
+      "value": null,
+      "unit": "seconds",
+      "status": "unset",
+      "rationale": "Bounds how long an operator waits before a fresh control plane accepts requests. No numeric objective has been agreed in this repository."
+    },
+    {
+      "id": "session-cold-first-attach",
+      "scenario": "From T4Session creation on a node with no cached session-runtime image, until status.fenceState is FenceProven and the RouteReady condition is True for the first runtime generation.",
+      "metric": "Wall-clock seconds from creation to first RouteReady.",
+      "statistic": "p95",
+      "comparator": "at-most",
+      "value": null,
+      "unit": "seconds",
+      "status": "unset",
+      "rationale": "This is the user-visible cost of starting work. It is dominated by image pull and PVC binding, which is why the warm case is measured separately."
+    },
+    {
+      "id": "session-warm-first-attach",
+      "scenario": "The same measurement with imagePrePull enabled and the workspace PVC already Bound.",
+      "metric": "Wall-clock seconds from creation to first RouteReady.",
+      "statistic": "p95",
+      "comparator": "at-most",
+      "value": null,
+      "unit": "seconds",
+      "status": "unset",
+      "rationale": "Isolates control-plane and fencing cost from image and storage provisioning cost."
+    },
+    {
+      "id": "controller-leader-failover",
+      "scenario": "Delete the controller replica currently holding the t4-cluster-operator.cluster.t4.dev Lease and wait until the surviving replica holds the Lease and completes one reconcile.",
+      "metric": "Wall-clock seconds from deletion to the first post-failover reconcile.",
+      "statistic": "p95",
+      "comparator": "at-most",
+      "value": null,
+      "unit": "seconds",
+      "status": "unset",
+      "rationale": "Bounds how long infrastructure desired state goes unreconciled. It is not an OMP session availability claim."
+    },
+    {
+      "id": "gateway-replica-failover",
+      "scenario": "Terminate one server replica while a client holds an omp-app/1 WebSocket and measure until the client is reconnected to a surviving replica and has resumed from its cursor.",
+      "metric": "Wall-clock seconds from termination to resumed stream.",
+      "statistic": "p95",
+      "comparator": "at-most",
+      "value": null,
+      "unit": "seconds",
+      "status": "unset",
+      "rationale": "The server Deployment uses maxUnavailable 0, a minAvailable 2 PDB, and readiness draining precisely so this is small; the number is still unproven."
+    },
+    {
+      "id": "fenced-generation-replacement",
+      "scenario": "Make the node holding a runtime-state volume unavailable and measure until positive fence proof commits one fresh runtime generation with the stable public ID preserved.",
+      "metric": "Wall-clock seconds from node loss to a fresh generation reporting RouteReady.",
+      "statistic": "p95",
+      "comparator": "at-most",
+      "value": null,
+      "unit": "seconds",
+      "status": "unset",
+      "rationale": "This is bounded below by CSI detach and kubelet eviction, neither of which the chart controls. A target here is only meaningful once it names the storage driver in the environment record."
+    },
+    {
+      "id": "fenced-generation-replacement-correctness",
+      "scenario": "The same runs as fenced-generation-replacement, counting how many produced a reused generation identifier, a second live writer, or a changed public ID.",
+      "metric": "Number of runs that violated the single-writer or stable-identity invariant.",
+      "statistic": "sum",
+      "comparator": "at-most",
+      "value": null,
+      "unit": "count",
+      "status": "unset",
+      "rationale": "A latency target for failover is meaningless without the correctness counter beside it. The only defensible value is zero, and it is left unset until the harness has actually produced runs to count."
+    }
+  ],
+  "observations": [
+    {
+      "targetId": "control-plane-cold-start",
+      "status": "unmeasured",
+      "harness": "scripts/cluster-ci/measure-slo.sh --run control-plane-cold-start",
+      "reason": "No measurement run has been executed. No built image digests, environment record, or raw artifact exists for this scenario.",
+      "blockedBy": "P5-08"
+    },
+    {
+      "targetId": "session-cold-first-attach",
+      "status": "unmeasured",
+      "harness": "scripts/cluster-ci/measure-slo.sh --run session-cold-first-attach",
+      "reason": "No measurement run has been executed.",
+      "blockedBy": "P5-08"
+    },
+    {
+      "targetId": "session-warm-first-attach",
+      "status": "unmeasured",
+      "harness": "scripts/cluster-ci/measure-slo.sh --run session-warm-first-attach",
+      "reason": "No measurement run has been executed.",
+      "blockedBy": "P5-08"
+    },
+    {
+      "targetId": "controller-leader-failover",
+      "status": "unmeasured",
+      "harness": "scripts/cluster-ci/measure-slo.sh --run controller-leader-failover",
+      "reason": "No measurement run has been executed.",
+      "blockedBy": "P5-08"
+    },
+    {
+      "targetId": "gateway-replica-failover",
+      "status": "unmeasured",
+      "harness": "scripts/cluster-ci/measure-slo.sh --run gateway-replica-failover",
+      "reason": "No measurement run has been executed.",
+      "blockedBy": "P5-08"
+    },
+    {
+      "targetId": "fenced-generation-replacement",
+      "status": "unmeasured",
+      "harness": "scripts/cluster-ci/measure-slo.sh --run fenced-generation-replacement",
+      "reason": "No measurement run has been executed.",
+      "blockedBy": "P5-08"
+    },
+    {
+      "targetId": "fenced-generation-replacement-correctness",
+      "status": "unmeasured",
+      "harness": "scripts/cluster-ci/measure-slo.sh --run fenced-generation-replacement",
+      "reason": "No measurement run has been executed. This counter is only meaningful once the paired latency scenario has produced runs.",
+      "blockedBy": "P5-08"
+    }
+  ]
+}

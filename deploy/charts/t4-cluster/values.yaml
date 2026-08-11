@@ -19,6 +19,10 @@ images:
     repository: ghcr.io/lycaonllc/t4-cluster-server
     digest: ""
     pullPolicy: IfNotPresent
+  sshGateway:
+    repository: ghcr.io/lycaonllc/t4-ssh-gateway
+    digest: ""
+    pullPolicy: IfNotPresent
   sessionRuntime:
     repository: ghcr.io/lycaonllc/t4-session-runtime
     digest: ""
@@ -32,6 +36,7 @@ imagePullSecrets: []
 
 controller:
   replicas: 2
+  runtimeActivityPollSeconds: 5
   resources:
     requests:
       cpu: 100m
@@ -43,11 +48,49 @@ controller:
 server:
   replicas: 3
   terminationGracePeriodSeconds: 60
-  # The gateway accepts identity only from Tailscale Serve or the Tailscale Kubernetes operator.
-  identityProvider: tailscale
-  # At least one trusted Tailscale proxy address or canonical CIDR is required for client access.
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 9
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 75
+  # Without a referenced file, the chart preserves the trusted Tailscale adapter.
+  # OIDC and mTLS mappings are supplied only through one existing ConfigMap or Secret.
+  identity:
+    adapters: [tailscale]
+    configMapRef:
+      name: ""
+      key: identity.json
+    secretRef:
+      name: ""
+      key: identity.json
+  # Tailscale and mTLS identity headers are accepted only from these proxy transports.
   trustedProxyAddresses: []
   trustedProxyCIDRs: []
+  publicApi:
+    # Explicit public identities; never inferred from an ingress request or cluster address.
+    restBaseURL: ""
+    ompAppWebSocketURL: ""
+    build:
+      version: ""
+      revision: ""
+      builtAt: ""
+  admission:
+    maxActiveRuntimes: 10
+    maxRetainedRuntimes: 100
+    maxWorkspaceCapacityBytes: 1099511627776
+    maxCpuMillis: 10000
+    maxMemoryBytes: 21474836480
+    maxGpuUnits: 0
+    browserEnabled: false
+    runtimeResources:
+      cpuMillis: 1000
+      memoryBytes: 2147483648
+      gpuUnits: 0
+    creationRate:
+      windowSeconds: 60
+      burst: 10
+      maximumRetryAfterSeconds: 30
   resources:
     requests:
       cpu: 250m
@@ -55,6 +98,48 @@ server:
     limits:
       cpu: "2"
       memory: 2Gi
+
+sshGateway:
+  enabled: false
+  replicas: 3
+  terminationGracePeriodSeconds: 30
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 9
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 75
+  # Required when provider, relay, or attach is enabled; module must already exist in the image.
+  handlerModule: ""
+  existingHostKeySecret: ""
+  existingProviderAssertionSecret: ""
+  providerAssertionKeyringKey: keyring.json
+  # Single source for both the signer destination and verifier audience; defaults to the in-cluster server Service.
+  providerInternalWebSocketURL: ""
+  commands:
+    provider: false
+    relay: false
+    attach: false
+    version: false
+  hostKeyKey: ssh_host_ed25519_key
+  existingAuthorizedKeysSecret: ""
+  authorizedKeysKey: authorized_keys
+  existingTrustedCASecret: ""
+  trustedCAKey: ca.pub
+  existingPrincipalsSecret: ""
+  principalsKey: authorized_principals
+  service:
+    type: LoadBalancer
+    port: 22
+    annotations: {}
+    loadBalancerSourceRanges: []
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
 
 session:
   nodeExclude:
@@ -99,9 +184,27 @@ modelGateway:
       cpu: "1"
       memory: 512Mi
 
+imagePrePull:
+  enabled: false
+  resources:
+    requests:
+      cpu: 5m
+      memory: 8Mi
+    limits:
+      cpu: 50m
+      memory: 32Mi
+
 storage:
   # Required when enabled. The administrator creates this backend-neutral RWX StorageClass.
   adminRWXStorageClass: ""
+  # Runtime authority state is never placed on the shared workspace. Select an
+  # independently fenced class and the strongest access mode it supports.
+  runtimeStateStorageClass: ""
+  runtimeStateSize: 10Gi
+  runtimeStateAccessMode: ReadWriteOncePod
+  # Required for backup/restore. The class driver must match both selected
+  # StorageClasses and must pass the storage conformance harness.
+  volumeSnapshotClass: ""
 
 woodpecker:
   existingSecret: ""
@@ -128,6 +231,18 @@ networkPolicy:
   enabled: true
   # Empty destination lists fail closed. Supply narrow destinations for enabled components.
   kubernetesApiCIDRs: []
+  # HTTPS destinations for OIDC discovery and JWKS only; empty fails closed.
+  identityProviderCIDRs: []
+  # Exact public or overlay-network sources allowed to reach the SSH LoadBalancer.
+  sshIngressCIDRs: []
+  # Optional external SSH command-handler destinations. The chart's own server:8080 is always allowed
+  # while provider/relay/attach is enabled; empty external destinations otherwise fail closed.
+  sshBackendCIDRs: []
+  sshBackendPorts:
+    - 8080
+  sshBackend:
+    namespaceSelector: {}
+    podSelector: {}
   modelRouteCIDRs: []
   modelRoutePorts: []
   modelRoute:

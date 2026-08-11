@@ -4,6 +4,11 @@ import { basename, relative, resolve, sep } from "node:path";
 
 export const CANONICAL_BUILD_SOURCE_REPOSITORY = "usr-bin-roygbiv/t4-code";
 export const AUTHORIZED_CI_MIRROR = "z-peterson/t4-code";
+export const AUTHORIZED_PROVENANCE_SIGNER = Object.freeze({
+  certificateIdentity: "https://github.com/wolfiesch/omperator/.github/workflows/ci.yml@refs/heads/main",
+  certificateIdentityType: "uri",
+  certificateIssuer: "https://token.actions.githubusercontent.com",
+});
 export const IMAGE_COMPONENTS = Object.freeze(["controller", "cluster-server", "session-runtime", "model-gateway"]);
 export const PROOF_SCENARIOS = Object.freeze([
   "ha-manifest",
@@ -194,12 +199,27 @@ export function validateImageEntries(images, sourceCommit) {
       fail(`${label}.reference must use the immutable digest`);
     }
     fileEvidence(image.sbom, `${label}.sbom`);
-    fileEvidence(image.provenance, `${label}.provenance`, ["mode", "signatureVerified"]);
-    if (
-      !["buildkit-content", "cosign-keyless"].includes(image.provenance.mode) ||
-      image.provenance.signatureVerified !== (image.provenance.mode === "cosign-keyless")
-    ) {
-      fail(`${label}.provenance signer verification claim is not truthful`);
+    const signed = image.provenance?.mode === "cosign-keyless";
+    fileEvidence(
+      image.provenance,
+      `${label}.provenance`,
+      signed
+        ? ["mode", "bundle", "certificateIdentity", "certificateIdentityType", "certificateIssuer"]
+        : ["mode"],
+    );
+    if (!["buildkit-content", "cosign-keyless"].includes(image.provenance.mode)) {
+      fail(`${label}.provenance mode is invalid`);
+    }
+    if (signed) {
+      fileEvidence(image.provenance.bundle, `${label}.provenance.bundle`, ["bytes"]);
+      positiveInteger(image.provenance.bundle.bytes, `${label}.provenance.bundle.bytes`);
+      if (
+        image.provenance.certificateIdentity !== AUTHORIZED_PROVENANCE_SIGNER.certificateIdentity ||
+        image.provenance.certificateIdentityType !== AUTHORIZED_PROVENANCE_SIGNER.certificateIdentityType ||
+        image.provenance.certificateIssuer !== AUTHORIZED_PROVENANCE_SIGNER.certificateIssuer
+      ) {
+        fail(`${label}.provenance signer is not authorized`);
+      }
     }
     fileEvidence(image.vulnerability, `${label}.vulnerability`, ["scanner", "critical", "high"]);
     if (

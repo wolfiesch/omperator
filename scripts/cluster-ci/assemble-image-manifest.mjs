@@ -1,9 +1,15 @@
+import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { bundleFromJSON } from "@sigstore/bundle";
+import { TrustedRoot } from "@sigstore/protobuf-specs";
+import { Verifier, toSignedEntity, toTrustMaterial } from "@sigstore/verify";
+
 import {
   AUTHORIZED_CI_MIRROR,
+  AUTHORIZED_PROVENANCE_SIGNER,
   CANONICAL_BUILD_SOURCE_REPOSITORY,
   IMAGE_COMPONENTS,
   createFileEvidence,
@@ -13,6 +19,9 @@ import {
 const repoRoot = resolve(import.meta.dirname, "../..");
 const artifactDirectory = resolve(repoRoot, "artifacts/cluster-proof/images");
 const outputPath = resolve(repoRoot, "artifacts/cluster-proof/image-publication.json");
+const TRUSTED_ROOT_PATH = resolve(repoRoot, "scripts/cluster-ci/fixtures/sigstore-trusted-root.json");
+const TRUSTED_ROOT_SHA256 = "6494e21ea73fa7ee769f85f57d5a3e6a08725eae1e38c755fc3517c9e6bc0b66";
+let trustedRootMaterial;
 const CANONICAL_BUILD_SOURCE_URL = `https://github.com/${CANONICAL_BUILD_SOURCE_REPOSITORY}`;
 const HARBOR_REGISTRY = "harbor.tailb18de3.ts.net";
 const QUARANTINE_PREFIX = "quarantine";
@@ -154,18 +163,6 @@ export function vulnerabilityCounts(report, { repository, digest, reference }) {
   return counts;
 }
 
-function boundedStrings(value, depth = 0, output = []) {
-  if (depth > 12 || output.length > 4096) throw new Error("provenance exceeded its structural bound");
-  if (typeof value === "string") {
-    if (value.length > 4096) throw new Error("provenance string exceeded its bound");
-    output.push(value);
-  } else if (Array.isArray(value)) {
-    value.forEach((item) => boundedStrings(item, depth + 1, output));
-  } else if (value && typeof value === "object") {
-    Object.values(value).forEach((item) => boundedStrings(item, depth + 1, output));
-  }
-  return output;
-}
 
 function trustedSourceMaterial(material, commit) {
   if (!material || typeof material !== "object" || typeof material.uri !== "string") return false;
@@ -184,8 +181,17 @@ function trustedSourceMaterial(material, commit) {
   );
 }
 
-export function verifyProvenance(jsonLines, { repository, digest, commit }) {
+export function verifyProvenance(jsonLines, { repository, digest, commit, platform, architecture }) {
   const expectedDigest = digest.slice("sha256:".length);
+  const expectedPlatform = platform === undefined && architecture === undefined
+    ? undefined
+    : `${platform}/${architecture}`;
+  if (
+    (expectedPlatform !== undefined && platform !== "linux") ||
+    (expectedPlatform !== undefined && !["amd64", "arm64"].includes(architecture))
+  ) {
+    throw new Error("provenance platform/architecture expectation is invalid");
+  }
   const lines = jsonLines.split("\n").filter(Boolean);
   if (lines.length < 1 || lines.length > 32) throw new Error("provenance attestation count is invalid");
   const statements = [];
@@ -194,64 +200,231 @@ export function verifyProvenance(jsonLines, { repository, digest, commit }) {
     let statement;
     try {
       envelope = JSON.parse(line);
-      statement = JSON.parse(Buffer.from(envelope.payload, "base64").toString("utf8"));
+      if (
+        !envelope ||
+        typeof envelope !== "object" ||
+        Array.isArray(envelope) ||
+        envelope.payloadType !== "application/vnd.in-toto+json" ||
+        typeof envelope.payload !== "string" ||
+        !Array.isArray(envelope.signatures) ||
+        envelope.signatures.length < 1 ||
+        envelope.signatures.length > 32 ||
+        envelope.signatures.some((signature) =>
+          !signature ||
+          typeof signature !== "object" ||
+          typeof signature.sig !== "string" ||
+          signature.sig.length < 1 ||
+          signature.sig.length > 8192
+        )
+      ) {
+        throw new Error("invalid envelope");
+      }
+      const payload = Buffer.from(envelope.payload, "base64");
+      if (payload.length < 2 || payload.length > 4 * 1024 * 1024) throw new Error("invalid payload size");
+      statement = JSON.parse(payload.toString("utf8"));
     } catch (error) {
       throw new Error("provenance attestation is not valid DSSE JSON", { cause: error });
-    }
-    if (envelope?.payloadType !== "application/vnd.in-toto+json" || typeof envelope.payload !== "string") {
-      throw new Error("provenance attestation is not an in-toto envelope");
     }
     statements.push(statement);
   }
   const provenance = statements.find((statement) => {
     const predicate = statement?.predicate;
-    const sourceMaterial = predicate?.materials?.find((material) => trustedSourceMaterial(material, commit));
-    const baseMaterial = predicate?.materials?.some(
+    const v1 = statement?.predicateType === "https://slsa.dev/provenance/v1";
+    const materials = v1
+      ? predicate?.buildDefinition?.resolvedDependencies
+      : predicate?.materials;
+    const sourceMaterial = materials?.find((material) => trustedSourceMaterial(material, commit));
+    const baseMaterial = materials?.some(
       (material) =>
         typeof material?.uri === "string" &&
         material.uri.startsWith("pkg:docker/") &&
         /^[0-9a-f]{64}$/u.test(material.digest?.sha256 ?? ""),
     );
-    const invocationStrings = boundedStrings(predicate?.invocation?.parameters ?? {});
+    const parameters = predicate?.invocation?.parameters;
+    const externalParameters = predicate?.buildDefinition?.externalParameters;
+    const declaredPlatforms = [
+      parameters?.platform,
+      parameters?.frontendAttrs?.platform,
+      externalParameters?.platform,
+      externalParameters?.frontendAttrs?.platform,
+      ...(Array.isArray(parameters?.platforms) ? parameters.platforms : []),
+      ...(Array.isArray(externalParameters?.platforms) ? externalParameters.platforms : []),
+    ]
+      .filter((value) => typeof value === "string")
+      .flatMap((value) => value.split(",").map((entry) => entry.trim()));
+    const invocationBindsSource = (
+      parameters?.commit === commit &&
+      parameters?.source === CANONICAL_BUILD_SOURCE_URL
+    ) || (
+      parameters?.frontendAttrs?.["build-arg:SOURCE_COMMIT"] === commit &&
+      parameters?.frontendAttrs?.["build-arg:SOURCE_REPOSITORY"] === CANONICAL_BUILD_SOURCE_URL
+    ) || (
+      externalParameters?.source?.uri === CANONICAL_BUILD_SOURCE_URL &&
+      [externalParameters?.source?.digest?.sha1, externalParameters?.source?.digest?.gitCommit].includes(commit)
+    ) || (
+      externalParameters?.frontendAttrs?.["build-arg:SOURCE_COMMIT"] === commit &&
+      externalParameters?.frontendAttrs?.["build-arg:SOURCE_REPOSITORY"] === CANONICAL_BUILD_SOURCE_URL
+    );
+    const builderId = v1 ? predicate?.runDetails?.builder?.id : predicate?.builder?.id;
+    const buildType = v1 ? predicate?.buildDefinition?.buildType : predicate?.buildType;
     return (
-      statement?._type === "https://in-toto.io/Statement/v0.1" &&
-      typeof statement.predicateType === "string" &&
-      predicate?.builder?.id === "https://mobyproject.org/buildkit@v1" &&
-      statement.predicateType.startsWith("https://slsa.dev/provenance/") &&
-      predicate?.buildType === "https://mobyproject.org/buildkit@v1" &&
+      ["https://in-toto.io/Statement/v0.1", "https://in-toto.io/Statement/v1"].includes(statement?._type) &&
+      ["https://slsa.dev/provenance/v0.2", "https://slsa.dev/provenance/v1"].includes(statement.predicateType) &&
+      builderId === "https://mobyproject.org/buildkit@v1" &&
+      buildType === "https://mobyproject.org/buildkit@v1" &&
+      Array.isArray(materials) &&
       statement.subject?.some(
         (subject) => subject?.name === repository && subject?.digest?.sha256 === expectedDigest,
       ) &&
       sourceMaterial &&
       baseMaterial &&
-      invocationStrings.includes(commit) &&
-      invocationStrings.includes(CANONICAL_BUILD_SOURCE_URL)
+      invocationBindsSource &&
+      (expectedPlatform === undefined || declaredPlatforms.includes(expectedPlatform))
     );
   });
   if (!provenance) {
-    throw new Error("BuildKit provenance does not bind subject, trusted source repository, CI commit, and materials");
+    throw new Error("BuildKit provenance does not bind subject, trusted source repository, CI commit, build type, materials, and requested platform");
   }
+  return provenance;
+}
+
+function exactIdentityPolicy(identityType, identity) {
+  const anchored = `^(?:${identity.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")})$`;
+  if (identityType === "uri") return { certificateIdentityURI: anchored };
+  if (identityType === "email") return { certificateIdentityEmail: anchored };
+  throw new Error("cosign certificate identity type must be uri or email");
+}
+function assertAuthorizedSignerPolicy(policy) {
+  if (
+    policy.certificateIdentity !== AUTHORIZED_PROVENANCE_SIGNER.certificateIdentity ||
+    policy.certificateIdentityType !== AUTHORIZED_PROVENANCE_SIGNER.certificateIdentityType ||
+    policy.certificateIssuer !== AUTHORIZED_PROVENANCE_SIGNER.certificateIssuer
+  ) {
+    throw new Error("signed provenance signer is not authorized");
+  }
+}
+
+
+function parseJsonLines(source, label) {
+  const lines = source.split("\n").filter((line) => line.length > 0);
+  if (lines.length < 1 || lines.length > 32) throw new Error(`${label} count is invalid`);
+  return lines.map((line) => {
+    try {
+      return JSON.parse(line);
+    } catch (error) {
+      throw new Error(`${label} is not valid JSON lines`, { cause: error });
+    }
+  });
+}
+
+function sameEnvelope(left, right) {
+  return left?.payloadType === right?.payloadType &&
+    left?.payload === right?.payload &&
+    Array.isArray(left?.signatures) &&
+    Array.isArray(right?.signatures) &&
+    JSON.stringify(left.signatures) === JSON.stringify(right.signatures);
+}
+
+async function verifyBundleWithPinnedRoot(bundle, options) {
+  if (trustedRootMaterial === undefined) {
+    const source = await readFile(TRUSTED_ROOT_PATH);
+    if (createHash("sha256").update(source).digest("hex") !== TRUSTED_ROOT_SHA256) {
+      throw new Error("pinned Sigstore trusted root does not match its reviewed digest");
+    }
+    trustedRootMaterial = toTrustMaterial(TrustedRoot.fromJSON(JSON.parse(source.toString("utf8"))));
+  }
+  const verifier = new Verifier(trustedRootMaterial, {
+    ctlogThreshold: options.ctLogThreshold,
+    tlogThreshold: options.tlogThreshold,
+  });
+  verifier.verify(toSignedEntity(bundleFromJSON(bundle)), {
+    subjectAlternativeName: options.certificateIdentityURI ?? options.certificateIdentityEmail,
+    extensions: { issuer: options.certificateIssuer },
+  });
+}
+
+export async function verifySignedProvenance(
+  provenanceSource,
+  bundleSource,
+  { certificateIdentity, certificateIdentityType, certificateIssuer },
+  verifyBundle = verifyBundleWithPinnedRoot,
+) {
+  const envelopes = parseJsonLines(provenanceSource, "provenance DSSE envelope");
+  const bundles = parseJsonLines(bundleSource, "Sigstore bundle");
+  if (
+    bundles.length !== envelopes.length ||
+    bundles.some((bundle, index) =>
+      bundle?.mediaType !== "application/vnd.dev.sigstore.bundle.v0.3+json" ||
+      !sameEnvelope(bundle.dsseEnvelope, envelopes[index])
+    )
+  ) {
+    throw new Error("Sigstore bundles do not contain the exact retained DSSE envelopes");
+  }
+  const options = {
+    ...exactIdentityPolicy(certificateIdentityType, certificateIdentity),
+    certificateIssuer,
+    ctLogThreshold: 1,
+    tlogThreshold: 1,
+  };
+  for (const bundle of bundles) await verifyBundle(bundle, options);
+  return envelopes;
+}
+
+export async function verifyAuthorizedSignedProvenance(
+  provenanceSource,
+  bundleSource,
+  declaredPolicy,
+  verifyBundle,
+) {
+  assertAuthorizedSignerPolicy(declaredPolicy);
+  return await verifySignedProvenance(
+    provenanceSource,
+    bundleSource,
+    AUTHORIZED_PROVENANCE_SIGNER,
+    verifyBundle,
+  );
 }
 
 export function provenanceVerificationMode(environment = process.env) {
-  const identity = environment.T4_COSIGN_CERTIFICATE_IDENTITY?.trim() ?? "";
-  const issuer = environment.T4_COSIGN_CERTIFICATE_OIDC_ISSUER?.trim() ?? "";
-  if (Boolean(identity) !== Boolean(issuer)) {
+  const certificateIdentity = environment.T4_COSIGN_CERTIFICATE_IDENTITY?.trim() ?? "";
+  const certificateIssuer = environment.T4_COSIGN_CERTIFICATE_OIDC_ISSUER?.trim() ?? "";
+  const certificateIdentityType = environment.T4_COSIGN_CERTIFICATE_IDENTITY_TYPE?.trim() ?? "";
+  if (Boolean(certificateIdentity) !== Boolean(certificateIssuer)) {
     throw new Error("cosign certificate identity and OIDC issuer must be configured together");
   }
-  return identity ? { mode: "cosign-keyless", signatureVerified: true } : { mode: "buildkit-content", signatureVerified: false };
+  if (!certificateIdentity) {
+    if (certificateIdentityType) throw new Error("cosign certificate identity type requires an identity");
+    return { mode: "buildkit-content" };
+  }
+  if (!["uri", "email"].includes(certificateIdentityType)) {
+    throw new Error("T4_COSIGN_CERTIFICATE_IDENTITY_TYPE must be uri or email");
+  }
+  assertAuthorizedSignerPolicy({ certificateIdentity, certificateIdentityType, certificateIssuer });
+  return {
+    mode: "cosign-keyless",
+    certificateIdentity,
+    certificateIdentityType,
+    certificateIssuer,
+  };
 }
 
 function validateProvenanceVerification(value, expected) {
+  const publicExpected = expected.mode === "cosign-keyless"
+    ? {
+        mode: expected.mode,
+        certificateIdentity: expected.certificateIdentity,
+        certificateIdentityType: expected.certificateIdentityType,
+        certificateIssuer: expected.certificateIssuer,
+      }
+    : { mode: expected.mode };
   if (
     !value ||
     typeof value !== "object" ||
     Array.isArray(value) ||
-    Object.keys(value).sort().join(",") !== "mode,signatureVerified" ||
-    value.mode !== expected.mode ||
-    value.signatureVerified !== expected.signatureVerified
+    JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(Object.keys(publicExpected).sort()) ||
+    Object.entries(publicExpected).some(([key, expectedValue]) => value[key] !== expectedValue)
   ) {
-    throw new Error("provenance signer verification record is missing or not truthful");
+    throw new Error("provenance signer policy record is missing or does not match the configured policy");
   }
   return value;
 }
@@ -263,6 +436,7 @@ async function imageEntry(component, commit, registry, project, expectedVerifica
   const evidenceReference = `${evidenceRepository}@${digest}`;
   const sbomPath = resolve(artifactDirectory, `${component}.spdx.json`);
   const provenancePath = resolve(artifactDirectory, `${component}.provenance.jsonl`);
+  const provenanceBundlePath = resolve(artifactDirectory, `${component}.provenance.sigstore.jsonl`);
   const provenanceVerificationPath = resolve(artifactDirectory, `${component}.provenance-verification.json`);
   const vulnerabilityPath = resolve(artifactDirectory, `${component}.trivy.json`);
   verifySpdx(await json(sbomPath, `${component} SBOM`), {
@@ -270,15 +444,29 @@ async function imageEntry(component, commit, registry, project, expectedVerifica
     digest,
     reference: evidenceReference,
   });
-  verifyProvenance(await readFile(provenancePath, "utf8"), {
-    repository: evidenceRepository,
-    digest,
-    commit,
-  });
+  const provenanceSource = await readFile(provenancePath, "utf8");
   const verification = validateProvenanceVerification(
     await json(provenanceVerificationPath, `${component} provenance verification`),
     expectedVerification,
   );
+  let bundleEvidence;
+  if (verification.mode === "cosign-keyless") {
+    const bundleSource = await readFile(provenanceBundlePath, "utf8");
+    await verifyAuthorizedSignedProvenance(provenanceSource, bundleSource, expectedVerification);
+    bundleEvidence = {
+      ...(await createFileEvidence(provenanceBundlePath, { artifactRoot: repoRoot })),
+      bytes: Buffer.byteLength(bundleSource),
+    };
+  }
+  for (const architecture of ["amd64", "arm64"]) {
+    verifyProvenance(provenanceSource, {
+      repository: evidenceRepository,
+      digest,
+      commit,
+      platform: "linux",
+      architecture,
+    });
+  }
   const counts = vulnerabilityCounts(await json(vulnerabilityPath, `${component} vulnerability report`), {
     repository: evidenceRepository,
     digest,
@@ -291,7 +479,11 @@ async function imageEntry(component, commit, registry, project, expectedVerifica
     digest,
     reference: `${repository}@${digest}`,
     sbom: await createFileEvidence(sbomPath, { artifactRoot: repoRoot }),
-    provenance: { ...(await createFileEvidence(provenancePath, { artifactRoot: repoRoot })), ...verification },
+    provenance: {
+      ...(await createFileEvidence(provenancePath, { artifactRoot: repoRoot })),
+      ...verification,
+      ...(bundleEvidence === undefined ? {} : { bundle: bundleEvidence }),
+    },
     vulnerability: {
       ...(await createFileEvidence(vulnerabilityPath, { artifactRoot: repoRoot })),
       scanner: "trivy",

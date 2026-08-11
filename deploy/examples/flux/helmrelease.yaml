@@ -1,0 +1,70 @@
+# Flux HelmRelease for the portable t4-cluster chart.
+#
+# The release is gated on the separately ordered CRD Kustomization and never
+# manages a CustomResourceDefinition itself.
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: t4-cluster
+  namespace: t4-system
+spec:
+  interval: 15m
+  releaseName: t4-cluster
+  targetNamespace: t4-system
+  # CRDs must exist, be Established, and serve the candidate schema before any
+  # workload rollout.
+  dependsOn:
+    - name: t4-cluster-crds
+      namespace: flux-system
+  chart:
+    spec:
+      chart: ./deploy/charts/t4-cluster
+      sourceRef:
+        kind: GitRepository
+        name: t4-code
+        namespace: flux-system
+      reconcileStrategy: Revision
+  install:
+    crds: Skip
+    timeout: 15m
+    remediation:
+      retries: 0
+  upgrade:
+    crds: Skip
+    timeout: 15m
+    cleanupOnFail: true
+    remediation:
+      retries: 1
+      # A failed upgrade rolls the workloads back to the previous revision. The
+      # additive CRDs stay installed, which is the same end state as
+      # docs/runbooks/cluster-rollback.md.
+      strategy: rollback
+      remediateLastFailure: true
+  rollback:
+    timeout: 15m
+    cleanupOnFail: true
+    # Never recreate or force-replace resources to make a rollback converge:
+    # that would delete and re-create Services and PVC-bound workloads.
+    recreate: false
+    force: false
+  uninstall:
+    # Retained workspaces, their PVCs, and the CRDs deliberately survive.
+    deletionPropagation: foreground
+    keepHistory: true
+  maxHistory: 20
+  driftDetection:
+    # Report drift; do not silently correct a live control plane.
+    mode: warn
+  # The chart is default-off and this example injects no inline values. Both
+  # objects are administrator-owned and are not created by the chart or by these
+  # examples. The overlay is optional: drop it to run the core install with no
+  # adapters at all.
+  valuesFrom:
+    - kind: ConfigMap
+      name: t4-cluster-values
+      valuesKey: values.yaml
+    - kind: ConfigMap
+      name: t4-cluster-adapter-values
+      valuesKey: values.yaml
+      optional: true

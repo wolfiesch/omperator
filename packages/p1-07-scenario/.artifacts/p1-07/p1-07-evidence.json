@@ -1,0 +1,232 @@
+{
+  "schemaVersion": 1,
+  "scenario": "P1-07-real-pinned-cmux-local",
+  "pinnedClient": {
+    "binaryFile": "cmux-tui-x86_64-apple-darwin",
+    "binarySha256": "f4d7c06a45a6ee558d28ac5c7e97265dcab43ebd791066a0392b6565d4b6357b",
+    "sourceCommit": "192e44428c16b98210c951ec4bd5a86bc7139014",
+    "sourceTree": "8e8fd0f70452987a00773f21e96b6c2f14825332",
+    "cmuxTuiSourceTree": "e0b39f571435fcee7557394988bf04e43bc3d4f6",
+    "ghosttyCommit": "8f31fb57cde291e7b8fecb46203bc398c44459f4",
+    "invocation": [
+      "<pinned-cmux>",
+      "--machine-provider-command",
+      "<bun>",
+      "packages/provider-adapter/src/bin.ts",
+      "provider",
+      "--endpoint",
+      "https://p1-07.local/provider",
+      "--profile",
+      "local-p1-07",
+      "--"
+    ],
+    "unmodified": true,
+    "pty": "host-service spawnPty"
+  },
+  "assertions": {
+    "visibleList": true,
+    "methods": {
+      "hello": 2,
+      "negotiate_client_capabilities": 2,
+      "snapshot": 13,
+      "create_machine": 1,
+      "open_machine": 3,
+      "close_machine": 2,
+      "invoke_action": 2
+    },
+    "createOpenClose": true,
+    "sleepWake": true,
+    "streamLossReconnect": true,
+    "controlReconnect": true,
+    "generationChanged": {
+      "before": "gen_tZh3v2JhlTE96S_k_IQc5Q",
+      "after": "gen_opHCHU558CVfvfcMwiU7SA",
+      "changed": true
+    },
+    "staleRouteRejected": "staleGeneration",
+    "ticketOneUse": "rejected",
+    "duplicateWriterRejected": true,
+    "noTranslation": [
+      {
+        "name": "control client-to-provider",
+        "equal": true,
+        "connections": 1,
+        "values": [
+          "860:2ca0426cda9e4731b7927723dbe9af01803fd30d592edf7954714fe31605a87a"
+        ],
+        "faultedConnectionsExcluded": 1,
+        "faultedConnectionIds": [
+          1
+        ]
+      },
+      {
+        "name": "control provider-to-client",
+        "equal": true,
+        "connections": 1,
+        "values": [
+          "2105:327e796005cb5769d302ca4b23c7fa3a9a167efd9a285b63c933d8b660fd05ac"
+        ],
+        "faultedConnectionsExcluded": 1,
+        "faultedConnectionIds": [
+          1
+        ]
+      },
+      {
+        "name": "stream client-to-provider",
+        "equal": true,
+        "connections": 2,
+        "values": [
+          "522:0666eec728eeeb65638cdf04c3d2aef101c6c3db8a8101e38f186aa3c1a39162",
+          "381:85661f92e738d6412a429e4ead2ed921dfe673253985e48c904df2175215134b"
+        ],
+        "faultedConnectionsExcluded": 1,
+        "faultedConnectionIds": [
+          1
+        ]
+      },
+      {
+        "name": "stream provider-to-client",
+        "equal": true,
+        "connections": 2,
+        "values": [
+          "12057:46f6c53e0ea799edf90f8eab2fe0acf282fd3584467ba4bb92ae779e3fb6d31f",
+          "2785:c1310dc364f106231481fb01a8bb282b82ebb15d39803f03fb540cb25ee7b593"
+        ],
+        "faultedConnectionsExcluded": 1,
+        "faultedConnectionIds": [
+          1
+        ]
+      },
+      {
+        "name": "stream client-to-runtime",
+        "equal": true,
+        "connections": 2,
+        "values": [
+          "522:0666eec728eeeb65638cdf04c3d2aef101c6c3db8a8101e38f186aa3c1a39162",
+          "381:85661f92e738d6412a429e4ead2ed921dfe673253985e48c904df2175215134b"
+        ],
+        "faultedConnectionsExcluded": 1,
+        "faultedConnectionIds": [
+          1
+        ]
+      },
+      {
+        "name": "stream runtime-to-client",
+        "equal": true,
+        "connections": 2,
+        "values": [
+          "12057:46f6c53e0ea799edf90f8eab2fe0acf282fd3584467ba4bb92ae779e3fb6d31f",
+          "2785:c1310dc364f106231481fb01a8bb282b82ebb15d39803f03fb540cb25ee7b593"
+        ],
+        "faultedConnectionsExcluded": 1,
+        "faultedConnectionIds": [
+          1
+        ]
+      }
+    ],
+    "workspaceCreateNotAdvertised": true
+  },
+  "frames": [
+    {
+      "method": "hello",
+      "sha256": "565c5269e727ca52ec809118cc90076e6bb608a8eabb2513b9737397bd4dc343"
+    },
+    {
+      "method": "negotiate_client_capabilities",
+      "sha256": "059216eaa8da87bb088853b3ab89d00f168ba9eb03f33ac39b557eb349b9dc58"
+    },
+    {
+      "method": "snapshot",
+      "sha256": "76464b7ae05d51a56fad34180325699b09085fc743bba2c3566d0a26e54fd05c"
+    },
+    {
+      "method": "snapshot",
+      "sha256": "5a4ae1b3a798c9971cac76717841f5d6e0caee7dd2219b038b44b3f430214418"
+    },
+    {
+      "method": "snapshot",
+      "sha256": "17e2f9034fd7ab5f36bd55809552872eb6d97a856d9ec1401670dde927808623"
+    },
+    {
+      "method": "create_machine",
+      "sha256": "2102ce275c8588675adf08687112c23dec68cafc4f87f62ab361db9409345c8b"
+    },
+    {
+      "method": "snapshot",
+      "sha256": "8f570e9601fff30c8904466b579cf91b4677b4101f959acdf21d3aa9d49e8b1f"
+    },
+    {
+      "method": "snapshot",
+      "sha256": "dc71abd247214d1ba923b4d60c24732207024bf5b07a1fdaf42498dd8a29b6d7"
+    },
+    {
+      "method": "snapshot",
+      "sha256": "0f1eec74b922168a41d5c340c5f1a6668d66b2852bb40352c837e64c63f97a7f"
+    },
+    {
+      "method": "open_machine",
+      "sha256": "20999a387a9d1ea6d24c253a0165812703128c77c2778ad7d255af864030b14c"
+    },
+    {
+      "method": "close_machine",
+      "sha256": "b0e77c003fe1b4146478df12291f5b4ac435a9b27d8142550d90a3a1c24e67d9"
+    },
+    {
+      "method": "snapshot",
+      "sha256": "c5dbc2a47cc850ae7331e8de420111c60f4236f79447b10a7808fb2202021673"
+    },
+    {
+      "method": "open_machine",
+      "sha256": "4dad980338ce117e13bf839ce98c930fbc2cad812594d0437bf4ae0c42a1556d"
+    },
+    {
+      "method": "snapshot",
+      "sha256": "e67a275d1d8461733f1f8ca986912e9a3e23b08d3c9531a13a9a3872a01662fa"
+    },
+    {
+      "method": "snapshot",
+      "sha256": "7e6ade433ed4ec5ae057f587562a09377681231ba8dc32cb1e5b7b223181a1b8"
+    },
+    {
+      "method": "invoke_action",
+      "sha256": "305bd1034b37eab57d86adc5b9478eef48c07c963a63cd12903a6c9d15956d23"
+    },
+    {
+      "method": "snapshot",
+      "sha256": "d92ec1fcc389b022df93244a09139dcc21afda56f21589ff92a9ec4c673e5ac5"
+    },
+    {
+      "method": "snapshot",
+      "sha256": "5bd75e66268d0827ccba235bc9a7f97bad5a03f63c5e45897baa9ce9160edbb3"
+    },
+    {
+      "method": "invoke_action",
+      "sha256": "47ec0ece4d98b8e4fc014df8833feaa22f44e284e82aaf883d60c46587db399f"
+    },
+    {
+      "method": "hello",
+      "sha256": "cdb90892cc7065d7318d0dd2822656e756decd4232ea4f474c5919e5fbe6981a"
+    },
+    {
+      "method": "negotiate_client_capabilities",
+      "sha256": "059216eaa8da87bb088853b3ab89d00f168ba9eb03f33ac39b557eb349b9dc58"
+    },
+    {
+      "method": "snapshot",
+      "sha256": "76464b7ae05d51a56fad34180325699b09085fc743bba2c3566d0a26e54fd05c"
+    },
+    {
+      "method": "open_machine",
+      "sha256": "39e7b2c40b190c60154401a362c600fdc8ab8d1404f910983216c0530ee8afb8"
+    },
+    {
+      "method": "snapshot",
+      "sha256": "17e2f9034fd7ab5f36bd55809552872eb6d97a856d9ec1401670dde927808623"
+    },
+    {
+      "method": "close_machine",
+      "sha256": "9340bb884fd6e439a0e1dedba12647cd11a831327a63784a48a22d449cf7ebaa"
+    }
+  ],
+  "boundaryEvidence": "p1-07-boundaries.ndjson"
+}

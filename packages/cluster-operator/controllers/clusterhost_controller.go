@@ -23,10 +23,15 @@ type ClusterHostReconciler struct {
 }
 
 func (r *ClusterHostReconciler) Reconcile(ctx context.Context, request ctrl.Request) (result ctrl.Result, err error) {
+	startedAt := time.Now()
 	var host clusterv1alpha1.T4ClusterHost
 	found := false
 	defer func() {
-		observeReconcile(metricKindClusterHost, request.NamespacedName, host.Status.Conditions, conditionObjectPresent(&host, found, err), err)
+		observeReconcile(metricKindClusterHost, request.NamespacedName, "", conditionObjectPresent(&host, found, err), err, startedAt)
+		if found {
+			storageReady := meta.FindStatusCondition(host.Status.Conditions, "StorageReady")
+			observeStorageOperation("probe", err, storageReady != nil && storageReady.Status == metav1.ConditionFalse, startedAt)
+		}
 	}()
 	if err := r.Get(ctx, request.NamespacedName, &host); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
@@ -39,18 +44,50 @@ func (r *ClusterHostReconciler) Reconcile(ctx context.Context, request ctrl.Requ
 	host.Status.ObservedGeneration = host.Generation
 
 	var storageClass storagev1.StorageClass
-	storageReady := true
+	workspaceStorageReady := true
 	if err := r.Get(ctx, types.NamespacedName{Name: host.Spec.StorageClassName}, &storageClass); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
-		storageReady = false
-		meta.SetStatusCondition(&host.Status.Conditions, condition("StorageReady", metav1.ConditionFalse, ReasonStorageClassNotFound, "selected StorageClass does not exist", host.Generation))
+		workspaceStorageReady = false
 	} else if !storageClassAllowsRWX(storageClass.Annotations) {
-		storageReady = false
-		meta.SetStatusCondition(&host.Status.Conditions, condition("StorageReady", metav1.ConditionFalse, ReasonStorageClassNotRWX, "selected StorageClass is not administrator-declared ReadWriteMany", host.Generation))
-	} else {
-		meta.SetStatusCondition(&host.Status.Conditions, condition("StorageReady", metav1.ConditionTrue, ReasonStorageReady, "selected StorageClass supports ReadWriteMany", host.Generation))
+		workspaceStorageReady = false
+	}
+
+	runtimeStorageReady := host.Spec.RuntimeStateStorageProfile != nil
+	if profile := host.Spec.RuntimeStateStorageProfile; profile != nil {
+		var runtimeStorageClass storagev1.StorageClass
+		if err := r.Get(ctx, types.NamespacedName{Name: profile.StorageClassName}, &runtimeStorageClass); err != nil {
+			if !apierrors.IsNotFound(err) {
+				return ctrl.Result{}, err
+			}
+			runtimeStorageReady = false
+		}
+	}
+
+	if workspaceStorageReady && runtimeStorageReady {
+		observed, observeErr := ObserveStorageCapabilities(ctx, r.Client, &host, metav1.Now())
+		if observeErr != nil {
+			return ctrl.Result{}, observeErr
+		}
+		host.Status.StorageCapabilities = observed
+		if gateErr := StorageCapabilitiesPermitRuntime(&host); gateErr != nil {
+			runtimeStorageReady = false
+		}
+	}
+
+	storageReady := workspaceStorageReady && runtimeStorageReady
+	switch {
+	case !workspaceStorageReady && storageClass.Name == "":
+		meta.SetStatusCondition(&host.Status.Conditions, condition("StorageReady", metav1.ConditionFalse, ReasonStorageClassNotFound, "selected workspace StorageClass does not exist", host.Generation))
+	case !workspaceStorageReady:
+		meta.SetStatusCondition(&host.Status.Conditions, condition("StorageReady", metav1.ConditionFalse, ReasonStorageClassNotRWX, "selected workspace StorageClass is not administrator-declared ReadWriteMany", host.Generation))
+	case host.Spec.RuntimeStateStorageProfile == nil:
+		meta.SetStatusCondition(&host.Status.Conditions, condition("StorageReady", metav1.ConditionFalse, "RuntimeStateStorageRequired", "separate runtime-state storage is required", host.Generation))
+	case !runtimeStorageReady:
+		meta.SetStatusCondition(&host.Status.Conditions, condition("StorageReady", metav1.ConditionFalse, "StorageConformanceRequired", "selected storage classes have not passed bounded remount and reattach conformance", host.Generation))
+	default:
+		meta.SetStatusCondition(&host.Status.Conditions, condition("StorageReady", metav1.ConditionTrue, ReasonStorageReady, "workspace and runtime-state storage capabilities are observed and supported", host.Generation))
 	}
 
 	ciReady := true

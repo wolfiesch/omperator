@@ -263,6 +263,13 @@ export class SubagentProjection {
 			.sort((left, right) => left.index - right.index || compareCodeUnits(left.id, right.id))
 			.map(state => this.toFrame(state));
 	}
+	activeCount(): number {
+		let count = 0;
+		for (const state of this.#states.values())
+			if (!hasStatus(TERMINAL_STATUS, state.status) && !hasStatus(RESUMABLE_STATUS, state.status)) count += 1;
+		return count;
+	}
+
 
 	private apply(input: ProjectionInput): AgentFrame | undefined {
 		const nextStatus = status(input.status);

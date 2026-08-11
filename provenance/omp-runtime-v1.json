@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "component": "omp-runtime",
+  "compatibilitySet": "portable-agent-platform-v1",
+  "source": {
+    "repository": "https://github.com/wolfiesch/oh-my-pi",
+    "commit": "c4d3ecdc35234d1aa470c3e1101d9a4ca45b64c5",
+    "contractCommit": "d16c6168c86f40fc44f25118c2fd06fe160fcb93",
+    "contractAncestry": "descendant"
+  },
+  "bridge": {
+    "protocol": "t4-omp-authority/1",
+    "methods": [
+      "host.info",
+      "authority.flush",
+      "authority.quiesce",
+      "session.create",
+      "session.fork",
+      "session.list",
+      "session.archive",
+      "session.restore",
+      "session.delete",
+      "discovery.load",
+      "discovery.page",
+      "project.rootForProject",
+      "project.rootForSession",
+      "lock.check",
+      "lock.status",
+      "operation.filesRead",
+      "operation.filesList",
+      "operation.filesDiff",
+      "operation.filesWrite",
+      "operation.filesPatch",
+      "operation.reviewRead",
+      "operation.reviewApply",
+      "operation.bashRun",
+      "operation.termOpen",
+      "operation.catalogGet",
+      "operation.settingsRead",
+      "operation.brokerStatus",
+      "operation.settingsWrite",
+      "operation.configWrite",
+      "terminal.input",
+      "terminal.resize",
+      "terminal.close",
+      "usage.read"
+    ],
+    "evidence": {
+      "sourceTests": [
+        "packages/coding-agent/test/appserver-bridge.test.ts",
+        "packages/coding-agent/test/appserver-bridge-smoke.test.ts"
+      ],
+      "hostGate": "pnpm verify:current-omp-bridge"
+    },
+    "compatibilityStatus": "admitted"
+  },
+  "rollout": {
+    "components": ["omperator-host", "omp-runtime", "cmux-runtime"],
+    "independentComponentRollsAllowed": false
+  }
+}

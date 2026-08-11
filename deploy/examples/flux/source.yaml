@@ -1,0 +1,23 @@
+# Flux source for the portable t4-cluster chart.
+#
+# A plain Git source is used so no registry, cloud provider, or OCI
+# distribution service becomes mandatory. If the chart is published as an OCI
+# artifact later, replace this GitRepository with a HelmRepository of
+# `type: oci` and point the HelmRelease chartRef at it; nothing else in these
+# examples changes.
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: t4-code
+  namespace: flux-system
+spec:
+  interval: 10m
+  url: https://git.example.test/t4-code.git
+  ref:
+    # Pin an exact commit. A branch or tag would let the chart, the CRDs, and
+    # the recorded image digest set drift apart between reconciliations.
+    commit: 0000000000000000000000000000000000000000
+  ignore: |
+    /*
+    !/deploy/charts/t4-cluster

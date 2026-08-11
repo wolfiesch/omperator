@@ -1,0 +1,1 @@
+{"protocol":"cmux.machine-provider","version":1,"id":"request-open","result":{"connection_id":"connection_01","transport":{"kind":"provider_stream","ticket":"fixture-single-use-stream-ticket","expires_at":"2026-07-28T12:01:00Z"},"workspace_mirror_authority":"fixture-workspace-authority-000000000001"}}

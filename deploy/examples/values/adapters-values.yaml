@@ -1,0 +1,109 @@
+# Optional adapter overlay for the t4-cluster chart.
+#
+# Apply this file AFTER deploy/examples/values/minimal-values.yaml to enable
+# every optional adapter at once. Nothing here is required by the core install;
+# each block can be dropped independently and the control plane still works.
+#
+# Every value is a documentation placeholder. Secrets, ConfigMaps, StorageClasses,
+# origins, and CIDRs must already exist in the target cluster. This chart creates
+# none of them.
+
+images:
+  sshGateway:
+    repository: registry.example/t4-ssh-gateway
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  modelGateway:
+    repository: registry.example/t4-model-gateway
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+
+server:
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 9
+
+# Adapter: SSH front door. Requires existing host-key and authorized-keys
+# Secrets. Command handlers additionally require a handler module that is
+# already present in the image.
+sshGateway:
+  enabled: true
+  existingHostKeySecret: t4-ssh-host-key
+  existingAuthorizedKeysSecret: t4-ssh-authorized-keys
+  existingTrustedCASecret: t4-ssh-trusted-ca
+  existingPrincipalsSecret: t4-ssh-principals
+  handlerModule: /usr/lib/t4/ssh-commands.mjs
+  existingProviderAssertionSecret: t4-provider-assertion
+  commands:
+    provider: true
+    relay: true
+    attach: true
+    version: true
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 9
+  service:
+    type: LoadBalancer
+    port: 22
+    loadBalancerSourceRanges: [203.0.113.0/24]
+
+# Adapter: provider-neutral credential boundary. The only chart-managed pod that
+# mounts a provider Secret. Enabling it forbids a direct session model route.
+modelGateway:
+  enabled: true
+  upstreamOrigin: https://api.provider.example
+  # Exact inference and model-discovery endpoints only. Never account, billing,
+  # file-management, fine-tuning, or administrative endpoints.
+  allowedPaths: [/v1/responses, /v1/models]
+  existingSecret: model-provider
+  credentialKey: credential
+  # The Secret value is the complete header value, such as "Bearer ...".
+  credentialHeader: authorization
+
+# Adapter: warm the pinned session-runtime digest on eligible nodes.
+imagePrePull:
+  enabled: true
+
+# Adapter: chart-managed ingress. The class must be tailscale; generic ingress
+# controllers are unsupported because they would let a caller spoof identity
+# headers.
+ingress:
+  enabled: true
+  className: tailscale
+  host: t4.example.ts.net
+  tls:
+    enabled: true
+
+# Adapter: Prometheus Operator objects.
+observability:
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+  prometheusRule:
+    enabled: true
+
+# Adapter: CI provider reference. Either an existing Secret or a short-lived
+# projected audience accepted by an administrator-owned CI adapter, never both.
+woodpecker:
+  configMap: t4-ci-config
+  serviceAccountAudience: https://ci.example.test
+  tokenExpirationSeconds: 600
+
+networkPolicy:
+  # The direct session model route is removed because the model gateway owns the
+  # only provider destination.
+  modelRouteCIDRs: []
+  modelRoutePorts: []
+  modelGatewayUpstreamCIDRs: [198.51.100.20/32]
+  modelGatewayUpstreamPorts: [443]
+  identityProviderCIDRs: [203.0.113.24/32]
+  sshIngressCIDRs: [203.0.113.0/24]
+  ciProviderCIDRs: [203.0.113.30/32]
+  ciProviderPorts: [443]
+  observability:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: monitoring
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: prometheus

@@ -4,23 +4,34 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { OmpAuthorityBridgeClient } from "../src/omp-authority-bridge-client.ts";
+import {
+  OMP_AUTHORITY_BRIDGE_METHODS,
+  OMP_AUTHORITY_BRIDGE_PROTOCOL,
+} from "../src/omp-authority-bridge-contract.ts";
 
-interface VerifiedRuntime {
+interface PortableRuntime {
   readonly sourceCommit: string;
   readonly sourceRepository: string;
-  readonly sourceTag: string;
   readonly version: string;
+  readonly contractCommit: string;
+  readonly bridge: {
+    readonly protocol: string;
+    readonly methods: readonly string[];
+    readonly compatibilityStatus: string;
+  };
 }
 
-function runtime(value: unknown): VerifiedRuntime {
+function runtime(value: unknown): PortableRuntime {
   if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new Error("compatibility matrix verifiedRuntime is invalid");
+    throw new Error("compatibility matrix portableRuntime is invalid");
   const record = value as Record<string, unknown>;
-  for (const key of ["sourceCommit", "sourceRepository", "sourceTag", "version"] as const) {
+  for (const key of ["sourceCommit", "sourceRepository", "version", "contractCommit"] as const) {
     if (typeof record[key] !== "string" || record[key].length === 0)
-      throw new Error(`compatibility matrix verifiedRuntime.${key} is invalid`);
+      throw new Error(`compatibility matrix portableRuntime.${key} is invalid`);
   }
-  return record as unknown as VerifiedRuntime;
+  if (!record.bridge || typeof record.bridge !== "object" || Array.isArray(record.bridge))
+    throw new Error("compatibility matrix portableRuntime.bridge is invalid");
+  return record as unknown as PortableRuntime;
 }
 
 async function gitHead(sourceRoot: string): Promise<string> {
@@ -41,23 +52,25 @@ async function gitHead(sourceRoot: string): Promise<string> {
 async function main(): Promise<void> {
   const repoRoot = resolve(import.meta.dirname, "../../..");
   const sourceRoot = process.env.T4_CURRENT_OMP_SOURCE_DIR;
-  const exactSourceRoot = sourceRoot ? resolve(repoRoot, sourceRoot) : "";
-  if (!exactSourceRoot.startsWith(`${repoRoot}/.current-continuity/`))
-    throw new Error("T4_CURRENT_OMP_SOURCE_DIR must be the checked-out current continuity source");
+  if (!sourceRoot) throw new Error("set T4_CURRENT_OMP_SOURCE_DIR to the current OMP source checkout");
+  const exactSourceRoot = resolve(repoRoot, sourceRoot);
   const matrix = JSON.parse(await readFile(join(repoRoot, "compat", "omp-app-matrix.json"), "utf8")) as {
-    verifiedRuntime?: unknown;
+    portableRuntime?: unknown;
   };
-  const expected = runtime(matrix.verifiedRuntime);
+  const expected = runtime(matrix.portableRuntime);
   if (expected.sourceRepository !== "https://github.com/wolfiesch/oh-my-pi")
-    throw new Error("verified runtime repository is not the owned OMP fork");
+    throw new Error("portable runtime repository is not the owned OMP fork");
+  if (expected.contractCommit !== "d16c6168c86f40fc44f25118c2fd06fe160fcb93")
+    throw new Error("portable runtime does not record the reviewed OMP contract ancestry");
   if ((await gitHead(exactSourceRoot)) !== expected.sourceCommit)
-    throw new Error("checked-out current OMP source does not match verifiedRuntime.sourceCommit");
+    throw new Error("checked-out current OMP source does not match portableRuntime.sourceCommit");
   const cli = join(exactSourceRoot, "packages", "coding-agent", "src", "cli.ts");
   if (!(await stat(cli)).isFile()) throw new Error("current OMP CLI source is missing");
 
   const root = await mkdtemp(join(tmpdir(), "t4-current-omp-bridge-"));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
+  const forkWorkspace = join(root, "fork-workspace");
   const profile = `current-proof-${Bun.randomUUIDv7().slice(-12)}`;
   const client = new OmpAuthorityBridgeClient({
     executable: process.execPath,
@@ -74,32 +87,79 @@ async function main(): Promise<void> {
     },
   });
   try {
-    await Promise.all([mkdir(home, { recursive: true, mode: 0o700 }), mkdir(workspace)]);
+    await Promise.all([
+      mkdir(home, { recursive: true, mode: 0o700 }),
+      mkdir(workspace),
+      mkdir(forkWorkspace),
+    ]);
     const ready = await client.start();
     if (ready.ompVersion !== expected.version || ready.ompBuild !== "source")
-      throw new Error("current OMP bridge identity does not match the verified runtime");
+      throw new Error("current OMP bridge identity does not match the portable runtime");
+    const advertisedMethods = [...ready.methods].sort();
+    const requiredMethods = [...OMP_AUTHORITY_BRIDGE_METHODS].sort();
+    if (
+      expected.bridge.protocol !== OMP_AUTHORITY_BRIDGE_PROTOCOL ||
+      expected.bridge.compatibilityStatus !== "admitted" ||
+      JSON.stringify([...expected.bridge.methods].sort()) !== JSON.stringify(requiredMethods) ||
+      JSON.stringify(advertisedMethods) !== JSON.stringify(requiredMethods)
+    ) {
+      throw new Error("current OMP bridge method set does not match the admitted portable contract");
+    }
+
     const authorities = client.createAuthorities();
     const host = await authorities.hostInfo();
-    const sessions = await authorities.sessionAuthority.list();
     if (!host.transcriptImageRoot.startsWith(home))
       throw new Error("current OMP bridge escaped the disposable profile");
-    if (sessions.length !== 0 || !authorities.discovery.inventoryComplete?.())
+    const initial = await authorities.sessionAuthority.list();
+    if (initial.length !== 0 || !authorities.discovery.inventoryComplete?.())
       throw new Error("current OMP bridge did not return one complete disposable inventory");
+
+    await client.flush();
+    const created = await authorities.sessionAuthority.create(workspace, "portable-authority-proof");
+    const afterCreate = await authorities.sessionAuthority.list();
+    const createdRecord = afterCreate.find((session) => session.sessionId === created.sessionId);
+    if (!createdRecord)
+      throw new Error("created session is absent from the authoritative inventory");
+    const fork = authorities.sessionAuthority.fork;
+    if (!fork) throw new Error("current OMP bridge did not expose session.fork");
+    const forked = await fork(createdRecord, forkWorkspace);
+    const afterFork = await authorities.sessionAuthority.list();
+    const forkedRecord = afterFork.find((session) => session.sessionId === forked.sessionId);
+    if (!forkedRecord)
+      throw new Error("forked session is absent from the authoritative inventory");
+    await authorities.sessionAuthority.archive(createdRecord, new Date().toISOString());
+    await authorities.sessionAuthority.restore(createdRecord);
+    await authorities.sessionAuthority.delete(forkedRecord);
+    await authorities.sessionAuthority.delete(createdRecord);
+    await client.flush();
+    const remaining = await authorities.sessionAuthority.list();
+    if (remaining.length !== 0)
+      throw new Error("real session lifecycle did not return the disposable inventory to empty");
+    await client.quiesce();
 
     const evidence = {
       schemaVersion: 1,
       runtime: {
         repository: expected.sourceRepository,
-        tag: expected.sourceTag,
         commit: expected.sourceCommit,
+        contractCommit: expected.contractCommit,
         version: ready.ompVersion,
         build: ready.ompBuild,
       },
       bridge: {
-        protocol: "t4-omp-authority/1",
-        methods: [...ready.methods].sort(),
+        protocol: OMP_AUTHORITY_BRIDGE_PROTOCOL,
+        methods: advertisedMethods,
         completeInventory: true,
-        sessionCount: sessions.length,
+      },
+      lifecycle: {
+        create: true,
+        fork: true,
+        archive: true,
+        restore: true,
+        delete: true,
+        flush: true,
+        quiesce: true,
+        finalSessionCount: remaining.length,
       },
       passed: true,
     };

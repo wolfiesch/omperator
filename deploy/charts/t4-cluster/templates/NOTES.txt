@@ -1,0 +1,49 @@
+{{- if not .Values.enabled }}
+t4-cluster {{ .Chart.Version }} (appVersion {{ .Chart.AppVersion }}) is installed in the
+default-off state. No controller, gateway, session workload, RBAC, Secret, or
+NetworkPolicy was rendered.
+
+To enable the control plane, supply a values file that sets `enabled: true`
+together with the reviewed StorageClasses, immutable image digests, and the
+administrator-owned OMP ConfigMap. See docs/runbooks/cluster-install.md.
+{{- else }}
+t4-cluster {{ .Chart.Version }} (appVersion {{ .Chart.AppVersion }}) is enabled in
+namespace {{ .Release.Namespace }} as release {{ .Release.Name }}.
+
+Kubernetes owns infrastructure desired state only. OMP remains the sole
+authority for sessions, agents, lifecycle, turns, approvals, and takeover
+through t4-omp-authority/1.
+
+Advertised in this release:
+  controller replicas ......... {{ .Values.controller.replicas }}
+  server replicas ............. {{ .Values.server.replicas }}{{ if .Values.server.autoscaling.enabled }} (HPA {{ .Values.server.autoscaling.minReplicas }}-{{ .Values.server.autoscaling.maxReplicas }}){{ end }}
+  identity adapters ........... {{ join "," .Values.server.identity.adapters }}
+  workspace StorageClass ...... {{ .Values.storage.adminRWXStorageClass }}
+  runtime-state StorageClass .. {{ .Values.storage.runtimeStateStorageClass }} ({{ .Values.storage.runtimeStateAccessMode }})
+  VolumeSnapshotClass ......... {{ .Values.storage.volumeSnapshotClass | default "<unset: backup/restore unavailable>" }}
+  optional adapters ........... ssh-gateway={{ .Values.sshGateway.enabled }} model-gateway={{ .Values.modelGateway.enabled }} image-pre-pull={{ .Values.imagePrePull.enabled }} ingress={{ .Values.ingress.enabled }} service-monitor={{ .Values.observability.serviceMonitor.enabled }} prometheus-rule={{ .Values.observability.prometheusRule.enabled }}
+
+CRDs are administered separately. This release did not create, upgrade, or
+delete any CustomResourceDefinition; `helm uninstall` will not remove them.
+Always run Helm through scripts/cluster-ci/crd-lifecycle.sh with --skip-crds.
+
+Verify the release before routing traffic:
+
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "controller") }} --timeout=300s
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "server") }} --timeout=300s
+  kubectl -n {{ .Release.Namespace }} get t4clusterhost {{ .Values.clusterHost.name }} -o jsonpath='{.status.storageCapabilities}{"\n"}'
+
+{{- if not .Values.storage.volumeSnapshotClass }}
+
+WARNING: storage.volumeSnapshotClass is empty. Quiesced checkpoints, backup,
+and restore are unavailable in this release. See
+docs/runbooks/cluster-backup-restore.md before relying on recovery.
+{{- end }}
+{{- if not .Values.networkPolicy.enabled }}
+
+WARNING: networkPolicy.enabled is false. No chart-managed egress or ingress
+isolation is rendered for the controller, server, session, or adapter pods.
+{{- end }}
+
+Runbooks: docs/runbooks/README.md
+{{- end }}

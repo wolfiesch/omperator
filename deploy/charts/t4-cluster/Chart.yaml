@@ -5,3 +5,25 @@ version: 0.1.0
 appVersion: "0.2.1"
 type: application
 kubeVersion: ">=1.30.0-0"
+keywords:
+  - t4
+  - agent-runtime
+  - operator
+  - portable
+sources:
+  - https://github.com/usr-bin-roygbiv/t4-code
+annotations:
+  # The three namespaced CRDs are administered separately by
+  # scripts/cluster-ci/crd-lifecycle.sh. Every Helm invocation must pass
+  # --skip-crds; Helm never upgrades or deletes files in crds/.
+  cluster.t4.dev/crd-ordering: separate
+  cluster.t4.dev/crd-install-flag: --skip-crds
+  # Machine-readable inventory of everything this chart advertises. Each entry
+  # names its values gate and the release-lifecycle scenarios that prove it.
+  # scripts/cluster-ci/chart-capabilities.mjs enforces the cross-references.
+  cluster.t4.dev/capabilities-file: capabilities.yaml
+  # No cloud, storage, identity, CI, or ingress provider is bundled or implied.
+  # Every id below is an adapter capability in capabilities.yaml whose enabling
+  # values gate defaults to a disabled value.
+  cluster.t4.dev/provider-neutral: "true"
+  cluster.t4.dev/optional-adapters: ssh-gateway,ssh-gateway-command-handlers,ssh-gateway-autoscaling,model-gateway,image-pre-pull,ingress-tailscale,observability-service-monitor,observability-prometheus-rule,ci-provider-reference

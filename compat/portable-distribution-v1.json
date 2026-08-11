@@ -1,0 +1,171 @@
+{
+  "schemaVersion": "t4-cluster-distribution/1",
+  "contract": "omperator-portable-agent-platform-v1-distribution",
+  "note": "Distribution compatibility matrix and upstream patch ledger for the portable t4-cluster chart. Nothing in this file is a measurement. Fields whose value is not yet established are null with an explicit reason, never a plausible placeholder.",
+  "chart": {
+    "name": "t4-cluster",
+    "version": "0.1.0",
+    "appVersion": "0.2.1",
+    "path": "deploy/charts/t4-cluster",
+    "capabilitiesFile": "deploy/charts/t4-cluster/capabilities.yaml",
+    "crdOrdering": "separate",
+    "crdInstallFlag": "--skip-crds",
+    "published": false,
+    "publicationNote": "P8-07 only. Local packaging is scripts/cluster-ci/package-chart.sh; no registry push, signature, or index update has occurred."
+  },
+  "api": {
+    "group": "cluster.t4.dev",
+    "servedVersions": ["v1alpha1"],
+    "storageVersion": "v1alpha1",
+    "kinds": ["T4ClusterHost", "T4Workspace", "T4Session"],
+    "conversionWebhook": false,
+    "compatibilityPolicy": "additive-only-within-v1alpha1",
+    "compatibilityFixtures": "packages/cluster-operator/api/v1alpha1/testdata/compat",
+    "skewPolicy": "controller, cluster-server, session-runtime, cmux, and OMP roll as one compatibility set; no component rolls independently"
+  },
+  "platform": {
+    "kubernetesMinimum": "1.30.0",
+    "kubernetesMaximumTested": null,
+    "kubernetesMaximumTestedReason": "no maximum has been exercised locally; the chart declares only the >=1.30.0-0 floor",
+    "helmMinimum": "3.14.0",
+    "requiredApis": [
+      "apiextensions.k8s.io/v1",
+      "apps/v1",
+      "autoscaling/v2",
+      "policy/v1",
+      "networking.k8s.io/v1",
+      "rbac.authorization.k8s.io/v1"
+    ],
+    "optionalApis": [
+      { "api": "snapshot.storage.k8s.io/v1", "requiredFor": "quiesced checkpoint, backup, and restore" },
+      { "api": "monitoring.coreos.com/v1", "requiredFor": "the ServiceMonitor and PrometheusRule adapters" }
+    ],
+    "storage": {
+      "workspaceAccessMode": "ReadWriteMany",
+      "runtimeStateAccessModes": ["ReadWriteOncePod", "ReadWriteOnce"],
+      "bundledDriver": null,
+      "bundledDriverReason": "the chart is backend neutral and installs no CSI driver, StorageClass, or host path",
+      "conformanceHarness": "scripts/cluster-ci/storage-conformance.sh"
+    }
+  },
+  "images": {
+    "components": ["controller", "cluster-server", "session-runtime", "model-gateway", "ssh-gateway"],
+    "referenceForm": "repository@sha256:<digest>",
+    "digestSet": null,
+    "digestSetReason": "no image was built or promoted by this work package; digests are recorded per release by scripts/cluster-ci/assemble-image-manifest.mjs",
+    "proofManifestComponents": ["controller", "cluster-server", "session-runtime", "model-gateway"],
+    "proofManifestNote": "scripts/cluster-ci/proof-contract.mjs currently requires exactly the four core components; the optional ssh-gateway image is chart-referenced and is not part of that manifest.",
+    "rollbackImageSet": null,
+    "rollbackImageSetReason": "a rollback set only exists once two releases have been recorded together; see docs/runbooks/cluster-rollback.md"
+  },
+  "runtimeCompatibilitySet": {
+    "specificationContractCommit": "d16c6168c86f40fc44f25118c2fd06fe160fcb93",
+    "ompSourceCommit": "c4d3ecdc35234d1aa470c3e1101d9a4ca45b64c5",
+    "ompAuthorityProtocol": "t4-omp-authority/1",
+    "appProtocol": "omp-app/1",
+    "source": "compat/omp-app-matrix.json",
+    "runtimeProvenance": "provenance/omp-runtime-v1.json"
+  },
+  "deploymentAdapters": [
+    {
+      "id": "helm",
+      "reference": true,
+      "path": "deploy/charts/t4-cluster",
+      "requires": ["helm >= 3.14.0", "scripts/cluster-ci/crd-lifecycle.sh"],
+      "crdOrdering": "crd-lifecycle.sh administers the CRDs, then execs Helm with --skip-crds",
+      "mandatoryProvider": null
+    },
+    {
+      "id": "terraform",
+      "reference": false,
+      "path": "deploy/terraform/t4-cluster",
+      "requires": ["terraform >= 1.6.0", "hashicorp/helm >= 2.12.0, < 4.0.0", "hashicorp/kubernetes >= 2.27.0, < 3.0.0"],
+      "crdOrdering": "crd_management=external-lifecycle-runner asserts Established and storedVersions before the release; crd_management=terraform applies CRDs in a separate resource the release depends on",
+      "mandatoryProvider": null
+    },
+    {
+      "id": "flux",
+      "reference": false,
+      "path": "deploy/examples/flux",
+      "requires": [
+        "source.toolkit.fluxcd.io/v1 GitRepository",
+        "kustomize.toolkit.fluxcd.io/v1 Kustomization",
+        "helm.toolkit.fluxcd.io/v2 HelmRelease"
+      ],
+      "crdOrdering": "a dedicated CRD Kustomization with prune disabled, and HelmRelease dependsOn it with install.crds=Skip and upgrade.crds=Skip",
+      "mandatoryProvider": null
+    },
+    {
+      "id": "argo",
+      "reference": false,
+      "path": "deploy/examples/argo",
+      "requires": ["argoproj.io/v1alpha1 Application", "argoproj.io/v1alpha1 AppProject"],
+      "crdOrdering": "sync wave -1 CRD Application ahead of the wave 0 chart Application, with helm.skipCrds=true",
+      "mandatoryProvider": null
+    }
+  ],
+  "upstreamPatchLedger": {
+    "policy": "Every carried delta against an upstream project is recorded with its upstream ref, the pinned ref in this repository, whether it ships in the product, and the exact condition under which the delta is removed.",
+    "entries": [
+      {
+        "id": "omp-integration-patches",
+        "upstreamRepository": "https://github.com/can1357/oh-my-pi",
+        "upstreamRef": "v17.0.5",
+        "upstreamCommit": "9fd6e97113f5ed3a847e66d346970efdf8afcad9",
+        "pinnedRepository": "https://github.com/wolfiesch/oh-my-pi",
+        "pinnedCommit": "c4d3ecdc35234d1aa470c3e1101d9a4ca45b64c5",
+        "patchSetSource": "compat/omp-app-matrix.json#/publishedRuntime/integrationPatches",
+        "upstreamContainsPatches": false,
+        "packagedInProduct": true,
+        "removalCondition": "an upstream release contains every named integration patch and the appserver, authority-bridge, and preview contracts pass unchanged; the pin then moves to that upstream tag and this entry is deleted"
+      },
+      {
+        "id": "cmux-machine-provider-import",
+        "upstreamRepository": "https://github.com/cmux/cmux-tui",
+        "upstreamCommit": "192e44428c16b98210c951ec4bd5a86bc7139014",
+        "pinnedTree": "983bee74116c7d5f5832a7695379c870cd41ef60",
+        "manifest": "provenance/cmux-machine-provider-v1.json",
+        "vendorPath": "vendor/cmux-machine-provider-v1",
+        "packagedInProduct": false,
+        "toolingAndConformanceOnly": true,
+        "licenseReviewRequiredBeforePackaging": true,
+        "removalCondition": "the machine protocol is published as a versioned upstream artifact this repository can depend on without vendoring, or T4 stops consuming the protocol"
+      },
+      {
+        "id": "app-wire",
+        "upstreamRepository": "https://github.com/lyc-aon/oh-my-pi",
+        "upstreamCommit": "796bb7dca45027bd4b7b94017cdf41ef214a11f2",
+        "pinnedArtifact": "vendor/app-wire/oh-my-pi-app-wire-0.7.0.tgz",
+        "packagedInProduct": true,
+        "removalCondition": "@oh-my-pi/app-wire 0.7.0 or a compatible successor is consumable from a registry with the same golden corpus hash, at which point the vendored tarball is deleted"
+      }
+    ],
+    "chartUpstreamDependencies": {
+      "helmDependencies": [],
+      "helmDependenciesNote": "the chart has no subcharts and no Chart.lock; every integration is a reference to an administrator-owned object",
+      "vendoredThirdPartyManifests": [],
+      "vendoredThirdPartyManifestsNote": "the CRDs in deploy/charts/t4-cluster/crds are authored in this repository, not vendored from upstream"
+    }
+  },
+  "proofHarnesses": {
+    "capabilityContract": "scripts/cluster-ci/chart-capabilities.mjs",
+    "releaseLifecycle": "scripts/cluster-ci/release-lifecycle.sh",
+    "localPackaging": "scripts/cluster-ci/package-chart.sh",
+    "crdLifecycle": "scripts/cluster-ci/crd-lifecycle.sh",
+    "storageConformance": "scripts/cluster-ci/storage-conformance.sh",
+    "sloMeasurement": "scripts/cluster-ci/measure-slo.sh",
+    "distributionCompatibility": "scripts/cluster-ci/distribution-compat.mjs"
+  },
+  "runbooks": {
+    "index": "docs/runbooks/README.md",
+    "install": "docs/runbooks/cluster-install.md",
+    "upgrade": "docs/runbooks/cluster-upgrade.md",
+    "rollback": "docs/runbooks/cluster-rollback.md",
+    "backupRestore": "docs/runbooks/cluster-backup-restore.md",
+    "fencing": "docs/runbooks/cluster-fencing.md",
+    "identityRotation": "docs/runbooks/cluster-identity-rotation.md",
+    "retainedStateReinstall": "docs/runbooks/cluster-retained-state-reinstall.md",
+    "uninstall": "docs/runbooks/cluster-uninstall.md",
+    "retentionAndDestructiveEffects": "docs/runbooks/cluster-retention-and-destructive-effects.md"
+  }
+}

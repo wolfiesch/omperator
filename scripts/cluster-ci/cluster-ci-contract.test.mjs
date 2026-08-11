@@ -21,7 +21,7 @@ import {
 } from "./readonly-cluster-proof.mjs";
 import { grafanaHealthSummary, lokiLogSummary, prometheusSample } from "./collect-readonly-cluster.mjs";
 import { HARBOR_REGISTRY_ALIASES, normalizeRegistryAuth } from "./normalize-registry-auth.mjs";
-import { provenanceVerificationMode, verifyProvenance, verifySpdx, vulnerabilityCounts } from "./assemble-image-manifest.mjs";
+import { provenanceVerificationMode, verifyAuthorizedSignedProvenance, verifyProvenance, verifySignedProvenance, verifySpdx, vulnerabilityCounts } from "./assemble-image-manifest.mjs";
 import { clusterWebSocketUrl, proofHelloFrame } from "./capture-redacted-frames.mjs";
 
 const COMMIT = "0123456789abcdef0123456789abcdef01234567";
@@ -76,7 +76,7 @@ function validProof() {
         digest: DIGEST,
         reference: `${repository}@${DIGEST}`,
         sbom: fileEvidence(`images/${component}.spdx.json`),
-        provenance: { ...fileEvidence(`images/${component}.provenance.json`), mode: "buildkit-content", signatureVerified: false },
+        provenance: { ...fileEvidence(`images/${component}.provenance.json`), mode: "buildkit-content" },
         vulnerability: {
           ...fileEvidence(`images/${component}.trivy.json`),
           scanner: "trivy",
@@ -307,7 +307,7 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
   );
   assert.ok(
     steps["current-authority-build"].commands.includes(
-      "(cd .current-continuity/omp && bun test packages/coding-agent/test/appserver-bridge.test.ts packages/coding-agent/test/appserver-session-lifecycle.test.ts)",
+      "(cd .current-continuity/omp && bun test packages/coding-agent/test/appserver-bridge.test.ts packages/coding-agent/test/appserver-bridge-smoke.test.ts)",
     ),
   );
   assert.deepEqual(steps["current-bridge-continuity"].depends_on, [
@@ -504,18 +504,37 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
   const provenanceSource = await readFile(resolve(repoRoot, "scripts/cluster-ci/capture-image-evidence.sh"), "utf8");
   assert.match(provenanceSource, /cosign verify-attestation/u);
   assert.match(provenanceSource, /cosign download attestation/u);
+  assert.match(provenanceSource, /provenance\.sigstore\.jsonl/u);
+  assert.doesNotMatch(provenanceSource, /signatureVerified/u);
   assert.match(provenanceSource, /must be configured together/u);
   assert.doesNotMatch(provenanceSource, /INSECURE|plain-http/iu);
   const dockerignore = await readFile(resolve(repoRoot, ".dockerignore"), "utf8");
   assert.match(dockerignore, /^\.cluster-ci\/registry-auth$/mu);
-  assert.deepEqual(provenanceVerificationMode({}), { mode: "buildkit-content", signatureVerified: false });
+  assert.deepEqual(provenanceVerificationMode({}), { mode: "buildkit-content" });
   assert.deepEqual(
-    provenanceVerificationMode({ T4_COSIGN_CERTIFICATE_IDENTITY: "builder", T4_COSIGN_CERTIFICATE_OIDC_ISSUER: "https://issuer.example" }),
-    { mode: "cosign-keyless", signatureVerified: true },
+    provenanceVerificationMode({
+      T4_COSIGN_CERTIFICATE_IDENTITY: "https://github.com/wolfiesch/omperator/.github/workflows/ci.yml@refs/heads/main",
+      T4_COSIGN_CERTIFICATE_IDENTITY_TYPE: "uri",
+      T4_COSIGN_CERTIFICATE_OIDC_ISSUER: "https://token.actions.githubusercontent.com",
+    }),
+    {
+      mode: "cosign-keyless",
+      certificateIdentity: "https://github.com/wolfiesch/omperator/.github/workflows/ci.yml@refs/heads/main",
+      certificateIdentityType: "uri",
+      certificateIssuer: "https://token.actions.githubusercontent.com",
+    },
   );
   assert.throws(
     () => provenanceVerificationMode({ T4_COSIGN_CERTIFICATE_IDENTITY: "builder" }),
     /configured together/u,
+  );
+  assert.throws(
+    () => provenanceVerificationMode({
+      T4_COSIGN_CERTIFICATE_IDENTITY: "https://github.com/attacker/repo/.github/workflows/ci.yml@refs/heads/main",
+      T4_COSIGN_CERTIFICATE_IDENTITY_TYPE: "uri",
+      T4_COSIGN_CERTIFICATE_OIDC_ISSUER: "https://token.actions.githubusercontent.com",
+    }),
+    /not authorized/u,
   );
 
   for (const script of ["build-image.sh", "capture-image-evidence.sh", "promote-images.sh", "publish-artifact.sh"]) {
@@ -589,7 +608,8 @@ test("proof validation accepts exact run/image/scenario identity and rejects fab
 
   const unauthenticatedSignerClaim = structuredClone(proof);
   unauthenticatedSignerClaim.images[0].provenance.mode = "cosign-keyless";
-  assert.throws(() => validateProofManifest(unauthenticatedSignerClaim), /signer verification claim/u);
+  unauthenticatedSignerClaim.images[0].provenance.signatureVerified = true;
+  assert.throws(() => validateProofManifest(unauthenticatedSignerClaim), /unexpected field|missing bundle/u);
 
   const extra = structuredClone(proof);
   extra.source.token = "must-not-survive";
@@ -811,12 +831,130 @@ test("SPDX, Trivy, and BuildKit content bind every image identity field", () => 
   const envelope = (payload) => `${JSON.stringify({
     payloadType: "application/vnd.in-toto+json",
     payload: Buffer.from(JSON.stringify(payload)).toString("base64"),
+    signatures: [{ keyid: "", sig: Buffer.from("semantic-contract-only").toString("base64") }],
   })}\n`;
   assert.doesNotThrow(() => verifyProvenance(envelope(statement), { repository, digest: DIGEST, commit: COMMIT }));
   const wrongSource = structuredClone(statement);
   wrongSource.predicate.materials[0].uri = `https://github.com/attacker/t4-code.git#${COMMIT}`;
   assert.throws(() => verifyProvenance(envelope(wrongSource), { repository, digest: DIGEST, commit: COMMIT }), /trusted source/u);
   assert.throws(() => verifyProvenance(envelope(statement), { repository, digest: DIGEST, commit: "f".repeat(40) }), /CI commit/u);
+});
+
+test("signed provenance binds the exact DSSE envelope and anchored signer policy", async () => {
+  const envelope = {
+    payloadType: "application/vnd.in-toto+json",
+    payload: Buffer.from('{"subject":"cryptographic-boundary"}').toString("base64"),
+    signatures: [{ keyid: "", sig: Buffer.from("signature-under-test").toString("base64") }],
+  };
+  const bundle = {
+    mediaType: "application/vnd.dev.sigstore.bundle.v0.3+json",
+    verificationMaterial: {
+      certificate: { rawBytes: "certificate" },
+      tlogEntries: [{ inclusionProof: { rootHash: "rekor-root" } }],
+    },
+    dsseEnvelope: envelope,
+  };
+  const policy = {
+    certificateIdentity: "https://github.com/wolfiesch/omperator/.github/workflows/ci.yml@refs/heads/main",
+    certificateIdentityType: "uri",
+    certificateIssuer: "https://token.actions.githubusercontent.com",
+  };
+  const expectedIdentityPolicy = "^(?:https://github\\.com/wolfiesch/omperator/\\.github/workflows/ci\\.yml@refs/heads/main)$";
+  const seen = [];
+  const verifier = async (candidate, options) => {
+    seen.push({ candidate, options });
+    if (options.certificateIdentityURI !== expectedIdentityPolicy) throw new Error("invalid certificate identity");
+    if (options.certificateIssuer !== policy.certificateIssuer) throw new Error("invalid certificate issuer");
+    if (candidate.verificationMaterial.tlogEntries[0].inclusionProof.rootHash !== "rekor-root") {
+      throw new Error("invalid Rekor inclusion proof");
+    }
+    if (candidate.dsseEnvelope.signatures[0].sig !== envelope.signatures[0].sig) {
+      throw new Error("invalid signature");
+    }
+  };
+  await verifySignedProvenance(
+    `${JSON.stringify(envelope)}\n`,
+    `${JSON.stringify(bundle)}\n`,
+    policy,
+    verifier,
+  );
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].options.certificateIdentityURI, expectedIdentityPolicy);
+  assert.equal(seen[0].options.certificateIssuer, policy.certificateIssuer);
+  assert.equal(seen[0].options.tlogThreshold, 1);
+  assert.equal(seen[0].options.ctLogThreshold, 1);
+
+  const mutatedPayload = structuredClone(envelope);
+  mutatedPayload.payload = Buffer.from('{"subject":"mutated"}').toString("base64");
+  await assert.rejects(
+    verifySignedProvenance(`${JSON.stringify(mutatedPayload)}\n`, `${JSON.stringify(bundle)}\n`, policy, verifier),
+    /exact retained DSSE/u,
+  );
+  const mutatedSignature = structuredClone(bundle);
+  mutatedSignature.dsseEnvelope.signatures[0].sig = Buffer.from("arbitrary").toString("base64");
+  await assert.rejects(
+    verifySignedProvenance(`${JSON.stringify(mutatedSignature.dsseEnvelope)}\n`, `${JSON.stringify(mutatedSignature)}\n`, policy, verifier),
+    /invalid signature/u,
+  );
+  await assert.rejects(
+    verifySignedProvenance(
+      `${JSON.stringify(envelope)}\n`,
+      `${JSON.stringify(bundle)}\n`,
+      { ...policy, certificateIdentity: "https://github.com/attacker/workflow" },
+      verifier,
+    ),
+    /certificate identity/u,
+  );
+  await assert.rejects(
+    verifySignedProvenance(
+      `${JSON.stringify(envelope)}\n`,
+      `${JSON.stringify(bundle)}\n`,
+      { ...policy, certificateIssuer: "https://issuer.attacker.example" },
+      verifier,
+    ),
+    /certificate issuer/u,
+  );
+  const mutatedProof = structuredClone(bundle);
+  mutatedProof.verificationMaterial.tlogEntries[0].inclusionProof.rootHash = "attacker-root";
+  await assert.rejects(
+    verifySignedProvenance(`${JSON.stringify(envelope)}\n`, `${JSON.stringify(mutatedProof)}\n`, policy, verifier),
+    /invalid Rekor/u,
+  );
+});
+
+test("the production verifier rejects an arbitrary signature in a genuine Sigstore bundle", async () => {
+  const fixture = JSON.parse(await readFile(
+    resolve(repoRoot, "scripts/cluster-ci/fixtures/sigstore-4.0.0-provenance.bundle.json"),
+    "utf8",
+  ));
+  const policy = {
+    certificateIdentity: "https://github.com/sigstore/sigstore-js/.github/workflows/release.yml@refs/heads/main",
+    certificateIdentityType: "uri",
+    certificateIssuer: "https://token.actions.githubusercontent.com",
+  };
+  await assert.rejects(
+    verifyAuthorizedSignedProvenance(
+      `${JSON.stringify(fixture.dsseEnvelope)}\n`,
+      `${JSON.stringify(fixture)}\n`,
+      policy,
+    ),
+    /not authorized/u,
+  );
+  await verifySignedProvenance(
+    `${JSON.stringify(fixture.dsseEnvelope)}\n`,
+    `${JSON.stringify(fixture)}\n`,
+    policy,
+  );
+  const forged = structuredClone(fixture);
+  forged.dsseEnvelope.signatures[0].sig = Buffer.from("arbitrary signature").toString("base64");
+  await assert.rejects(
+    verifySignedProvenance(
+      `${JSON.stringify(forged.dsseEnvelope)}\n`,
+      `${JSON.stringify(forged)}\n`,
+      policy,
+    ),
+    /signature|verification/u,
+  );
 });
 
 test("live observability parsers retain only bounded source-safe summaries", () => {
