@@ -47,7 +47,7 @@ describe("bundled OMP runtime", () => {
       .rejects.toThrow("integrity check");
   });
 
-  it("installs the exact signed bytes after verifying their Developer ID identity", async () => {
+  it("replaces stale signed bytes even when their code identity matches", async () => {
     const root = await mkdtemp(join(tmpdir(), "t4-bundled-runtime-signed-"));
     const resourcesPath = join(root, "resources");
     const supportPath = join(root, "support");
@@ -76,6 +76,7 @@ describe("bundled OMP runtime", () => {
         return "signed-code-directory-hash";
       },
     });
+    await writeFile(installed, "older signed bytes with the same code directory");
     const reused = await installBundledOmpRuntime({
       resourcesPath,
       applicationSupportPath: supportPath,
@@ -89,7 +90,6 @@ describe("bundled OMP runtime", () => {
     expect(reused).toBe(installed);
     expect(verified).toEqual([
       join(runtimeRoot, "omp"),
-      installed,
       join(runtimeRoot, "omp"),
     ]);
     expect(await readFile(installed)).toEqual(signedBytes);

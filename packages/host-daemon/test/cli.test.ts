@@ -85,6 +85,40 @@ describe("T4 host daemon CLI", () => {
           "serve",
           "--omp",
           "/opt/omp",
+          "--state-root",
+          "/tmp/native-dogfood",
+          "--remote-mode",
+          "direct",
+          "--remote-address",
+          "100.64.0.1",
+        ],
+        "/home/test",
+      ),
+    ).toThrow("requires a non-default --profile");
+    expect(
+      parseHostDaemonArgs(
+        [
+          "serve",
+          "--omp",
+          "/opt/omp",
+          "--profile",
+          "native-dogfood",
+          "--state-root",
+          "/tmp/native-dogfood",
+          "--remote-mode",
+          "direct",
+          "--remote-address",
+          "100.64.0.1",
+        ],
+        "/home/test",
+      ).profileId,
+    ).toBe("native-dogfood");
+    expect(() =>
+      parseHostDaemonArgs(
+        [
+          "serve",
+          "--omp",
+          "/opt/omp",
           "--remote-mode",
           "direct",
           "--remote-address",

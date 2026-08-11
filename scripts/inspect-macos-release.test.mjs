@@ -7,6 +7,7 @@ import {
   validateMacosLibraryValidationBoundary,
   validateMacosIdentityContract,
   validateMacosSignatureReport,
+  validatePackagedRuntimeManifest,
 } from "./inspect-macos-release.mjs";
 
 const identity = JSON.parse(
@@ -82,4 +83,25 @@ test("signature report fails closed on certificate, team, runtime, and timestamp
       assert.throws(() => validateMacosSignatureReport({ ...valid, ...override }, identity), expected);
     });
   }
+});
+
+test("packaged runtime manifest must match the published runtime tag", () => {
+  const manifest = {
+    version: 1,
+    tag: "t4code-17.0.5-appserver-19",
+    platform: "darwin",
+    arch: "arm64",
+    executable: "omp",
+    size: 120_975_568,
+    sha256: "a".repeat(64),
+  };
+
+  assert.equal(
+    validatePackagedRuntimeManifest(manifest, "t4code-17.0.5-appserver-19").tag,
+    manifest.tag,
+  );
+  assert.throws(
+    () => validatePackagedRuntimeManifest(manifest, "t4code-17.0.5-appserver-18"),
+    /does not match published runtime/u,
+  );
 });

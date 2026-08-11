@@ -429,10 +429,18 @@ export function SessionScreen({
           </span>
         </div>
         <span className="flex shrink-0 items-center gap-1">
-          {connectionState !== null && <SessionConnectionBadge state={connectionState} />}
+          {connectionState !== null && (
+            <SessionConnectionBadge
+              onOpenHostHealth={onOpenHostHealth}
+              state={connectionState}
+            />
+          )}
           {!archived &&
             (connectionState === null || connectionState === "connected") && (
-              <SessionStateBadge session={session} />
+              <SessionStateBadge
+                onOpenHostHealth={onOpenHostHealth}
+                session={session}
+              />
             )}
           {archived && (
             <Badge

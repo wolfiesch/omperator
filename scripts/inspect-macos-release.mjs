@@ -10,12 +10,35 @@ import { fileURLToPath } from "node:url";
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 const TAG_PATTERN = /^v\d+\.\d+\.\d+$/u;
+const RUNTIME_TAG_PATTERN = /^t4code-\d+\.\d+\.\d+-appserver-[1-9]\d*$/u;
 
 function requireString(value, label) {
   if (typeof value !== "string" || value.length === 0) {
     throw new Error(`${label} must be a non-empty string`);
   }
   return value;
+}
+
+export function validatePackagedRuntimeManifest(manifest, expectedTag) {
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
+    throw new Error("packaged runtime manifest must be an object");
+  }
+  if (manifest.version !== 1) throw new Error("packaged runtime manifest version must be 1");
+  if (manifest.platform !== "darwin" || manifest.arch !== "arm64" || manifest.executable !== "omp") {
+    throw new Error("packaged runtime manifest must describe the macOS arm64 OMP executable");
+  }
+  const tag = requireString(manifest.tag, "packaged runtime tag");
+  if (!RUNTIME_TAG_PATTERN.test(tag)) throw new Error("packaged runtime tag is invalid");
+  if (!Number.isSafeInteger(manifest.size) || manifest.size < 1) {
+    throw new Error("packaged runtime size must be a positive integer");
+  }
+  if (!SHA256_PATTERN.test(requireString(manifest.sha256, "packaged runtime sha256"))) {
+    throw new Error("packaged runtime sha256 must be a lowercase SHA-256 digest");
+  }
+  if (tag !== expectedTag) {
+    throw new Error(`packaged runtime tag ${tag} does not match published runtime ${expectedTag}`);
+  }
+  return Object.freeze({ ...manifest });
 }
 
 export function validateMacosIdentityContract(contract) {
@@ -141,7 +164,7 @@ function findSingleApp(directory) {
   return apps[0];
 }
 
-function inspectApp(appPath, contract, certificatePrefix) {
+function inspectApp(appPath, contract, certificatePrefix, expectedRuntimeTag) {
   run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", appPath]);
   const display = run("codesign", [
     "--display",
@@ -155,6 +178,10 @@ function inspectApp(appPath, contract, certificatePrefix) {
     certificateSha256: createHash("sha256").update(leafCertificate).digest("hex"),
   };
   validateMacosSignatureReport(report, contract);
+  const runtimeManifest = validatePackagedRuntimeManifest(
+    JSON.parse(readFileSync(join(appPath, "Contents", "Resources", "runtime", "manifest.json"), "utf8")),
+    expectedRuntimeTag,
+  );
   const runtimePath = join(appPath, "Contents", "Resources", "runtime", "omp");
   const hostPath = join(appPath, "Contents", "Resources", "runtime", "t4-host");
   run("codesign", ["--verify", "--strict", "--verbose=2", runtimePath]);
@@ -164,7 +191,7 @@ function inspectApp(appPath, contract, certificatePrefix) {
   validateMacosLibraryValidationBoundary(appEntitlements, runtimeEntitlements);
   run("spctl", ["--assess", "--type", "execute", "--verbose=4", appPath]);
   run("xcrun", ["stapler", "validate", appPath]);
-  return report;
+  return Object.freeze({ ...report, runtimeTag: runtimeManifest.tag });
 }
 
 function requireArtifact(path, extension) {
@@ -181,7 +208,12 @@ function requireArtifact(path, extension) {
   return absolutePath;
 }
 
-export function inspectMacosRelease(zipPath, dmgPath, identityPath) {
+export function inspectMacosRelease(
+  zipPath,
+  dmgPath,
+  identityPath,
+  matrixPath = "compat/omp-app-matrix.json",
+) {
   if (process.platform !== "darwin") {
     throw new Error(
       `macOS release inspection requires darwin; current platform is ${process.platform}`,
@@ -192,6 +224,14 @@ export function inspectMacosRelease(zipPath, dmgPath, identityPath) {
   const identity = validateMacosIdentityContract(
     JSON.parse(readFileSync(resolve(identityPath), "utf8")),
   );
+  const matrix = JSON.parse(readFileSync(resolve(matrixPath), "utf8"));
+  const expectedRuntimeTag = requireString(
+    matrix?.publishedRuntime?.sourceTag,
+    "published runtime sourceTag",
+  );
+  if (!RUNTIME_TAG_PATTERN.test(expectedRuntimeTag)) {
+    throw new Error("published runtime sourceTag is invalid");
+  }
   const root = mkdtempSync(join(tmpdir(), "t4-macos-release-"));
   const zipRoot = join(root, "zip");
   const mountPoint = join(root, "dmg");
@@ -200,7 +240,12 @@ export function inspectMacosRelease(zipPath, dmgPath, identityPath) {
     mkdirSync(zipRoot);
     mkdirSync(mountPoint);
     run("ditto", ["-x", "-k", zip, zipRoot]);
-    const zipReport = inspectApp(findSingleApp(zipRoot), identity, join(root, "zip-cert-"));
+    const zipReport = inspectApp(
+      findSingleApp(zipRoot),
+      identity,
+      join(root, "zip-cert-"),
+      expectedRuntimeTag,
+    );
 
     run("hdiutil", [
       "attach",
@@ -212,7 +257,12 @@ export function inspectMacosRelease(zipPath, dmgPath, identityPath) {
       dmg,
     ]);
     mounted = true;
-    const dmgReport = inspectApp(findSingleApp(mountPoint), identity, join(root, "dmg-cert-"));
+    const dmgReport = inspectApp(
+      findSingleApp(mountPoint),
+      identity,
+      join(root, "dmg-cert-"),
+      expectedRuntimeTag,
+    );
     return Object.freeze({ zip: zipReport, dmg: dmgReport });
   } finally {
     if (mounted) {
@@ -230,14 +280,18 @@ const isMain =
   process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 if (isMain) {
   try {
-    const [zipPath, dmgPath, identityPath = ".github/macos-release-identity.json"] =
-      process.argv.slice(2);
+    const [
+      zipPath,
+      dmgPath,
+      identityPath = ".github/macos-release-identity.json",
+      matrixPath = "compat/omp-app-matrix.json",
+    ] = process.argv.slice(2);
     if (!zipPath || !dmgPath) {
       throw new Error(
-        "usage: node scripts/inspect-macos-release.mjs APP.zip APP.dmg [identity.json]",
+        "usage: node scripts/inspect-macos-release.mjs APP.zip APP.dmg [identity.json] [matrix.json]",
       );
     }
-    inspectMacosRelease(zipPath, dmgPath, identityPath);
+    inspectMacosRelease(zipPath, dmgPath, identityPath, matrixPath);
     console.log(
       "macOS Developer ID identity, hardened runtime, Gatekeeper, and notarization checks passed",
     );

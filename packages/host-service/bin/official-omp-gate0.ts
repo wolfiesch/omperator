@@ -331,6 +331,7 @@ function launchRpc(
       cwd: workspace,
       env: {
         ...process.env,
+        HOME: profile,
         PI_CODING_AGENT_DIR: profile,
         PI_NOTIFICATIONS: "off",
       },
@@ -584,7 +585,7 @@ async function runLargeRpcPayloadScenario(input: {
   const factory = new BunRpcChildFactory(
     { executable: input.runtime.path, prefixArgv: [] },
     undefined,
-    { PI_CODING_AGENT_DIR: input.profile, PI_NOTIFICATIONS: "off" },
+    { HOME: input.profile, PI_CODING_AGENT_DIR: input.profile, PI_NOTIFICATIONS: "off" },
   );
   const completion = Promise.withResolvers<
     { readonly kind: "agent_end" } | { readonly kind: "crashed"; readonly error: Error }

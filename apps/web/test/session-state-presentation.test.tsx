@@ -120,6 +120,23 @@ describe("truthful session state presentation", () => {
     );
   });
 
+  it("opens host diagnostics directly from an offline session", () => {
+    const offline = renderToStaticMarkup(
+      <SessionConnectionBadge onOpenHostHealth={() => {}} state="disconnected" />,
+    );
+
+    expect(offline).toContain("<button");
+    expect(offline).toContain("Offline. Open Hosts");
+    const offlineWithoutRuntime = renderToStaticMarkup(
+      <SessionStateBadge
+        onOpenHostHealth={() => {}}
+        session={{ ...BASE_SESSION, freshness: "offline" }}
+      />,
+    );
+    expect(offlineWithoutRuntime).toContain("<button");
+    expect(offlineWithoutRuntime).toContain("Offline. Open Hosts");
+  });
+
   it("distinguishes reconnect and inventory sync from a genuinely unreachable host", () => {
     expect(presentSessionWriteReason("offline", "connecting")).toBe(
       RECONNECTING_WRITE_REASON,
