@@ -151,6 +151,15 @@ export function presentSessionState(session: WorkspaceSession): SessionStatePres
     };
   }
 
+  if (session.hostOwned === false) {
+    return {
+      label: "Read-only",
+      detail: "This session was discovered outside Omperator and is read-only until opened.",
+      status: null,
+      busy: false,
+    };
+  }
+
   // "connecting" is a legacy defensive case. New live projections never
   // publish connection state as session activity.
   if (session.status !== null && session.status !== "connecting") {

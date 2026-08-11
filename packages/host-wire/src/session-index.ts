@@ -146,6 +146,12 @@ export interface SessionRef {
 	updatedAt: string;
 	archivedAt?: string;
 	liveState?: SessionLiveState;
+	/**
+	 * Whether this host's durable ownership store recognizes the exact
+	 * transcript. False means the session is read-only until attach resolves
+	 * an external writer or creates an owned fork.
+	 */
+	hostOwned?: boolean;
 	model?: string;
 	thinking?: string;
 	mode?: string;
@@ -400,6 +406,8 @@ export function decodeSessionRef(value: unknown, path: string): SessionRef {
 			decodeSessionClusterState(liveState.cluster, `${path}.liveState.cluster`);
 		if (liveState.ci !== undefined) decodeSessionCiState(liveState.ci, `${path}.liveState.ci`);
 	}
+	if (session.hostOwned !== undefined && typeof session.hostOwned !== "boolean")
+		fail("INVALID_FRAME", "hostOwned must be boolean", `${path}.hostOwned`);
 	if (session.model !== undefined) controlFree(session.model, `${path}.model`, 256);
 	if (session.thinking !== undefined) controlFree(session.thinking, `${path}.thinking`, 256);
 	if (session.mode !== undefined) {

@@ -48,7 +48,10 @@ describe("appserver ownership and forks", () => {
 					savedCursors: [],
 				});
 				expect(await client.nextServer()).toMatchObject({ type: "welcome" });
-				expect((await client.nextServer()).type).toBe("sessions");
+				expect(await client.nextServer()).toMatchObject({
+					type: "sessions",
+					sessions: [{ sessionId: sid, hostOwned: true }],
+				});
 				client.sendJson({
 					v: "omp-app/1",
 					type: "command",
@@ -588,7 +591,10 @@ describe("appserver ownership and forks", () => {
 				expect(welcome).toMatchObject({ type: "welcome" });
 				if (welcome.type !== "welcome") throw new Error("host did not send a welcome frame");
 				expect(welcome.grantedFeatures).toContain("session.fork");
-				expect((await client.nextServer()).type).toBe("sessions");
+				expect(await client.nextServer()).toMatchObject({
+					type: "sessions",
+					sessions: [{ sessionId: sourceId, hostOwned: false }],
+				});
 				client.sendJson({
 					v: "omp-app/1",
 					type: "command",

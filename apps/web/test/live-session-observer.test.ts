@@ -27,6 +27,7 @@ import {
   OFFLINE_WRITE_REASON,
   presentSessionControl,
 } from "../src/features/session-runtime/session-observer.ts";
+import { presentSessionState } from "../src/features/session-runtime/session-state.ts";
 import { deriveWorkspaceData } from "../src/platform/live-workspace.ts";
 import { deferred, FakeShell, makeWelcome } from "./fake-shell.ts";
 
@@ -149,6 +150,22 @@ describe("live runtime observer gating", () => {
     expect(snapshot.link).toBe("live");
     expect(snapshot.canPrompt).toBe(true);
     expect(snapshot.controls.modelSupported).toBe(true);
+    runtime.dispose();
+    await controller.stop();
+  });
+
+  it("marks an externally discovered row read-only before the session is opened", async () => {
+    const { shell, controller, runtime } = await startedRuntime();
+    shell.emitFrame({
+      targetId: "local",
+      frame: sessionsUpsert(2, { hostOwned: false, status: "idle" }),
+    });
+
+    const row = deriveWorkspaceData(controller.getSnapshot()).sessions[0]!;
+    expect(row).toMatchObject({ hostOwned: false, lifecycle: "idle", status: null });
+    expect(row.control).toBeUndefined();
+    expect(presentSessionState(row).label).toBe("Read-only");
+
     runtime.dispose();
     await controller.stop();
   });

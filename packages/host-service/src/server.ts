@@ -5029,8 +5029,14 @@ export class LocalAppserver implements AppserverHandle {
 		this.#observerTimers.set(sessionId, timer);
 	}
 
+	private sessionRefForClient(ref: SessionRef): SessionRef {
+		const record = this.#records.get(ref.sessionId);
+		if (!this.#sessionOwnership || !record) return ref;
+		const hostOwned = this.#sessionOwnership.owns(ref.sessionId, record.path);
+		return ref.hostOwned === hostOwned ? ref : { ...ref, hostOwned };
+	}
 	private sessionListResult(): { sessions: SessionRef[]; totalCount: number; truncated: boolean } {
-		const allSessions = [...this.#projections.values()].map(value => value.value.ref);
+		const allSessions = [...this.#projections.values()].map(value => this.sessionRefForClient(value.value.ref));
 		allSessions.sort((a, b) => {
 			if (a.updatedAt < b.updatedAt) return 1;
 			if (a.updatedAt > b.updatedAt) return -1;
@@ -5088,6 +5094,10 @@ export class LocalAppserver implements AppserverHandle {
 			if (sessions.has(sessionId)) await this.#sendFrame(client, frame);
 	}
 	private async broadcastIndex(frame: ServerFrame): Promise<void> {
+		const outbound =
+			frame.type === "session.delta" && frame.upsert
+				? { ...frame, upsert: this.sessionRefForClient(frame.upsert) }
+				: frame;
 		const sends: Array<Promise<boolean>> = [];
 		for (const client of this.#clients) {
 			if (
@@ -5096,7 +5106,7 @@ export class LocalAppserver implements AppserverHandle {
 				!this.#clientFeatures.get(client)?.has("session.delta")
 			)
 				continue;
-			sends.push(this.#sendFrame(client, frame));
+			sends.push(this.#sendFrame(client, outbound));
 		}
 		await Promise.all(sends);
 	}

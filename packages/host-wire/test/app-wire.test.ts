@@ -296,6 +296,22 @@ describe("app-wire authority", () => {
 		])
 			expect(() => decodeSessionRef({ ...base, runtime }, "session")).toThrow(AppWireError);
 	});
+	test("session host ownership is an optional boolean", () => {
+		const base = {
+			hostId: "h",
+			sessionId: "s",
+			project: { projectId: "p" },
+			revision: "r",
+			title: "Task",
+			status: "idle",
+			updatedAt: "2026-07-18T12:00:00.000Z",
+		};
+		expect(decodeSessionRef({ ...base, hostOwned: true }, "session").hostOwned).toBe(true);
+		expect(decodeSessionRef({ ...base, hostOwned: false }, "session").hostOwned).toBe(false);
+		expect(decodeSessionRef(base, "session").hostOwned).toBeUndefined();
+		for (const hostOwned of [null, 0, "false"])
+			expect(() => decodeSessionRef({ ...base, hostOwned }, "session")).toThrow(AppWireError);
+	});
 	test("session mode is an optional bounded additive field", () => {
 		const base = {
 			hostId: "h",
