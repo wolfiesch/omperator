@@ -169,13 +169,13 @@ describe("resolveLiveProjectCreateTargets", () => {
         ["local", "connected"],
         ["local:fable-swarm", "connected"],
         ["local:offline", "disconnected"],
-        ["tailnet", "connected"],
+        ["remote", "connected"],
       ]),
       targetHosts: new Map([
         ["local", "host-default"],
         ["local:fable-swarm", "host-fable"],
         ["local:offline", "host-offline"],
-        ["tailnet", "host-remote"],
+        ["remote", "host-remote"],
       ]),
       targets: new Map([
         ["local", { targetId: "local", kind: "local", label: "Default" }],
@@ -184,7 +184,7 @@ describe("resolveLiveProjectCreateTargets", () => {
           { targetId: "local:fable-swarm", kind: "local", label: "Fable Swarm" },
         ],
         ["local:offline", { targetId: "local:offline", kind: "local", label: "Offline" }],
-        ["tailnet", { targetId: "tailnet", kind: "remote", label: "Tailnet" }],
+        ["remote", { targetId: "remote", kind: "remote", label: "Remote" }],
       ]),
     } as never;
 
@@ -212,22 +212,22 @@ describe("resolveLiveProjectCreateTargets", () => {
     const snapshot = {
       connections: new Map([
         ["local", "connected"],
-        ["tailnet", "connected"],
+        ["remote", "connected"],
       ]),
       targetHosts: new Map([
         ["local", "host-local"],
-        ["tailnet", "host-remote"],
+        ["remote", "host-remote"],
       ]),
       targets: new Map([
         ["local", { targetId: "local", kind: "local", label: "Default" }],
-        ["tailnet", { targetId: "tailnet", kind: "remote", label: "Tailnet" }],
+        ["remote", { targetId: "remote", kind: "remote", label: "Remote" }],
       ]),
     } as never;
 
     expect(resolveLiveProjectCreateTargets(snapshot, "host-remote/project-1")).toEqual([
       {
-        address: { targetId: "tailnet", hostId: "host-remote", projectId: "project-1" },
-        label: "Tailnet",
+        address: { targetId: "remote", hostId: "host-remote", projectId: "project-1" },
+        label: "Remote",
         current: true,
       },
     ]);

@@ -2,7 +2,7 @@ import { deviceToken as validateDeviceToken, type AndroidUpdateState } from "@t4
 import {
   DEFAULT_MOBILE_PROFILE_ID,
   MOBILE_BACKEND_STORAGE_KEY,
-  parseTailnetBackend,
+  parseMobileBackend,
   type StoredMobileBackend,
   type StoredMobileBackendDirectory,
 } from "./native-mobile-backend.ts";
@@ -10,7 +10,7 @@ import {
 export {
   MOBILE_BACKEND_STORAGE_KEY,
   normalizeMobileProfileId,
-  parseTailnetBackend,
+  parseMobileBackend,
   type StoredMobileBackend,
   type StoredMobileBackendDirectory,
 } from "./native-mobile-backend.ts";
@@ -203,7 +203,7 @@ function storedMobileBackend(value: unknown): StoredMobileBackend {
   ) {
     throw new Error("The saved host list is damaged. Add the host again.");
   }
-  const parsed = parseTailnetBackend(
+  const parsed = parseMobileBackend(
     data.origin,
     data.version === 3 && typeof data.profileId === "string" ? data.profileId : undefined,
     data.version === 3 && data.clusterOperatorEnabled === true,
@@ -229,7 +229,7 @@ function storedMobileBackendDirectory(value: unknown, version: 2 | 3): StoredMob
     version === 3
       ? data.activeEndpointKey
       : typeof data.activeOrigin === "string"
-        ? parseTailnetBackend(data.activeOrigin, DEFAULT_PROFILE_ID).endpointKey
+        ? parseMobileBackend(data.activeOrigin, DEFAULT_PROFILE_ID).endpointKey
         : undefined;
   if (
     (version === 3 && data.version !== 3) ||
@@ -517,7 +517,7 @@ export async function probeMobileBackend(
       socket.close(1000, "T4 mobile connection check");
     };
     const onError = () =>
-      finish(new Error("Omperator could not reach that host. Check Tailscale and the address."));
+      finish(new Error("Omperator could not reach that host. Check the address and that the host is running."));
     const onClose = () =>
       finish(new Error("The host closed the connection before Omperator could start."));
     const onAbort = () => {
@@ -526,7 +526,7 @@ export async function probeMobileBackend(
     };
     const timer = setTimeout(() => {
       socket.close();
-      finish(new Error("The host did not answer. Check that Tailscale and the T4 gateway are running."));
+      finish(new Error("The host did not answer. Check that the T4 gateway is running on your computer."));
     }, timeoutMs);
     socket.addEventListener("open", onOpen);
     socket.addEventListener("error", onError);

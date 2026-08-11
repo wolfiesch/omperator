@@ -6,7 +6,7 @@ import WebSocket, { WebSocketServer } from "ws";
 
 import { BuiltWebServer } from "./built-web-server.ts";
 
-const PUBLIC_WSS = "wss://operator-fixture.tailnet.ts.net/v1/ws";
+const PUBLIC_WSS = "wss://operator-fixture.example.com/v1/ws";
 const HOST = "cluster-host";
 const SESSION = "cluster-session";
 const VIEW = `${HOST}/${SESSION}`;
@@ -124,7 +124,7 @@ function sessionRef(ciStatus: "queued" | "running" | "success" = "running") {
         status: ciStatus,
         currentStage: ciStatus === "success" ? "complete" : "verify",
         startedAt: "2026-07-20T12:01:00.000Z",
-        link: "https://ci.tailnet.ts.net/repos/repo-a/pipeline/42",
+        link: "https://ci.example.com/repos/repo-a/pipeline/42",
       },
     },
   };
@@ -537,7 +537,7 @@ test.describe("OMP/T4 cluster GUI boundaries", () => {
     const ciLink = page.getByRole("link", { name: "Open CI pipeline" });
     await expect(ciLink).toHaveAttribute(
       "href",
-      "https://ci.tailnet.ts.net/repos/repo-a/pipeline/42",
+      "https://ci.example.com/repos/repo-a/pipeline/42",
     );
     const openGui = page.getByRole("button", { name: "Open GUI" });
     const runCi = page.getByRole("button", { name: "Run CI" });

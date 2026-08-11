@@ -8,7 +8,7 @@ import { expect, test, type Page } from "@playwright/test";
 import type { SessionRef } from "@t4-code/protocol";
 import {
   MOBILE_BACKEND_STORAGE_KEY,
-  parseTailnetBackend,
+  parseMobileBackend,
 } from "../apps/web/src/platform/native-mobile-backend.ts";
 import type { ScenarioId } from "../packages/fixture-server/src/index.ts";
 import { installColdMountObserver, readColdMountSamples } from "./cold-mount-observer.ts";
@@ -26,10 +26,10 @@ const SESSION_TITLE = "stream-v1 fixture";
 // Chromium can report an exact 44 CSS px box a few floating-point ulps below 44.
 const MIN_TOUCH_TARGET_PX = 43.99;
 const CONNECTED_COPY =
-  "This Tailnet connection is live. Choose a session from the list on the left to inspect it.";
-const DEFAULT_MOBILE_BACKEND = parseTailnetBackend("https://fixture.tailnet.ts.net");
-const PROFILE_MOBILE_BACKEND = parseTailnetBackend(
-  "https://fixture.tailnet.ts.net",
+  "This remote connection is live. Choose a session from the list on the left to inspect it.";
+const DEFAULT_MOBILE_BACKEND = parseMobileBackend("https://fixture.example.com");
+const PROFILE_MOBILE_BACKEND = parseMobileBackend(
+  "https://fixture.example.com",
   "fable-swarm",
 );
 

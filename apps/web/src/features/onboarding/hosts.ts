@@ -36,7 +36,7 @@ export interface HostRow {
   readonly id: string;
   readonly kind: HostKind;
   readonly name: string;
-  /** Tailnet identity for remote hosts; null for the local host. */
+  /** Verified identity for remote hosts; null for the local host. */
   readonly identity: PeerIdentity | null;
   readonly state: HostConnectionState;
   /** Exact cause, written for the row it sits under. */
@@ -150,6 +150,6 @@ export function groupHosts(hosts: readonly HostRow[]): readonly HostGroup[] {
   const local = hosts.filter((host) => host.kind === "local");
   const remote = hosts.filter((host) => host.kind === "remote");
   if (local.length > 0) groups.push({ kind: "local", label: "This computer", hosts: local });
-  if (remote.length > 0) groups.push({ kind: "remote", label: "Paired over Tailscale", hosts: remote });
+  if (remote.length > 0) groups.push({ kind: "remote", label: "Paired computers", hosts: remote });
   return groups;
 }

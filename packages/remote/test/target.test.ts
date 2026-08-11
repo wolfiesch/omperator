@@ -22,16 +22,15 @@ import {
 } from "../src/target.ts";
 
 const CANARY = "raw-canary-device-token-should-never-leak";
+const HOST = "node-a.relay.example.com";
 const response: PairingResponse = {
   deviceToken: CANARY,
   expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
   hostId: "host-a",
-  tailscaleNodeId: "node-a",
-  tailscaleLogin: "alice@example.com",
   capabilities: ["sessions.read", "sessions.write"],
   protocolVersion: 1,
-  endpoints: [{ transport: "direct", host: "node-a.tail.ts.net", url: "ws://node-a.tail.ts.net:4879/", port: 4879 }],
-  metadata: { region: "tailnet", endpoint: "https://secret.example/" },
+  endpoints: [{ transport: "direct", host: HOST, url: `ws://${HOST}:4879/`, port: 4879 }],
+  metadata: { region: "public", endpoint: "https://secret.example/" },
 };
 
 class Vault implements CredentialVault {
@@ -57,14 +56,14 @@ class Connector implements PrivilegedPairingConnector {
 }
 const probe: EndpointProbe = {
   async probe(_endpoint) {
-    return { ok: true, protocolVersion: 1, hostId: "host-a", tailscaleNodeId: "node-a", tailscaleLogin: "alice@example.com" };
+    return { ok: true, protocolVersion: 1, hostId: "host-a" };
   },
 };
 
 async function paired() {
   const registry = new Registry();
   const vault = new Vault();
-  const result = await pairRemoteHost({ targetId: "target-a", label: "Desktop", code: "123456", connector: new Connector(), registry, vault, expectedEndpointHosts: ["node-a.tail.ts.net"], now: Date.now() });
+  const result = await pairRemoteHost({ targetId: "target-a", label: "Desktop", code: "123456", connector: new Connector(), registry, vault, expectedEndpointHosts: [HOST], now: Date.now() });
   return { registry, vault, result };
 }
 
@@ -74,27 +73,35 @@ describe("remote paired target contract", () => {
     const serialized = JSON.stringify(result.view);
     expect(serialized).not.toContain(CANARY);
     expect(serialized).not.toContain("credentialRef");
-    expect(serialized).not.toContain("node-a.tail.ts.net");
+    expect(serialized).not.toContain(HOST);
     expect(JSON.stringify(sanitizePairedHostRecord(result.record))).not.toContain(CANARY);
   });
 
-  it("rejects malicious URLs, LAN/public IPs, userinfo and query/hash", async () => {
+  it("rejects userinfo, query/hash, protocol mismatches and unpinned hosts", async () => {
     const registry = new Registry();
     const vault = new Vault();
-    const bad = (url: string, host = "node-a.tail.ts.net") => pairRemoteHost({ targetId: "x", label: "x", code: "123456", connector: new Connector({ ...response, endpoints: [{ transport: "direct", host, url, port: 4879 }] }), registry, vault, expectedEndpointHosts: [host] });
+    const bad = (url: string, host = HOST) => pairRemoteHost({ targetId: "x", label: "x", code: "123456", connector: new Connector({ ...response, endpoints: [{ transport: "direct", host, url, port: 4879 }] }), registry, vault, expectedEndpointHosts: [host] });
     await expect(bad("ws://192.168.1.4:4879/")).rejects.toBeInstanceOf(TargetEndpointError);
-    await expect(bad("ws://8.8.8.8:4879/", "8.8.8.8")).rejects.toBeInstanceOf(TargetEndpointError);
-    await expect(bad("ws://node-a.tail.ts.net:4879/?token=evil")).rejects.toBeInstanceOf(TargetEndpointError);
-    await expect(bad("ws://user:pass@node-a.tail.ts.net:4879/")).rejects.toBeInstanceOf(TargetEndpointError);
-    await expect(bad("wss://node-a.tail.ts.net:8443/", "node-a.tail.ts.net")).rejects.toBeInstanceOf(TargetEndpointError);
+    await expect(bad("ws://8.8.8.8:4879/")).rejects.toBeInstanceOf(TargetEndpointError);
+    await expect(bad(`ws://${HOST}:4879/?token=evil`)).rejects.toBeInstanceOf(TargetEndpointError);
+    await expect(bad(`ws://user:pass@${HOST}:4879/`)).rejects.toBeInstanceOf(TargetEndpointError);
+    await expect(bad(`wss://${HOST}:8443/`, HOST)).rejects.toBeInstanceOf(TargetEndpointError);
     await expect(pairRemoteHost({ targetId: "x", label: "x", code: "123456", connector: new Connector(), registry, vault, expectedEndpointHosts: ["public.example.com"] })).rejects.toBeInstanceOf(TargetEndpointError);
+  });
+
+  it("accepts plain IP and hostname endpoints pinned at pairing", async () => {
+    const registry = new Registry();
+    const vault = new Vault();
+    const result = await pairRemoteHost({ targetId: "ip-target", label: "IP host", code: "123456", connector: new Connector({ ...response, endpoints: [{ transport: "direct", host: "8.8.8.8", url: "ws://8.8.8.8:4879/", port: 4879 }] }), registry, vault, expectedEndpointHosts: ["8.8.8.8"], now: Date.now() });
+    expect(result.record.endpoints[0]?.host).toBe("8.8.8.8");
+    expect(result.record.pinnedEndpointHosts).toEqual(["8.8.8.8"]);
   });
 
   it("rolls vault back if registry write fails", async () => {
     const registry = new Registry();
     registry.failPut = true;
     const vault = new Vault();
-    await expect(pairRemoteHost({ targetId: "target-a", label: "Desktop", code: "123456", connector: new Connector(), registry, vault, expectedEndpointHosts: ["node-a.tail.ts.net"] })).rejects.toBeInstanceOf(Error);
+    await expect(pairRemoteHost({ targetId: "target-a", label: "Desktop", code: "123456", connector: new Connector(), registry, vault, expectedEndpointHosts: [HOST] })).rejects.toBeInstanceOf(Error);
     expect(vault.values.size).toBe(0);
     expect(registry.value).toBeNull();
   });
@@ -114,23 +121,23 @@ describe("remote paired target contract", () => {
     expect(probes).toBe(0);
   });
 
-  it("pins host/node/login and hard-fails identity swaps", async () => {
+  it("pins the host id and hard-fails identity swaps", async () => {
     const { registry } = await paired();
-    const swapped: EndpointProbe = { probe: async () => ({ ok: true, protocolVersion: 1, hostId: "host-b", tailscaleNodeId: "node-b", tailscaleLogin: "mallory@example.com" }) };
+    const swapped: EndpointProbe = { probe: async () => ({ ok: true, protocolVersion: 1, hostId: "host-b" }) };
     await expect(selectRemoteEndpoint({ record: registry.value!, probe: swapped })).rejects.toBeInstanceOf(TargetIdentityMismatchError);
   });
 
   it("uses direct before Serve and keeps plan secrets out of its view", async () => {
     const { registry, vault } = await paired();
     registry.value = { ...registry.value!, endpoints: [
-      { transport: "serve", host: "node-a.tail.ts.net", url: "wss://node-a.tail.ts.net/", port: 443 },
+      { transport: "serve", host: HOST, url: `wss://${HOST}/`, port: 443 },
       registry.value!.endpoints[0]!,
     ] };
     const plan = await createRemoteConnectionPlan({ targetId: "target-a", registry, vault, probe });
     expect(plan.endpoint.transport).toBe("direct");
     expect(plan.authorization.value).toContain(CANARY);
     expect(JSON.stringify(sanitizeConnectionPlan(plan))).not.toContain(CANARY);
-    expect(JSON.stringify(sanitizeConnectionPlan(plan))).not.toContain("tail.ts.net");
+    expect(JSON.stringify(sanitizeConnectionPlan(plan))).not.toContain(HOST);
   });
 
   it("forgets both records and vault entries without transport side effects", async () => {

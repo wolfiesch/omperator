@@ -3,12 +3,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  discoverTailscaleExecutable,
   NodeProcessRunner,
-  readTailscaleStatus,
   runProcess,
-  TailscaleCliNotFoundError,
-  type ProcessRunner,
 } from "@t4-code/remote";
 
 import { discoverNativeOmpProfiles } from "./local-profiles.ts";
@@ -40,8 +36,6 @@ export interface SourceContract {
   readonly ompUrl: string;
 }
 
-export type TailnetInspection = "ready" | "not-connected" | "not-installed" | "unavailable";
-
 export interface DoctorRuntime {
   readonly platform: NodeJS.Platform;
   readonly arch: string;
@@ -53,7 +47,6 @@ export interface DoctorRuntime {
   readonly inspectPathOmp: () => Promise<PathOmpCompatibility>;
   readonly probeOmp: (executable: string) => Promise<boolean>;
   readonly profileCount: () => Promise<number>;
-  readonly inspectTailnet: () => Promise<TailnetInspection>;
 }
 
 export interface DoctorReport {
@@ -164,50 +157,6 @@ async function installedToolVersion(command: "bun" | "pnpm"): Promise<string | n
   }
 }
 
-export interface TailnetProbeOptions {
-  readonly environment?: NodeJS.ProcessEnv;
-  readonly executable?: string;
-  readonly runner?: ProcessRunner;
-}
-
-function createScrubbedProcessRunner(
-  runner: ProcessRunner,
-  environment: NodeJS.ProcessEnv,
-): ProcessRunner {
-  return {
-    spawn(spec, signal) {
-      return runner.spawn(
-        { ...spec, env: createSafeServiceEnvironment(spec.env ?? environment) },
-        signal,
-      );
-    },
-  };
-}
-
-export async function inspectTailnet(
-  options: TailnetProbeOptions = {},
-): Promise<TailnetInspection> {
-  const baseRunner = options.runner ?? new NodeProcessRunner();
-  const environment = createSafeServiceEnvironment(options.environment);
-  const runner = createScrubbedProcessRunner(baseRunner, environment);
-  let executable: string;
-  try {
-    executable =
-      options.executable ??
-      (await discoverTailscaleExecutable());
-  } catch (error) {
-    return error instanceof TailscaleCliNotFoundError ? "not-installed" : "unavailable";
-  }
-  try {
-    const status = await readTailscaleStatus({ runner, executable });
-    return status.magicDnsName !== null || status.tailnetIpv4Addresses.length > 0
-      ? "ready"
-      : "not-connected";
-  } catch {
-    return "unavailable";
-  }
-}
-
 export function createDoctorRuntime(): DoctorRuntime {
   return {
     platform: process.platform,
@@ -220,7 +169,6 @@ export function createDoctorRuntime(): DoctorRuntime {
     inspectPathOmp: () => inspectPathOmpCompatibility(),
     probeOmp: (executable) => probeOmpAppserver(executable),
     profileCount: async () => (await discoverNativeOmpProfiles()).length,
-    inspectTailnet,
   };
 }
 
@@ -444,33 +392,6 @@ export async function collectDoctorReport(
       ),
     );
   }
-
-  const tailnet = await runtime.inspectTailnet();
-  const tailnetCheck: Record<TailnetInspection, DoctorCheck> = {
-    ready: check("tailscale", "Tailscale", "pass", "Tailscale returned a local tailnet identity."),
-    "not-connected": check(
-      "tailscale",
-      "Tailscale",
-      "warning",
-      "Tailscale is installed but no local tailnet identity was reported.",
-      "Sign in to Tailscale before using remote hosts or the browser client.",
-    ),
-    "not-installed": check(
-      "tailscale",
-      "Tailscale",
-      "warning",
-      "Tailscale is not installed. Local desktop use can still work.",
-      "Install Tailscale only if you need paired computers, Android, or browser access.",
-    ),
-    unavailable: check(
-      "tailscale",
-      "Tailscale",
-      "warning",
-      "Tailscale status could not be read safely. Local desktop use can still work.",
-      "Open Tailscale and confirm it is signed in before using remote access.",
-    ),
-  };
-  checks.push(tailnetCheck[tailnet]);
 
   return Object.freeze({
     schemaVersion: 1,

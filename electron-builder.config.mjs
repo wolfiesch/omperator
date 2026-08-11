@@ -61,7 +61,7 @@ const config = {
     extraResources: [
       { from: ".artifacts/omp-runtime", to: "runtime" },
       { from: "scripts/tailnet-gateway.mjs", to: "gateway/tailnet-gateway.mjs" },
-      { from: "scripts/tailnet-service.mjs", to: "gateway/tailnet-service.mjs" },
+      { from: "scripts/gateway-service.mjs", to: "gateway/gateway-service.mjs" },
       { from: "apps/desktop/node_modules/ws", to: "node_modules/ws" },
     ],
     target: [

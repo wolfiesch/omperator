@@ -1,5 +1,5 @@
+import { isIP } from "node:net";
 import { DEVICE_CAPABILITIES, isCapability, type DeviceCapability } from "@t4-code/protocol";
-import { isTailscaleIpv4Address } from "./tailscale.ts";
 export const PAIRED_HOST_RECORD_VERSION = 1 as const;
 export const REMOTE_PROTOCOL_MIN = 1;
 export const REMOTE_PROTOCOL_MAX = 1;
@@ -22,8 +22,6 @@ export interface PairedHostRecord {
   readonly pinnedEndpointHosts: readonly string[];
   readonly credentialRef: string;
   readonly hostId: string;
-  readonly tailscaleNodeId: string;
-  readonly tailscaleLogin: string;
   readonly capabilities: readonly RemoteCapability[];
   readonly metadata: Readonly<Record<string, string>>;
   readonly createdAt: number;
@@ -35,8 +33,6 @@ export interface SanitizedPairedHostView {
   readonly label: string;
   readonly state: "paired" | "revoked" | "expired";
   readonly hostId: string;
-  readonly tailscaleNodeId: string;
-  readonly tailscaleLogin: string;
   readonly capabilities: readonly RemoteCapability[];
   readonly updatedAt: number;
 }
@@ -62,8 +58,6 @@ export interface PairingResponse {
   readonly deviceToken: string;
   readonly expiresAt: string;
   readonly hostId: string;
-  readonly tailscaleNodeId: string;
-  readonly tailscaleLogin: string;
   readonly capabilities: readonly string[];
   readonly protocolVersion: number;
   readonly endpoints: readonly unknown[];
@@ -129,7 +123,7 @@ export function validatePairingCode(value: unknown): string {
   return value;
 }
 
-function isMagicDnsHost(host: string): boolean {
+function isHostname(host: string): boolean {
   if (/^\d+(?:\.\d+){3}$/u.test(host)) return false;
   return host.length <= 253 && /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/iu.test(host) && !host.endsWith(".local");
 }
@@ -148,12 +142,11 @@ export function validateRemoteEndpoint(input: unknown, expectedHosts?: readonly 
   try { url = new URL(raw.url); } catch { throw new TargetEndpointError(); }
   const host = url.hostname.toLowerCase().replace(/^\[(.*)\]$/u, "$1");
   if (url.username || url.password || url.search || url.hash || url.pathname !== "/") throw new TargetEndpointError();
-  const isTailnetIp = isTailscaleIpv4Address(host);
+  const isPlainIp = isIP(host) !== 0;
   const isPinnedHost = expectedHosts?.some((value) => typeof value === "string" && value.trim().toLowerCase() === host) ?? false;
-  const isMagicDns = isMagicDnsHost(host) && host.endsWith(".ts.net");
-  if (!isTailnetIp && !isMagicDns) throw new TargetEndpointError();
+  if (!isPlainIp && !isHostname(host)) throw new TargetEndpointError();
   if (raw.transport === "direct" && url.protocol !== "ws:") throw new TargetEndpointError();
-  if (raw.transport === "serve" && (url.protocol !== "wss:" || !isMagicDns)) throw new TargetEndpointError();
+  if (raw.transport === "serve" && url.protocol !== "wss:") throw new TargetEndpointError();
   if (raw.host.trim().toLowerCase() !== host) throw new TargetEndpointError();
   if (expectedHosts?.length && !isPinnedHost) throw new TargetEndpointError();
   const defaultPort = url.protocol === "wss:" ? 443 : 80;
@@ -186,7 +179,7 @@ function sanitizeMetadata(value: Readonly<Record<string, unknown>> | undefined):
 }
 
 export function sanitizePairedHostRecord(record: PairedHostRecord, state: SanitizedPairedHostView["state"] = "paired"): SanitizedPairedHostView {
-  return { targetId: record.targetId, label: record.label, state, hostId: record.hostId, tailscaleNodeId: record.tailscaleNodeId, tailscaleLogin: record.tailscaleLogin, capabilities: record.capabilities, updatedAt: record.updatedAt };
+  return { targetId: record.targetId, label: record.label, state, hostId: record.hostId, capabilities: record.capabilities, updatedAt: record.updatedAt };
 }
 
 export function sanitizeRemoteError(error: unknown): { readonly tag: string; readonly code: string; readonly message: string } {
@@ -210,7 +203,7 @@ function validateIdentity(response: PairingResponse, now: number): void {
   if (!Array.isArray(response.capabilities) || !Array.isArray(response.endpoints)) throw new PairingTransactionError();
   const expiry = Date.parse(response.expiresAt);
   if (!Number.isFinite(expiry) || expiry <= now || expiry > now + 366 * 24 * 60 * 60 * 1000) throw new TargetCredentialError();
-  if (!boundedString(response.deviceToken, 4096) || !boundedString(response.hostId, 256) || !boundedString(response.tailscaleNodeId, 256) || !boundedString(response.tailscaleLogin, 320)) throw new PairingTransactionError();
+  if (!boundedString(response.deviceToken, 4096) || !boundedString(response.hostId, 256)) throw new PairingTransactionError();
   if (!Number.isInteger(response.protocolVersion) || response.protocolVersion < REMOTE_PROTOCOL_MIN || response.protocolVersion > REMOTE_PROTOCOL_MAX) throw new TargetCapabilityError();
   if (!hasRequiredCapabilities(response.capabilities)) throw new TargetCapabilityError();
 }
@@ -237,14 +230,14 @@ export async function pairRemoteHost(input: {
   validateIdentity(response, now);
   if (!hasRequiredCapabilities(response.capabilities, input.requiredCapabilities ?? ["sessions.read"])) throw new TargetCapabilityError();
   const pinnedEndpointHosts = [...new Set(input.expectedEndpointHosts.map((host) => boundedString(host, 253)?.toLowerCase()).filter((host): host is string => host !== null))];
-  if (!pinnedEndpointHosts.length || pinnedEndpointHosts.some((host) => !isTailscaleIpv4Address(host) && !(isMagicDnsHost(host) && host.endsWith(".ts.net")))) throw new TargetEndpointError();
+  if (!pinnedEndpointHosts.length || pinnedEndpointHosts.some((host) => isIP(host) === 0 && !isHostname(host))) throw new TargetEndpointError();
   const endpoints = response.endpoints.map((endpoint) => validateRemoteEndpoint(endpoint, pinnedEndpointHosts));
   if (!endpoints.length) throw new TargetEndpointError();
   const credentialRef = `remote/${targetId}`;
   const record: PairedHostRecord = {
     version: PAIRED_HOST_RECORD_VERSION,
     targetId, label, endpoints, pinnedEndpointHosts, credentialRef,
-    hostId: response.hostId, tailscaleNodeId: response.tailscaleNodeId, tailscaleLogin: response.tailscaleLogin,
+    hostId: response.hostId,
     capabilities: normalizeCapabilities(response.capabilities), metadata: sanitizeMetadata(response.metadata), createdAt: now, updatedAt: now,
   };
   try { await input.vault.set(credentialRef, { token: response.deviceToken, expiresAt: response.expiresAt }); } catch { throw new PairingTransactionError(); }
@@ -278,8 +271,6 @@ export interface EndpointProbeResult {
   readonly ok: boolean;
   readonly protocolVersion: number;
   readonly hostId: string;
-  readonly tailscaleNodeId: string;
-  readonly tailscaleLogin: string;
   readonly host?: string;
 }
 export interface EndpointProbe {
@@ -312,7 +303,7 @@ export async function selectRemoteEndpoint(input: { readonly record: PairedHostR
     const result = await boundedProbe(input.probe, endpoint, input.timeoutMs ?? 2_500, input.signal);
     if (!result || !result.ok || !Number.isInteger(result.protocolVersion) || result.protocolVersion < REMOTE_PROTOCOL_MIN || result.protocolVersion > REMOTE_PROTOCOL_MAX) continue;
     if (result.host && result.host.toLowerCase() !== endpoint.host) throw new TargetIdentityMismatchError();
-    if (result.hostId !== input.record.hostId || result.tailscaleNodeId !== input.record.tailscaleNodeId || result.tailscaleLogin !== input.record.tailscaleLogin) throw new TargetIdentityMismatchError();
+    if (result.hostId !== input.record.hostId) throw new TargetIdentityMismatchError();
     return { endpoint, probe: result };
   }
   throw new TargetEndpointError();

@@ -19,44 +19,6 @@ export function normalizeIpAddress(address: string): string {
 		? address.slice(7)
 		: address;
 }
-function ipv4(value: string): number[] | undefined {
-	if (isIP(value) !== 4) return undefined;
-	const parts = value.split(".").map(Number);
-	return parts.length === 4 && parts.every(part => Number.isInteger(part) && part >= 0 && part <= 255)
-		? parts
-		: undefined;
-}
-function ipv6(value: string): bigint | undefined {
-	if (isIP(value) !== 6) return undefined;
-	const pieces = value.split("::");
-	if (pieces.length > 2) return undefined;
-	const left = pieces[0] ? pieces[0].split(":") : [];
-	const right = pieces[1] ? pieces[1].split(":") : [];
-	const count = left.length + right.length;
-	if ((!pieces[1] && count !== 8) || (pieces[1] && count >= 8)) return undefined;
-	const words = [...left, ...Array(8 - count).fill("0"), ...right].map(piece => Number.parseInt(piece, 16));
-	if (words.some(word => !Number.isInteger(word) || word < 0 || word > 0xffff)) return undefined;
-	return words.reduce((result, word) => (result << 16n) | BigInt(word), 0n);
-}
-export function isTailnetAddress(address: string): boolean {
-	const normalized = normalizeIpAddress(address);
-	const v4 = ipv4(normalized);
-	if (v4) return v4[0] === 100 && v4[1] >= 64 && v4[1] <= 127;
-	const v6 = ipv6(normalized);
-	return v6 !== undefined && v6 >> 80n === 0xfd7a115ca1e0n;
-}
-function isLoopbackAddress(address: string): boolean {
-	const normalized = normalizeIpAddress(address);
-	const v4 = ipv4(normalized);
-	return v4 ? v4[0] === 127 : normalized === "::1";
-}
-export function createListenerPlan(config: RemoteListenerConfig): ListenerPlan {
-	if (!isTailnetAddress(config.address) || normalizeIpAddress(config.address) !== config.address)
-		throw new Error("direct listener address must be an explicit Tailscale address");
-	if (!Number.isInteger(config.port) || config.port < 1 || config.port > 65535)
-		throw new Error("listener port is invalid");
-	return { mode: "direct", address: config.address, port: config.port, path: "/v1/ws", trustedServeProxy: false };
-}
 export function createInternalListenerPlan(config: RemoteListenerConfig): ListenerPlan {
 	if (config.address !== "0.0.0.0" && config.address !== "::")
 		throw new Error("internal listener must bind an unspecified pod address");
@@ -68,31 +30,6 @@ export function createInternalListenerPlan(config: RemoteListenerConfig): Listen
 }
 export function originAllowed(origin: string | null, allowlist: readonly string[] = []): boolean {
 	return origin === null || allowlist.includes(origin);
-}
-export function createServeProxyPlan(config: RemoteListenerConfig): ListenerPlan {
-	if (config.address !== "127.0.0.1" && config.address !== "::1") throw new Error("Serve proxy must bind loopback");
-	if (config.trustedServeProxy !== true) throw new Error("Serve proxy requires trustedServeProxy");
-	if (!Number.isInteger(config.port) || config.port < 1 || config.port > 65535)
-		throw new Error("listener port is invalid");
-	return { mode: "serve", address: config.address, port: config.port, path: "/v1/ws", trustedServeProxy: true };
-}
-export function resolveServePeer(
-	remoteAddress: string,
-	headers: Headers,
-	trustedServeProxy: boolean,
-): ListenerPeerContext | undefined {
-	if (!trustedServeProxy || (remoteAddress !== "127.0.0.1" && remoteAddress !== "::1")) return undefined;
-	const nodeId = headers.get("Tailscale-Node-ID");
-	const hostname = headers.get("Tailscale-Node-Name");
-	const user = headers.get("Tailscale-User-Login");
-	const address = headers.get("Tailscale-Client-IP");
-	if (!nodeId || !hostname || !user || !address || !isTailnetAddress(address)) return undefined;
-	return { address, source: "serve", identity: { nodeId, hostname, user, addresses: [address], source: "serve" } };
-}
-export function directPeer(address: string, nodeId: string): ListenerPeerContext {
-	const normalized = normalizeIpAddress(address);
-	if (!isTailnetAddress(normalized)) throw new Error("peer is not a Tailscale address");
-	return { address: normalized, source: "direct", identity: { nodeId, addresses: [normalized], source: "direct" } };
 }
 type SocketData = { peer: ListenerPeerContext; connectionId: string; reserved: boolean; opened: boolean };
 type SocketEntry = {
@@ -128,7 +65,6 @@ export class BunRemoteListener {
 		private readonly plan: ListenerPlan,
 		private readonly hooks: RemoteConnectionHooks,
 		private readonly config: RemoteListenerConfig,
-		private readonly resolver?: { resolve(address: string): Promise<RemotePeerIdentity> },
 		private readonly health?: HealthProvider,
 	) {}
 	start(): void {
@@ -140,13 +76,11 @@ export class BunRemoteListener {
 		run.server = Bun.serve<SocketData>({
 			hostname: this.plan.address,
 			port: this.plan.port,
-			...(this.config.tls ? { tls: { cert: this.config.tls.cert, key: this.config.tls.key } } : {}),
 			fetch: async (request, server) => {
 				const url = new URL(request.url);
 				if (url.pathname === "/healthz" && request.method === "GET")
 					return Response.json({
 						...(this.health ? this.health() : { ok: true }),
-						...(this.config.tlsFingerprint ? { tlsFingerprint: this.config.tlsFingerprint } : {}),
 					});
 				if (url.pathname !== this.plan.path) return new Response("Not Found", { status: 404 });
 				if (!originAllowed(request.headers.get("origin"), this.config.originAllowlist))
@@ -157,40 +91,20 @@ export class BunRemoteListener {
 				try {
 					const requested = server.requestIP(request)?.address;
 					if (!requested) return new Response("Unauthorized", { status: 401 });
-					const address = normalizeIpAddress(requested);
-					let peer: ListenerPeerContext | undefined;
-					if (this.plan.mode === "direct") {
-						if (this.config.internalPeerNodeId) {
-							const normalized = normalizeIpAddress(address);
-							peer = { address: normalized, source: "direct", identity: { nodeId: this.config.internalPeerNodeId, addresses: [normalized], source: "direct" } };
-						}
-						else {
-							// A client on this same Mac reaches the explicitly
-							// Tailnet-bound listener either from loopback or the
-							// Mac's own Tailnet address. Give that self-connection
-							// a stable local identity without depending on
-							// `tailscale whois` accepting a self-query. Remote
-							// peers still require verified Tailscale identity.
-							const local = isLoopbackAddress(address) || address === this.plan.address;
-							const peerAddress = local ? this.plan.address : address;
-							if (!isTailnetAddress(peerAddress) || !this.resolver)
-								return new Response("Unauthorized", { status: 401 });
-							peer = {
-								address: peerAddress,
-								source: "direct",
-								identity: local
-									? {
-											nodeId: `local:${peerAddress}`,
-											addresses: [peerAddress],
-											source: "direct",
-										}
-									: await this.resolver.resolve(peerAddress),
-							};
-						}
-					} else {
-						peer = resolveServePeer(address, request.headers, this.plan.trustedServeProxy);
-						if (!peer) return new Response("Forbidden", { status: 403 });
-					}
+					// Pod-network (cluster) listeners carry a fixed peer identity
+					// authenticated by the cluster's dedicated policy. No other
+					// remote listener mode exists.
+					if (!this.config.internalPeerNodeId)
+						return new Response("Unauthorized", { status: 401 });
+					const peer: ListenerPeerContext = {
+						address: normalizeIpAddress(requested),
+						source: "direct",
+						identity: {
+							nodeId: this.config.internalPeerNodeId,
+							addresses: [normalizeIpAddress(requested)],
+							source: "direct",
+						},
+					};
 					const connectionId = randomUUID();
 					if (
 						!server.upgrade(request, {

@@ -3,7 +3,7 @@ import type { OmpClient, OmpClientOptions } from "@t4-code/client";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { createBrowserShellPort, detectBackend } from "../src/platform/browser-shell-port.ts";
-import { parseTailnetBackend } from "../src/platform/native-mobile-backend.ts";
+import { parseMobileBackend } from "../src/platform/native-mobile-backend.ts";
 
 const originalDocument = globalThis.document;
 const originalWindow = globalThis.window;
@@ -52,25 +52,25 @@ afterEach(() => {
 });
 
 describe("mobile cluster target", () => {
-  it("keeps the saved Tailnet target operator-disabled by default", () => {
-    expect(parseTailnetBackend("https://operator.tailnet.ts.net")).toEqual({
+  it("keeps the saved host operator-disabled by default", () => {
+    expect(parseMobileBackend("https://operator.example.com")).toEqual({
       version: 3,
-      endpointKey: "https://operator.tailnet.ts.net#profile=default",
-      origin: "https://operator.tailnet.ts.net",
+      endpointKey: "https://operator.example.com#profile=default",
+      origin: "https://operator.example.com",
       profileId: "default",
-      wsUrl: "wss://operator.tailnet.ts.net/v1/ws",
+      wsUrl: "wss://operator.example.com/v1/ws",
       label: "T4 on operator",
     });
     expect(
-      parseTailnetBackend("https://operator.tailnet.ts.net", "default", true),
+      parseMobileBackend("https://operator.example.com", "default", true),
     ).toMatchObject({
       clusterOperatorEnabled: true,
-      wsUrl: "wss://operator.tailnet.ts.net/v1/ws",
+      wsUrl: "wss://operator.example.com/v1/ws",
     });
   });
 
   it("requests no cluster feature for an ordinary browser/mobile backend", async () => {
-    backendScript({ wsUrl: "wss://operator.tailnet.ts.net/v1/ws", label: "Operator" });
+    backendScript({ wsUrl: "wss://operator.example.com/v1/ws", label: "Operator" });
     const capture = captureClientOptions();
     const shell = createBrowserShellPort({ clientFactory: capture.factory });
     if (shell === null) throw new Error("shell was not created");
@@ -88,7 +88,7 @@ describe("mobile cluster target", () => {
 
   it("allows one explicit secure cluster target and rejects insecure or credentialed URLs", async () => {
     backendScript({
-      wsUrl: "wss://operator.tailnet.ts.net/v1/ws",
+      wsUrl: "wss://operator.example.com/v1/ws",
       label: "Operator",
       clusterOperatorEnabled: true,
     });
@@ -113,13 +113,13 @@ describe("mobile cluster target", () => {
     );
 
     backendScript({
-      wsUrl: "ws://operator.tailnet.ts.net/v1/ws",
+      wsUrl: "ws://operator.example.com/v1/ws",
       label: "Operator",
       clusterOperatorEnabled: true,
     });
     expect(() => detectBackend()).toThrow(/secure WSS cluster target/u);
     backendScript({
-      wsUrl: "wss://operator.tailnet.ts.net/v1/ws?token=secret",
+      wsUrl: "wss://operator.example.com/v1/ws?token=secret",
       label: "Operator",
       clusterOperatorEnabled: true,
     });

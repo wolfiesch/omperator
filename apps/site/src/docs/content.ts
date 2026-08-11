@@ -148,7 +148,7 @@ const firstRun: DocTopic = {
     { kind: "h2", id: "first-run-phone", text: "Use your phone" },
     {
       kind: "p",
-      text: "Install and connect Tailscale on the Mac and phone. In Omperator, open **Settings → Hosts**, choose **Set up phone access**, then scan the QR code. Omperator installs the private loopback gateway and configures Tailscale Serve; it never enables public Tailscale Funnel.",
+      text: "On your computer, open **Settings → Hosts** and choose **Set up phone access**. Omperator installs a private gateway, announces it at the public rendezvous, and shows a QR code and a six-digit pairing code. Scan the QR code or enter the code in the Omperator app on your phone; the phone joins through the public relay without any account or VPN setup.",
     },
     { kind: "h2", id: "first-run-service", text: "Who keeps the desktop app server running" },
     {
@@ -298,14 +298,14 @@ const remotePairing: DocTopic = {
       kind: "p",
       text: "When a remote connection drops, Omperator retries on its own for as long as it takes: growing delays, capped at 10 seconds between tries. A network drop, a laptop sleep, or a host restart ends in a reconnected session. Settings you were editing stay staged locally until the host confirms them; nothing is sent blind during a drop.",
     },
-    { kind: "h2", id: "remote-pairing-tailnet", text: "Phone access over a tailnet" },
+    { kind: "h2", id: "remote-pairing-relay", text: "Phone access over the public relay" },
     {
       kind: "p",
-      text: "A source checkout can serve Omperator to a phone through Tailscale Serve. This path has no Omperator app password: Tailscale identity plus the tailnet ACLs or grants decide who can reach it. Keep it on Serve, never Funnel, and remember that every permitted identity can operate the connected OMP appserver.",
+      text: "A source checkout can serve Omperator to a phone through the public relay and rendezvous. This path has no Omperator app password: the six-digit pairing code is single-use, expires in two minutes, and the host approves what the device may do when it pairs. The relay sees only encrypted envelopes, so sessions stay end to end between the phone and the host.",
     },
     {
       kind: "p",
-      text: `The mobile release test goes through the Tailnet \`.ts.net\` HTTPS URL in a 320 × 568 touch browser: connected state, a created session, a selected model, a prompt and its reply, and exactly two durable transcript rows kept through five reloads. Follow the [Tailnet setup guide](${REPO_URL}/blob/${RELEASE_TAG}/docs/TAILNET_REMOTE.md) to install the source-hosted gateway.`,
+      text: "The mobile release test goes through the relay in a 320 × 568 touch browser: connected state, a created session, a selected model, a prompt and its reply, and exactly two durable transcript rows kept through five reloads.",
     },
     {
       kind: "p",
@@ -314,7 +314,7 @@ const remotePairing: DocTopic = {
     { kind: "h2", id: "remote-pairing-android-hosts", text: "Saved hosts on Android" },
     {
       kind: "p",
-      text: "The Android app keeps up to 16 saved Tailnet gateway addresses, stored as plain HTTPS origins with no secrets inside. Switch, add, and remove are separate actions in the host list, and installs that already had a saved address migrate it into the list automatically.",
+      text: "The Android app keeps up to 16 saved gateway addresses, stored as plain HTTPS origins with no secrets inside. Switch, add, and remove are separate actions in the host list, and installs that already had a saved address migrate it into the list automatically.",
     },
     {
       kind: "p",

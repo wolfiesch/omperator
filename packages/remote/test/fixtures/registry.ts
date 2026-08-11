@@ -15,45 +15,48 @@ export function remoteTarget(targetId: string, address = "100.64.0.1"): RemoteTa
 
 export const validRemoteTargetFixtures = [
   {
-    name: "Tailscale IPv4",
-    target: remoteTarget("tailnet-v4", "100.64.0.1"),
+    name: "plain IPv4",
+    target: remoteTarget("plain-v4", "100.64.0.1"),
     expectedAddress: "100.64.0.1",
   },
   {
-    name: "Tailscale IPv6",
-    target: remoteTarget("tailnet-v6", "fd7a:115c:a1e0::1"),
+    name: "plain IPv6",
+    target: remoteTarget("plain-v6", "fd7a:115c:a1e0::1"),
     expectedAddress: "fd7a:115c:a1e0::1",
   },
   {
-    name: "MagicDNS",
-    target: remoteTarget("magic-dns", "Bunker.Example.TS.NET"),
-    expectedAddress: "bunker.example.ts.net",
-  },
-  {
-    name: "Tailscale Serve with an explicit default port",
-    target: {
-      ...remoteTarget("serve"),
-      mode: "serve",
-      address: "wss://bunker.example.ts.net:443/",
-      port: 443,
-    },
-    expectedAddress: "wss://bunker.example.ts.net/",
-  },
-] as const;
-
-export const invalidRemoteTargetFixtures = [
-  {
     name: "public IPv4",
     target: remoteTarget("public", "8.8.8.8"),
+    expectedAddress: "8.8.8.8",
   },
   {
     name: "private LAN IPv4",
     target: remoteTarget("private", "192.168.1.2"),
+    expectedAddress: "192.168.1.2",
   },
   {
-    name: "non-Tailscale IPv6",
+    name: "public IPv6",
     target: remoteTarget("ipv6", "2001:4860:4860::8888"),
+    expectedAddress: "2001:4860:4860::8888",
   },
+  {
+    name: "hostname",
+    target: remoteTarget("hostname", "Bunker.Example.COM"),
+    expectedAddress: "bunker.example.com",
+  },
+  {
+    name: "serve with an explicit default port",
+    target: {
+      ...remoteTarget("serve"),
+      mode: "serve",
+      address: "wss://bunker.example.com:443/",
+      port: 443,
+    },
+    expectedAddress: "wss://bunker.example.com/",
+  },
+] as const;
+
+export const invalidRemoteTargetFixtures = [
   {
     name: "mDNS hostname",
     target: remoteTarget("mdns", "bunker.local"),
@@ -67,7 +70,7 @@ export const invalidRemoteTargetFixtures = [
     target: {
       ...remoteTarget("serve-query"),
       mode: "serve",
-      address: "https://bunker.example.ts.net/?token=secret",
+      address: "https://bunker.example.com/?token=secret",
       port: 443,
     },
   },
@@ -76,7 +79,7 @@ export const invalidRemoteTargetFixtures = [
     target: {
       ...remoteTarget("serve-port"),
       mode: "serve",
-      address: "wss://bunker.example.ts.net/",
+      address: "wss://bunker.example.com/",
       port: 4210,
     },
   },

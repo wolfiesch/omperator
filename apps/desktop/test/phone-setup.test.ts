@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProcessRunner, ProcessSpec } from "@t4-code/remote";
 import { PhoneSetupService } from "../src/phone-setup.ts";
 
+const GATEWAY = "/Applications/Omperator.app/Contents/MacOS/Omperator";
+
 describe("phone setup", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -27,32 +29,31 @@ describe("phone setup", () => {
     });
   }
 
-  it("turns a connected Mac tailnet into a private QR destination", async () => {
-    vi.stubEnv("T4_RENDEZVOUS_URL", "https://rdv.override.example.com");
+  async function setupResources(): Promise<string> {
     const resourcesPath = await mkdtemp(join(tmpdir(), "t4-phone-setup-"));
     await mkdir(join(resourcesPath, "runtime"));
     await writeFile(join(resourcesPath, "runtime", "manifest.json"), '{"tag":"synthetic"}\n');
+    return resourcesPath;
+  }
+
+  it("configures public phone access through the rendezvous relay", async () => {
+    vi.stubEnv("T4_RENDEZVOUS_URL", "https://rdv.override.example.com");
+    const resourcesPath = await setupResources();
     const calls: ProcessSpec[] = [];
     let gatewayInstalled = false;
     const runner: ProcessRunner = {
       spawn: async (spec) => {
         calls.push(spec);
-        const isStatus = spec.command === "/tailscale" && spec.args?.[0] === "status";
-        const isServeStatus = spec.command === "/tailscale" && spec.args?.join(" ") === "serve status --json";
-        const isGatewayInspect = spec.command === "/Applications/Omperator.app/Contents/MacOS/Omperator" && spec.args?.[1] === "status";
-        const isGatewayInstall = spec.command === "/Applications/Omperator.app/Contents/MacOS/Omperator" && spec.args?.[1] === "install";
+        const isGatewayStatus = spec.command === GATEWAY && spec.args?.[1] === "status";
+        const isGatewayInstall = spec.command === GATEWAY && spec.args?.[1] === "install";
         if (isGatewayInstall) gatewayInstalled = true;
         return {
           kill: () => {},
-          result: Promise.resolve(isStatus
-            ? { exitCode: 0, signal: null, stdout: JSON.stringify({ Self: { DNSName: "work-mac.example.ts.net." } }), stderr: "", stdoutTruncated: false, stderrTruncated: false }
-            : isServeStatus
-              ? { exitCode: 0, signal: null, stdout: JSON.stringify({ TCP: { "8445": { HTTPS: true } }, Web: { "work-mac.example.ts.net:8445": { Handlers: { "/": { Proxy: "http://127.0.0.1:4194" } } } } }), stderr: "", stdoutTruncated: false, stderrTruncated: false }
-              : isGatewayInspect
-              ? gatewayInstalled
-                ? { exitCode: 0, signal: null, stdout: "health: healthy", stderr: "", stdoutTruncated: false, stderrTruncated: false }
-                : { exitCode: 1, signal: null, stdout: "", stderr: "not installed", stdoutTruncated: false, stderrTruncated: false }
-              : { exitCode: 0, signal: null, stdout: "ok", stderr: "", stdoutTruncated: false, stderrTruncated: false }),
+          result: Promise.resolve(isGatewayStatus
+            ? gatewayInstalled
+              ? { exitCode: 0, signal: null, stdout: "health: healthy", stderr: "", stdoutTruncated: false, stderrTruncated: false }
+              : { exitCode: 1, signal: null, stdout: "", stderr: "not installed", stdoutTruncated: false, stderrTruncated: false }
+            : { exitCode: 0, signal: null, stdout: "ok", stderr: "", stdoutTruncated: false, stderrTruncated: false }),
         };
       },
     };
@@ -60,34 +61,28 @@ describe("phone setup", () => {
       platform: "darwin",
       arch: "arm64",
       resourcesPath,
-      electronExecutable: "/Applications/Omperator.app/Contents/MacOS/Omperator",
+      electronExecutable: GATEWAY,
       runner,
-      discoverTailscale: async () => "/tailscale",
     });
 
     expect(await service.inspect()).toEqual({
       phase: "not-configured",
       message: "Set up private phone access, then open Omperator on your phone; it will find this computer automatically.",
-      url: "https://work-mac.example.ts.net:8445/",
+      url: "https://rdv.override.example.com/",
     });
     stubPairCode("123456");
     const configured = await service.configure();
     expect(configured).toMatchObject({
       phase: "ready",
-      url: "https://work-mac.example.ts.net:8445/",
+      url: "https://rdv.override.example.com/",
       pairCode: "123456",
     });
     expect(configured.message).toBe("Phone access is ready — enter the code on your phone: 123456");
-    const serve = calls.find((call) =>
-      call.command === "/tailscale"
-      && call.args?.[0] === "serve"
-      && call.args?.[1] === "--bg"
-    );
-    expect(serve?.args).toEqual(["serve", "--bg", "--https=8445", "http://127.0.0.1:4194"]);
-    expect(JSON.stringify(calls)).not.toContain("funnel");
-    const install = calls.find((call) => call.command.includes("Omperator") && call.args?.includes("install"));
+    const install = calls.find((call) => call.command === GATEWAY && call.args?.includes("install"));
     expect(install?.env).toEqual({ PATH: "/usr/bin:/bin:/usr/sbin:/sbin", ELECTRON_RUN_AS_NODE: "1" });
     expect(install?.args).toContain("--electron-run-as-node");
+    expect(install?.args).toContain("--origin");
+    expect(install?.args).toContain("https://rdv.override.example.com/");
     expect(install?.args).toContain("--rendezvous-url");
     expect(install?.args).toContain("https://rdv.override.example.com");
     expect(install?.args).not.toContain("https://wickrunner.com:8445");
@@ -98,61 +93,52 @@ describe("phone setup", () => {
     expect(calls.filter((call) => call.args?.[1] === "install")).toHaveLength(installCount);
   });
 
-  it("does not show a QR code when Tailscale Serve points somewhere else", async () => {
-    const resourcesPath = await mkdtemp(join(tmpdir(), "t4-phone-setup-stale-"));
-    await mkdir(join(resourcesPath, "runtime"));
-    await writeFile(join(resourcesPath, "runtime", "manifest.json"), '{"tag":"synthetic"}\n');
+  it("reports ready with the rendezvous URL even without a relay pairing endpoint", async () => {
+    vi.stubEnv("T4_RENDEZVOUS_URL", "");
+    const resourcesPath = await setupResources();
     stubPairCode(undefined);
     const runner: ProcessRunner = {
       spawn: async (spec) => ({
         kill: () => {},
-        result: Promise.resolve(spec.command === "/tailscale" && spec.args?.[0] === "status"
-          ? { exitCode: 0, signal: null, stdout: JSON.stringify({ Self: { DNSName: "work-mac.example.ts.net." } }), stderr: "", stdoutTruncated: false, stderrTruncated: false }
-          : spec.command === "/tailscale"
-            ? { exitCode: 0, signal: null, stdout: JSON.stringify({ TCP: { "8445": { HTTPS: true } }, Web: { "work-mac.example.ts.net:8445": { Handlers: { "/": { Proxy: "http://127.0.0.1:9999" } } } } }), stderr: "", stdoutTruncated: false, stderrTruncated: false }
-            : { exitCode: 0, signal: null, stdout: "health: healthy", stderr: "", stdoutTruncated: false, stderrTruncated: false }),
+        result: Promise.resolve(spec.command === GATEWAY && spec.args?.[1] === "status"
+          ? { exitCode: 0, signal: null, stdout: "health: healthy", stderr: "", stdoutTruncated: false, stderrTruncated: false }
+          : { exitCode: 1, signal: null, stdout: "", stderr: "not installed", stdoutTruncated: false, stderrTruncated: false }),
       }),
     };
     const service = new PhoneSetupService({
       platform: "darwin",
       arch: "arm64",
       resourcesPath,
-      electronExecutable: "/Applications/Omperator.app/Contents/MacOS/Omperator",
+      electronExecutable: GATEWAY,
       runner,
-      discoverTailscale: async () => "/tailscale",
     });
 
     const state = await service.inspect();
-    expect(state).toMatchObject({ phase: "not-configured" });
+    expect(state).toMatchObject({ phase: "ready", url: "https://wickrunner.com:8445/" });
     expect(state.pairCode).toBeUndefined();
+    expect(state.message).toBe("Phone access is ready — open Omperator on your phone; it will find this computer automatically.");
   });
 
   it("restarts previously configured phone access when the desktop app opens", async () => {
     vi.stubEnv("T4_RENDEZVOUS_URL", "");
     vi.stubEnv("T4_RELAY_URL", "wss://relay.override.example.com");
     stubPairCode("246810");
-    const resourcesPath = await mkdtemp(join(tmpdir(), "t4-phone-setup-restore-"));
-    await mkdir(join(resourcesPath, "runtime"));
-    await writeFile(join(resourcesPath, "runtime", "manifest.json"), '{"tag":"synthetic"}\n');
+    const resourcesPath = await setupResources();
     const calls: ProcessSpec[] = [];
     let gatewayInstalled = false;
     const runner: ProcessRunner = {
       spawn: async (spec) => {
         calls.push(spec);
-        const isStatus = spec.command === "/tailscale" && spec.args?.[0] === "status";
-        const isServeStatus = spec.command === "/tailscale" && spec.args?.join(" ") === "serve status --json";
-        const isGatewayStatus = spec.command.includes("Omperator") && spec.args?.[1] === "status";
-        const isGatewayInstall = spec.command.includes("Omperator") && spec.args?.[1] === "install";
+        const isGatewayStatus = spec.command === GATEWAY && spec.args?.[1] === "status";
+        const isGatewayInstall = spec.command === GATEWAY && spec.args?.[1] === "install";
         if (isGatewayInstall) gatewayInstalled = true;
         return {
           kill: () => {},
-          result: Promise.resolve(isStatus
-            ? { exitCode: 0, signal: null, stdout: JSON.stringify({ Self: { DNSName: "work-mac.example.ts.net." } }), stderr: "", stdoutTruncated: false, stderrTruncated: false }
-            : isServeStatus
-              ? { exitCode: 0, signal: null, stdout: JSON.stringify({ TCP: { "8445": { HTTPS: true } }, Web: { "work-mac.example.ts.net:8445": { Handlers: { "/": { Proxy: "http://127.0.0.1:4194" } } } } }), stderr: "", stdoutTruncated: false, stderrTruncated: false }
-              : isGatewayStatus && gatewayInstalled
-                ? { exitCode: 0, signal: null, stdout: "health: healthy", stderr: "", stdoutTruncated: false, stderrTruncated: false }
-                : { exitCode: isGatewayInstall ? 0 : 1, signal: null, stdout: "", stderr: "", stdoutTruncated: false, stderrTruncated: false }),
+          result: Promise.resolve(isGatewayStatus
+            ? gatewayInstalled
+              ? { exitCode: 0, signal: null, stdout: "health: healthy", stderr: "", stdoutTruncated: false, stderrTruncated: false }
+              : { exitCode: 1, signal: null, stdout: "", stderr: "not installed", stdoutTruncated: false, stderrTruncated: false }
+            : { exitCode: isGatewayInstall ? 0 : 1, signal: null, stdout: "", stderr: "", stdoutTruncated: false, stderrTruncated: false }),
         };
       },
     };
@@ -160,9 +146,8 @@ describe("phone setup", () => {
       platform: "darwin",
       arch: "arm64",
       resourcesPath,
-      electronExecutable: "/Applications/Omperator.app/Contents/MacOS/Omperator",
+      electronExecutable: GATEWAY,
       runner,
-      discoverTailscale: async () => "/tailscale",
     });
 
     const restoring = service.restore();
@@ -175,45 +160,40 @@ describe("phone setup", () => {
     expect(restoredInstall?.args).toContain("--relay-url");
     expect(restoredInstall?.args).toContain("wss://relay.override.example.com");
     expect(restoredInstall?.args).not.toContain("wss://wickrunner.com:8443");
-    expect(calls.some((call) => call.args?.[0] === "serve" && call.args?.[1] === "--bg")).toBe(false);
   });
 
-  it("upgrades a stale gateway before requiring Tailscale", async () => {
+  it("upgrades a stale gateway against the public rendezvous origin", async () => {
     vi.stubEnv("T4_RENDEZVOUS_URL", "");
-    const resourcesPath = await mkdtemp(join(tmpdir(), "t4-phone-setup-stale-upgrade-"));
-    await mkdir(join(resourcesPath, "runtime"));
-    await writeFile(join(resourcesPath, "runtime", "manifest.json"), '{"tag":"synthetic"}\n');
+    const resourcesPath = await setupResources();
+    stubPairCode(undefined);
     const calls: ProcessSpec[] = [];
+    let gatewayInstalled = false;
     const runner: ProcessRunner = {
       spawn: async (spec) => {
         calls.push(spec);
-        const isGatewayStatus = spec.command.includes("Omperator") && spec.args?.[1] === "status";
-        const isGatewayInstall = spec.command.includes("Omperator") && spec.args?.[1] === "install";
+        const isGatewayStatus = spec.command === GATEWAY && spec.args?.[1] === "status";
+        const isGatewayInstall = spec.command === GATEWAY && spec.args?.[1] === "install";
+        if (isGatewayInstall) gatewayInstalled = true;
         return {
           kill: () => {},
           result: Promise.resolve(isGatewayStatus
-            ? {
-                exitCode: 1,
-                signal: null,
-                stdout: [
-                  "definition: current",
-                  "supervisor: running",
-                  "health: healthy",
-                  "allowed origin: https://work-mac.example.ts.net:8445",
-                  "deployment identity: stale",
-                ].join("\n"),
-                stderr: "",
-                stdoutTruncated: false,
-                stderrTruncated: false,
-              }
-            : {
-                exitCode: isGatewayInstall ? 0 : 1,
-                signal: null,
-                stdout: "",
-                stderr: "",
-                stdoutTruncated: false,
-                stderrTruncated: false,
-              }),
+            ? gatewayInstalled
+              ? { exitCode: 0, signal: null, stdout: "health: healthy", stderr: "", stdoutTruncated: false, stderrTruncated: false }
+              : {
+                  exitCode: 1,
+                  signal: null,
+                  stdout: [
+                    "definition: current",
+                    "supervisor: running",
+                    "health: healthy",
+                    "allowed origin: https://wickrunner.com:8445",
+                    "deployment identity: stale",
+                  ].join("\n"),
+                  stderr: "",
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                }
+            : { exitCode: isGatewayInstall ? 0 : 1, signal: null, stdout: "", stderr: "", stdoutTruncated: false, stderrTruncated: false }),
         };
       },
     };
@@ -221,17 +201,17 @@ describe("phone setup", () => {
       platform: "darwin",
       arch: "arm64",
       resourcesPath,
-      electronExecutable: "/Applications/Omperator.app/Contents/MacOS/Omperator",
+      electronExecutable: GATEWAY,
       runner,
-      discoverTailscale: async () => { throw new Error("Tailscale is offline."); },
     });
 
     expect(await service.restore()).toEqual({
-      phase: "tailscale-required",
-      message: "Tailscale is offline.",
+      phase: "ready",
+      message: "Phone access is ready — open Omperator on your phone; it will find this computer automatically.",
+      url: "https://wickrunner.com:8445/",
     });
     const install = calls.find((call) => call.args?.[1] === "install");
-    expect(install?.args).toContain("https://work-mac.example.ts.net:8445");
+    expect(install?.args).toContain("https://wickrunner.com:8445/");
     expect(install?.args).toContain("--electron-run-as-node");
     expect(install?.args).toContain("--rendezvous-url");
     expect(install?.args).toContain("https://wickrunner.com:8445");
@@ -240,63 +220,55 @@ describe("phone setup", () => {
   });
 
   it("does not call phone access ready while the local OMP runtime is unreachable", async () => {
-    const resourcesPath = await mkdtemp(join(tmpdir(), "t4-phone-setup-offline-"));
-    await mkdir(join(resourcesPath, "runtime"));
-    await writeFile(join(resourcesPath, "runtime", "manifest.json"), '{"tag":"synthetic"}\n');
+    const resourcesPath = await setupResources();
+    stubPairCode(undefined);
     const runner: ProcessRunner = {
       spawn: async (spec) => ({
         kill: () => {},
-        result: Promise.resolve(spec.command === "/tailscale" && spec.args?.[0] === "status"
-          ? { exitCode: 0, signal: null, stdout: JSON.stringify({ Self: { DNSName: "work-mac.example.ts.net." } }), stderr: "", stdoutTruncated: false, stderrTruncated: false }
-          : spec.command === "/tailscale"
-            ? { exitCode: 0, signal: null, stdout: JSON.stringify({ TCP: { "8445": { HTTPS: true } }, Web: { "work-mac.example.ts.net:8445": { Handlers: { "/": { Proxy: "http://127.0.0.1:4194" } } } } }), stderr: "", stdoutTruncated: false, stderrTruncated: false }
-            : { exitCode: 1, signal: null, stdout: "health: unhealthy", stderr: "", stdoutTruncated: false, stderrTruncated: false }),
+        result: Promise.resolve(spec.command === GATEWAY && spec.args?.[1] === "status"
+          ? { exitCode: 0, signal: null, stdout: "health: unhealthy", stderr: "", stdoutTruncated: false, stderrTruncated: false }
+          : { exitCode: 1, signal: null, stdout: "", stderr: "not installed", stdoutTruncated: false, stderrTruncated: false }),
       }),
     };
     const service = new PhoneSetupService({
       platform: "darwin",
       arch: "arm64",
       resourcesPath,
-      electronExecutable: "/Applications/Omperator.app/Contents/MacOS/Omperator",
+      electronExecutable: GATEWAY,
       runner,
-      discoverTailscale: async () => "/tailscale",
     });
 
     expect(await service.inspect()).toEqual({
       phase: "error",
       message: "Phone access is installed, but the local OMP runtime is not ready. Open Hosts, restart the default OMP profile, then check again.",
-      url: "https://work-mac.example.ts.net:8445/",
+      url: "https://wickrunner.com:8445/",
     });
   });
 
-  it("keeps the old ready message when the gateway has no relay pairing endpoint", async () => {
-    vi.stubEnv("T4_RENDEZVOUS_URL", "");
-    const resourcesPath = await mkdtemp(join(tmpdir(), "t4-phone-setup-no-relay-"));
-    await mkdir(join(resourcesPath, "runtime"));
-    await writeFile(join(resourcesPath, "runtime", "manifest.json"), '{"tag":"synthetic"}\n');
-    stubPairCode(undefined);
+  it("rejects unsupported platforms before touching the gateway", async () => {
+    const resourcesPath = await setupResources();
+    const calls: ProcessSpec[] = [];
     const runner: ProcessRunner = {
-      spawn: async (spec) => ({
-        kill: () => {},
-        result: Promise.resolve(spec.command === "/tailscale" && spec.args?.[0] === "status"
-          ? { exitCode: 0, signal: null, stdout: JSON.stringify({ Self: { DNSName: "work-mac.example.ts.net." } }), stderr: "", stdoutTruncated: false, stderrTruncated: false }
-          : spec.command === "/tailscale"
-            ? { exitCode: 0, signal: null, stdout: JSON.stringify({ TCP: { "8445": { HTTPS: true } }, Web: { "work-mac.example.ts.net:8445": { Handlers: { "/": { Proxy: "http://127.0.0.1:4194" } } } } }), stderr: "", stdoutTruncated: false, stderrTruncated: false }
-            : { exitCode: 0, signal: null, stdout: "health: healthy", stderr: "", stdoutTruncated: false, stderrTruncated: false }),
-      }),
+      spawn: async (spec) => {
+        calls.push(spec);
+        return {
+          kill: () => {},
+          result: Promise.resolve({ exitCode: 0, signal: null, stdout: "ok", stderr: "", stdoutTruncated: false, stderrTruncated: false }),
+        };
+      },
     };
     const service = new PhoneSetupService({
-      platform: "darwin",
-      arch: "arm64",
+      platform: "linux",
+      arch: "x64",
       resourcesPath,
-      electronExecutable: "/Applications/Omperator.app/Contents/MacOS/Omperator",
+      electronExecutable: GATEWAY,
       runner,
-      discoverTailscale: async () => "/tailscale",
     });
 
-    const state = await service.inspect();
-    expect(state).toMatchObject({ phase: "ready", url: "https://work-mac.example.ts.net:8445/" });
-    expect(state.pairCode).toBeUndefined();
-    expect(state.message).toBe("Phone access is ready — open Omperator on your phone; it will find this computer automatically.");
+    expect(await service.inspect()).toEqual({
+      phase: "unsupported",
+      message: "One-click phone setup currently requires the Apple Silicon Mac app.",
+    });
+    expect(calls).toHaveLength(0);
   });
 });

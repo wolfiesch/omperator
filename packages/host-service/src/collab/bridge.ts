@@ -227,7 +227,7 @@ export async function readCollabLinkForTranscript(
 
 /**
  * Resolve the live room link for a session: the on-disk collab.json first
- * (with its freshness window), then the tailnet gateway push registry. Never
+ * (with its freshness window), then the gateway push registry. Never
  * throws; returns undefined when there is no live room anywhere.
  */
 export async function readCollabLink(

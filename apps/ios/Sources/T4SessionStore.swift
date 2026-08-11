@@ -1,9 +1,9 @@
 //  T4SessionStore.swift
-//  Authoritative session inventory for the native T4 Code iOS client. Replaces
-//  Enclave's collab-guest "rooms you've joined" model: this holds the real
-//  host-wire SessionRef inventory, grouped by project, and drives the rail from
-//  a HostClient connection. Seeded with sample data so the rail renders in the
-//  simulator without a live host; connect(endpoint:) swaps in a real t4-host.
+//  Authoritative session inventory for the native T4 Code iOS client. Holds
+//  the real host-wire SessionRef inventory, grouped by project, and drives
+//  the rail from a HostClient connection. Seeded with sample data so the
+//  rail renders in the simulator without a live host; connect(endpoint:)
+//  swaps in a real t4-host.
 
 import Foundation
 #if canImport(FoundationNetworking)
@@ -155,33 +155,6 @@ enum T4RailFilter: String, CaseIterable, Identifiable {
     }
 }
 
-/// One room served by the tailnet gateway's collab host (GET /v1/rooms —
-/// the /enclave plugin's room inventory). `sessionId` is the OMP session
-/// identity on the host (what the app keys transcripts by); `roomId` is the
-/// collab relay room the guest actually joins; `link` is the relay wss URL;
-/// `token` is the room write token, absent for un-locked rooms.
-struct CollabRoom: Decodable, Equatable, Sendable, Identifiable {
-    let sessionId: String
-    let title: String
-    let link: String
-    let token: String?
-    let roomId: String
-    let updatedAt: String
-
-    var id: String { sessionId }
-}
-
-/// The GET /v1/rooms response envelope.
-private struct CollabRoomsResponse: Decodable {
-    let rooms: [CollabRoom]
-}
-
-/// The host gateway's GET /v1/discovery response: the host-wire wsUrl the
-/// client connects to through the gateway.
-private struct GatewayDiscoveryResponse: Decodable {
-    let wsUrl: String
-}
-
 @MainActor
 final class T4SessionStore: ObservableObject {
     let connectionModel = T4ConnectionInventoryModel()
@@ -313,7 +286,7 @@ final class T4SessionStore: ObservableObject {
         }
     }
     /// Human-readable endpoint the store is currently paired/connected to
-    /// (e.g. "ws://macbookpro.my-tailnet.ts.net:8787/v1/ws"), for UI display.
+    /// (e.g. "wss://host:8788/v1/ws"), for UI display.
     private(set) var pairedEndpoint: String? {
         get { connectionModel.pairedEndpoint }
         set { connectionModel.pairedEndpoint = newValue }
@@ -573,7 +546,7 @@ final class T4SessionStore: ObservableObject {
     var client: HostClient?
     var hostId: String = ""
     /// The rendezvous hostId of the host this store is connected to through
-    /// the public (relay) control plane; nil for tailnet/endpoint connects.
+    /// the public (relay) control plane; nil for direct endpoint connects.
     /// Scopes the saved-relay-link cleanup on explicit disconnect.
     private var connectedRelayHostId: String?
     private var streamingTasks: [String: Task<Void, Never>] = [:]
@@ -597,11 +570,6 @@ final class T4SessionStore: ObservableObject {
     // Keychain.swift). The account names are reused as the legacy
     // UserDefaults keys so the one-time migration maps 1:1.
     private static let savedEndpointKey = "t4.endpoint"
-    /// Saved tailnet gateway for the plug-and-play collab path. When present,
-    /// restore() prefers it over the legacy host-wire endpoint: the collab
-    /// world has no ownership machinery, no PIN, and no clones.
-    private static let savedCollabGatewayKey = "t4.collabGateway"
-    private static let savedCollabNameKey = "t4.collabName"
     private static let savedDeviceIdKey = "t4.deviceId"
     private static let savedDeviceTokenKey = "t4.deviceToken"
     private static let railListViewKey = "t4.rail.listView"
@@ -977,9 +945,7 @@ final class T4SessionStore: ObservableObject {
         }
         // Linux QA seam: -T4OpenEndpoint=<ws://…> connects to an open host
         // without device credentials (welcome.authentication == .local) — the
-        // raw-endpoint connect-sheet path for open hosts. The Tailnet
-        // gateway's local transport rejects device authentication, so this is
-        // how the Linux client reaches a gateway-backed host from the CLI.
+        // raw-endpoint connect-sheet path for open hosts.
         #if os(Linux)
         if let openSeam = arguments.first(where: { $0.hasPrefix("-T4OpenEndpoint=") }),
            let endpoint = URL(string: String(openSeam.dropFirst("-T4OpenEndpoint=".count))),
@@ -1206,18 +1172,11 @@ final class T4SessionStore: ObservableObject {
     /// Answer the pending host ask (session.ui.respond {requestId, value}),
     /// then clear it. The host clears the ask with an `ask.resolved` event,
     /// but we clear optimistically so the banner dismisses immediately.
-    /// In collab mode the answer goes to the pending ui-request's reqId.
     func respondAsk(value: String) async {
         guard let ask = pendingAsk else { return }
         let askId = ask.request.askId
         let sessionId = ask.sessionId
         pendingAsk = nil
-        if collabMode, openCollabSessionId == sessionId,
-           let guest = activeCollabGuest,
-           let pending = collabPendingRequestBySession.removeValue(forKey: sessionId) {
-            await guest.sendUiResponse(reqId: pending.reqId, value: value)
-            return
-        }
         _ = await control(sessionId: sessionId, command: "session.ui.respond",
                           args: ["requestId": .string(askId), "value": .string(value)])
     }
@@ -1321,23 +1280,9 @@ final class T4SessionStore: ObservableObject {
         return succeeded
     }
 
-    /// Answer the pending confirmation challenge (approve/deny). In collab
-    /// mode the decision answers the pending ui-request through the guest
-    /// (the enclave plugin maps approve → first option or "approve", deny →
-    /// "reject").
+    /// Answer the pending confirmation challenge (approve/deny).
     func confirm(_ decision: ConfirmDecision) async {
         guard let challenge = pendingConfirmation else { return }
-        let sessionId = challenge.sessionId ?? ""
-        if collabMode, openCollabSessionId == sessionId,
-           let guest = activeCollabGuest,
-           let pending = collabPendingRequestBySession.removeValue(forKey: sessionId) {
-            pendingConfirmation = nil
-            let value = decision == .approve
-                ? (pending.options.first ?? "approve")
-                : "reject"
-            await guest.sendUiResponse(reqId: pending.reqId, value: value)
-            return
-        }
         guard let client else { return }
         pendingConfirmation = nil
         do {
@@ -1352,16 +1297,7 @@ final class T4SessionStore: ObservableObject {
     /// Send a user prompt to a session (session.prompt), uploading any images
     /// first (session.image.begin/chunk → imageId refs). No-op with a clear
     /// error when not connected — the composer is disabled in that state.
-    /// In collab mode the prompt goes to the open room's guest connection.
     func sendPrompt(sessionId: String, text: String, images: [Data] = []) async {
-        if collabMode {
-            guard openCollabSessionId == sessionId, let guest = activeCollabGuest else {
-                lastError = "No collab room is open."
-                return
-            }
-            await guest.sendPrompt(text)
-            return
-        }
         guard let client, connected, !hostId.isEmpty else {
             lastError = "Not connected to a host."
             return
@@ -1391,13 +1327,8 @@ final class T4SessionStore: ObservableObject {
         }
     }
 
-    /// Interrupt a running turn (session.cancel). In collab mode, abort the
-    /// open room's guest turn instead.
+    /// Interrupt a running turn (session.cancel).
     func cancel(sessionId: String) async {
-        if collabMode, openCollabSessionId == sessionId, let guest = activeCollabGuest {
-            await guest.sendAbort()
-            return
-        }
         guard let client, connected, !hostId.isEmpty else { return }
         await withLease(sessionId: sessionId, kind: .controller) { leaseId in
             do {
@@ -2225,37 +2156,6 @@ final class T4SessionStore: ObservableObject {
         }
     }
 
-    /// Connect to a computer picked from rendezvous discovery. The host's
-    /// gateway serves the host-wire wsUrl at GET {origin}/v1/discovery;
-    /// connecting through the gateway with an empty code is owner
-    /// auto-approval — the welcome is .local, so no pairing round-trip
-    /// happens. Discovery failures land in lastError; the Advanced
-    /// (endpoint/pair) path remains the fallback.
-    func connectDiscoveryHost(_ host: T4DiscoveryHost, name: String) async {
-        let endpoint: URL
-        do {
-            var request = URLRequest(url: host.origin.appendingPathComponent("v1/discovery"))
-            request.timeoutInterval = 15
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                throw T4WireError.invalidFrame(
-                    path: "v1/discovery",
-                    reason: "HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)"
-                )
-            }
-            let wsUrlString = try JSONDecoder().decode(GatewayDiscoveryResponse.self, from: data).wsUrl
-            guard let url = URL(string: wsUrlString) else {
-                throw T4WireError.invalidFrame(path: "wsUrl", reason: "unparseable wsUrl")
-            }
-            endpoint = url
-        } catch {
-            lastError = "Couldn't reach \(host.label): \(error)"
-            return
-        }
-        await pairAndConnect(endpoint: endpoint, code: "", deviceName: name)
-    }
-
     /// Connect to a computer through the public (rendezvous) control plane.
     ///
     /// With a `code`, the one-time pairing code is redeemed at
@@ -2705,8 +2605,8 @@ final class T4SessionStore: ObservableObject {
     }
 
     /// Cancel in-flight streaming projections and drop per-session transcript/
-    /// terminal buffers. Shared by disconnect() and connectCollab() so neither
-    /// mode inherits the other's projection state.
+    /// terminal buffers. Shared by disconnect() so no reconnect inherits the
+    /// previous connection's projection state.
     private func resetTranscriptProjections() {
         for task in streamingTasks.values { task.cancel() }
         streamingTasks.removeAll()
@@ -2727,25 +2627,6 @@ final class T4SessionStore: ObservableObject {
     }
 
     func disconnect() async {
-        await closeCollabRoom()
-        if collabMode {
-            // Exiting collab drops the guest inventory and the saved gateway
-            // (the user chose to disconnect from this host).
-            collabRooms = []
-            collabMode = false
-            collabGatewayURL = nil
-            UserDefaults.standard.removeObject(forKey: Self.savedCollabGatewayKey)
-            UserDefaults.standard.removeObject(forKey: Self.savedCollabNameKey)
-            collabModels = []
-            collabCurrentModel = nil
-            collabPendingRequestBySession.removeAll()
-            pendingAsk = nil
-            pendingConfirmation = nil
-            connected = false
-            pairedEndpoint = nil
-            hasLiveInventory = false
-            return
-        }
         await client?.close()
         client = nil
         connected = false
@@ -2766,623 +2647,6 @@ final class T4SessionStore: ObservableObject {
         // Explicit disconnect forgets the host, so the auto-rc "return here"
         // memory goes with it (restore() has no endpoint to reconnect to).
         UserDefaults.standard.removeObject(forKey: Self.lastSessionIdKey)
-    }
-
-    // MARK: - Collab guest mode
-    // The tailnet gateway's collab host (the /enclave plugin) serves the
-    // rooms this device has joined. connectCollab(gatewayURL:name:) discovers
-    // them via GET <gateway>/v1/rooms and swaps the rail inventory to the
-    // rooms; openCollabRoom(sessionId:) joins one as a collab guest and routes
-    // its frames into the same transcript projection host-wire uses
-    // (appendDurableEntry, the streaming buffers, the live tool projection,
-    // and the ask/confirmation surfaces). Host-wire mode stays fully intact —
-    // collab is an additive entry point.
-
-    /// Rooms discovered from the gateway — the source of truth for each
-    /// room's link/token/roomId. `sessions` mirrors them as SessionRefs so
-    /// the existing rail renders them unchanged.
-    @Published private(set) var collabRooms: [CollabRoom] = []
-    /// True while the store is in collab-guest mode (rooms instead of a
-    /// direct host-wire connection).
-    @Published private(set) var collabMode = false
-    /// The gateway URL the current collab inventory came from, if any.
-    private(set) var collabGatewayURL: URL?
-    /// The open room's guest connection (one at a time); nil when no room is
-    /// open. In collab mode, sends route through it.
-    private(set) var activeCollabGuest: T4CollabGuest?
-    /// sessionId of the currently open collab room, if any.
-    private(set) var openCollabSessionId: String?
-    /// Frame-consumption task for the active guest; cancelled on close.
-    private var collabTask: Task<Void, Never>?
-    /// Guest hello name (the device name shown to other participants).
-    private var collabGuestName = platformClientName
-    /// Pending collab ui-request routing: sessionId → (reqId, options), so
-    /// the existing confirm/ask surfaces answer through the guest with the
-    /// value the enclave plugin expects (approve → first option or "approve",
-    /// deny → "reject", select → the option id, editor → the typed text).
-    private var collabPendingRequestBySession: [String: (reqId: Int, options: [String])] = [:]
-    /// Model ids the enclave plugin advertises (enclave-caps), if any.
-    private(set) var collabModels: [String] = []
-    /// The enclave's current model id (enclave-caps / state), if advertised.
-    private(set) var collabCurrentModel: String?
-
-    private static let collabHostId = "collab"
-    private static let collabProjectId = "collab"
-    private static let collabProjectName = "Collab"
-
-    /// Discover the gateway's collab rooms and enter collab mode: the rail
-    /// inventory becomes the rooms and the workspace flips to the live view.
-    /// Any live host-wire connection is closed first (the modes share the
-    /// rail); saved host-wire credentials are left untouched.
-    func connectCollab(gatewayURL: URL, name: String) async {
-        guard !connecting else { return }
-        connecting = true
-        defer { connecting = false }
-        collabGatewayURL = gatewayURL
-        collabGuestName = name
-        do {
-            let rooms = try await fetchCollabRooms(gatewayURL: gatewayURL)
-            // Close any prior host-wire connection so its pushes can't
-            // overwrite the collab inventory.
-            if client != nil || !attachedSessions.isEmpty {
-                await client?.close()
-                client = nil
-                attachedSessions.removeAll()
-                grantedCapabilities = []
-                grantedFeatures = []
-                hostInfo = nil
-                resetTranscriptProjections()
-            }
-            collabRooms = rooms
-            sessions = sessionRefs(from: rooms)
-            collabMode = true
-            connected = true
-            pairedEndpoint = gatewayURL.absoluteString
-            UserDefaults.standard.set(gatewayURL.absoluteString, forKey: Self.savedCollabGatewayKey)
-            UserDefaults.standard.set(name, forKey: Self.savedCollabNameKey)
-            markLive()
-            clearErrorAfterSuccessfulConnection()
-            reconcileSelection()
-        } catch {
-            collabRooms = []
-            sessions = []
-            collabMode = false
-            connected = false
-            pairedEndpoint = nil
-            lastError = "Gateway unavailable: \(error)"
-        }
-    }
-
-    /// GET <gateway>/v1/rooms → {rooms: [{sessionId,title,link,token?,
-    /// roomId,updatedAt}]}. The gateway serves the rooms the tailnet user has
-    /// joined (collab.json); un-locked rooms omit `token`.
-    private func fetchCollabRooms(gatewayURL: URL) async throws -> [CollabRoom] {
-        var request = URLRequest(url: gatewayURL.appendingPathComponent("v1/rooms"))
-        request.timeoutInterval = 15
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw T4WireError.invalidFrame(path: "v1/rooms", reason: "non-HTTP response")
-        }
-        guard http.statusCode == 200 else {
-            throw T4WireError.invalidFrame(path: "v1/rooms", reason: "HTTP \(http.statusCode)")
-        }
-        return try JSONDecoder().decode(CollabRoomsResponse.self, from: data).rooms
-    }
-
-    /// Build the rail inventory (SessionRefs) from the discovered rooms. The
-    /// rooms map 1:1 onto the fields the rail reads (title, project, status,
-    /// updatedAt); link/token/roomId stay on CollabRoom for the guest
-    /// connection. SessionRef has no public memberwise init, so each ref is
-    /// decoded from a minimal JSON shape — the same pattern the sample
-    /// inventory uses.
-    private func sessionRefs(from rooms: [CollabRoom]) -> [SessionRef] {
-        rooms.compactMap { room in
-            let json: [String: Any] = [
-                "hostId": Self.collabHostId,
-                "sessionId": room.sessionId,
-                "project": [
-                    "projectId": Self.collabProjectId,
-                    "name": Self.collabProjectName,
-                ],
-                "revision": "1",
-                "title": room.title,
-                "status": "idle",
-                "updatedAt": room.updatedAt,
-            ]
-            guard let data = try? JSONSerialization.data(withJSONObject: json),
-                  let ref = try? JSONDecoder().decode(SessionRef.self, from: data)
-            else { return nil }
-            return ref
-        }
-    }
-
-    /// Open the room for a session if collab mode is active and the room
-    /// isn't already the open one. The detail view calls this on appear, so
-    /// a rail tap (or auto-select) joins the room without extra plumbing.
-    func openCollabRoomIfNeeded(sessionId: String) async {
-        guard collabMode,
-              collabRooms.contains(where: { $0.sessionId == sessionId }) else { return }
-        if openCollabSessionId == sessionId { return }
-        await openCollabRoom(sessionId: sessionId)
-    }
-
-    /// Join a discovered collab room as a guest: open the relay connection,
-    /// consume its frames into the existing transcript projection, and route
-    /// sends (prompt/abort/ui-response) through the guest. Closes any
-    /// previously open room first — one guest connection at a time.
-    func openCollabRoom(sessionId: String) async {
-        guard collabMode,
-              let room = collabRooms.first(where: { $0.sessionId == sessionId }) else { return }
-        await closeCollabRoom()
-        let guest = T4CollabGuest(link: room.link, token: room.token, name: collabGuestName)
-        activeCollabGuest = guest
-        openCollabSessionId = sessionId
-        // Fresh projection for the room: the welcome + snapshot replay the
-        // full history, exactly like a host-wire session.attach snapshot.
-        clearStreamingMessage(sessionId: sessionId)
-        clearLiveTurn(sessionId: sessionId)
-        liveEntries.removeValue(forKey: sessionId)
-        pendingTranscriptEntries.removeValue(forKey: sessionId)
-        liveTools.removeValue(forKey: sessionId)
-        toolStreamingTasks.removeValue(forKey: sessionId)?.cancel()
-        connected = true
-        collabTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            for await frame in await guest.frames {
-                guard self.openCollabSessionId == sessionId else { return }
-                self.handleCollabFrame(frame, sessionId: sessionId)
-            }
-            // The stream finished (terminal bye/error or the room closed).
-            self.markCollabDisconnected(sessionId: sessionId)
-        }
-        await guest.start()
-    }
-
-    /// Close the open collab room, if any. Idempotent.
-    func closeCollabRoom() async {
-        openCollabSessionId = nil
-        collabTask?.cancel()
-        collabTask = nil
-        if let guest = activeCollabGuest {
-            activeCollabGuest = nil
-            await guest.close()
-        }
-        collabPendingRequestBySession.removeAll()
-        pendingAsk = nil
-        pendingConfirmation = nil
-        if collabMode { connected = false }
-    }
-
-    /// Drop the open room's connection state after a terminal bye/error.
-    /// The inventory (rooms) stays — only the live guest is gone.
-    private func markCollabDisconnected(sessionId: String, reason: String? = nil) {
-        guard openCollabSessionId == sessionId else { return }
-        activeCollabGuest = nil
-        openCollabSessionId = nil
-        collabTask = nil
-        collabPendingRequestBySession.removeValue(forKey: sessionId)
-        pendingAsk = nil
-        pendingConfirmation = nil
-        activeTurns.remove(sessionId)
-        // The room is gone (bye/error/close); a dead guest must not leave the
-        // app showing "Live" with a composer that silently no-ops.
-        connected = false
-        if let reason, !reason.isEmpty {
-            lastError = reason
-        }
-    }
-
-    /// Route one collab frame into the app's transcript projection.
-    private func handleCollabFrame(_ frame: T4CollabFrame, sessionId: String) {
-        switch frame {
-        case .welcome:
-            // Welcome resets the snapshot — mirror the host-wire snapshot
-            // handling by dropping any projection state for the session.
-            clearStreamingMessage(sessionId: sessionId)
-            clearLiveTurn(sessionId: sessionId)
-            liveEntries.removeValue(forKey: sessionId)
-            pendingTranscriptEntries.removeValue(forKey: sessionId)
-            liveTools.removeValue(forKey: sessionId)
-            toolStreamingTasks.removeValue(forKey: sessionId)?.cancel()
-            connected = true
-
-        case .snapshotChunk(let entries, _):
-            for entry in entries {
-                ingestCollabEntry(entry, sessionId: sessionId)
-            }
-
-        case .entry(let entry):
-            ingestCollabEntry(entry, sessionId: sessionId)
-
-        case .event(let event):
-            handleCollabEvent(event, sessionId: sessionId)
-
-        case .state(let isStreaming, let modelId, _):
-            connected = true
-            if isStreaming { activeTurns.insert(sessionId) }
-            else { activeTurns.remove(sessionId) }
-            if let modelId, !modelId.isEmpty { collabCurrentModel = modelId }
-
-        case .enclaveCaps(let models, _, let current):
-            collabModels = models
-            collabCurrentModel = current
-
-        case .enclaveResult(let ok, let message, let reqId):
-            // Resolve any pending control keyed to that request.
-            if let reqId, collabPendingRequestBySession[sessionId]?.reqId == reqId {
-                collabPendingRequestBySession.removeValue(forKey: sessionId)
-                pendingAsk = nil
-                pendingConfirmation = nil
-            }
-            if !ok, let message, !message.isEmpty {
-                lastError = message
-            }
-
-        case .uiRequest(let reqId, let kind, let title, let options, let helpText, let prefill):
-            surfaceCollabRequest(
-                reqId: reqId, kind: kind, title: title, options: options,
-                helpText: helpText, prefill: prefill, sessionId: sessionId)
-
-        case .error(let message):
-            t4log.error("collab error: \(message, privacy: .public)")
-            lastError = message
-            markCollabDisconnected(sessionId: sessionId)
-
-        case .bye(let reason):
-            markCollabDisconnected(sessionId: sessionId, reason: reason)
-        }
-    }
-
-    /// Map a collab wire entry onto the app's durable entries and append
-    /// them through the same deferred pipeline host-wire entries use, so
-    /// settled rows wait for the live streaming/tool projections to finish
-    /// revealing (no double render).
-    private func ingestCollabEntry(_ entry: T4CollabWireEntry, sessionId: String) {
-        for mapped in collabDurableEntries(from: entry, sessionId: sessionId) {
-            if shouldDeferTranscriptEntry(mapped, sessionId: sessionId) {
-                enqueuePendingTranscriptEntry(mapped, sessionId: sessionId)
-                finishPendingTranscriptEntries(sessionId: sessionId)
-            } else {
-                appendDurableEntry(mapped, sessionId: sessionId)
-                settleLiveProjection(for: mapped, sessionId: sessionId)
-            }
-        }
-    }
-
-    /// Map one collab wire entry onto the app's DurableEntry JSON shape.
-    /// message entries → kind "message" with {role,text,reasoning};
-    /// toolResult messages → kind "tool-use" (the app renders tool cards
-    /// from it, keyed by toolCallId so the live projection settles it);
-    /// custom_message → a message row with the customType headline;
-    /// compaction → the compaction row. A single wire entry can map to
-    /// several durable entries; ids are suffixed to stay unique.
-    private func collabDurableEntries(from entry: T4CollabWireEntry, sessionId: String) -> [TranscriptEntry] {
-        switch entry.type {
-        case "message":
-            guard let message = entry.message, let role = message.role else { return [] }
-            switch role {
-            case "user", "developer", "assistant":
-                let (text, reasoning) = collabMessageText(message.content)
-                let data: JSONValue = .object([
-                    "role": .string(role),
-                    "text": .string(text),
-                    "reasoning": .string(reasoning),
-                ])
-                return collabTranscriptEntry(
-                    id: entry.id, parentId: entry.parentId, sessionId: sessionId,
-                    kind: "message", timestamp: entry.timestamp, data: data
-                ).map { [$0] } ?? []
-
-            case "toolResult":
-                let toolName = message.toolName ?? collabToolResultName(message.content)
-                let callId = message.toolCallId ?? collabToolResultCallId(message.content)
-                let isError = message.isError ?? collabToolResultIsError(message.content)
-                let output = collabToolResultText(message.content)
-                let data: JSONValue = .object([
-                    "tool": .string(toolName),
-                    "title": .string(toolName),
-                    "toolCallId": .string(callId),
-                    "result": .object(["output": .string(output)]),
-                    "ok": .bool(!isError),
-                ])
-                return collabTranscriptEntry(
-                    id: "\(entry.id):tool", parentId: entry.parentId, sessionId: sessionId,
-                    kind: "tool-use", timestamp: entry.timestamp, data: data
-                ).map { [$0] } ?? []
-
-            default:
-                return []
-            }
-
-        case "custom_message":
-            let customType = entry.customType ?? "custom_message"
-            let text = collabCustomMessageText(entry.message?.content)
-            // Metadata-only entries (tool execution markers, session events)
-            // have no readable text — drop them entirely.
-            guard !text.isEmpty else { return [] }
-            let data: JSONValue = .object([
-                "role": .string("assistant"),
-                "customType": .string(customType),
-                "text": .string(text),
-            ])
-            return collabTranscriptEntry(
-                id: entry.id, parentId: entry.parentId, sessionId: sessionId,
-                kind: "message", timestamp: entry.timestamp, data: data
-            ).map { [$0] } ?? []
-
-        case "compaction":
-            let summary = entry.summary ?? ""
-            let data: JSONValue = .object(["summary": .string(summary)])
-            return collabTranscriptEntry(
-                id: entry.id, parentId: entry.parentId, sessionId: sessionId,
-                kind: "compaction", timestamp: entry.timestamp, data: data
-            ).map { [$0] } ?? []
-
-        default:
-            // session / branch_summary / unknown: no durable row.
-            return []
-        }
-    }
-
-    /// Decode a durable entry from the app's JSON shape and wrap it.
-    private func collabTranscriptEntry(
-        id: String, parentId: String?, sessionId: String, kind: String,
-        timestamp: String, data: JSONValue
-    ) -> TranscriptEntry? {
-        var fields: [String: JSONValue] = [
-            "id": .string(id),
-            "hostId": .string(Self.collabHostId),
-            "sessionId": .string(sessionId),
-            "kind": .string(kind),
-            "timestamp": .string(timestamp),
-            "data": data,
-        ]
-        if let parentId { fields["parentId"] = .string(parentId) }
-        guard let encoded = try? JSONEncoder().encode(fields),
-              let entry = try? JSONDecoder().decode(DurableEntry.self, from: encoded)
-        else { return nil }
-        return TranscriptEntry(from: entry)
-    }
-
-    /// Extract text/thinking from a collab message: a plain string, or an
-    /// array of {type:"text"|"thinking"|…} blocks. Text blocks → text,
-    /// thinking blocks → reasoning (the app's message data shape).
-    private func collabMessageText(_ content: JSONValue?) -> (text: String, reasoning: String) {
-        guard let content else { return ("", "") }
-        if case .string(let text) = content { return (text, "") }
-        guard case .array(let blocks) = content else { return ("", "") }
-        var text: [String] = []
-        var reasoning: [String] = []
-        for block in blocks {
-            guard case .object(let b) = block else { continue }
-            switch b["type"] {
-            case .string("text"):
-                if case .string(let value) = b["text"] { text.append(value) }
-            case .string("thinking"):
-                if case .string(let value) = b["thinking"] { reasoning.append(value) }
-            default:
-                break
-            }
-        }
-        return (text.joined(separator: "\n"), reasoning.joined(separator: "\n"))
-    }
-
-    /// toolResult content: {toolCallId, toolName, content, isError}. The
-    /// tool name, call id, and error flag live beside the content blocks.
-    private func collabToolResultName(_ content: JSONValue?) -> String {
-        guard let content else { return "tool" }
-        if let name = content.string("toolName"), !name.isEmpty { return name }
-        return "tool"
-    }
-
-    private func collabToolResultCallId(_ content: JSONValue?) -> String {
-        content?.string("toolCallId") ?? ""
-    }
-
-    private func collabToolResultIsError(_ content: JSONValue?) -> Bool {
-        content?.bool("isError") ?? false
-    }
-
-    /// The tool result's readable output — Enclave `contentString` semantics:
-    /// a plain string, or the `text` blocks of a content array, joined.
-    /// Anything else yields "" (never a raw JSON dump).
-    private func collabToolResultText(_ content: JSONValue?) -> String {
-        guard let content else { return "" }
-        if case .string(let text) = content { return text }
-        if case .array(let blocks) = content { return collabBlocksText(blocks) }
-        if let blocks = content.array("content") { return collabBlocksText(blocks) }
-        return ""
-    }
-
-    /// Flatten one provider content-block array into readable text.
-    private func collabBlocksText(_ blocks: [JSONValue]) -> String {
-        var parts: [String] = []
-        for block in blocks {
-            guard case .object(let b) = block else { continue }
-            switch b["type"] {
-            case .string("text"):
-                if case .string(let text) = b["text"] { parts.append(text) }
-                else if case .array(let texts)? = b["text"] {
-                    for item in texts { if case .string(let text) = item { parts.append(text) } }
-                }
-            case .string("json"), .string("json_object"):
-                // Structured payload: keep any prose it carries, never dump.
-                if case .string(let text) = b["text"] { parts.append(text) }
-            default:
-                if case .string(let text) = b["text"] { parts.append(text) }
-                else if case .string(let value) = b["content"] { parts.append(value) }
-                else if case .array(let values)? = b["content"] {
-                    for item in values { if case .string(let text) = item { parts.append(text) } }
-                }
-            }
-        }
-        return parts.joined(separator: "\n")
-    }
-
-    /// custom_message content → a renderable string. Metadata-only entries
-    /// (tool_execution_start/end, session_exit) yield "" and are dropped —
-    /// they are never shown as raw JSON.
-    private func collabCustomMessageText(_ content: JSONValue?) -> String {
-        guard let content else { return "" }
-        if case .string(let text) = content { return text }
-        if case .object(let o) = content {
-            if case .string(let text) = o["text"] ?? .null, !text.isEmpty { return text }
-        }
-        if case .array(let blocks) = content {
-            var parts: [String] = []
-            for block in blocks {
-                guard case .object(let b) = block else { continue }
-                if case .string("text") = b["type"], case .string(let text) = b["text"] {
-                    parts.append(text)
-                }
-            }
-            return parts.joined(separator: "\n")
-        }
-        return ""
-    }
-
-    /// Route a collab event into the live projection: assistant
-    /// message_update → the streaming buffer; tool_execution_* → the live
-    /// tool projection; turn_start/end → activeTurns; notice → errors.
-    private func handleCollabEvent(_ event: T4CollabEvent, sessionId: String) {
-        switch event.type {
-        case "turn_start", "agent_start":
-            activeTurns.insert(sessionId)
-
-        case "turn_end", "agent_end":
-            activeTurns.remove(sessionId)
-
-        case "message_update":
-            // In-flight assistant content — the same path host-wire's
-            // message.update events take.
-            guard case .object(let m) = event.message,
-                  case .string(let role) = m["role"], role == "assistant" else { return }
-            let (text, reasoning) = collabMessageText(m["content"])
-            receiveStreamingMessage(sessionId: sessionId, text: text, reasoning: reasoning)
-
-        case "message_start", "message_end":
-            // Settled content arrives as durable entries.
-            break
-
-        case "tool_execution_start":
-            collabToolEvent(sessionId: sessionId, type: "tool.start", event: event)
-
-        case "tool_execution_update":
-            collabToolEvent(sessionId: sessionId, type: "tool.progress", event: event)
-
-        case "tool_execution_end":
-            collabToolEvent(sessionId: sessionId, type: "tool.result", event: event)
-
-        case "notice":
-            // T4CollabEvent.message is a string for notice events.
-            if event.level == "error", let message = event.message,
-               case .string(let text) = message, !text.isEmpty {
-                lastError = text
-            }
-
-        case "thinking_level_changed":
-            break
-
-        default:
-            break
-        }
-    }
-
-    /// Translate a collab tool_execution event into the SessionEvent shape
-    /// the app's live tool projection understands. SessionEvent has no
-    /// public init, so the event is decoded from the same JSON envelope the
-    /// host-wire fixture seam uses (see streamingProofEvent).
-    private func collabToolEvent(sessionId: String, type: String, event: T4CollabEvent) {
-        guard let callId = event.toolCallId, !callId.isEmpty else { return }
-        var fields: [String: JSONValue] = [
-            "type": .string(type),
-            "callId": .string(callId),
-        ]
-        if let toolName = event.toolName, !toolName.isEmpty {
-            fields["tool"] = .string(toolName)
-        }
-        switch type {
-        case "tool.start":
-            if let args = event.args { fields["args"] = args }
-        case "tool.progress":
-            if let partial = event.args {
-                if case .string(let chunk) = partial { fields["chunk"] = .string(chunk) }
-                else if let data = try? JSONEncoder().encode(partial),
-                        let json = String(data: data, encoding: .utf8) {
-                    fields["note"] = .string(json)
-                }
-            }
-        case "tool.result":
-            if let result = event.result { fields["result"] = result }
-        default:
-            return
-        }
-        let frame: JSONValue = .object([
-            "v": .string("omp-app/1"),
-            "type": .string("event"),
-            "cursor": .object(["epoch": .string("collab"), "seq": .number(0)]),
-            "hostId": .string(Self.collabHostId),
-            "sessionId": .string(sessionId),
-            "event": .object(fields),
-        ])
-        guard let data = try? JSONEncoder().encode(frame),
-              case .event(let decoded) = try? ServerFrame.decode(data) else { return }
-        receiveToolEvent(sessionId: sessionId, event: decoded.event)
-    }
-
-    /// Surface a collab ui-request through the existing ask/approval UI.
-    /// Plan requests use the approve-deny banner (the plugin maps approve →
-    /// first option or "approve", deny → "reject"); select/editor requests
-    /// use the ask card (option tap or free text).
-    private func surfaceCollabRequest(
-        reqId: Int, kind: String, title: String, options: [String]?,
-        helpText: String?, prefill: String?, sessionId: String
-    ) {
-        let requestOptions = options ?? []
-        collabPendingRequestBySession[sessionId] = (reqId: reqId, options: requestOptions)
-        let promptText = [title, helpText]
-            .compactMap { $0.flatMap { $0.isEmpty ? nil : $0 } }
-            .joined(separator: "\n")
-        if kind == "plan" {
-            pendingConfirmation = collabConfirmationChallenge(
-                reqId: reqId, sessionId: sessionId,
-                summary: promptText.isEmpty ? "Approve this plan?" : promptText)
-        } else {
-            let question: String? = {
-                if !promptText.isEmpty { return promptText }
-                if let prefill, !prefill.isEmpty { return prefill }
-                return nil
-            }()
-            pendingAsk = PendingAsk(
-                sessionId: sessionId,
-                request: AskRequest(
-                    askId: "collab-\(reqId)",
-                    question: question,
-                    options: requestOptions.map { AskOption(id: $0, label: $0) }
-                )
-            )
-        }
-    }
-
-    /// Build a confirmation challenge for a collab plan/approval request.
-    /// ConfirmationChallenge has no public memberwise init, so it is decoded
-    /// from the minimal wire shape (same pattern as the sample inventory).
-    private func collabConfirmationChallenge(reqId: Int, sessionId: String, summary: String) -> ConfirmationChallenge? {
-        let json: [String: Any] = [
-            "v": "omp-app/1",
-            "type": "confirmation",
-            "confirmationId": "collab-\(reqId)",
-            "commandId": "collab-\(reqId)",
-            "hostId": Self.collabHostId,
-            "sessionId": sessionId,
-            "commandHash": "collab",
-            "revision": "1",
-            "expiresAt": "2099-01-01T00:00:00Z",
-            "summary": summary,
-        ]
-        guard let data = try? JSONSerialization.data(withJSONObject: json) else { return nil }
-        return try? JSONDecoder().decode(ConfirmationChallenge.self, from: data)
     }
 
     // MARK: - Sample inventory (simulator preview without a live host)

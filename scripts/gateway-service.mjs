@@ -74,7 +74,7 @@ function platformName(platform) {
 // Kept dependency-free so `status` and `uninstall` still work if a checkout's
 // package install is damaged. The gateway enforces the same policy at startup.
 function normalizeServiceOrigin(value) {
-  const text = cleanText(value, "Tailnet HTTPS origin", 2_048);
+  const text = cleanText(value, "HTTPS origin", 2_048);
   let url;
   try {
     url = new URL(text);
@@ -87,10 +87,9 @@ function normalizeServiceOrigin(value) {
     url.password !== "" ||
     url.pathname !== "/" ||
     url.search !== "" ||
-    url.hash !== "" ||
-    !url.hostname.endsWith(".ts.net")
+    url.hash !== ""
   ) {
-    fail("T4_ALLOWED_ORIGIN must be a Tailscale HTTPS origin ending in .ts.net");
+    fail("T4_ALLOWED_ORIGIN must be a plain HTTPS origin");
   }
   return url.origin;
 }
@@ -655,18 +654,18 @@ function usage() {
   return `Omperator Tailnet gateway service
 
 Usage:
-  node scripts/tailnet-service.mjs install --origin https://HOST.TAILNET.ts.net[:PORT] [options]
-  node scripts/tailnet-service.mjs start|stop|restart|status|uninstall
+  node scripts/gateway-service.mjs install --origin https://wickrunner.com [options]
+  node scripts/gateway-service.mjs start|stop|restart|status|uninstall
 
 Install options:
-  --origin URL          Exact Tailscale HTTPS origin (required)
+  --origin URL          Exact public HTTPS origin (required)
   --port PORT           Loopback gateway port (default: 4194)
   --web-root PATH       Built T4 web directory (default: apps/web/dist)
   --app-socket PATH     OMP appserver Unix socket
   --profile-routes JSON Static named-profile route array
   --start-profiles       Allow configured named profiles to start on demand
   --label TEXT          Host label shown by Omperator
-  --host-dns-name NAME  MagicDNS name served by /v1/discovery (default: resolved from tailscale)
+  --host-dns-name NAME  Hostname served by /v1/discovery (default: machine hostname)
   --rendezvous-url URL  Public rendezvous base URL this gateway announces to for
                         zero-typing phone discovery (https; http allowed on loopback)
   --relay-url URL       Public relay URL for the E2E control-plane adapter
@@ -677,7 +676,7 @@ Install options:
                         Run the gateway with Electron's bundled Node runtime
   --defer-start         Install the definition durably disabled and stopped
 
-This manages only the loopback gateway service. Configure Tailscale Serve separately.
+This manages only the loopback gateway service.
 `;
 }
 

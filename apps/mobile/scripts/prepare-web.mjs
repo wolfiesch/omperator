@@ -12,7 +12,7 @@ const MOBILE_CONTENT_SECURITY_POLICY = [
   "style-src 'self' 'unsafe-inline'",
   "font-src 'self' data:",
   "img-src 'self' data: blob:",
-  "connect-src 'self' wss://*.ts.net:*",
+  "connect-src 'self' https://wickrunner.com:8445 wss:",
   "object-src 'none'",
   "base-uri 'none'",
   "frame-src 'none'",

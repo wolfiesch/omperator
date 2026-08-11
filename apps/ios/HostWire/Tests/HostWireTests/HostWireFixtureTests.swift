@@ -84,7 +84,7 @@ struct HostWireFixtureTests {
     func deepLinks() {
         #expect(Pairing.parseDeepLink("t4-code://pair/studio-mac/123456", issuedAtMs: 1)?.code == "123456")
         #expect(Pairing.parseDeepLink("t4-code://pair/studio-mac/123456", issuedAtMs: 1)?.hostHint == "studio-mac")
-        // Hint-only links are valid owner auto-approval prefills (empty code).
+        // Hint-only links stay valid (empty code = rejoin-if-saved on the public path).
         let hintOnly = Pairing.parseDeepLink("t4-code://pair/studio-mac", issuedAtMs: 1)
         #expect(hintOnly?.hostHint == "studio-mac")
         #expect(hintOnly?.code == "")

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer, type Server } from "node:http";
 import { parsePairArgs, runPairAction, postPairTicket } from "../src/pair.ts";
@@ -71,7 +71,7 @@ describe("t4-host pair", () => {
       await runPairAction(
         { socketPath, ttlMs: 600_000 },
         {
-          resolveHostHint: async () => ({ hint: "macbookpro.example.ts.net" }),
+          resolveHostHint: async () => ({ hint: "macbookpro.example.com" }),
           renderQr: async () => "[qr-stub]",
           out: (text) => {
             captured.push(text);
@@ -84,7 +84,7 @@ describe("t4-host pair", () => {
     }
     const output = captured.join("");
     expect(output).toContain("654321");
-    expect(output).toContain("t4-code://pair/macbookpro.example.ts.net/654321");
+    expect(output).toContain("t4-code://pair/macbookpro.example.com/654321");
     expect(output).toContain("[qr-stub]");
     expect(output).toContain("Expires in");
   });
@@ -181,8 +181,8 @@ describe("t4-host pair", () => {
     }
   });
 
-  test("falls back to localhost hint with a note when tailscale is unavailable", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "t4-pair-fallback-"));
+  test("defaults the host hint to the machine hostname", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "t4-pair-hint-"));
     const socketPath = join(dir, "pair.sock");
     const server = await startPairServer(socketPath, {
       code: "999888",
@@ -193,11 +193,6 @@ describe("t4-host pair", () => {
       await runPairAction(
         { socketPath, ttlMs: 600_000 },
         {
-          // Simulate the default tailscale lookup failing by returning the fallback.
-          resolveHostHint: async () => ({
-            hint: "localhost",
-            note: "tailscale not available — using localhost; pairing only works from this machine",
-          }),
           renderQr: async () => "[qr]",
           out: (text) => {
             captured.push(text);
@@ -209,7 +204,7 @@ describe("t4-host pair", () => {
       await rm(dir, { recursive: true, force: true });
     }
     const output = captured.join("");
-    expect(output).toContain("t4-code://pair/localhost/999888");
-    expect(output).toContain("tailscale not available");
+    expect(output).toContain(`t4-code://pair/${hostname()}/999888`);
+    expect(output).not.toContain("tailscale");
   });
 });

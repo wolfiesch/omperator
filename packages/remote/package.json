@@ -7,7 +7,6 @@
     ".": "./src/index.ts",
     "./process": "./src/process.ts",
     "./registry": "./src/registry.ts",
-    "./tailscale": "./src/tailscale.ts",
     "./ssh": "./src/ssh.ts",
     "./tunnel": "./src/tunnel.ts",
     "./target": "./src/target.ts"

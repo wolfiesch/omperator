@@ -171,8 +171,8 @@ function ServiceCard({
         <span className="flex min-w-0 flex-col">
           <span className="font-medium text-sm">Skip the local runtime</span>
           <span className="text-muted-foreground text-xs">
-            Use only hosts you pair over Tailscale. Nothing runs on this computer until you come
-            back to this in Settings.
+            Use only paired hosts. Nothing runs on this computer until you come back to this in
+            Settings.
           </span>
         </span>
       </label>

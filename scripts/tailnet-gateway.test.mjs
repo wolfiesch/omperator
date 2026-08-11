@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { chmod, mkdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { connect as connectSocket } from "node:net";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { test } from "node:test";
 
@@ -22,14 +22,13 @@ import {
   optionsFromEnvironment,
   resolveAppSocket,
   safeStaticPath,
-  spawnTailscaleHostName,
   startTailnetGateway,
 } from "./tailnet-gateway.mjs";
 import { startRendezvous } from "./rendezvous.mjs";
 import { TestGuest, dec, startMockRelay } from "./relay-test-helpers.mjs";
 import { makeCanonicalTemporaryDirectory } from "./test-temporary-directory.mjs";
 
-const ALLOWED_ORIGIN = "https://host.example-tailnet.ts.net:8445";
+const ALLOWED_ORIGIN = "https://host.example.com:8445";
 const DEPLOYMENT_IDENTITY = `sha256:${"b".repeat(64)}`;
 
 function websocketMessage(socket) {
@@ -110,15 +109,14 @@ async function fixture(socketTopology = "symlink", gatewayOptions = {}) {
   };
 }
 
-test("origin validation accepts only explicit Tailscale HTTPS origins", () => {
+test("origin validation accepts only plain HTTPS origins", () => {
   assert.equal(normalizeAllowedOrigin(ALLOWED_ORIGIN), ALLOWED_ORIGIN);
   for (const value of [
-    "http://host.example-tailnet.ts.net",
-    "https://example.com",
-    "https://host.example-tailnet.ts.net/path",
-    "https://user@host.example-tailnet.ts.net",
+    "http://host.example.com",
+    "https://host.example.com/path",
+    "https://user@host.example.com",
   ]) {
-    assert.throws(() => normalizeAllowedOrigin(value), /Tailscale HTTPS origin/u);
+    assert.throws(() => normalizeAllowedOrigin(value), /plain HTTPS origin/u);
   }
 });
 
@@ -149,7 +147,7 @@ test("gateway environment parses the explicit comma-separated native origin set"
     T4_ALLOWED_ORIGIN: ALLOWED_ORIGIN,
     T4_NATIVE_ALLOWED_ORIGINS: "https://localhost,capacitor://localhost",
     T4_DEPLOYMENT_IDENTITY: DEPLOYMENT_IDENTITY,
-    T4_HOST_DNS_NAME: "workstation.example-tailnet.ts.net.",
+    T4_HOST_DNS_NAME: "workstation.example.com.",
     XDG_RUNTIME_DIR: "/run/user/1000",
   });
   assert.deepEqual(normalizeNativeAllowedOrigins(options.nativeAllowedOrigins), [
@@ -157,7 +155,7 @@ test("gateway environment parses the explicit comma-separated native origin set"
     "capacitor://localhost",
   ]);
   assert.equal(options.deploymentIdentity, DEPLOYMENT_IDENTITY);
-  assert.equal(options.hostDnsName, "workstation.example-tailnet.ts.net.");
+  assert.equal(options.hostDnsName, "workstation.example.com.");
 });
 
 test("backend injection is explicit, credential-free, and script-safe", () => {
@@ -167,7 +165,7 @@ test("backend injection is explicit, credential-free, and script-safe", () => {
     label: "Host </script><script>alert(1)</script>",
   });
   assert.match(injected, /id="t4-backend"/u);
-  assert.match(injected, /wss:\/\/host\.example-tailnet\.ts\.net:8445\/v1\/ws/u);
+  assert.match(injected, /wss:\/\/host\.example.com:8445\/v1\/ws/u);
   assert.doesNotMatch(injected, /<script>alert/u);
   assert.doesNotMatch(injected, /token|password|credential/iu);
 });
@@ -190,14 +188,13 @@ test("cluster gateway configuration is default-off and adds no implicit target",
 });
 
 test("cluster gateway opts into exactly one credential-free secure WSS target", () => {
-  const clusterWsUrl = "wss://operator.example-tailnet.ts.net/v1/ws";
+  const clusterWsUrl = "wss://operator.example.com/v1/ws";
   assert.equal(normalizeClusterWebSocketUrl(clusterWsUrl), clusterWsUrl);
   for (const value of [
-    "ws://operator.example-tailnet.ts.net/v1/ws",
-    "wss://operator.example-tailnet.ts.net:30000/v1/ws",
-    "wss://operator.example-tailnet.ts.net/v1/ws?token=secret",
-    "wss://user:secret@operator.example-tailnet.ts.net/v1/ws",
-    "wss://operator.example.com/v1/ws",
+    "ws://operator.example.com/v1/ws",
+    "wss://operator.example.com:30000/v1/ws",
+    "wss://operator.example.com/v1/ws?token=secret",
+    "wss://user:secret@operator.example.com/v1/ws",
   ]) {
     assert.throws(() => normalizeClusterWebSocketUrl(value), /secure WSS cluster target/u);
   }
@@ -262,7 +259,7 @@ test("gateway serves configured app and reports real upstream health", async () 
     const contentSecurityPolicy = indexResponse.headers.get("content-security-policy");
     assert.match(
       contentSecurityPolicy ?? "",
-      /connect-src 'self' wss:\/\/host\.example-tailnet\.ts\.net:8445/u,
+      /connect-src 'self' wss:\/\/host\.example.com:8445/u,
     );
     assert.match(contentSecurityPolicy ?? "", /img-src 'self' data: blob:/u);
     assert.doesNotMatch(contentSecurityPolicy ?? "", /\*/u);
@@ -305,7 +302,7 @@ test("gateway serves configured app and reports real upstream health", async () 
 
 test("gateway serves /v1/discovery with the owner auto-approval contract", async () => {
   const running = await fixture("symlink", {
-    hostDnsName: "workstation.example-tailnet.ts.net.",
+    hostDnsName: "workstation.example.com.",
   });
   try {
     const response = await fetch(`${running.url}/v1/discovery`);
@@ -314,11 +311,11 @@ test("gateway serves /v1/discovery with the owner auto-approval contract", async
     assert.equal(response.headers.get("x-frame-options"), "DENY");
     assert.equal(response.headers.get("cache-control"), "no-store");
     assert.deepEqual(await response.json(), {
-      hostName: "workstation.example-tailnet.ts.net",
+      hostName: "workstation.example.com",
       label: "Test host </script>",
       deploymentIdentity: DEPLOYMENT_IDENTITY,
       autoApprove: true,
-      wsUrl: "https://host.example-tailnet.ts.net:8445/v1/ws",
+      wsUrl: "https://host.example.com:8445/v1/ws",
       roomsEndpoint: "/v1/rooms",
       nodes: [],
     });
@@ -330,14 +327,14 @@ test("gateway serves /v1/discovery with the owner auto-approval contract", async
     });
     assert.equal(
       (await originResponse.json()).wsUrl,
-      "https://host.example-tailnet.ts.net:8445/v1/ws",
+      "https://host.example.com:8445/v1/ws",
     );
     const crossOriginResponse = await fetch(`${running.url}/v1/discovery`, {
-      headers: { Origin: "https://attacker.example-tailnet.ts.net" },
+      headers: { Origin: "https://attacker.example.com" },
     });
     assert.equal(
       (await crossOriginResponse.json()).wsUrl,
-      "https://host.example-tailnet.ts.net:8445/v1/ws",
+      "https://host.example.com:8445/v1/ws",
     );
 
     // HEAD is served without a body; other methods are rejected.
@@ -360,7 +357,7 @@ async function registerNodeAndRoom(running, nodeId = "node-one", sessionId = "01
     headers,
     body: JSON.stringify({
       nodeId,
-      hostname: "workstation.example-tailnet.ts.net",
+      hostname: "workstation.example.com",
       arch: "arm64",
       cpuCount: 8,
       memoryBytes: 16 * 1024 * 1024 * 1024,
@@ -375,7 +372,7 @@ async function registerNodeAndRoom(running, nodeId = "node-one", sessionId = "01
       sessionId,
       title: "Registry room",
       roomId: "room-one",
-      link: "wss://relay.example-tailnet.ts.net/r/room-one.SECRET",
+      link: "wss://relay.example.com/r/room-one.SECRET",
       token: "dG9rZW4",
     }),
   });
@@ -411,7 +408,7 @@ test("registered rooms appear in /v1/rooms with the fixed rooms contract", async
     const room = rooms[0];
     assert.equal(room.sessionId, "019fe55e-ae01-1111-2222-333344445555");
     assert.equal(room.title, "Registry room");
-    assert.equal(room.link, "wss://relay.example-tailnet.ts.net/r/room-one.SECRET");
+    assert.equal(room.link, "wss://relay.example.com/r/room-one.SECRET");
     assert.equal(room.token, "dG9rZW4");
     assert.equal(room.roomId, "room-one");
     assert.equal(room.nodeId, "node-one");
@@ -422,20 +419,20 @@ test("registered rooms appear in /v1/rooms with the fixed rooms contract", async
 });
 
 test("node inventory is served by /v1/nodes and /v1/discovery", async () => {
-  const running = await fixture("symlink", { hostDnsName: "workstation.example-tailnet.ts.net." });
+  const running = await fixture("symlink", { hostDnsName: "workstation.example.com." });
   try {
     await registerNodeAndRoom(running);
     const nodesResponse = await fetch(`${running.url}/v1/nodes`);
     const { nodes } = await nodesResponse.json();
     assert.equal(nodes.length, 1);
     assert.equal(nodes[0].nodeId, "node-one");
-    assert.equal(nodes[0].hostname, "workstation.example-tailnet.ts.net");
+    assert.equal(nodes[0].hostname, "workstation.example.com");
     assert.equal(nodes[0].cpuCount, 8);
     assert.equal(nodes[0].roomCount, 1);
 
     const discoveryResponse = await fetch(`${running.url}/v1/discovery`);
     const discovery = await discoveryResponse.json();
-    assert.equal(discovery.hostName, "workstation.example-tailnet.ts.net");
+    assert.equal(discovery.hostName, "workstation.example.com");
     assert.equal(discovery.nodes.length, 1);
     assert.equal(discovery.nodes[0].roomCount, 1);
   } finally {
@@ -512,14 +509,21 @@ test("room registration requires sessionId, roomId, and link", async () => {
   }
 });
 
-test("discovery host name falls back gracefully when tailscale is unavailable", async () => {
-  assert.equal(await spawnTailscaleHostName({ PATH: "" }), null);
+test("discovery host name falls back to the machine hostname", async () => {
+  const running = await fixture();
+  try {
+    const response = await fetch(`${running.url}/v1/discovery`);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).hostName, hostname());
+  } finally {
+    await running.close();
+  }
 });
 
 test("gateway rejects cross-origin sockets and bridges only the web and native allowlist", async () => {
   const running = await fixture();
   try {
-    for (const origin of ["https://attacker.example-tailnet.ts.net", "null", "*"]) {
+    for (const origin of ["https://attacker.example.com", "null", "*"]) {
       const denied = new WebSocket(`${running.url.replace("http", "ws")}/v1/ws`, {
         headers: { Origin: origin },
       });
@@ -565,7 +569,7 @@ test("gateway survives peer resets while rejecting websocket upgrades", async ()
       "Upgrade: websocket",
       "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
       "Sec-WebSocket-Version: 13",
-      "Origin: https://attacker.example-tailnet.ts.net",
+      "Origin: https://attacker.example.com",
       "",
       "",
     ].join("\r\n");
@@ -906,7 +910,7 @@ test("gateway announces to the rendezvous and deregisters on close", async () =>
   try {
     running = await fixture("symlink", {
       rendezvousUrl: rendezvousBase,
-      hostDnsName: "workstation.example-tailnet.ts.net.",
+      hostDnsName: "workstation.example.com.",
     });
     const deadline = Date.now() + 5_000;
     let hosts = [];
@@ -918,7 +922,7 @@ test("gateway announces to the rendezvous and deregisters on close", async () =>
     }
     assert.equal(hosts.length, 1);
     assert.equal(hosts[0].hostId, DEPLOYMENT_IDENTITY);
-    assert.equal(hosts[0].hostname, "workstation.example-tailnet.ts.net");
+    assert.equal(hosts[0].hostname, "workstation.example.com");
     assert.equal(hosts[0].origin, ALLOWED_ORIGIN);
   } finally {
     if (running) {
@@ -940,7 +944,7 @@ test("gateway mints pairing codes and bridges host-wire over the relay", async (
     running = await fixture("symlink", {
       rendezvousUrl: rendezvousBase,
       relayUrl: relay.url,
-      hostDnsName: "workstation.example-tailnet.ts.net.",
+      hostDnsName: "workstation.example.com.",
     });
     const pairResponse = await fetch(`${running.url}/v1/pair-code`);
     assert.equal(pairResponse.status, 200);

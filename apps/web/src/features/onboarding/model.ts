@@ -68,9 +68,8 @@ export function capabilityLabels(ids: readonly CapabilityId[]): string {
 }
 
 /**
- * Who a remote peer is, as verified by the host (Tailscale login + node
- * name). Safe display labels only — never an IP, MagicDNS FQDN with paths,
- * or key material.
+ * Who a remote peer is, as verified by the host. Safe display labels only —
+ * never an IP, hostname with paths, or key material.
  */
 export interface PeerIdentity {
   /** Canonical account, e.g. "maintainer@github". */

@@ -48,89 +48,15 @@ describe("T4 host daemon CLI", () => {
     ).toBe("/isolated-profile");
   });
 
-  test("validates remote exposure and rejects ambiguous or relative authority", () => {
+  test("rejects tailnet remote flags and validates authority", () => {
     expect(() => parseHostDaemonArgs(["serve", "--omp", "omp"], "/home/test")).toThrow("absolute");
+    // The tailnet remote-exposure model is gone: remote flags are unsupported.
     expect(() =>
       parseHostDaemonArgs(
-        ["serve", "--omp", "/opt/omp", "--remote-address", "100.64.0.1"],
+        ["serve", "--omp", "/opt/omp", "--remote-mode", "direct", "--remote-address", "100.64.0.1"],
         "/home/test",
       ),
-    ).toThrow("require --remote-mode");
-    expect(() =>
-      parseHostDaemonArgs(
-        ["serve", "--omp", "/opt/omp", "--remote-mode", "serve", "--remote-address", "0.0.0.0"],
-        "/home/test",
-      ),
-    ).toThrow("loopback");
-    expect(
-      parseHostDaemonArgs(
-        [
-          "serve",
-          "--omp",
-          "/opt/omp",
-          "--remote-mode",
-          "direct",
-          "--remote-address",
-          "100.64.0.1",
-          "--remote-port",
-          "8787",
-          "--remote-tls-port",
-          "8788",
-        ],
-        "/home/test",
-      ).remote,
-    ).toMatchObject({ port: 8787, tlsPort: 8788 });
-    expect(() =>
-      parseHostDaemonArgs(
-        [
-          "serve",
-          "--omp",
-          "/opt/omp",
-          "--remote-mode",
-          "direct",
-          "--remote-address",
-          "100.64.0.1",
-          "--remote-port",
-          "8788",
-          "--remote-tls-port",
-          "8788",
-        ],
-        "/home/test",
-      ),
-    ).toThrow("must differ");
-    expect(() =>
-      parseHostDaemonArgs(
-        [
-          "serve",
-          "--omp",
-          "/opt/omp",
-          "--remote-mode",
-          "serve",
-          "--remote-address",
-          "127.0.0.1",
-          "--trusted-serve-proxy",
-          "--remote-tls-port",
-          "8788",
-        ],
-        "/home/test",
-      ),
-    ).toThrow("direct-mode only");
-    expect(() =>
-      parseHostDaemonArgs(
-        [
-          "serve",
-          "--omp",
-          "/opt/omp",
-          "--remote-mode",
-          "direct",
-          "--remote-address",
-          "100.64.0.1",
-          "--remote-origin",
-          "https://example.com/path",
-        ],
-        "/home/test",
-      ),
-    ).toThrow("HTTP origin");
+    ).toThrow("unsupported t4-host argument: --remote-mode");
     expect(() =>
       parseHostDaemonArgs(
         ["serve", "--omp", "/opt/omp", "--omp-authority", "official"],
@@ -175,23 +101,6 @@ describe("T4 host daemon CLI", () => {
       expect(() =>
         parseHostDaemonArgs(["serve", "--omp", "/opt/omp", "--profile", "default", "--test-control"], "/home/test"),
       ).toThrow("default profile");
-      expect(() =>
-        parseHostDaemonArgs(
-          [
-            "serve",
-            "--omp",
-            "/opt/omp",
-            "--profile",
-            "t4",
-            "--test-control",
-            "--remote-mode",
-            "direct",
-            "--remote-address",
-            "100.64.0.1",
-          ],
-          "/home/test",
-        ),
-      ).toThrow("local-only");
       const config = parseHostDaemonArgs(
         ["serve", "--omp", "/opt/omp", "--profile", "t4", "--test-control"],
         "/home/test",

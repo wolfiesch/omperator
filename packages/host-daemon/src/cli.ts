@@ -6,7 +6,6 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import {
   createAppserver,
   createHostLogger,
-  createRemoteAppserver,
   OfficialOmpProfileAuthority,
   OmpSettingsAuthority,
   OmpAuthorityBridgeClient,
@@ -64,7 +63,6 @@ const OFFICIAL_OMP_MATRIX: readonly OfficialOmpMatrixRow[] = Object.freeze([
   }),
 ]);
 const PROFILE = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
-const ORIGIN_LIMIT = 32;
 const VERSION_OUTPUT_BYTES = 4 * 1024;
 const VERSION_TIMEOUT_MS = 5_000;
 
@@ -108,16 +106,6 @@ export interface HostDaemonConfig {
   readonly stateRoot: string;
   /** Local-only deterministic seeding for integration runs. Never enabled by default. */
   readonly testControl?: boolean;
-  readonly remote?: {
-    readonly mode: "direct" | "serve";
-    readonly address: string;
-    readonly port: number;
-    readonly origins: readonly string[];
-    readonly trustedServeProxy: boolean;
-    readonly tlsPort?: number;
-    /** Owner auto-approval override; undefined keeps the direct-mode default ON. */
-    readonly autoApproveOwner?: boolean;
-  };
 }
 
 export interface HostDaemonPaths {
@@ -128,7 +116,6 @@ export interface HostDaemonPaths {
   readonly transcriptSearchPath: string;
   readonly officialMetadataPath: string;
   readonly testControlManifestPath: string;
-  readonly remoteStateRoot: string;
   readonly socketPath: string;
 }
 
@@ -136,22 +123,6 @@ function value(argv: readonly string[], index: number, flag: string): string {
   const result = argv[index + 1];
   if (!result || result.startsWith("--")) throw new Error(`${flag} requires a value`);
   return result;
-}
-
-function boundedOrigin(input: string): string {
-  const url = new URL(input);
-  if (
-    (url.protocol !== "https:" && url.protocol !== "http:") ||
-    url.username ||
-    url.password ||
-    url.pathname !== "/" ||
-    url.search ||
-    url.hash
-  )
-    throw new Error(
-      "--remote-origin must be an HTTP origin without credentials, path, query, or fragment",
-    );
-  return url.origin;
 }
 
 /**
@@ -173,20 +144,7 @@ export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): 
   let ompSessionsRoot: string | undefined;
   let profileId = "default";
   let stateRoot = join(home, ".t4-code", "host");
-  let remoteMode: "direct" | "serve" | undefined;
-  let remoteAddress: string | undefined;
-  let remotePort = 8787;
-  let remoteTlsPort: number | undefined;
-  let trustedServeProxy = false;
   let testControl = false;
-  let remoteAutoApprove: boolean | undefined;
-  const envAutoApprove = process.env.T4_REMOTE_AUTO_APPROVE;
-  if (envAutoApprove !== undefined) {
-    if (envAutoApprove === "1" || envAutoApprove === "true") remoteAutoApprove = true;
-    else if (envAutoApprove === "0" || envAutoApprove === "false") remoteAutoApprove = false;
-    else throw new Error("T4_REMOTE_AUTO_APPROVE must be 1, 0, true, or false");
-  }
-  const origins: string[] = [];
   for (let index = 1; index < argv.length; index += 1) {
     const flag = argv[index]!;
     if (flag === "--omp") ompExecutable = value(argv, index++, flag);
@@ -198,26 +156,6 @@ export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): 
     } else if (flag === "--omp-sessions-root") ompSessionsRoot = value(argv, index++, flag);
     else if (flag === "--profile") profileId = value(argv, index++, flag);
     else if (flag === "--state-root") stateRoot = value(argv, index++, flag);
-    else if (flag === "--remote-mode") {
-      const mode = value(argv, index++, flag);
-      if (mode !== "direct" && mode !== "serve")
-        throw new Error("--remote-mode must be direct or serve");
-      remoteMode = mode;
-    } else if (flag === "--remote-address") remoteAddress = value(argv, index++, flag);
-    else if (flag === "--remote-port") {
-      remotePort = Number(value(argv, index++, flag));
-      if (!Number.isSafeInteger(remotePort) || remotePort < 1 || remotePort > 65_535)
-        throw new Error("--remote-port must be between 1 and 65535");
-    } else if (flag === "--remote-tls-port") {
-      remoteTlsPort = Number(value(argv, index++, flag));
-      if (!Number.isSafeInteger(remoteTlsPort) || remoteTlsPort < 1 || remoteTlsPort > 65_535)
-        throw new Error("--remote-tls-port must be between 1 and 65535");
-    } else if (flag === "--remote-origin") {
-      if (origins.length >= ORIGIN_LIMIT) throw new Error("too many --remote-origin values");
-      origins.push(boundedOrigin(value(argv, index++, flag)));
-    } else if (flag === "--trusted-serve-proxy") trustedServeProxy = true;
-    else if (flag === "--remote-auto-approve") remoteAutoApprove = true;
-    else if (flag === "--no-remote-auto-approve") remoteAutoApprove = false;
     else if (flag === "--test-control") testControl = true;
     else throw new Error(`unsupported t4-host argument: ${flag}`);
   }
@@ -229,18 +167,6 @@ export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): 
     throw new Error("official OMP authority requires an absolute --omp-sessions-root");
   if (authorityMode === "bridge" && ompSessionsRoot)
     throw new Error("--omp-sessions-root requires official OMP authority");
-  if (!remoteMode && (remoteAddress || origins.length || trustedServeProxy || remotePort !== 8787 || remoteTlsPort !== undefined))
-    throw new Error("remote flags require --remote-mode");
-  if (remoteMode && !remoteAddress) throw new Error("remote mode requires --remote-address");
-  if (remoteMode === "serve" && remoteAddress !== "127.0.0.1" && remoteAddress !== "::1")
-    throw new Error("serve mode requires a loopback address");
-  if (remoteMode === "serve" && !trustedServeProxy)
-    throw new Error("serve mode requires --trusted-serve-proxy");
-  if (remoteMode === "serve" && remoteTlsPort !== undefined)
-    throw new Error("--remote-tls-port is direct-mode only");
-  if (remoteTlsPort === remotePort) throw new Error("--remote-tls-port must differ from --remote-port");
-  if (remoteMode === "direct" && trustedServeProxy)
-    throw new Error("trusted Serve proxy is invalid in direct mode");
   if (testControl) {
     // Seeding writes disposable sessions into the profile it serves, so it must
     // never reach the default profile a person actually works in, and it must
@@ -248,7 +174,6 @@ export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): 
     if (process.env.OMP_APP_TEST_MODE !== "1")
       throw new Error("--test-control requires OMP_APP_TEST_MODE=1");
     if (profileId === "default") throw new Error("--test-control refuses the default profile");
-    if (remoteMode) throw new Error("--test-control is local-only");
   }
   return {
     ompExecutable: resolve(ompExecutable),
@@ -257,19 +182,6 @@ export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): 
     profileId,
     stateRoot: resolve(stateRoot),
     ...(testControl ? { testControl: true } : {}),
-    ...(remoteMode
-      ? {
-          remote: {
-            mode: remoteMode,
-            address: remoteAddress!,
-            port: remotePort,
-            origins,
-            trustedServeProxy,
-            ...(remoteTlsPort !== undefined ? { tlsPort: remoteTlsPort } : {}),
-            ...(remoteAutoApprove !== undefined ? { autoApproveOwner: remoteAutoApprove } : {}),
-          },
-        }
-      : {}),
   };
 }
 
@@ -289,7 +201,6 @@ export function hostDaemonPaths(
     transcriptSearchPath: join(profileStateRoot, "transcript-search.sqlite"),
     officialMetadataPath: join(profileStateRoot, "official-omp-sessions.json"),
     testControlManifestPath: join(profileStateRoot, "test-control-manifest.json"),
-    remoteStateRoot: join(profileStateRoot, "remote"),
     socketPath: profileSocketPath(config.profileId),
   };
 }
@@ -302,7 +213,6 @@ export interface HostDaemonDependencies {
   ) => OfficialOmpProfileAuthority;
   readonly createTranscriptSearch?: (path: string) => TranscriptSearchIndex;
   readonly createLocal?: (options: AppserverOptions) => AppserverHandle;
-  readonly createRemote?: typeof createRemoteAppserver;
   readonly verifyOfficialRuntime?: (
     executable: string,
   ) => Promise<
@@ -315,46 +225,6 @@ export interface HostDaemonDependencies {
   readonly removeSignal?: (signal: "SIGINT" | "SIGTERM", listener: () => void) => void;
   /** Structured host logger for boot reaping and appserver events; constructed from profileStateRoot when omitted. */
   readonly loggerHost?: HostLogger;
-}
-
-/**
- * Load or generate the self-signed cert a wss listener serves. Persisted per
- * profile so the fingerprint clients pin (TOFU) survives restarts. RSA rather
- * than ECDSA: Bun's BoringSSL rejected LibreSSL-written EC keys at startup.
- */
-async function ensureSelfSignedCert(
-  dir: string,
-  commonName: string,
-): Promise<{ cert: string; key: string; fingerprint: string }> {
-  const certPath = join(dir, "wss-cert.pem");
-  const keyPath = join(dir, "wss-key.pem");
-  await mkdir(dir, { recursive: true, mode: 0o700 });
-  const existing = await Promise.all([
-    readFile(certPath, "utf8").catch(() => undefined),
-    readFile(keyPath, "utf8").catch(() => undefined),
-  ]);
-  if (existing[0] && existing[1])
-    return { cert: existing[0], key: existing[1], fingerprint: certFingerprint(existing[0]) };
-  const child = Bun.spawn(
-    [
-      "/usr/bin/openssl", "req", "-x509", "-newkey", "rsa:2048",
-      "-nodes", "-days", "3650", "-subj", `/CN=${commonName}`,
-      "-keyout", keyPath, "-out", certPath,
-    ],
-    { stdout: "ignore", stderr: "pipe" },
-  );
-  const stderr = child.stderr ? await boundedProcessOutput(child.stderr, 4096) : "";
-  if ((await child.exited) !== 0) throw new Error(`openssl cert generation failed: ${stderr.trim()}`);
-  await chmod(keyPath, 0o600);
-  const cert = await readFile(certPath, "utf8");
-  const key = await readFile(keyPath, "utf8");
-  return { cert, key, fingerprint: certFingerprint(cert) };
-}
-
-/** sha256 of the certificate DER, hex — the value clients pin. */
-function certFingerprint(pem: string): string {
-  const body = pem.replace(/-----[^-]+-----/g, "").replace(/\s+/g, "");
-  return createHash("sha256").update(Buffer.from(body, "base64")).digest("hex");
 }
 
 async function boundedProcessOutput(stream: ReadableStream<Uint8Array>, maxBytes: number): Promise<string> {
@@ -694,38 +564,7 @@ export async function runHostDaemon(
     };
     let appserver: AppserverHandle;
     try {
-      const tlsMaterial = config.remote?.tlsPort
-        ? await ensureSelfSignedCert(join(paths.remoteStateRoot, "tls"), config.remote.address)
-        : undefined;
-      if (tlsMaterial)
-        hostLogger.log("remote.tls", { fingerprint: tlsMaterial.fingerprint });
-      appserver = config.remote
-        ? await (dependencies.createRemote ?? createRemoteAppserver)({
-            stateDir: paths.remoteStateRoot,
-            ...(config.remote.autoApproveOwner !== undefined
-              ? { autoApproveOwner: config.remote.autoApproveOwner }
-              : {}),
-            remoteEndpoint: {
-              address: config.remote.address,
-              port: config.remote.port,
-              originAllowlist: config.remote.origins,
-              serveProxy: config.remote.mode === "serve",
-              trustedServeProxy: config.remote.trustedServeProxy,
-            },
-            ...(tlsMaterial && config.remote.tlsPort
-              ? {
-                  remoteEndpointTls: {
-                    address: config.remote.address,
-                    port: config.remote.tlsPort,
-                    originAllowlist: config.remote.origins,
-                    tls: { cert: tlsMaterial.cert, key: tlsMaterial.key },
-                    tlsFingerprint: tlsMaterial.fingerprint,
-                  },
-                }
-              : {}),
-            appserver: options,
-          })
-        : (dependencies.createLocal ?? createAppserver)(options);
+      appserver = (dependencies.createLocal ?? createAppserver)(options);
     } catch (error) {
       await Promise.resolve(transcriptSearchAuthority.close()).catch(() => undefined);
       throw error;

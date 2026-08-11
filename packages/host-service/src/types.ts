@@ -29,7 +29,6 @@ import type {
 	ListenerPeerContext,
 	RemoteConnection,
 	RemoteListenerConfig,
-	RemotePeerIdentity,
 } from "./remote/types.ts";
 import type { RuntimeAdapterRegistry } from "./runtime-adapter.ts";
 import type { RpcChildInvocation } from "./rpc-child-contract.ts";
@@ -369,10 +368,7 @@ export interface AppserverOptions {
 	idleSupervisorTickMs?: number;
 	now?: () => Date;
 	remoteEndpoint?: RemoteListenerConfig;
-	/** Optional second listener serving the same policy over TLS (wss); shares hooks and health with remoteEndpoint. */
-	remoteEndpointTls?: RemoteListenerConfig;
 	remotePolicy?: RemoteConnectionPolicy;
-	remoteResolver?: { resolve(address: string): Promise<RemotePeerIdentity> };
 	/** Optional structured host logger for connection/pair/denied/supervisor/watchdog events. */
 	logger?: HostLogger;
 	remoteListener?: BunRemoteListener;

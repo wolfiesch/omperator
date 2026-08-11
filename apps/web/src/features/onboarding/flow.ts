@@ -24,7 +24,7 @@ export const STAGE_INFO: Readonly<Record<OnboardingStage, StageInfo>> = {
   hosts: {
     id: "hosts",
     title: "Add a host",
-    task: "Sessions live on hosts. Use this computer, or pair one over Tailscale.",
+    task: "Sessions live on hosts. Use this computer, or pair another computer.",
   },
   defaults: {
     id: "defaults",

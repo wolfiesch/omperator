@@ -118,7 +118,7 @@ import {
 	PromptLifecycleController,
 } from "./prompt-lifecycle-controller.ts";
 import { SessionProjection } from "./projection.ts";
-import { BunRemoteListener, createInternalListenerPlan, createListenerPlan, createServeProxyPlan } from "./remote/listener.ts";
+import { BunRemoteListener, createInternalListenerPlan } from "./remote/listener.ts";
 import type { HostLogger } from "./remote/logging.ts";
 import type { HealthSnapshot, RemoteConnection, RemoteListenerConfig } from "./remote/types.ts";
 import { BunRpcChildFactory, RpcChildSupervisor } from "./rpc-child.ts";
@@ -923,12 +923,9 @@ export class LocalAppserver implements AppserverHandle {
 		return this.#connections.remoteDecisions;
 	}
 	#remoteListener?: BunRemoteListener;
-	#remoteListenerTls?: BunRemoteListener;
-	#remoteEndpointTls?: RemoteListenerConfig;
 	#remotePolicy?: RemoteConnectionPolicy;
 	#adminRouter: AdminRequestRouter;
 	#remoteEndpoint?: RemoteListenerConfig;
-	#remoteResolver?: AppserverOptions["remoteResolver"];
 	#started = false;
 	#stopping = false;
 	#hostProvided: boolean;
@@ -989,13 +986,11 @@ export class LocalAppserver implements AppserverHandle {
 		this.socketPath = options.socketPath ?? defaultSocketPath();
 		this.#remotePolicy = options.remotePolicy;
 		this.#remoteEndpoint = options.remoteEndpoint;
-		this.#remoteResolver = options.remoteResolver;
 		this.#runtimeActivity = options.runtimeActivity;
 		this.#durableFlush = options.durableFlush;
 		this.#runtimeIngress = options.runtimeIngress;
 		this.#runtimeIdentity = options.runtimeIdentity ?? { uid: String(this.hostId), generation: this.epoch };
 		this.#remoteListener = options.remoteListener;
-		this.#remoteEndpointTls = options.remoteEndpointTls;
 		this.#clock = options.clock ?? clock;
 		this.#idempotency = new IdempotencyStore({ now: () => this.#clock.now().getTime() });
 		this.#authority = options.sessionAuthority;
@@ -1410,23 +1405,20 @@ export class LocalAppserver implements AppserverHandle {
 				void this.refreshSessions().catch(() => undefined);
 			});
 			if (this.#remotePolicy && this.#remoteEndpoint) {
+				if (!this.#remoteEndpoint.internalPeerNodeId)
+					throw new Error("remote listener requires a fixed internalPeerNodeId");
 				const listener =
 					this.#remoteListener ??
 					new BunRemoteListener(
-						this.#remoteEndpoint.internalPeerNodeId
-							? createInternalListenerPlan(this.#remoteEndpoint)
-							: this.#remoteEndpoint.serveProxy === true
-								? createServeProxyPlan(this.#remoteEndpoint)
-								: createListenerPlan(this.#remoteEndpoint),
+						createInternalListenerPlan(this.#remoteEndpoint),
 						{
 							connected: connection => this.#remoteConnected(connection),
 							message: (connection, message) => this.#remoteMessage(connection, message),
 							disconnected: connection => this.#remoteDisconnected(connection),
 						},
 						this.#remoteEndpoint,
-						this.#remoteResolver,
 						() => this.#healthSnapshot(),
-				);
+					);
 				this.#remoteListener = listener;
 				try {
 					listener.start();
@@ -1434,28 +1426,6 @@ export class LocalAppserver implements AppserverHandle {
 					this.#remoteListener = undefined;
 					throw error;
 				}
-			}
-			if (this.#remotePolicy && this.#remoteEndpointTls) {
-				const tlsEndpoint = this.#remoteEndpointTls;
-				const tlsListener = new BunRemoteListener(
-					createListenerPlan(tlsEndpoint),
-					{
-						connected: connection => this.#remoteConnected(connection),
-						message: (connection, message) => this.#remoteMessage(connection, message),
-						disconnected: connection => this.#remoteDisconnected(connection),
-					},
-					tlsEndpoint,
-					this.#remoteResolver,
-					() => this.#healthSnapshot(),
-				);
-				try {
-					tlsListener.start();
-				} catch (error) {
-					await this.#remoteListener?.stop().catch(() => undefined);
-					this.#remoteListener = undefined;
-					throw error;
-				}
-				this.#remoteListenerTls = tlsListener;
 			}
 		} catch (error) {
 			try {
@@ -1483,8 +1453,6 @@ export class LocalAppserver implements AppserverHandle {
 		try {
 			await this.#remoteListener?.stop();
 			this.#remoteListener = undefined;
-			await this.#remoteListenerTls?.stop();
-			this.#remoteListenerTls = undefined;
 			await Promise.all(
 				[...this.#clients].map(async ws => {
 					for (const controller of this.#abortControllers.get(ws) ?? []) controller.abort();

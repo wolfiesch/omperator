@@ -119,7 +119,6 @@ function validateClusterWsUrl(value: string): string {
     parsed.username !== "" ||
     parsed.password !== "" ||
     parsed.port !== "" ||
-    !parsed.hostname.endsWith(".ts.net") ||
     parsed.pathname !== "/v1/ws"
   ) {
     throw new Error("cluster operator requires one secure WSS cluster target");

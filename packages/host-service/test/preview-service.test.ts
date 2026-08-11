@@ -33,14 +33,6 @@ describe("preview URL policy", () => {
 			expect(validatePreviewUrl("http://[::1]:9000").hostname).toBe("[::1]");
 		});
 
-		it("accepts .ts.net tailnet host", () => {
-			expect(validatePreviewUrl("https://myhost.ts.net").hostname).toBe("myhost.ts.net");
-		});
-
-		it("accepts .tailnet host", () => {
-			expect(validatePreviewUrl("https://dev.tailnet:443").hostname).toBe("dev.tailnet");
-		});
-
 		it("rejects non-http protocols", () => {
 			expect(() => validatePreviewUrl("file:///etc/passwd")).toThrow(PreviewServiceError);
 			expect(() => validatePreviewUrl("ftp://localhost")).toThrow(PreviewServiceError);
@@ -85,7 +77,7 @@ describe("preview URL policy", () => {
 	describe("previewUrlAllowed", () => {
 		it("returns true for allowed URLs", () => {
 			expect(previewUrlAllowed("http://localhost:3000")).toBe(true);
-			expect(previewUrlAllowed("https://myhost.ts.net")).toBe(true);
+			expect(previewUrlAllowed("http://127.0.0.1:8080")).toBe(true);
 		});
 
 		it("returns false for rejected URLs", () => {

@@ -1,17 +1,20 @@
 //  T4DiscoveryClient.swift
 //  Rendezvous host discovery for the native T4 Code clients (iOS + macOS):
-//  the registry's /v1/hosts lists the tailnet's computers, and a healthz
-//  probe keeps only the ones this device can actually reach (same tailnet /
-//  LAN). Discovery is strictly best-effort — any failure reads as an empty
-//  list, and the Advanced (endpoint/pair) connect path remains the fallback.
+//  the registry's /v1/hosts lists the computers running Omperator. Every
+//  listed host is connectable through the public relay (the phone never
+//  reaches the host's own address), so no per-host reachability filter is
+//  applied. Discovery is strictly best-effort — any failure reads as an
+//  empty list, and the Advanced (endpoint/pair) connect path remains the
+//  fallback.
 
 import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
 
-/// One computer advertised by the rendezvous registry. `origin` is the host
-/// gateway's HTTPS origin (e.g. https://workstation.example-tailnet.ts.net:8445).
+/// One computer advertised by the rendezvous registry. `origin` is the
+/// address the host advertised (e.g. https://workstation.example.com:8445);
+/// the phone connects to the host through the public relay, not this origin.
 struct T4DiscoveryHost: Decodable, Identifiable, Equatable, Sendable {
     let hostId: String
     let hostname: String
@@ -73,12 +76,10 @@ enum T4DiscoveryClient {
         return URL(string: "https://wickrunner.com:8445")!
     }
 
-    /// List the reachable computers: GET {rendezvous}/v1/hosts, then probe
-    /// each advertised origin's /healthz (3s timeout) and keep only the HTTP
-    /// 200s, sorted by hostname (case-insensitive). Any error returns [] —
-    /// discovery never throws to the UI.
+    /// List the computers registered at the rendezvous: GET
+    /// {rendezvous}/v1/hosts, sorted by hostname (case-insensitive). Any
+    /// error returns [] — discovery never throws to the UI.
     static func discoverHosts() async -> [T4DiscoveryHost] {
-        let hosts: [T4DiscoveryHost]
         do {
             var request = URLRequest(url: rendezvousBaseURL().appendingPathComponent("v1/hosts"))
             request.timeoutInterval = 15
@@ -86,37 +87,13 @@ enum T4DiscoveryClient {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return [] }
             let envelope = try JSONDecoder().decode(T4DiscoveryResponse.self, from: data)
-            hosts = envelope.hosts.compactMap { T4DiscoveryHost(raw: $0) }
+            return envelope.hosts
+                .compactMap { T4DiscoveryHost(raw: $0) }
+                .sorted {
+                    $0.hostname.localizedCaseInsensitiveCompare($1.hostname) == .orderedAscending
+                }
         } catch {
             return []
-        }
-        // Probe the origins concurrently — a phone only sees the hosts it can
-        // reach, so unreachable entries are dropped here, not at the registry.
-        let reachable = await withTaskGroup(of: (host: T4DiscoveryHost, reachable: Bool).self) { group in
-            for host in hosts {
-                group.addTask { (host, await Self.isReachable(host)) }
-            }
-            var reachable: [T4DiscoveryHost] = []
-            for await (host, ok) in group where ok {
-                reachable.append(host)
-            }
-            return reachable
-        }
-        return reachable.sorted {
-            $0.hostname.localizedCaseInsensitiveCompare($1.hostname) == .orderedAscending
-        }
-    }
-
-    /// A host is reachable when its gateway answers /healthz with HTTP 200
-    /// inside the 3s probe timeout.
-    private static func isReachable(_ host: T4DiscoveryHost) async -> Bool {
-        var request = URLRequest(url: host.origin.appendingPathComponent("healthz"))
-        request.timeoutInterval = 3
-        do {
-            let (_, response) = try await URLSession.shared.data(for: request)
-            return (response as? HTTPURLResponse)?.statusCode == 200
-        } catch {
-            return false
         }
     }
 }

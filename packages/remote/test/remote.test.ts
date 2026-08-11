@@ -1,22 +1,8 @@
-
 import { readFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vite-plus/test";
-import { NodeProcessRunner, runProcess, ProcessTimeoutError, type ProcessResult, type ProcessRunner, type PathProbe } from "../src/process.ts";
-import {
-  buildTailscaleEndpointCandidates,
-  discoverTailscaleExecutable,
-  isTailscaleIpv4Address,
-  parseTailscaleMagicDnsName,
-  parseTailscaleStatus,
-  suggestTailscaleServe,
-  TailscaleCliNotFoundError,
-  TailscaleCommandError,
-  TailscaleServeSuggestionError,
-  TailscaleStatusParseError,
-  readTailscaleStatus,
-} from "../src/tailscale.ts";
+import { NodeProcessRunner, runProcess, ProcessTimeoutError, type ProcessResult, type ProcessRunner } from "../src/process.ts";
 import {
   buildSshArgv,
   buildSshShellCommand,
@@ -29,7 +15,6 @@ import {
 } from "../src/ssh.ts";
 import { type Clock, resolveLoopbackSshHttpBaseUrl, startSshTunnel, waitForHttpReady, SshTunnelError } from "../src/tunnel.ts";
 
-const statusJson = JSON.stringify({ Self: { DNSName: "desktop.tail.ts.net.", TailscaleIPs: ["100.100.100.100", "fd7a:115c:a1e0::1", "192.168.1.4"] } });
 const target: SshTarget = { alias: "devbox", hostname: "devbox.example.com", username: "julius", port: 2222 };
 
 function result(value: Partial<ProcessResult> = {}): ProcessResult {
@@ -41,82 +26,11 @@ function fakeRunner(output: ProcessResult | Error): ProcessRunner {
     return { result: Promise.resolve(output), kill: () => undefined };
   } };
 }
-class FakeProbe implements PathProbe {
-  readonly files: readonly string[];
-  readonly pathCommand: string | null;
-  constructor(files: readonly string[] = [], pathCommand: string | null = null) {
-    this.files = files;
-    this.pathCommand = pathCommand;
-  }
-  exists(path: string): Promise<boolean> { return Promise.resolve(this.files.includes(path)); }
-  which(): Promise<string | null> { return Promise.resolve(this.pathCommand); }
-}
-function abortableRunner(): ProcessRunner {
-  return {
-    spawn: async (_spec, signal) => {
-      const { promise, resolve } = Promise.withResolvers<ProcessResult>();
-      const kill = () => resolve(result({ exitCode: 143 }));
-      if (signal?.aborted) kill();
-      else signal?.addEventListener("abort", kill, { once: true });
-      return { result: promise, kill };
-    },
-  };
-}
 class FakeClock implements Clock {
   current = 0;
   now(): number { return this.current; }
   sleep(ms: number): Promise<void> { this.current += ms; return Promise.resolve(); }
 }
-
-it("parses MagicDNS, strict tailnet IPv4, and status facts", () => {
-  expect(parseTailscaleMagicDnsName(statusJson)).toBe("desktop.tail.ts.net");
-  expect(parseTailscaleMagicDnsName("{}")).toBeNull();
-  expect(parseTailscaleStatus(statusJson)).toEqual({ magicDnsName: "desktop.tail.ts.net", tailnetIpv4Addresses: ["100.100.100.100"] });
-  expect(isTailscaleIpv4Address("100.64.0.1")).toBe(true);
-  expect(isTailscaleIpv4Address("100.64.0.1oops")).toBe(false);
-  expect(isTailscaleIpv4Address("100.128.0.1")).toBe(false);
-  expect(() => parseTailscaleStatus("not-json")).toThrow(TailscaleStatusParseError);
-});
-
-it("builds explicit direct and Serve WebSocket endpoint candidates", () => {
-  const status = parseTailscaleStatus(statusJson);
-  expect(buildTailscaleEndpointCandidates({ status })).toEqual([
-    { transport: "direct", kind: "magicdns", host: "desktop.tail.ts.net", url: "ws://desktop.tail.ts.net:4879/" },
-    { transport: "direct", kind: "ipv4", host: "100.100.100.100", url: "ws://100.100.100.100:4879/" },
-  ]);
-  expect(buildTailscaleEndpointCandidates({ status, transport: "serve" })).toEqual([
-    { transport: "serve", kind: "magicdns", host: "desktop.tail.ts.net", url: "wss://desktop.tail.ts.net:8445/" },
-  ]);
-});
-
-it("discovers platform-specific CLI candidates without spawning", async () => {
-  await expect(discoverTailscaleExecutable({ platform: "darwin", probe: new FakeProbe(["/opt/homebrew/bin/tailscale"]) })).resolves.toBe("/opt/homebrew/bin/tailscale");
-  await expect(discoverTailscaleExecutable({ platform: "linux", probe: new FakeProbe([], "/custom/bin/tailscale") })).resolves.toBe("/custom/bin/tailscale");
-  await expect(discoverTailscaleExecutable({ platform: "darwin", probe: new FakeProbe() })).rejects.toBeInstanceOf(TailscaleCliNotFoundError);
-});
-
-it("keeps Tailscale command diagnostics bounded and secret-free", async () => {
-  const syntheticToken = `${["ts", "key"].join("")}-${["auth", "secret", "token", "value"].join("-")}`;
-  const error = await readTailscaleStatus({ runner: fakeRunner(result({ exitCode: 7, stderr: syntheticToken })), executable: "tailscale", timeoutMs: 20 }).catch((cause) => cause);
-  expect(error).toBeInstanceOf(TailscaleCommandError);
-  expect((error as TailscaleCommandError).message).toBe("tailscale status exited with code 7.");
-  expect((error as TailscaleCommandError).message).not.toContain(syntheticToken);
-  expect((error as TailscaleCommandError).message).not.toContain("tskey");
-});
-it("aborts stalled status processes on timeout and cancellation", async () => {
-  const timeout = await readTailscaleStatus({ runner: abortableRunner(), executable: "tailscale", timeoutMs: 1 }).catch((cause) => cause);
-  expect(timeout).toMatchObject({ kind: "timeout", details: { timeoutMs: 1 } });
-  const controller = new AbortController();
-  controller.abort();
-  const cancelled = await readTailscaleStatus({ runner: abortableRunner(), executable: "tailscale", signal: controller.signal }).catch((cause) => cause);
-  expect(cancelled).toMatchObject({ kind: "cancelled" });
-});
-
-it("suggests loopback Serve only and never Funnel or wildcard bind", () => {
-  expect(suggestTailscaleServe({ localPort: 4879, servePort: 8445 })).toEqual({ executable: "tailscale", args: ["serve", "--bg", "--https=8445", "http://127.0.0.1:4879"], sideEffect: "manual-only" });
-  expect(() => suggestTailscaleServe({ localPort: 4879, mode: "funnel" })).toThrow(TailscaleServeSuggestionError);
-  expect(() => suggestTailscaleServe({ localPort: 4879, localHost: "0.0.0.0" })).toThrow(TailscaleServeSuggestionError);
-});
 
 it("builds direct SSH argv and quotes hostile paths without shell execution", () => {
   const argv = buildSshArgv(target, { platform: "win32", identityFile: "/tmp/key with spaces;$(touch pwned)", remoteCommandArgs: ["printf", "a'b"] });
@@ -125,7 +39,7 @@ it("builds direct SSH argv and quotes hostile paths without shell execution", ()
   expect(buildSshShellCommand({ command: "ssh", args: ["a'b", "space path"] })).toBe("'ssh' 'a'\\''b' 'space path'");
 });
 
-it("decides auth without treating Tailscale identity as authorization and redacts secrets", () => {
+it("decides auth without treating host identity as authorization and redacts secrets", () => {
   expect(decideSshAuthMethod()).toBe("batch");
   expect(decideSshAuthMethod({ interactiveAuth: true })).toBe("interactive");
   expect(decideSshAuthMethod({ authSecret: "pairing-secret" })).toBe("askpass");
@@ -158,18 +72,6 @@ it("kills tunnel process on readiness timeout and cancellation", async () => {
   await expect(startSshTunnel({ target, localPort: 4879, runner, expectedHostId: "host-a", readinessTimeoutMs: 10, clock, probe: async () => false })).rejects.toBeDefined();
   expect(killed).toBe(1);
   expect(new SshTunnelError("x").message).toBe("x");
-});
-it("parses peer/user suggestions, excludes self, deduplicates, and sorts online first", () => {
-  const raw = JSON.stringify({
-    Self: { ID: "self", DNSName: "self.tail.ts.net", TailscaleIPs: ["100.64.0.1"] },
-    User: { one: { LoginName: "alice@example.com" }, two: { LoginName: "bob@example.com" } },
-    Peer: {
-      a: { ID: "self", UserID: "one", Online: true, Active: true, OS: "linux", DNSName: "self.tail.ts.net", TailscaleIPs: ["100.64.0.1"] },
-      b: { ID: "node-b", UserID: "two", Online: false, Active: false, OS: "windows", DNSName: "b.tail.ts.net", TailscaleIPs: ["100.64.0.2", "192.168.1.1"] },
-      c: { ID: "node-b", UserID: "two", Online: true, Active: true, OS: "windows", DNSName: "b.tail.ts.net", TailscaleIPs: ["100.64.0.2"] },
-    },
-  });
-  expect(parseTailscaleStatus(raw).peers).toEqual([{ nodeId: "node-b", login: "bob@example.com", os: "windows", online: true, active: true, magicDnsName: "b.tail.ts.net", tailnetIpv4Addresses: ["100.64.0.2"] }]);
 });
 
 it("accounts bounded process capture in linear time and marks truncation", async () => {
@@ -217,10 +119,6 @@ it("throws ProcessTimeoutError promptly when a process or grandchild holds stdio
     } catch {}
     await unlink(pidFile).catch(() => {});
   }
-});
-it("rejects truncated status output before JSON parsing", async () => {
-  const error = await readTailscaleStatus({ executable: "tailscale", runner: fakeRunner(result({ stdout: "{}", stdoutTruncated: true })) }).catch((cause) => cause);
-  expect(error).toMatchObject({ tag: "TailscaleCommandError", kind: "truncated", details: { stream: "stdout" } });
 });
 it("accepts structured SSH health only when child stays alive and identity matches", async () => {
   const { promise, resolve } = Promise.withResolvers<ProcessResult>();

@@ -3,14 +3,14 @@ import { Cable, LockKeyhole, Network } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 
 import {
-  parseTailnetBackend,
+  parseMobileBackend,
   probeMobileBackend,
   replaceStoredMobileBackend,
   type StoredMobileBackend,
 } from "../platform/native-mobile.ts";
 
 /**
- * Shared Tailnet address form: parse, probe, then persist-and-reload. Used by
+ * Shared gateway address form: parse, probe, then persist-and-reload. Used by
  * the first-run screen and the host manager's Add view so address validation
  * and probing never fork. Nothing is written until the probe succeeds, so a
  * cancelled or failed attempt leaves every saved host untouched. `save`
@@ -48,7 +48,7 @@ export async function probeAndSaveMobileBackend(
   return "saved";
 }
 
-export function TailnetAddressForm({
+export function GatewayAddressForm({
   cancelSignal,
   initialMessage,
   save,
@@ -87,9 +87,9 @@ export function TailnetAddressForm({
         setMessage(null);
         let backend;
         try {
-          backend = parseTailnetBackend(address, profileId, clusterOperatorEnabled);
+          backend = parseMobileBackend(address, profileId, clusterOperatorEnabled);
         } catch (error) {
-          setMessage(error instanceof Error ? error.message : "Enter a valid Tailnet address.");
+          setMessage(error instanceof Error ? error.message : "Enter a valid HTTPS address.");
           return;
         }
         const controller = new AbortController();
@@ -116,7 +116,7 @@ export function TailnetAddressForm({
       }}
     >
       <label className="font-medium text-sm" htmlFor={addressId}>
-        Tailnet address
+        Host address
       </label>
       <input
         aria-describedby={`${helpId} ${statusId}`}
@@ -129,7 +129,7 @@ export function TailnetAddressForm({
         id={addressId}
         inputMode="url"
         onChange={(event) => setAddress(event.target.value)}
-        placeholder="https://host.tailnet.ts.net:8445"
+        placeholder="https://host.example.com:8445"
         spellCheck={false}
         type="url"
         value={address}
@@ -207,7 +207,7 @@ export function MobileConnectionScreen({ startupMessage }: { readonly startupMes
         </p>
 
         <div className="mt-8">
-          <TailnetAddressForm
+          <GatewayAddressForm
             save={replaceStoredMobileBackend}
             {...(startupMessage === undefined ? {} : { initialMessage: startupMessage })}
           />
@@ -217,13 +217,15 @@ export function MobileConnectionScreen({ startupMessage }: { readonly startupMes
           <div className="flex gap-3 py-3.5">
             <Network aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
             <p className="text-sm leading-relaxed">
-              Open Tailscale on this phone and connect to the same tailnet as your computer.
+              On your computer, open Settings → Hosts → Set up phone access to see this address and
+              a six-digit pairing code.
             </p>
           </div>
           <div className="flex gap-3 py-3.5">
             <LockKeyhole aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
             <p className="text-sm leading-relaxed">
-              If the host asks to pair, Omperator will show the exact command and six-digit code flow.
+              The code works once and expires in two minutes; the host decides what this phone may do
+              when you pair.
             </p>
           </div>
         </div>

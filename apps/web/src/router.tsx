@@ -80,8 +80,8 @@ function HomeRoute() {
   });
   // Desktop mode resumes a visible current session or selects the latest one
   // while Current is selected. Empty Archived remains an explicit home state.
-  // A browser-direct Tailnet bridge intentionally stays on the live landing
-  // page so opening the URL never implicitly attaches a session.
+  // A browser-direct bridge intentionally stays on the live landing page so
+  // opening the URL never implicitly attaches a session.
   if (preferredSessionId !== null) {
     return <Navigate params={{ sessionId: preferredSessionId }} to="/sessions/$sessionId" />;
   }

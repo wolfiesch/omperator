@@ -4,10 +4,11 @@
 // there is no CA chain to validate, so the security anchor is the leaf cert's
 // sha256 fingerprint, pinned on first connect and enforced thereafter.
 //
-// Threat model: this authenticates the host *inside* the tailnet tunnel — a
-// rogue tailnet peer can complete a TCP handshake but cannot present the
-// pinned cert. First-connect trust (TOFU) matches the existing pairing trust
-// model: the device-token pairing flow is already the moment of trust.
+// Threat model: this authenticates the host for direct wss:// connects
+// (--remote-tls-port) — a rogue network peer can complete a TCP handshake
+// but cannot present the pinned cert. First-connect trust (TOFU) matches the
+// existing pairing trust model: the device-token pairing flow is already the
+// moment of trust.
 //
 // The fingerprint the app pins is exactly what the host prints as
 // `tlsFingerprint` on GET /healthz, so an operator can verify out-of-band.
@@ -73,7 +74,7 @@ final class T4CertificatePinStore: @unchecked Sendable {
 /// Only `wss://` endpoints should route through this; plain `ws://` carries no
 /// server trust challenge at all.
 final class T4CertPinner: NSObject, URLSessionDelegate {
-    /// Keychain account key for a host:port pair, e.g. "certpin.host.tailnet.ts.net:8788".
+    /// Keychain account key for a host:port pair, e.g. "certpin.host.example.com:8788".
     static func pinKey(host: String, port: Int) -> String { "certpin.\(host.lowercased()):\(port)" }
 
     private let key: String

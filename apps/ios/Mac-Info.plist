@@ -22,7 +22,7 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
-	<!-- Dev: t4-host serves cleartext ws:// on the tailnet. Remove once the host offers wss. -->
+	<!-- Dev: t4-host serves cleartext ws://. Remove once the host offers wss. -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>

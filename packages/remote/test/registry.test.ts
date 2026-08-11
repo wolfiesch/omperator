@@ -122,14 +122,14 @@ describe("versioned remote target registry", () => {
     await serveRegistry.put({
       ...remoteTarget("serve-one"),
       mode: "serve",
-      address: "https://bunker.example.ts.net/",
+      address: "https://bunker.example.com/",
       port: 443,
     });
     await expect(
       serveRegistry.put({
         ...remoteTarget("serve-two"),
         mode: "serve",
-        address: "https://bunker.example.ts.net:443/",
+        address: "https://bunker.example.com:443/",
         port: 443,
       }),
     ).rejects.toThrow("duplicate remote target");

@@ -49,9 +49,8 @@ public struct ConfirmFrame: Codable, Equatable, Sendable {
     }
 }
 
-/// Client → host: begin pairing. The code is optional: an empty code asks
-/// the host to auto-approve a same-tailnet owner device; non-owners must
-/// still supply the 6-digit ticket the host validates.
+/// Client → host: begin pairing. The code is the 6-digit pairing ticket the
+/// host validates.
 public struct PairStartFrame: Codable, Equatable, Sendable {
     public let v: String
     public let type: String
@@ -84,7 +83,7 @@ public struct PairStartFrame: Codable, Equatable, Sendable {
         }
         v = version; type = "pair.start"
         requestId = try IDs.opaque(try c.decode(String.self, forKey: .requestId), path: "requestId")
-        code = try Pairing.pairingCodeLenient(try c.decode(String.self, forKey: .code), path: "code")
+        code = try Pairing.pairingCode(try c.decode(String.self, forKey: .code), path: "code")
         deviceId = try IDs.opaque(try c.decode(String.self, forKey: .deviceId), path: "deviceId", maxBytes: 256)
         deviceName = try Bounded.controlFree(try c.decode(String.self, forKey: .deviceName), path: "deviceName", maxBytes: 256)
         platform = try Bounded.controlFree(try c.decode(String.self, forKey: .platform), path: "platform", maxBytes: 128)
@@ -197,7 +196,8 @@ public struct ConfirmationChallenge: Decodable, Equatable, Sendable {
 }
 
 /// A parsed `t4-code://pair/<hostHint>[/<6-digit code>]` deep link. `code`
-/// is empty when the link carries no ticket (owner auto-approval prefill).
+/// is empty when the link carries no ticket; the public path then rejoins
+/// with the saved room link, or asks for a code.
 public struct PendingPair: Equatable, Sendable {
     public let hostHint: String
     public let code: String
@@ -215,20 +215,11 @@ public enum Pairing {
         return code
     }
 
-    /// Pairing code for the owner auto-approval handshake (pair.start with an
-    /// empty code). The empty string is valid — the host approves a
-    /// same-tailnet owner peer without a ticket. Any non-empty value is
-    /// passed through as-is and the host rejects it if it is not a valid
-    /// 6-digit ticket.
-    public static func pairingCodeLenient(_ value: String, path: String) throws -> String {
-        if value.isEmpty { return value }
-        return try Bounded.controlFree(value, path: path, maxBytes: 32)
-    }
-
     /// Parse `t4-code://pair/<hostHint>[/<code>]` (pair-link.parsePairDeepLink).
-    /// The code segment is optional: a hint-only link yields a prefill with an
-    /// empty code for owner auto-approval. A hint that starts with `sha256:`
-    /// is a rendezvous hostId and means the public (relay) connect path.
+    /// The code segment is optional: a hint-only link yields a prefill with
+    /// an empty code (the public path rejoins with the saved room link, or
+    /// asks for a code). A hint that starts with `sha256:` is a rendezvous
+    /// hostId and means the public (relay) connect path.
     /// Returns nil for any deviation: wrong scheme/host, extra components, or
     /// a malformed hint/code.
     public static func parseDeepLink(_ string: String, issuedAtMs: Double) -> PendingPair? {

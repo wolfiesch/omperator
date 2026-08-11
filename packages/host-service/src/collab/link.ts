@@ -45,9 +45,9 @@ export function base64UrlDecode(input: string): Uint8Array {
 const DEFAULT_GATEWAY_URL = "http://127.0.0.1:4194";
 
 /**
- * Read the room link for a session from the tailnet gateway's push registry
+ * Read the room link for a session from the gateway's push registry
  * (`GET <gateway>/v1/rooms`). The /enclave plugin registers live rooms there
- * (nothing is scanned from disk), and the gateway serves the rooms this tailnet
+ * (nothing is scanned from disk), and the gateway serves the rooms this
  * node has shared. Returns undefined on any failure — unreachable gateway, bad
  * envelope, or no room for the session — never throws.
  */

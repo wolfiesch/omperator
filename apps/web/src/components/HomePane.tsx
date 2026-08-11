@@ -138,7 +138,7 @@ function DesktopHomePane({
             <EmptyTitle>{browserDirect ? "Choose a live session" : "No sessions yet"}</EmptyTitle>
             <EmptyDescription>
               {browserDirect
-                ? "This Tailnet connection is live. Choose a session from the list on the left to inspect it."
+                ? "This connection is live. Choose a session from the list on the left to inspect it."
                 : "This machine is connected. Sessions you start here or from a paired device appear in the list on the left the moment they exist."}
             </EmptyDescription>
           </EmptyHeader>

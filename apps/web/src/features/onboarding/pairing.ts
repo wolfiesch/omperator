@@ -1,7 +1,7 @@
 // Pairing state machine, host side. The host mints a short-lived code, the
 // remote device types it, the host reviews and edits the requested
 // capabilities, then approves or denies. Security posture is explicit
-// everywhere: tailnet reachability is not trust, the grant is the trust
+// everywhere: network reachability is not trust, the grant is the trust
 // decision, and the bearer token never enters this model — `granted`
 // carries a token-free `PairedDevice` only.
 import {
@@ -20,11 +20,11 @@ export const PAIRING_CODE_TTL_MS = 2 * 60_000;
 export const PAIRING_MAX_ATTEMPTS = 5;
 
 /**
- * The one sentence every pairing surface must carry. Reachability over the
- * tailnet is a network fact; trust is the grant the user approves here.
+ * The one sentence every pairing surface must carry. Reachability is a
+ * network fact; trust is the grant the user approves here.
  */
 export const MEMBERSHIP_NOT_TRUST_COPY =
-  "Being on your tailnet only lets a device reach this host. What it can do is decided here, by you.";
+  "Being able to reach this host is not trust. What a device can do is decided here, by you.";
 
 /** What the remote device asked for, as reported by the host. */
 export interface PairingRequest {

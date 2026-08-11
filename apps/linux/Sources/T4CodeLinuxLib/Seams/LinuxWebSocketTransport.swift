@@ -7,7 +7,7 @@
 //  This is a compact RFC 6455 client over BSD sockets:
 //    - ws://   plain TCP
 //    - wss://  rejected with a clear error (TLS not yet wired; the fixture
-//              smoke test and Tailnet routes use ws://)
+//              smoke test uses ws://)
 //  Frames: masked client text frames, unmasked server text/binary frames,
 //  ping/pong keepalive passthrough, close handshake. One reader task owns
 //  receive(); send() is a continuation on the same socket.
@@ -34,17 +34,6 @@ final class LinuxWebSocketTransport: HostWireTransport {
         return Data(bytes).base64EncodedString()
     }()
 
-    /// -T4Origin= seam: the Tailnet gateway rejects every WebSocket upgrade
-    /// whose Origin is not its exact allowed set. A native client sends no
-    /// Origin by default, so this injects the tailnet HTTPS origin for local
-    /// ws:// connections routed through the gateway.
-    static var upgradeOrigin: String? {
-        ProcessInfo.processInfo.arguments
-            .first(where: { $0.hasPrefix("-T4Origin=") })
-            .map { String($0.dropFirst("-T4Origin=".count)) }
-            .flatMap { $0.isEmpty ? nil : $0 }
-    }
-
     init(endpoint: URL) {
         self.endpoint = endpoint
     }
@@ -57,7 +46,7 @@ final class LinuxWebSocketTransport: HostWireTransport {
         }
         guard endpoint.scheme == "ws" else {
             throw HostClientError.transport(
-                "wss:// requires TLS which the Linux transport does not implement yet; use ws:// (Tailnet-encrypted)"
+                "wss:// requires TLS which the Linux transport does not implement yet; use ws://"
             )
         }
         guard let host = endpoint.host, let port = endpoint.port else {
@@ -71,14 +60,9 @@ final class LinuxWebSocketTransport: HostWireTransport {
         // HTTP/1.1 upgrade request.
         let path = endpoint.path.isEmpty ? "/" : endpoint.path
         let query = endpoint.query.map { "?\($0)" } ?? ""
-        var originHeader = ""
-        if let origin = Self.upgradeOrigin {
-            originHeader = "Origin: \(origin)\r\n"
-        }
         let request =
             "GET \(path)\(query) HTTP/1.1\r\n" +
             "Host: \(host):\(port)\r\n" +
-            originHeader +
             "Upgrade: websocket\r\n" +
             "Connection: Upgrade\r\n" +
             "Sec-WebSocket-Key: \(Self.clientKey)\r\n" +

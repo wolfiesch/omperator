@@ -15,31 +15,12 @@ export * from "./projection.ts";
 export * from "./preview/index.ts";
 export * from "./remote/index.ts";
 export * from "./remote/listener.ts";
-export * from "./remote/policy.ts";
-export * from "./remote/resolver.ts";
-export * from "./remote/runtime.ts";
 export * from "./remote/types.ts";
 export * from "./rpc-child.ts";
 export * from "./rpc-child-contract.ts";
 export * from "./runtime-adapter.ts";
 export * from "./runtime-adapter-presets.ts";
 export * from "./session-ownership-store.ts";
-export type {
-	AuthenticatedPrincipal,
-	Capability,
-	DeviceMetadata,
-	DeviceRecord,
-	DeviceRegistry,
-	RemotePeerIdentity as SecurityRemotePeerIdentity,
-} from "./security/index.ts";
-export {
-	COMMAND_DESCRIPTORS,
-	DEVICE_CAPABILITIES,
-	LeaseRegistry,
-	LocalPairingTicketIssuer,
-	SqliteDeviceRegistry,
-	TokenBucketLimiter,
-} from "./security/index.ts";
 export * from "./server.ts";
 export * from "./test-control.ts";
 export * from "./transcript-image-reader.ts";

@@ -5,7 +5,7 @@ import { createReadStream } from "node:fs";
 import { lstat, readFile, readlink, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { connect as connectSocket } from "node:net";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { dirname, extname, isAbsolute, join, parse, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -70,10 +70,9 @@ export function normalizeAllowedOrigin(value) {
     url.password !== "" ||
     url.pathname !== "/" ||
     url.search !== "" ||
-    url.hash !== "" ||
-    !url.hostname.endsWith(".ts.net")
+    url.hash !== ""
   ) {
-    throw new Error("T4_ALLOWED_ORIGIN must be a Tailscale HTTPS origin ending in .ts.net");
+    throw new Error("T4_ALLOWED_ORIGIN must be a plain HTTPS origin");
   }
   return url.origin;
 }
@@ -260,8 +259,7 @@ export function normalizeClusterWebSocketUrl(value) {
     url.port !== "" ||
     url.pathname !== "/v1/ws" ||
     url.search !== "" ||
-    url.hash !== "" ||
-    !url.hostname.endsWith(".ts.net")
+    url.hash !== ""
   ) {
     throw new Error("T4_CLUSTER_WS_URL must be one credential-free secure WSS cluster target");
   }
@@ -776,47 +774,6 @@ async function handleRegistryRequest(request, response, pathname, method) {
   return false;
 }
 
-const TAILSCALE_STATUS_TIMEOUT_MS = 10_000;
-
-export function spawnTailscaleHostName(environment = process.env) {
-  return new Promise((resolvePromise) => {
-    const child = spawn("tailscale", ["status", "--json"], {
-      shell: false,
-      stdio: ["ignore", "pipe", "ignore"],
-      env: environment,
-      windowsHide: true,
-    });
-    let output = "";
-    let settled = false;
-    let timer;
-    const finish = (value) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      child.kill();
-      resolvePromise(value);
-    };
-    timer = setTimeout(() => finish(null), TAILSCALE_STATUS_TIMEOUT_MS);
-    child.stdout.on("data", (chunk) => {
-      if (output.length < MAX_FRAME_BYTES) output += chunk.toString("utf8");
-    });
-    child.once("error", () => finish(null));
-    child.once("close", (code) => {
-      if (code !== 0) {
-        finish(null);
-        return;
-      }
-      try {
-        const status = JSON.parse(output);
-        const dnsName = status?.Self?.DNSName;
-        finish(typeof dnsName === "string" ? dnsName.replace(/\.$/, "") : null);
-      } catch {
-        finish(null);
-      }
-    });
-  });
-}
-
 function bridgeBrowser(browser, options, activeBrowsers) {
   activeBrowsers.set(browser, true);
   const pending = [];
@@ -934,17 +891,7 @@ export async function startTailnetGateway(input) {
   // One-shot MagicDNS lookup for /v1/discovery: the first request spawns
   // `tailscale status --json` once and the result is cached. A failed spawn
   // is not cached so a later request can retry.
-  let discoveryHostName;
-  const resolveDiscoveryHostName = () => {
-    if (options.hostDnsName !== undefined) return Promise.resolve(options.hostDnsName);
-    if (discoveryHostName === undefined) {
-      discoveryHostName = spawnTailscaleHostName().catch(() => {
-        discoveryHostName = undefined;
-        return null;
-      });
-    }
-    return discoveryHostName;
-  };
+  const resolveDiscoveryHostName = () => Promise.resolve(options.hostDnsName ?? hostname());
   let closed = false;
   // E2E control-plane adapter for the public (relay) model: hosts pairing
   // rooms on the relay and mints the 6-digit codes the desktop displays.

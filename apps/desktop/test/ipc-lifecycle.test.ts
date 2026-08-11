@@ -276,8 +276,8 @@ describe("desktop IPC lifecycle proof", () => {
     const attack = [
       "Authorization: Bearer BEARER_SECRET authorization=Basic BASIC_SECRET",
       "Bearer BARE_BEARER_SECRET Basic BARE_BASIC_SECRET",
-      "ws://alice:WS_SECRET@tailnet.local/private/path",
-      "wss://tailnet.local/socket?token=QUERY_SECRET",
+      "ws://alice:WS_SECRET@secrets.local/private/path",
+      "wss://secrets.local/socket?token=QUERY_SECRET",
       "/Users/alice/Library/Application Support/T4 Code/auth.json",
       "at (/Users/alice/private/main.js:1:2)",
       "path=/home/alice/.config/t4-code/auth.json",
@@ -301,7 +301,7 @@ describe("desktop IPC lifecycle proof", () => {
     const error = runtimeError(new Error(attack));
     for (const leaked of [
       "BEARER_SECRET", "BASIC_SECRET", "BARE_BEARER_SECRET", "BARE_BASIC_SECRET",
-      "WS_SECRET", "QUERY_SECRET", "tailnet.local", "TOPSECRET", "JSON_SECRET",
+      "WS_SECRET", "QUERY_SECRET", "secrets.local", "TOPSECRET", "JSON_SECRET",
       "secret with spaces", "two words", "ACCESS_SECRET", "CLIENT_SECRET", "API_SECRET",
       "alice", "auth.json", "main.js", "file.ts", "/Users/", "/home/", "file:///",
     ]) {

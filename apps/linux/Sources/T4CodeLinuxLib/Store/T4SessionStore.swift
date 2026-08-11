@@ -286,7 +286,7 @@ final class T4SessionStore: ObservableObject {
         }
     }
     /// Human-readable endpoint the store is currently paired/connected to
-    /// (e.g. "ws://macbookpro.my-tailnet.ts.net:8787/v1/ws"), for UI display.
+    /// (e.g. "wss://host:8788/v1/ws"), for UI display.
     private(set) var pairedEndpoint: String? {
         get { connectionModel.pairedEndpoint }
         set { connectionModel.pairedEndpoint = newValue }
@@ -941,9 +941,7 @@ final class T4SessionStore: ObservableObject {
         }
         // Linux QA seam: -T4OpenEndpoint=<ws://…> connects to an open host
         // without device credentials (welcome.authentication == .local) — the
-        // raw-endpoint connect-sheet path for open hosts. The Tailnet
-        // gateway's local transport rejects device authentication, so this is
-        // how the Linux client reaches a gateway-backed host from the CLI.
+        // raw-endpoint connect-sheet path for open hosts.
         #if os(Linux)
         if let openSeam = arguments.first(where: { $0.hasPrefix("-T4OpenEndpoint=") }),
            let endpoint = URL(string: String(openSeam.dropFirst("-T4OpenEndpoint=".count))),

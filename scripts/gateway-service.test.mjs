@@ -18,7 +18,7 @@ import {
   supervisorCommands,
   validateServiceConfig,
   validateCliOptions,
-} from "./tailnet-service.mjs";
+} from "./gateway-service.mjs";
 
 const CONFIG = {
   version: 1,
@@ -27,21 +27,21 @@ const CONFIG = {
   gatewayScript: "/home/alice/t4-code/scripts/tailnet-gateway.mjs",
   webRoot: "/home/alice/t4-code/apps/web/dist",
   appSocket: "/run/user/1000/omp/appserver.sock",
-  allowedOrigin: "https://workstation.example-tailnet.ts.net:8445",
+  allowedOrigin: "https://wickrunner.com",
   nativeAllowedOrigins: ["https://localhost", "capacitor://localhost"],
   port: DEFAULT_GATEWAY_PORT,
   label: "Alice's workstation",
   deploymentIdentity: `sha256:${"a".repeat(64)}`,
 };
 
-test("service config requires an exact Tailnet HTTPS origin and absolute local paths", () => {
+test("service config requires an exact HTTPS origin and absolute local paths", () => {
   assert.deepEqual(validateServiceConfig(CONFIG), CONFIG);
   const legacyConfig = { ...CONFIG };
   delete legacyConfig.nativeAllowedOrigins;
   assert.deepEqual(validateServiceConfig(legacyConfig), CONFIG);
   assert.throws(
-    () => validateServiceConfig({ ...CONFIG, allowedOrigin: "https://public.example.com" }),
-    /Tailscale HTTPS origin/u,
+    () => validateServiceConfig({ ...CONFIG, allowedOrigin: "http://wickrunner.com" }),
+    /plain HTTPS origin/u,
   );
   assert.throws(
     () => validateServiceConfig({ ...CONFIG, nativeAllowedOrigins: ["*"] }),
@@ -62,17 +62,17 @@ test("service config requires an exact Tailnet HTTPS origin and absolute local p
 test("host DNS name flows from config into both unit definitions when set", () => {
   const withName = validateServiceConfig({
     ...CONFIG,
-    hostDnsName: "workstation.example-tailnet.ts.net.",
+    hostDnsName: "workstation.example.com.",
   });
-  assert.equal(withName.hostDnsName, "workstation.example-tailnet.ts.net");
+  assert.equal(withName.hostDnsName, "workstation.example.com");
   assert.match(
     renderSystemdUnit(withName),
-    /Environment="T4_HOST_DNS_NAME=workstation\.example-tailnet\.ts\.net"/u,
+    /Environment="T4_HOST_DNS_NAME=workstation\.example\.com"/u,
   );
   const darwinPaths = servicePaths({ platform: "darwin", homeDirectory: "/Users/alice", uid: 501 });
   assert.match(
     renderLaunchAgent(withName, darwinPaths),
-    /<key>T4_HOST_DNS_NAME<\/key>\s+<string>workstation\.example-tailnet\.ts\.net<\/string>/u,
+    /<key>T4_HOST_DNS_NAME<\/key>\s+<string>workstation\.example\.com<\/string>/u,
   );
 
   const withoutName = validateServiceConfig(CONFIG);

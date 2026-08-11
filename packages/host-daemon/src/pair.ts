@@ -1,11 +1,7 @@
-import { execFile } from "node:child_process";
 import { request } from "node:http";
-import { homedir } from "node:os";
-import { promisify } from "node:util";
+import { homedir, hostname } from "node:os";
 import qrcode from "qrcode";
 import { profileSocketPath } from "@t4-code/host-service";
-
-const execFileAsync = promisify(execFile);
 
 /**
  * Capabilities requested on every pairing ticket. These match the read/prompt/
@@ -19,8 +15,6 @@ export const DEFAULT_PAIR_TTL_MS = 600_000;
 /** Port the iOS companion assumes when building ws://<hint>:8787/v1/ws. */
 export const PAIR_PORT = 8787;
 
-const TAILSCALE_TIMEOUT_MS = 5_000;
-const TAILSCALE_MAX_BUFFER = 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 10_000;
 const HOSTNAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 
@@ -42,7 +36,7 @@ export interface PairArgs {
 }
 
 export interface PairActionDependencies {
-  /** Resolve the host hint embedded in the deep link. Defaults to a tailscale probe. */
+  /** Resolve the host hint embedded in the deep link. Defaults to the machine hostname. */
   readonly resolveHostHint?: () => Promise<HostHintResult>;
   /** POST the pairing ticket. Defaults to the unix-socket implementation. */
   readonly postTicket?: (
@@ -79,33 +73,12 @@ export function parsePairArgs(argv: readonly string[], home = homedir()): PairAr
   return { socketPath: socketPath ?? profileSocketPath(undefined, undefined, home), ttlMs };
 }
 
-async function runTailscale(args: readonly string[]): Promise<string> {
-  const { stdout } = await execFileAsync("tailscale", [...args], {
-    timeout: TAILSCALE_TIMEOUT_MS,
-    maxBuffer: TAILSCALE_MAX_BUFFER,
-  });
-  return stdout;
-}
-
 /**
- * Best-effort host hint: prefer the tailscale DNS name, then the IPv4 address,
- * then localhost. Never throws — a missing tailscale just degrades to localhost.
+ * Best-effort host hint: the machine hostname. Never throws.
  */
 export async function defaultResolveHostHint(): Promise<HostHintResult> {
-  try {
-    const stdout = await runTailscale(["status", "--json"]);
-    const dns = String(JSON.parse(stdout)?.Self?.DNSName ?? "").replace(/\.+$/u, "");
-    if (dns && HOSTNAME_PATTERN.test(dns)) return { hint: dns };
-  } catch {}
-  try {
-    const stdout = await runTailscale(["ip", "-4"]);
-    const ip = stdout.trim().split(/\s+/u)[0];
-    if (ip && HOSTNAME_PATTERN.test(ip)) return { hint: ip };
-  } catch {}
-  return {
-    hint: "localhost",
-    note: "tailscale not available — using localhost; pairing only works from this machine",
-  };
+  const hint = hostname();
+  return HOSTNAME_PATTERN.test(hint) ? { hint } : { hint: "localhost" };
 }
 
 /** POST /admin/pair-ticket over a unix socket using node:http (fetch can't). */

@@ -596,9 +596,14 @@ class FakeTargetsPort implements TargetActionsPort {
 }
 
 describe("target add validation", () => {
-  it("accepts a Tailscale IP and derives an exact add request", () => {
+  it("accepts an HTTPS address and derives an exact add request", () => {
     const result = validateTargetDraft(
-      { ...EMPTY_TARGET_DRAFT, label: "Work Mac", address: "100.64.0.12", port: "4400" },
+      {
+        ...EMPTY_TARGET_DRAFT,
+        label: "Work Mac",
+        address: "https://work.example.com:4400",
+        port: "4400",
+      },
       new Set(["local"]),
     );
     expect(result.ok).toBe(true);
@@ -606,8 +611,8 @@ describe("target add validation", () => {
       expect(result.target).toMatchObject({
         targetId: "work-mac",
         label: "Work Mac",
-        mode: "direct",
-        address: "100.64.0.12",
+        mode: "serve",
+        address: "https://work.example.com:4400",
         port: 4400,
         grantedCapabilities: [],
         status: "unknown",
@@ -617,29 +622,27 @@ describe("target add validation", () => {
     }
   });
 
-  it("rejects non-tailnet direct addresses and malformed serve URLs", () => {
-    const direct = validateTargetDraft(
+  it("rejects malformed HTTPS/WSS addresses", () => {
+    const bare = validateTargetDraft(
       { ...EMPTY_TARGET_DRAFT, label: "X", address: "example.com", port: "4400" },
       new Set(),
     );
-    expect(direct.ok).toBe(false);
-    const serve = validateTargetDraft(
+    expect(bare.ok).toBe(false);
+    const insecure = validateTargetDraft(
       {
         ...EMPTY_TARGET_DRAFT,
         label: "X",
-        mode: "serve",
-        address: "http://host.tail.ts.net/",
+        address: "http://host.example.com/",
         port: "",
       },
       new Set(),
     );
-    expect(serve.ok).toBe(false);
+    expect(insecure.ok).toBe(false);
     const good = validateTargetDraft(
       {
         ...EMPTY_TARGET_DRAFT,
         label: "X",
-        mode: "serve",
-        address: "https://host.tail.ts.net/",
+        address: "https://host.example.com/",
         port: "",
       },
       new Set(),
@@ -807,7 +810,7 @@ describe("target actions", () => {
     const store = createTargetsStore(port, {});
     store
       .getState()
-      .setDraft({ ...EMPTY_TARGET_DRAFT, label: "Work Mac", address: "100.64.0.12", port: "4400" });
+      .setDraft({ ...EMPTY_TARGET_DRAFT, label: "Work Mac", address: "https://work.example.com:4400", port: "4400" });
     await store.getState().submitAdd();
     expect(port.calls.map((call) => call.kind)).toEqual(["add", "connect"]);
     expect(store.getState().requestedCapabilities["work-mac"]).toContain("sessions.read");

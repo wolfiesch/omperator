@@ -1,4 +1,4 @@
-// Host connection menu: local and tailnet hosts grouped, each row naming
+// Host connection menu: local and remote hosts grouped, each row naming
 // its exact state, why it is in it, and the one safe action available from
 // here. A cached host never claims to be connected; a skewed host says what
 // still works. Standalone: state in, intents out.

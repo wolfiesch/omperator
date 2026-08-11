@@ -2,40 +2,15 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
-  buildTailscaleHttpsBaseUrl,
-  discoverTailscaleExecutable,
   NodeProcessRunner,
-  readTailscaleStatus,
   runProcess,
-  suggestTailscaleServe,
   type ProcessRunner,
 } from "@t4-code/remote";
 import type { PhoneSetupState } from "@t4-code/protocol/desktop-ipc";
 
 const LOCAL_GATEWAY_PORT = 4_194;
-const TAILSCALE_HTTPS_PORT = 8_445;
 const RENDEZVOUS_URL_DEFAULT = "https://wickrunner.com:8445";
 const RELAY_URL_DEFAULT = "wss://wickrunner.com:8443";
-
-function gatewayOriginFromStatus(output: string): string | undefined {
-  const match = /^allowed origin:\s*(\S+)\s*$/imu.exec(output);
-  if (match?.[1] === undefined) return undefined;
-  try {
-    const url = new URL(match[1]);
-    if (
-      url.protocol !== "https:"
-      || url.username !== ""
-      || url.password !== ""
-      || url.pathname !== "/"
-      || url.search !== ""
-      || url.hash !== ""
-      || !url.hostname.endsWith(".ts.net")
-    ) return undefined;
-    return url.origin;
-  } catch {
-    return undefined;
-  }
-}
 
 export interface PhoneSetupServiceOptions {
   readonly platform?: NodeJS.Platform;
@@ -43,7 +18,6 @@ export interface PhoneSetupServiceOptions {
   readonly resourcesPath: string;
   readonly electronExecutable: string;
   readonly runner?: ProcessRunner;
-  readonly discoverTailscale?: () => Promise<string>;
 }
 
 export class PhoneSetupService {
@@ -52,7 +26,6 @@ export class PhoneSetupService {
   private readonly resourcesPath: string;
   private readonly electronExecutable: string;
   private readonly runner: ProcessRunner;
-  private readonly tailscaleExecutable: () => Promise<string>;
   private configureOperation: Promise<PhoneSetupState> | undefined;
   private restoreOperation: Promise<PhoneSetupState> | undefined;
 
@@ -62,7 +35,6 @@ export class PhoneSetupService {
     this.resourcesPath = options.resourcesPath;
     this.electronExecutable = options.electronExecutable;
     this.runner = options.runner ?? new NodeProcessRunner();
-    this.tailscaleExecutable = options.discoverTailscale ?? (() => discoverTailscaleExecutable({ platform: this.platform }));
   }
 
   inspect(): Promise<PhoneSetupState> {
@@ -107,18 +79,25 @@ export class PhoneSetupService {
     return `sha256:${createHash("sha256").update(manifest).digest("hex")}`;
   }
 
-  private async tailscaleFacts(): Promise<{ executable: string; url: string }> {
-    const executable = await this.tailscaleExecutable();
-    const status = await readTailscaleStatus({ runner: this.runner, executable, timeoutMs: 3_000 });
-    if (!status.magicDnsName) throw new Error("Tailscale is not connected or MagicDNS is unavailable.");
-    return { executable, url: buildTailscaleHttpsBaseUrl({ magicDnsName: status.magicDnsName, servePort: TAILSCALE_HTTPS_PORT }) };
+  /** Public origin the phone opens to pair through the rendezvous. */
+  private publicOrigin(): string {
+    const rendezvous = process.env.T4_RENDEZVOUS_URL?.trim() || RENDEZVOUS_URL_DEFAULT;
+    try {
+      const url = new URL(rendezvous);
+      url.pathname = "/";
+      url.search = "";
+      url.hash = "";
+      return url.toString();
+    } catch {
+      return `${rendezvous.replace(/\/+$/u, "")}/`;
+    }
   }
 
   private async runGatewayService(args: readonly string[]): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
     return runProcess({
       runner: this.runner,
       command: this.electronExecutable,
-      args: [join(this.resourcesPath, "gateway", "tailnet-service.mjs"), ...args],
+      args: [join(this.resourcesPath, "gateway", "gateway-service.mjs"), ...args],
       env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", ELECTRON_RUN_AS_NODE: "1" },
       timeoutMs: 20_000,
     });
@@ -146,11 +125,9 @@ export class PhoneSetupService {
       return;
     }
     if (!/^deployment identity:\s*stale\s*$/imu.test(status.stdout)) return;
-    const origin = gatewayOriginFromStatus(status.stdout);
-    if (origin === undefined) return;
-    const install = await this.installGateway(origin, deploymentIdentity);
+    const install = await this.installGateway(this.publicOrigin(), deploymentIdentity);
     if (install.exitCode !== 0) {
-      throw new Error(install.stderr.trim().slice(0, 512) || "The private phone gateway could not be upgraded.");
+      throw new Error(install.stderr.trim().slice(0, 512) || "The phone gateway could not be upgraded.");
     }
   }
 
@@ -199,118 +176,57 @@ export class PhoneSetupService {
       : `Phone access is ready — enter the code on your phone: ${pairCode}`;
   }
 
-  private async hasExpectedServe(executable: string, url: string): Promise<boolean> {
-    try {
-      const result = await runProcess({
-        runner: this.runner,
-        command: executable,
-        args: ["serve", "status", "--json"],
-        timeoutMs: 3_000,
-      });
-      if (result.exitCode !== 0 || result.stderr.trim().length > 0) return false;
-      const parsed: unknown = JSON.parse(result.stdout);
-      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return false;
-      const record = parsed as Record<string, unknown>;
-      const tcp = record.TCP;
-      const web = record.Web;
-      if (tcp === null || typeof tcp !== "object" || Array.isArray(tcp)) return false;
-      if (web === null || typeof web !== "object" || Array.isArray(web)) return false;
-      const destination = new URL(url);
-      const port = destination.port || "443";
-      const tcpPort = (tcp as Record<string, unknown>)[port];
-      if (tcpPort === null || typeof tcpPort !== "object" || Array.isArray(tcpPort)) return false;
-      if ((tcpPort as Record<string, unknown>).HTTPS !== true) return false;
-      const authority = destination.port ? `${destination.hostname}:${destination.port}` : destination.hostname;
-      const webRoute = (web as Record<string, unknown>)[authority];
-      if (webRoute === null || typeof webRoute !== "object" || Array.isArray(webRoute)) return false;
-      const handlers = (webRoute as Record<string, unknown>).Handlers;
-      if (handlers === null || typeof handlers !== "object" || Array.isArray(handlers)) return false;
-      const root = (handlers as Record<string, unknown>)["/"];
-      return root !== null && typeof root === "object" && !Array.isArray(root)
-        && (root as Record<string, unknown>).Proxy === `http://127.0.0.1:${LOCAL_GATEWAY_PORT}`;
-    } catch {
-      return false;
-    }
-  }
-
   private async inspectInternal(): Promise<PhoneSetupState> {
     const unsupported = this.unsupported();
     if (unsupported) return unsupported;
-    let facts: { executable: string; url: string };
-    try {
-      facts = await this.tailscaleFacts();
-    } catch {
-      return { phase: "tailscale-required", message: "Install and connect Tailscale on this Mac to enable private phone access." };
-    }
-    let gatewayHealthy = false;
+    const url = this.publicOrigin();
     try {
       const service = await this.runGatewayService(["status", "--deployment-identity", await this.identity()]);
-      const expectedServe = await this.hasExpectedServe(facts.executable, facts.url);
-      gatewayHealthy = service.exitCode === 0 && /health:\s*healthy/iu.test(service.stdout);
-      if (gatewayHealthy && expectedServe) {
-        const code = await this.fetchPairCode();
-        return {
-          phase: "ready",
-          message: this.readyMessage(code),
-          url: facts.url,
-          ...(code === undefined ? {} : { pairCode: code }),
-        };
-      }
-      if (expectedServe && /health:\s*unhealthy/iu.test(service.stdout)) {
+      if (service.exitCode === 0) {
+        if (/health:\s*healthy/iu.test(service.stdout)) {
+          const code = await this.fetchPairCode();
+          return {
+            phase: "ready",
+            message: this.readyMessage(code),
+            url,
+            ...(code === undefined ? {} : { pairCode: code }),
+          };
+        }
         return {
           phase: "error",
           message: "Phone access is installed, but the local OMP runtime is not ready. Open Hosts, restart the default OMP profile, then check again.",
-          url: facts.url,
+          url,
         };
       }
     } catch {}
-    const code = gatewayHealthy ? await this.fetchPairCode() : undefined;
     return {
       phase: "not-configured",
       message: "Set up private phone access, then open Omperator on your phone; it will find this computer automatically.",
-      url: facts.url,
-      ...(code === undefined ? {} : { pairCode: code }),
+      url,
     };
   }
 
   private async configureInternal(): Promise<PhoneSetupState> {
     const unsupported = this.unsupported();
     if (unsupported) return unsupported;
-    let facts: { executable: string; url: string };
-    try {
-      facts = await this.tailscaleFacts();
-    } catch (error) {
-      return { phase: "tailscale-required", message: error instanceof Error ? error.message : "Tailscale is unavailable." };
-    }
     const deploymentIdentity = await this.identity();
-    const service = await this.installGateway(facts.url, deploymentIdentity);
+    const origin = this.publicOrigin();
+    const service = await this.installGateway(origin, deploymentIdentity);
     if (service.exitCode !== 0) {
-      return { phase: "error", message: service.stderr.trim().slice(0, 512) || "The private phone gateway could not start." };
-    }
-    const serve = suggestTailscaleServe({
-      localPort: LOCAL_GATEWAY_PORT,
-      servePort: TAILSCALE_HTTPS_PORT,
-      executable: facts.executable,
-    });
-    const result = await runProcess({ runner: this.runner, command: serve.executable, args: serve.args, timeoutMs: 10_000 });
-    if (result.exitCode !== 0) {
-      return { phase: "error", message: result.stderr.trim().slice(0, 512) || "Tailscale Serve could not expose the private gateway." };
-    }
-    if (!await this.hasExpectedServe(facts.executable, facts.url)) {
-      return { phase: "error", message: "Tailscale Serve did not keep the expected private phone route." };
+      return { phase: "error", message: service.stderr.trim().slice(0, 512) || "The phone gateway could not start." };
     }
     if (!await this.waitForHealthyGateway(deploymentIdentity)) {
       return {
         phase: "error",
         message: "Phone access was installed, but the local OMP runtime is not ready. Open Hosts, restart the default OMP profile, then check again.",
-        url: facts.url,
+        url: origin,
       };
     }
     const code = await this.fetchPairCode();
     return {
       phase: "ready",
       message: this.readyMessage(code),
-      url: facts.url,
+      url: origin,
       ...(code === undefined ? {} : { pairCode: code }),
     };
   }
@@ -320,46 +236,32 @@ export class PhoneSetupService {
     if (unsupported) return unsupported;
     const deploymentIdentity = await this.identity();
     await this.repairStaleGateway(deploymentIdentity);
-    let facts: { executable: string; url: string };
-    try {
-      facts = await this.tailscaleFacts();
-    } catch (error) {
-      return { phase: "tailscale-required", message: error instanceof Error ? error.message : "Tailscale is unavailable." };
-    }
-    if (!await this.hasExpectedServe(facts.executable, facts.url)) {
-      const code = await this.gatewayIsHealthy(deploymentIdentity) ? await this.fetchPairCode() : undefined;
-      return {
-        phase: "not-configured",
-        message: "Set up private phone access, then open Omperator on your phone; it will find this computer automatically.",
-        url: facts.url,
-        ...(code === undefined ? {} : { pairCode: code }),
-      };
-    }
     if (await this.gatewayIsHealthy(deploymentIdentity)) {
       const code = await this.fetchPairCode();
       return {
         phase: "ready",
         message: this.readyMessage(code),
-        url: facts.url,
+        url: this.publicOrigin(),
         ...(code === undefined ? {} : { pairCode: code }),
       };
     }
-    const service = await this.installGateway(facts.url, deploymentIdentity);
+    const origin = this.publicOrigin();
+    const service = await this.installGateway(origin, deploymentIdentity);
     if (service.exitCode !== 0) {
-      return { phase: "error", message: service.stderr.trim().slice(0, 512) || "The private phone gateway could not restart." };
+      return { phase: "error", message: service.stderr.trim().slice(0, 512) || "The phone gateway could not restart." };
     }
     if (!await this.waitForHealthyGateway(deploymentIdentity)) {
       return {
         phase: "error",
         message: "Phone access restarted, but the local OMP runtime is not ready yet. Open Hosts, restart the default OMP profile, then check again.",
-        url: facts.url,
+        url: origin,
       };
     }
     const code = await this.fetchPairCode();
     return {
       phase: "ready",
       message: this.readyMessage(code),
-      url: facts.url,
+      url: origin,
       ...(code === undefined ? {} : { pairCode: code }),
     };
   }

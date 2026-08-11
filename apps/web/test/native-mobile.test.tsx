@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { MobileConnectionScreen } from "../src/components/MobileConnectionScreen.tsx";
 import {
   MOBILE_BACKEND_STORAGE_KEY,
-  parseTailnetBackend,
+  parseMobileBackend,
   persistNativeMobileCredentials,
   prepareNativeMobileBackend,
   probeMobileBackend,
@@ -34,29 +34,28 @@ afterEach(() => {
 });
 
 describe("native mobile connection", () => {
-  it("normalizes a full Tailnet HTTPS origin and rejects unsafe addresses", () => {
-    expect(parseTailnetBackend("workstation.example.ts.net:8445")).toEqual({
+  it("normalizes a full HTTPS origin and rejects unsafe addresses", () => {
+    expect(parseMobileBackend("workstation.example.com:8445")).toEqual({
       version: 3,
-      endpointKey: "https://workstation.example.ts.net:8445#profile=default",
-      origin: "https://workstation.example.ts.net:8445",
+      endpointKey: "https://workstation.example.com:8445#profile=default",
+      origin: "https://workstation.example.com:8445",
       profileId: "default",
-      wsUrl: "wss://workstation.example.ts.net:8445/v1/ws",
+      wsUrl: "wss://workstation.example.com:8445/v1/ws",
       label: "T4 on workstation",
     });
-    expect(() => parseTailnetBackend("http://host.tailnet.ts.net")).toThrow(/HTTPS/u);
-    expect(() => parseTailnetBackend("https://example.com")).toThrow(/\.ts\.net/u);
-    expect(() => parseTailnetBackend("https://host.tailnet.ts.net/admin")).toThrow(/host address only/u);
-    expect(() => parseTailnetBackend("https://user:pass@host.tailnet.ts.net")).toThrow(/credentials/u);
-    expect(parseTailnetBackend("https://host.tailnet.ts.net", "  work  ")).toMatchObject({
-      endpointKey: "https://host.tailnet.ts.net#profile=work",
+    expect(() => parseMobileBackend("http://host.example.com")).toThrow(/HTTPS/u);
+    expect(() => parseMobileBackend("https://host.example.com/admin")).toThrow(/host address only/u);
+    expect(() => parseMobileBackend("https://user:pass@host.example.com")).toThrow(/credentials/u);
+    expect(parseMobileBackend("https://host.example.com", "  work  ")).toMatchObject({
+      endpointKey: "https://host.example.com#profile=work",
       profileId: "work",
-      wsUrl: "wss://host.tailnet.ts.net/v1/profiles/work/ws",
+      wsUrl: "wss://host.example.com/v1/profiles/work/ws",
     });
   });
   it("replaces an existing endpoint at the saved-endpoint cap but rejects a distinct endpoint", () => {
     const storage = new MemoryStorage();
     const backends = Array.from({ length: 16 }, (_, index) =>
-      parseTailnetBackend(`https://host-${index}.tailnet.ts.net:8445`, `profile-${index}`),
+      parseMobileBackend(`https://host-${index}.example.com:8445`, `profile-${index}`),
     );
     for (const backend of backends) writeStoredMobileBackend(backend, storage);
 
@@ -65,15 +64,15 @@ describe("native mobile connection", () => {
     expect(readStoredMobileBackendDirectory(storage)?.backends[0]).toEqual(backends[1]);
     expect(readStoredMobileBackendDirectory(storage)?.backends[15]).toEqual(backends[0]);
 
-    const distinct = parseTailnetBackend("https://new-host.tailnet.ts.net:8445", "new-profile");
+    const distinct = parseMobileBackend("https://new-host.example.com:8445", "new-profile");
     expect(() => writeStoredMobileBackend(distinct, storage)).toThrow(/up to 16 T4 endpoints/u);
     expect(readStoredMobileBackendDirectory(storage)?.backends).toHaveLength(16);
   });
 
   it("migrates the legacy host, retains added hosts, and switches without deleting either", () => {
     const storage = new MemoryStorage();
-    const bunker = parseTailnetBackend("https://bunker.tailnet.ts.net:8445");
-    const laptop = parseTailnetBackend("https://laptop.tailnet.ts.net:8445");
+    const bunker = parseMobileBackend("https://bunker.example.com:8445");
+    const laptop = parseMobileBackend("https://laptop.example.com:8445");
     storage.setItem("t4-code:mobile-backend:v1", JSON.stringify(bunker));
 
     expect(readStoredMobileBackendDirectory(storage)).toEqual({
@@ -112,7 +111,7 @@ describe("native mobile connection", () => {
 
   it("loads only the active host credential from the keyed native bridge", async () => {
     const storage = new MemoryStorage();
-    const backend = parseTailnetBackend("https://host.tailnet.ts.net:8445");
+    const backend = parseMobileBackend("https://host.example.com:8445");
     storage.setItem("t4-code:mobile-backend:v1", JSON.stringify(backend));
     const reads: Array<{ readonly hostKey: string; readonly migrateLegacy?: boolean }> = [];
     const clears: string[] = [];
@@ -168,7 +167,7 @@ describe("native mobile connection", () => {
 
   it("migrates v2 origin-keyed credentials to the default profile endpoint", async () => {
     const storage = new MemoryStorage();
-    const backend = parseTailnetBackend("https://legacy.tailnet.ts.net:8445");
+    const backend = parseMobileBackend("https://legacy.example.com:8445");
     storage.setItem(
       "t4-code:mobile-backends:v2",
       JSON.stringify({
@@ -244,7 +243,7 @@ describe("native mobile connection", () => {
 
   it("does not rebind global legacy credentials after v2 host repair", async () => {
     const storage = new MemoryStorage();
-    const backend = parseTailnetBackend("https://repaired.tailnet.ts.net:8445");
+    const backend = parseMobileBackend("https://repaired.example.com:8445");
     replaceStoredMobileBackend(backend, storage);
     const reads: Array<{ readonly hostKey: string; readonly migrateLegacy?: boolean }> = [];
     Object.defineProperty(globalThis, "document", {
@@ -284,7 +283,7 @@ describe("native mobile connection", () => {
   it("retries a stranded secure-storage callback after a WebView reload", async () => {
     vi.useFakeTimers();
     const storage = new MemoryStorage();
-    const backend = parseTailnetBackend("https://reload.tailnet.ts.net:8445", "proof");
+    const backend = parseMobileBackend("https://reload.example.com:8445", "proof");
     writeStoredMobileBackend(backend, storage);
     let reads = 0;
     Object.defineProperty(globalThis, "document", {
@@ -324,7 +323,7 @@ describe("native mobile connection", () => {
   it("returns setup instead of hanging when secure storage never answers", async () => {
     vi.useFakeTimers();
     const storage = new MemoryStorage();
-    const backend = parseTailnetBackend("https://silent.tailnet.ts.net:8445", "proof");
+    const backend = parseMobileBackend("https://silent.example.com:8445", "proof");
     writeStoredMobileBackend(backend, storage);
     let reads = 0;
     Object.defineProperty(globalThis, "document", {
@@ -389,8 +388,8 @@ describe("native mobile connection", () => {
 
   it("stores and removes credentials for exactly the selected host", async () => {
     const storage = new MemoryStorage();
-    const bunker = parseTailnetBackend("https://bunker.tailnet.ts.net:8445");
-    const laptop = parseTailnetBackend("https://laptop.tailnet.ts.net:8445");
+    const bunker = parseMobileBackend("https://bunker.example.com:8445");
+    const laptop = parseMobileBackend("https://laptop.example.com:8445");
     writeStoredMobileBackend(bunker, storage);
     writeStoredMobileBackend(laptop, storage);
     selectStoredMobileBackend(bunker.endpointKey, storage);
@@ -457,8 +456,8 @@ describe("native mobile connection", () => {
 
   it("restores the complete host directory when secure credential removal fails", async () => {
     const storage = new MemoryStorage();
-    const bunker = parseTailnetBackend("https://bunker.tailnet.ts.net:8445");
-    const laptop = parseTailnetBackend("https://laptop.tailnet.ts.net:8445");
+    const bunker = parseMobileBackend("https://bunker.example.com:8445");
+    const laptop = parseMobileBackend("https://laptop.example.com:8445");
     writeStoredMobileBackend(bunker, storage);
     writeStoredMobileBackend(laptop, storage);
     let directoryDuringClear: StoredMobileBackendDirectory | null = null;
@@ -502,8 +501,8 @@ describe("native mobile connection", () => {
 
   it("removing the active host selects a retained host, then removing the last enters setup", async () => {
     const storage = new MemoryStorage();
-    const bunker = parseTailnetBackend("https://bunker.tailnet.ts.net:8445");
-    const laptop = parseTailnetBackend("https://laptop.tailnet.ts.net:8445");
+    const bunker = parseMobileBackend("https://bunker.example.com:8445");
+    const laptop = parseMobileBackend("https://laptop.example.com:8445");
     writeStoredMobileBackend(bunker, storage);
     writeStoredMobileBackend(laptop, storage);
     const clears: string[] = [];
@@ -545,8 +544,8 @@ describe("native mobile connection", () => {
 
   it("does not clear the active profile when removing another profile on the same origin", async () => {
     const storage = new MemoryStorage();
-    const defaultBackend = parseTailnetBackend("https://host.tailnet.ts.net:8445");
-    const fableBackend = parseTailnetBackend("https://host.tailnet.ts.net:8445", "fable");
+    const defaultBackend = parseMobileBackend("https://host.example.com:8445");
+    const fableBackend = parseMobileBackend("https://host.example.com:8445", "fable");
     writeStoredMobileBackend(defaultBackend, storage);
     writeStoredMobileBackend(fableBackend, storage);
     Object.defineProperty(globalThis, "window", {
@@ -594,7 +593,7 @@ describe("native mobile connection", () => {
       close(): void {}
       private emit(name: string): void { for (const listener of this.listeners.get(name) ?? []) listener(); }
     }
-    const backend = parseTailnetBackend("https://host.tailnet.ts.net:8445");
+    const backend = parseMobileBackend("https://host.example.com:8445");
     await expect(probeMobileBackend(backend, { WebSocketImpl: OpeningSocket as unknown as typeof WebSocket })).resolves.toBeUndefined();
     expect(OpeningSocket.url).toBe(backend.wsUrl);
   });
@@ -620,7 +619,7 @@ describe("native mobile connection", () => {
       }
     }
     const controller = new AbortController();
-    const backend = parseTailnetBackend("https://host.tailnet.ts.net:8445");
+    const backend = parseMobileBackend("https://host.example.com:8445");
     const probe = probeMobileBackend(backend, {
       signal: controller.signal,
       WebSocketImpl: HangingSocket as unknown as typeof WebSocket,
@@ -635,7 +634,7 @@ describe("native mobile connection", () => {
   it("renders focused first-run instructions instead of fixture sessions", () => {
     const markup = renderToStaticMarkup(<MobileConnectionScreen />);
     expect(markup).toContain("Connect to your T4 host");
-    expect(markup).toContain("Open Tailscale on this phone");
+    expect(markup).toContain("six-digit pairing code");
     expect(markup).toContain("h-12 w-full");
     expect(markup).not.toContain("Sample data");
   });

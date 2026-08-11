@@ -148,7 +148,7 @@ export function decodeT4OmpLauncherState(value: unknown): T4OmpLauncherState {
     message: controlFree(item.message, "t4-omp launcher message", 512),
   });
 }
-export type PhoneSetupPhase = "unsupported" | "tailscale-required" | "not-configured" | "ready" | "error";
+export type PhoneSetupPhase = "unsupported" | "not-configured" | "ready" | "error";
 export interface PhoneSetupState {
   readonly phase: PhoneSetupPhase;
   readonly message: string;
@@ -160,7 +160,7 @@ export interface PhoneSetupRequest {}
 export function decodePhoneSetupState(value: unknown): PhoneSetupState {
   const item = object(value, "phone setup state");
   exact(item, ["phase", "message", "url", "pairCode"]);
-  if (!["unsupported", "tailscale-required", "not-configured", "ready", "error"].includes(item.phase as string)) {
+  if (!["unsupported", "not-configured", "ready", "error"].includes(item.phase as string)) {
     throw new Error("invalid phone setup phase");
   }
   const message = controlFree(item.message, "phone setup message", 512);
@@ -169,7 +169,7 @@ export function decodePhoneSetupState(value: unknown): PhoneSetupState {
     const parsed = new URL(controlFree(item.url, "phone setup URL", 2_048));
     if (
       parsed.protocol !== "https:" || parsed.username !== "" || parsed.password !== "" ||
-      !parsed.hostname.endsWith(".ts.net") || parsed.port !== "8445" || parsed.pathname !== "/" ||
+      parsed.hostname === "" || parsed.pathname !== "/" ||
       parsed.search !== "" || parsed.hash !== ""
     ) throw new Error("invalid phone setup URL");
     url = parsed.toString();

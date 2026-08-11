@@ -1,12 +1,12 @@
 //  T4ConnectView.swift
 //  Connect to a T4 host over host-wire. The new-user path comes first: pick
-//  your computer from the rendezvous discovery list and tap it — the store
-//  resolves the host gateway's /v1/discovery wsUrl and connects through the
-//  gateway (the welcome is .local, so no pairing round-trip). Already-paired
-//  devices (or local/open hosts) can use the Advanced section to connect with
-//  raw endpoint + credentials, or just a raw endpoint. t4-code://pair/...
-//  deep links prefill the pair fields via the optional `pendingPair`
-//  parameter.
+//  your computer from the rendezvous discovery list and tap it, enter the
+//  6-digit pairing code shown on the computer, and the store redeems it at
+//  the rendezvous for a control-room link joined through the public relay.
+//  Already-paired devices (or local/open hosts) can use the Advanced section
+//  to connect with raw endpoint + credentials, or just a raw endpoint.
+//  t4-code://pair/... deep links prefill the pairing code via the optional
+//  `pendingPair` parameter.
 
 import SwiftUI
 import HostWire
@@ -27,12 +27,10 @@ struct T4ConnectView: View {
     /// Optional deep-link prefill (t4-code://pair/<hostHint>[/<code>]).
     var pendingPair: PendingPair? = nil
 
-    @State private var pairHost: String = ""
-    @State private var pairCode: String = ""
     @State private var showAdvanced = false
 
-    // Rendezvous discovery: computers this device can reach, listed by the
-    // registry and filtered by a healthz probe.
+    // Rendezvous discovery: computers running Omperator, listed by the
+    // registry (connectivity is via the public relay, not the host's address).
     @State private var discoveryHosts: [T4DiscoveryHost] = []
     @State private var isLoadingHosts = false
 
@@ -47,12 +45,6 @@ struct T4ConnectView: View {
     @State private var deviceToken = ""
 
     private var t: Theme { theme.t }
-
-    private var trimmedHost: String { pairHost.trimmingCharacters(in: .whitespacesAndNewlines) }
-    private var trimmedCode: String { pairCode.trimmingCharacters(in: .whitespacesAndNewlines) }
-    // The code is optional: same-tailnet owner hosts auto-approve an empty
-    // code; non-owners still need the 6-digit ticket.
-    private var pairValid: Bool { !trimmedHost.isEmpty }
 
     private var trimmedEndpoint: String { endpoint.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var endpointValid: Bool {
@@ -97,7 +89,7 @@ struct T4ConnectView: View {
                 } header: {
                     Text("Connect to your computer")
                 } footer: {
-                    Text("Tap a computer — a computer on your private network connects automatically; anything else shows a pairing code.")
+                    Text("Tap a computer and enter the 6-digit pairing code shown on it. An already-paired computer reconnects automatically.")
                 }
 
                 // Build stamp: the git commit baked into the bundle by the
@@ -110,34 +102,6 @@ struct T4ConnectView: View {
                 }
 
                 DisclosureGroup("Advanced", isExpanded: $showAdvanced) {
-                    Text("Legacy pairing (code required only for devices outside your Tailnet):")
-                        .font(.system(size: 12))
-                        .foregroundStyle(t.txtMuted)
-                    TextField("Host (e.g. macbookpro.my-tailnet.ts.net)", text: $pairHost)
-                        .autocorrectionDisabled()
-                        #if os(iOS)
-                        .textInputAutocapitalization(.never)
-                        #endif
-                    TextField("6-digit code", text: $pairCode)
-                        .autocorrectionDisabled()
-                        .font(.system(.body, design: .monospaced))
-                        #if os(iOS)
-                        .keyboardType(.numberPad)
-                        .textInputAutocapitalization(.never)
-                        #endif
-                    Button {
-                        Task { await pairAndConnect() }
-                    } label: {
-                        HStack {
-                            if store.connecting { ProgressView().tint(.white) }
-                            Text("Pair & Connect").fontWeight(.semibold)
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(t.interactiveAccent)
-                    .disabled(!pairValid || store.connecting)
-
                     TextField("wss://host:port/v1/ws", text: $endpoint)
                         .autocorrectionDisabled()
                         #if os(iOS)
@@ -220,15 +184,13 @@ struct T4ConnectView: View {
         }
     }
 
-    /// The pairing-code sheet for a discovered host. A non-empty code goes
-    /// through the rendezvous (public path); an empty code first tries the
-    /// host's gateway (tailnet owner auto-approval) and keeps the prompt up
-    /// when that origin is unreachable, so the code stays reachable.
+    /// The pairing-code sheet for a discovered host. The code is redeemed at
+    /// the rendezvous for the host's control-room link (the public path).
     private func codePrompt(host: T4DiscoveryHost) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Connect to \(host.label)")
                 .font(.headline)
-            Text("Omperator on \(host.label) shows a 6-digit pairing code. Your own computer — reachable over your private network — connects without one.")
+            Text("Omperator on \(host.label) shows a 6-digit pairing code. Enter it here to connect.")
                 .font(.system(size: 12))
                 .foregroundStyle(t.txtMuted)
             TextField("6-digit pairing code", text: $codePromptCode)
@@ -246,9 +208,6 @@ struct T4ConnectView: View {
             HStack {
                 Button("Cancel") { codePromptHost = nil }
                 Spacer()
-                Button("Connect over private network") {
-                    Task { await connectViaTailnet(host) }
-                }
                 Button {
                     Task { await connectWithCode(host) }
                 } label: {
@@ -266,36 +225,16 @@ struct T4ConnectView: View {
         .frame(width: 400)
     }
 
-    /// Connect with the entered code: non-empty goes through the rendezvous;
-    /// empty falls back to the tailnet gateway (and keeps the prompt open —
-    /// with `lastError` explaining — when that origin is unreachable).
+    /// Connect with the entered code: the code is redeemed at the rendezvous
+    /// for the host's control-room link. An empty code with no saved link
+    /// keeps the prompt open — `lastError` explains that a code is required.
     private func connectWithCode(_ host: T4DiscoveryHost) async {
         let code = codePromptCode.trimmingCharacters(in: .whitespacesAndNewlines)
-        if code.isEmpty {
-            await store.connectDiscoveryHost(host, name: platformDeviceName())
-        } else {
-            await store.connectPublicHost(hostId: host.hostId, code: code, name: platformDeviceName())
-        }
+        await store.connectPublicHost(hostId: host.hostId, code: code.isEmpty ? nil : code, name: platformDeviceName())
         if store.connected {
             codePromptHost = nil
             dismiss()
         }
-    }
-
-    /// Secondary prompt action: the tailnet gateway path (owner
-    /// auto-approval) without entering a pairing code.
-    private func connectViaTailnet(_ host: T4DiscoveryHost) async {
-        await store.connectDiscoveryHost(host, name: platformDeviceName())
-        if store.connected {
-            codePromptHost = nil
-            dismiss()
-        }
-    }
-
-    /// Connect to a discovered computer through its gateway.
-    private func connect(_ host: T4DiscoveryHost) async {
-        await store.connectDiscoveryHost(host, name: platformDeviceName())
-        if store.connected { dismiss() }
     }
 
     /// Load the rendezvous discovery list (on appear and via Refresh).
@@ -306,24 +245,20 @@ struct T4ConnectView: View {
         discoveryHosts = await T4DiscoveryClient.discoverHosts()
     }
 
-    /// Prefill the connect fields from a deep link on first appearance — then
-    /// connect immediately: opening the link IS the consent gesture. Links
-    /// with a host hint connect through discovery when the host is known (a
-    /// fresh fetch — the on-appear list may still be loading); otherwise the
-    /// hint pairs directly, the pre-discovery path.
+    /// Connect from a deep link on first appearance — opening the link IS the
+    /// consent gesture. A `sha256:` hostId is a rendezvous identity and goes
+    /// straight through the public (relay) path (an empty code means
+    /// rejoin-if-saved). A plain hostname hint resolves through the
+    /// rendezvous discovery list — a fresh fetch, since the on-appear list
+    /// may still be loading; if no registered host matches, the sheet stays
+    /// up and explains that the host was not found.
     private func applyPendingPair() {
-        guard let pair = pendingPair, pairHost.isEmpty, pairCode.isEmpty else { return }
-        pairHost = pair.hostHint
-        pairCode = pair.code
-        guard !trimmedHost.isEmpty else { return }
-        if trimmedHost.hasPrefix("sha256:") {
-            // A rendezvous hostId: the public (relay) connect path. The
-            // code is optional — an empty one means rejoin-if-saved, and
-            // connectPublicHost explains when neither exists.
+        guard let pair = pendingPair else { return }
+        if pair.hostHint.hasPrefix("sha256:") {
             Task {
                 await store.connectPublicHost(
-                    hostId: trimmedHost,
-                    code: trimmedCode.isEmpty ? nil : trimmedCode,
+                    hostId: pair.hostHint,
+                    code: pair.code.isEmpty ? nil : pair.code,
                     name: platformDeviceName()
                 )
                 if store.connected { dismiss() }
@@ -332,34 +267,17 @@ struct T4ConnectView: View {
         }
         Task {
             let hosts = await T4DiscoveryClient.discoverHosts()
-            if let host = hosts.first(where: { $0.hostname.lowercased() == trimmedHost.lowercased() }) {
-                await connect(host)
+            if let host = hosts.first(where: { $0.hostname.lowercased() == pair.hostHint.lowercased() }) {
+                await store.connectPublicHost(
+                    hostId: host.hostId,
+                    code: pair.code.isEmpty ? nil : pair.code,
+                    name: platformDeviceName()
+                )
+                if store.connected { dismiss() }
             } else {
-                await pairAndConnect()
+                store.lastError = "Couldn't find \(pair.hostHint) in the rendezvous list — open Omperator on that computer and use its pairing code."
             }
         }
-    }
-
-    /// Build the endpoint from the host hint. Explicit schemes pass through;
-    /// a bare hint defaults to the plain ws port (8787). Port 8788 (the
-    /// host's --remote-tls-port) implies wss so a bare `host:8788` "just
-    /// works" — no scheme typing for the common case.
-    private func pairEndpoint() -> URL? {
-        let host = trimmedHost
-        guard !host.isEmpty else { return nil }
-        if host.hasPrefix("ws://") || host.hasPrefix("wss://") {
-            return URL(string: host.hasSuffix("/v1/ws") ? host : "\(host)/v1/ws")
-        }
-        let withPort = host.contains(":") ? host : "\(host):8787"
-        let scheme = withPort.hasSuffix(":8788") ? "wss" : "ws"
-        return URL(string: "\(scheme)://\(withPort)/v1/ws")
-    }
-
-    private func pairAndConnect() async {
-        guard let url = pairEndpoint() else { return }
-        let name = platformDeviceName()
-        await store.pairAndConnect(endpoint: url, code: trimmedCode, deviceName: name)
-        if store.connected { dismiss() }
     }
 
     private func connectRaw() async {

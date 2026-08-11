@@ -40,33 +40,33 @@ describe("desktop IPC boundary", () => {
       message: "Ready",
     })).toThrow();
   });
-  it("accepts only private root Tailnet URLs for phone setup", () => {
+  it("accepts only root HTTPS origins for phone setup", () => {
     expect(decodePhoneSetupState({
       phase: "ready",
       message: "Ready",
-      url: "https://work-mac.example.ts.net:8445/",
-    })).toEqual({ phase: "ready", message: "Ready", url: "https://work-mac.example.ts.net:8445/" });
+      url: "https://wickrunner.com/",
+    })).toEqual({ phase: "ready", message: "Ready", url: "https://wickrunner.com/" });
     for (const url of [
-      "https://example.com:8445/",
-      "https://work-mac.example.ts.net:8445/path",
-      "https://user:secret@work-mac.example.ts.net:8445/",
-      "http://work-mac.example.ts.net:8445/",
+      "https://wickrunner.com/path",
+      "https://user:secret@wickrunner.com/",
+      "http://wickrunner.com/",
+      "https:///",
     ]) expect(() => decodePhoneSetupState({ phase: "ready", message: "Ready", url })).toThrow();
   });
   it("accepts an optional six-digit pairing code for phone setup", () => {
     const state = {
       phase: "ready",
       message: "Phone access is ready — enter the code on your phone: 123456",
-      url: "https://work-mac.example.ts.net:8445/",
+      url: "https://wickrunner.com/",
       pairCode: "123456",
     };
     expect(decodePhoneSetupState(state)).toEqual(state);
-    expect(decodePhoneSetupState({ phase: "ready", message: "Ready", url: "https://work-mac.example.ts.net:8445/" }).pairCode).toBeUndefined();
+    expect(decodePhoneSetupState({ phase: "ready", message: "Ready", url: "https://wickrunner.com/" }).pairCode).toBeUndefined();
     for (const pairCode of ["12345", "1234567", "12a456", "12345a", ""]) {
       expect(() => decodePhoneSetupState({
         phase: "ready",
         message: "Ready",
-        url: "https://work-mac.example.ts.net:8445/",
+        url: "https://wickrunner.com/",
         pairCode,
       })).toThrow();
     }

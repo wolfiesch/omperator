@@ -154,12 +154,9 @@ export const PAIR_CODE_ERROR = "Enter the six digits exactly as the host shows t
 
 // ─── Add-target validation (mirror of the desktop contract) ─────────────────
 
-export type TargetMode = "direct" | "serve";
-
 export interface TargetDraft {
   readonly label: string;
-  readonly mode: TargetMode;
-  /** Direct: Tailscale IP or MagicDNS name. Serve: HTTPS/WSS URL. */
+  /** HTTPS/WSS URL of the host's gateway. */
   readonly address: string;
   readonly port: string;
   readonly expectedHostId: string;
@@ -168,7 +165,6 @@ export interface TargetDraft {
 
 export const EMPTY_TARGET_DRAFT: TargetDraft = {
   label: "",
-  mode: "direct",
   address: "",
   port: "",
   expectedHostId: "",
@@ -181,29 +177,9 @@ export type TargetDraftResult =
   | { readonly ok: true; readonly target: TargetAddRequest["target"] }
   | { readonly ok: false; readonly errors: Partial<Record<TargetDraftField, string>> };
 
-const MAGIC_DNS = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/iu;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting them is the point
 const CONTROL_CHARS = /\p{Cc}/u;
 const OPAQUE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
-
-/** Tailscale CGNAT IPv4 (100.64/10) or Tailscale ULA IPv6 (fd7a:115c:a1e0::/48). */
-function isTailscaleIp(value: string): boolean {
-  const v4 = value.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/u);
-  if (v4 !== null) {
-    const octets = v4.slice(1).map(Number);
-    if (octets.some((octet) => octet > 255)) return false;
-    return octets[0] === 100 && (octets[1] ?? 0) >= 64 && (octets[1] ?? 0) <= 127;
-  }
-  return /^fd7a:115c:a1e0:/iu.test(value);
-}
-
-function directAddressError(address: string): string | null {
-  const normalized = address.trim().toLowerCase();
-  if (normalized.length === 0) return "Enter the host's Tailscale IP or name.";
-  if (isTailscaleIp(normalized)) return null;
-  if (MAGIC_DNS.test(normalized) && normalized.endsWith(".ts.net") && !normalized.endsWith(".local")) return null;
-  return "Use the host's Tailscale IP (100.x) or its full tailnet name ending in .ts.net.";
-}
 
 function serveAddressError(address: string, port: number | null): string | null {
   if (address.trim().length === 0) return "Enter the host's HTTPS address.";
@@ -211,12 +187,11 @@ function serveAddressError(address: string, port: number | null): string | null 
   try {
     url = new URL(address.trim());
   } catch {
-    return "Enter a full address, like https://host.tailnet.ts.net";
+    return "Enter a full address, like https://host.example.com";
   }
   if (url.protocol !== "https:" && url.protocol !== "wss:") return "The address must start with https:// or wss://";
   if (url.username !== "" || url.password !== "") return "Take the account details out of the address.";
   if (url.search !== "" || url.hash !== "" || url.pathname !== "/") return "Use just the address — no path or extra parts.";
-  if (directAddressError(url.hostname) !== null) return "The address must point at a tailnet name ending in .ts.net.";
   const authorityPort = url.port === "" ? 443 : Number(url.port);
   if (port !== null && authorityPort !== port) return "The port in the address doesn't match the port field.";
   return null;
@@ -236,15 +211,12 @@ export function validateTargetDraft(draft: TargetDraft, existingIds: ReadonlySet
   }
 
   const portText = draft.port.trim();
-  const portNumber = portText.length === 0 ? (draft.mode === "serve" ? 443 : null) : Number(portText);
+  const portNumber = portText.length === 0 ? 443 : Number(portText);
   if (portNumber === null || !Number.isInteger(portNumber) || portNumber < 1 || portNumber > 65535) {
     errors.port = "Enter a port between 1 and 65535.";
   }
 
-  const addressError =
-    draft.mode === "direct"
-      ? directAddressError(draft.address)
-      : serveAddressError(draft.address, errors.port === undefined ? portNumber : null);
+  const addressError = serveAddressError(draft.address, errors.port === undefined ? portNumber : null);
   if (addressError !== null) errors.address = addressError;
 
   const expectedHostId = draft.expectedHostId.trim();
@@ -273,8 +245,8 @@ export function validateTargetDraft(draft: TargetDraft, existingIds: ReadonlySet
     target: {
       targetId,
       label,
-      mode: draft.mode,
-      address: draft.mode === "direct" ? draft.address.trim().toLowerCase() : draft.address.trim(),
+      mode: "serve",
+      address: draft.address.trim(),
       port: portNumber as number,
       requestedCapabilities,
       grantedCapabilities: [],

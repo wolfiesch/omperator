@@ -1,6 +1,6 @@
 // Pairing panel, host side: mint a short-lived code, review what the remote
 // device asked for, edit the grant, approve or refuse. Security stays
-// explicit on every screen — tailnet reachability is not trust, and the
+// explicit on every screen — network reachability is not trust, and the
 // bearer credential is never shown (it does not even reach this component's
 // props). Standalone: phase in, intents out.
 import { Badge, Button, cn } from "@t4-code/ui";
@@ -125,8 +125,7 @@ export function PairingPanel({
               </div>
               <IdentityFacts identity={phase.request.identity} />
               <p className="text-muted-foreground text-xs">
-                Identity checked by this host against your tailnet. If this is not your device,
-                refuse it.
+                Identity checked by this host. If this is not your device, refuse it.
               </p>
             </div>
             <fieldset className="flex flex-col gap-1">
@@ -227,8 +226,8 @@ export function PairingPanel({
             <PhaseHeading key="mismatch">This is not the device you paired</PhaseHeading>
             <div className="flex flex-col gap-2 rounded-lg bg-destructive/8 px-3 py-2.5 dark:bg-destructive/16">
               <p className="text-destructive-foreground text-sm">
-                The connection was refused and nothing changed. Someone reachable on your tailnet
-                presented a valid credential from a different identity.
+                The connection was refused and nothing changed. Someone presented a valid
+                credential from a different identity.
               </p>
               <div className="flex flex-col gap-1 text-xs">
                 <span>

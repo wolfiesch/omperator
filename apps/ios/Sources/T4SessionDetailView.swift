@@ -81,13 +81,13 @@ struct T4SessionDetailView: View {
                 renderLimit = min(total, renderLimit + 40)
             }
         }
-        // Host-side paging (host-wire only; collab snapshots ship everything).
+        // Host-side paging for host-wire sessions.
         let paging = transcriptModel.pagingState[session.sessionId]
         let hasMore = (paging?.hasMore == true)
             || (paging?.hasMore == nil && total >= 50)
         guard hasMore, paging?.loading != true,
               transcriptModel.prependingSession != session.sessionId,
-              store.connected, !store.collabMode else { return }
+              store.connected else { return }
         Task { await store.loadEarlier(sessionId: session.sessionId) }
     }
 
@@ -228,9 +228,6 @@ struct T4SessionDetailView: View {
         #endif
         .task(id: session.sessionId) {
             await store.attach(sessionId: session.sessionId)
-            // Collab mode has no host-wire attach: joining the room IS the
-            // attach. No-op for host-wire sessions (room not in collabRooms).
-            await store.openCollabRoomIfNeeded(sessionId: session.sessionId)
         }
         .onAppear {
             // UI-test seams: boot with a pane/drawer/card visible for screenshots.

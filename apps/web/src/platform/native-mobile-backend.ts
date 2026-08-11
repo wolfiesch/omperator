@@ -55,7 +55,7 @@ function websocketUrlFor(origin: string, profileId: string): string {
   return websocket.toString();
 }
 
-export function parseTailnetBackend(
+export function parseMobileBackend(
   value: string,
   profileId?: string,
   clusterOperatorEnabled = false,
@@ -73,21 +73,18 @@ export function parseTailnetBackend(
   try {
     parsed = new URL(candidate);
   } catch {
-    throw new Error("Enter a valid HTTPS Tailnet address.");
+    throw new Error("Enter a valid HTTPS address.");
   }
-  if (parsed.protocol !== "https:") throw new Error("Use the HTTPS Tailnet address, not HTTP.");
+  if (parsed.protocol !== "https:") throw new Error("Use the HTTPS address, not HTTP.");
   if (parsed.username !== "" || parsed.password !== "")
     throw new Error("The address cannot contain credentials.");
   if (parsed.pathname !== "/" || parsed.search !== "" || parsed.hash !== "") {
     throw new Error("Enter the host address only, without a path, query, or fragment.");
   }
-  const hostname = parsed.hostname.toLowerCase();
-  if (hostname === "ts.net" || !hostname.endsWith(".ts.net")) {
-    throw new Error("Use the full Tailscale hostname ending in .ts.net.");
-  }
   if (clusterOperatorEnabled && parsed.port !== "") {
     throw new Error("The cluster operator requires the standard secure WSS route, not a NodePort.");
   }
+  const hostname = parsed.hostname.toLowerCase();
   const origin = parsed.origin;
   return {
     version: 3,

@@ -24,7 +24,7 @@ import {
   selectStoredMobileBackend,
   writeStoredMobileBackend,
 } from "../platform/native-mobile.ts";
-import { TailnetAddressForm } from "./MobileConnectionScreen.tsx";
+import { GatewayAddressForm } from "./MobileConnectionScreen.tsx";
 
 type ManagerView = { kind: "hosts" } | { kind: "add" } | { kind: "remove"; endpointKey: string };
 
@@ -276,7 +276,7 @@ export function MobileConnectionAction() {
                 way.
               </DialogDescription>
             </DialogHeader>
-            <TailnetAddressForm
+            <GatewayAddressForm
               cancelSignal={addCancelSignal}
               save={writeStoredMobileBackend}
               submitLabel="Check and add"

@@ -1,11 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import type { ProcessRunner } from "@t4-code/remote";
-
 import {
   collectDoctorReport,
   formatDoctorReport,
-  inspectTailnet,
   readSourceContract,
   satisfiesCaretVersion,
   satisfiesMinimumVersion,
@@ -35,7 +32,6 @@ function runtime(overrides: Partial<DoctorRuntime> = {}): DoctorRuntime {
     inspectPathOmp: async () => "compatible",
     probeOmp: async () => true,
     profileCount: async () => 3,
-    inspectTailnet: async () => "ready",
     ...overrides,
   };
 }
@@ -65,7 +61,6 @@ describe("T4 setup doctor", () => {
       ["terminal-omp", "pass"],
       ["appserver", "pass"],
       ["profiles", "pass"],
-      ["tailscale", "pass"],
     ]);
     expect(formatDoctorReport(report)).toContain("Required setup checks passed.");
   });
@@ -93,7 +88,6 @@ describe("T4 setup doctor", () => {
         profileCount: async () => {
           throw new Error("/private/example/.omp contains REDACT_ME");
         },
-        inspectTailnet: async () => "unavailable",
       }),
     );
     const rendered = formatDoctorReport(report);
@@ -119,7 +113,6 @@ describe("T4 setup doctor", () => {
         pnpmVersion: blocked,
         discoverOmp: blocked,
         profileCount: blocked,
-        inspectTailnet: blocked,
       }),
     );
 
@@ -129,48 +122,13 @@ describe("T4 setup doctor", () => {
     expect(formatDoctorReport(report)).not.toContain("pnpm");
   });
 
-  it("runs the Tailscale status command with a scrubbed environment", async () => {
-    let capturedEnvironment: NodeJS.ProcessEnv | undefined;
-    const runner: ProcessRunner = {
-      spawn(spec) {
-        capturedEnvironment = spec.env;
-        return Promise.resolve({
-          result: Promise.resolve({
-            exitCode: 0,
-            signal: null,
-            stdout: JSON.stringify({
-              Self: { DNSName: "desktop.example.ts.net.", TailscaleIPs: ["100.64.0.7"] },
-            }),
-            stderr: "",
-            stdoutTruncated: false,
-            stderrTruncated: false,
-          }),
-          kill: () => undefined,
-        });
-      },
-    };
-
-    const inspection = await inspectTailnet({
-      executable: "/usr/bin/tailscale",
-      environment: {
-        HOME: "/tmp/t4-doctor",
-        PATH: "/usr/bin",
-        PROVIDER_TOKEN: "must-not-reach-tailscale",
-      },
-      runner,
-    });
-    expect(inspection).toBe("ready");
-    expect(capturedEnvironment).toEqual({ HOME: "/tmp/t4-doctor", PATH: "/usr/bin" });
-  });
-
-  it("treats an optional stopped appserver and missing Tailscale as warnings", async () => {
+  it("treats an optional stopped appserver as a warning", async () => {
     const report = await collectDoctorReport(
-      runtime({ probeOmp: async () => false, inspectTailnet: async () => "not-installed" }),
+      runtime({ probeOmp: async () => false }),
     );
 
     expect(report.ok).toBe(true);
     expect(report.checks.find((item) => item.id === "appserver")?.status).toBe("warning");
-    expect(report.checks.find((item) => item.id === "tailscale")?.status).toBe("warning");
   });
 
   it("keeps mobile targets out of unsupported desktop guidance", async () => {

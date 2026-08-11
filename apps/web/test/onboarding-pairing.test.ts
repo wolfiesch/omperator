@@ -111,8 +111,7 @@ describe("token hygiene", () => {
 });
 
 describe("security copy", () => {
-  it("membership-is-not-trust names the boundary and who decides", () => {
-    expect(MEMBERSHIP_NOT_TRUST_COPY).toContain("tailnet");
+  it("reachability-is-not-trust names the boundary and who decides", () => {
     expect(MEMBERSHIP_NOT_TRUST_COPY).toContain("reach");
     expect(MEMBERSHIP_NOT_TRUST_COPY).toContain("decided here, by you");
   });

@@ -14,7 +14,7 @@ import { resolveRendererPlatform } from "../src/platform/bridge.ts";
 import { createBrowserShellPort, detectBackend } from "../src/platform/browser-shell-port.ts";
 import { BrowserWebSocketTransport } from "../src/platform/browser-transport.ts";
 import {
-  parseTailnetBackend,
+  parseMobileBackend,
   selectStoredMobileBackend,
   writeStoredMobileBackend,
 } from "../src/platform/native-mobile.ts";
@@ -136,7 +136,7 @@ describe("browser platform boundary", () => {
       configurable: true,
       value: {
         __t4MobileBackend: {
-          wsUrl: "wss://host.tailnet.ts.net:8445/v1/ws",
+          wsUrl: "wss://host.example.com:8445/v1/ws",
           label: "T4 on host",
           deviceId: "android-device",
           deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
@@ -145,7 +145,7 @@ describe("browser platform boundary", () => {
       },
     });
     expect(detectBackend()).toEqual({
-      wsUrl: "wss://host.tailnet.ts.net:8445/v1/ws",
+      wsUrl: "wss://host.example.com:8445/v1/ws",
       label: "T4 on host",
       deviceId: "android-device",
       deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
@@ -438,8 +438,8 @@ describe("browser platform boundary", () => {
   });
 
   it("fails closed when the active native endpoint changes before pairing completes", async () => {
-    const profileA = parseTailnetBackend("https://profile-a.tailnet.ts.net:8445", "alpha");
-    const profileB = parseTailnetBackend("https://profile-b.tailnet.ts.net:8445", "beta");
+    const profileA = parseMobileBackend("https://profile-a.example.com:8445", "alpha");
+    const profileB = parseMobileBackend("https://profile-b.example.com:8445", "beta");
     const storage = new MemoryStorage();
     writeStoredMobileBackend(profileA, storage);
     writeStoredMobileBackend(profileB, storage);

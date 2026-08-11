@@ -338,13 +338,7 @@ function PhoneSetupCard({ api }: { readonly api: PhoneSetupApi }) {
               </ol>
             ) : (
               <ol className="list-decimal space-y-1 pl-4 text-sm">
-                <li>Open Omperator on your phone; it will find this computer automatically.</li>
-                <li>Open Tailscale on your phone, sign in to the same account, and connect.</li>
-                <li>
-                  For automatic reconnect, tap your Tailscale profile picture, open
-                  {" "}<span className="font-medium">VPN On Demand</span>, and set both Wi-Fi and
-                  Cellular to <span className="font-medium">Always</span>.
-                </li>
+                <li>Open Omperator on your phone; it will find this computer at the public rendezvous.</li>
                 <li>or scan this QR code to connect directly.</li>
                 <li>Choose <span className="font-medium">Add to Home Screen</span> in Safari if you want an app icon.</li>
               </ol>
@@ -365,7 +359,7 @@ function PhoneSetupCard({ api }: { readonly api: PhoneSetupApi }) {
               <code className="rounded bg-secondary px-1.5 py-0.5 font-mono text-base font-semibold tracking-[0.2em]">{state.pairCode}</code>
             </p>
           ) : null}
-          <Button disabled={busy || state.phase === "tailscale-required"} onClick={() => void configure()} size="sm">
+          <Button disabled={busy} onClick={() => void configure()} size="sm">
             {busy && <Spinner />}{busy ? "Setting up…" : "Set up phone access"}
           </Button>
         </div>
@@ -767,11 +761,6 @@ function TargetCard({ api, row }: { readonly api: TargetsStoreApi; readonly row:
     >
       <div className="flex min-w-0 items-center gap-2">
         <span className="min-w-0 flex-1 truncate font-medium text-sm">{row.target.label}</span>
-        {remote && row.target.mode !== undefined && (
-          <Badge variant="outline">
-            {row.target.mode === "serve" ? "Tailscale Serve" : "Direct"}
-          </Badge>
-        )}
         {!remote && <Badge variant="outline">This computer</Badge>}
         <ToneBadge label={meta.label} live={meta.live} tone={meta.tone} />
       </div>
@@ -885,44 +874,13 @@ function AddHostForm({
     >
       <h2 className="flex items-center gap-2 font-medium text-sm" id="add-host-heading">
         <Plus aria-hidden="true" className="size-4" />
-        Add a computer over Tailscale
+        Add a computer
       </h2>
-      <div
-        aria-label="How to reach it"
-        className="flex items-center gap-0.5 self-start rounded-lg border border-border p-0.5"
-        role="group"
-      >
-        {(["direct", "serve"] as const).map((mode) => (
-          <button
-            aria-pressed={draft.mode === mode}
-            className={cn(
-              "h-6.5 cursor-pointer rounded-md px-2 font-medium text-xs outline-none transition-colors duration-(--motion-duration-fast) focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
-              draft.mode === mode
-                ? "bg-secondary text-foreground"
-                : "text-muted-foreground hover:bg-accent hover:text-foreground",
-            )}
-            key={mode}
-            onClick={() => setDraft({ mode })}
-            type="button"
-          >
-            {mode === "direct" ? "Direct (tailnet)" : "Tailscale Serve (HTTPS)"}
-          </button>
-        ))}
-      </div>
       <div className="grid gap-3 sm:grid-cols-2">
         {field("label", "Name", { placeholder: "Work desktop" })}
-        {field(
-          "address",
-          draft.mode === "direct" ? "Tailscale IP or name" : "HTTPS address",
-          draft.mode === "direct"
-            ? { placeholder: "100.64.0.12 or host.tailnet.ts.net" }
-            : { placeholder: "https://host.tailnet.ts.net" },
-        )}
+        {field("address", "HTTPS address", { placeholder: "https://host.example.com:8445" })}
         {field("port", "Port", {
-          hint:
-            draft.mode === "serve"
-              ? "Leave empty for 443."
-              : "The port the host's runtime listens on.",
+          hint: "Leave empty for 443.",
         })}
         {field("expectedHostId", "Expected host ID (optional)", {
           hint: "If set, the connection is refused when a different host answers.",

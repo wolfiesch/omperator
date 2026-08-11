@@ -1,4 +1,4 @@
-// Paired devices: what each device is, who it is on the tailnet, when it
+// Paired devices: what each device is, which account it belongs to, when it
 // was last seen, and exactly what it may do — with revoke one click away
 // behind a confirmation that names the impact. Focus returns to a sensible
 // row after the dialog closes, however it closes.

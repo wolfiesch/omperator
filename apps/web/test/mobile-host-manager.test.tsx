@@ -12,11 +12,11 @@ import {
 } from "../src/components/MobileConnectionAction.tsx";
 import {
   probeAndSaveMobileBackend,
-  TailnetAddressForm,
+  GatewayAddressForm,
 } from "../src/components/MobileConnectionScreen.tsx";
 import {
   MOBILE_BACKEND_STORAGE_KEY,
-  parseTailnetBackend,
+  parseMobileBackend,
 } from "../src/platform/native-mobile.ts";
 
 const originalWindow = globalThis.window;
@@ -41,8 +41,8 @@ afterEach(() => {
 describe("mobile saved-host manager", () => {
   it("renders the T4 hosts entry point without touching saved-host state", () => {
     const storage = new MemoryStorage();
-    const bunker = parseTailnetBackend("https://bunker.tailnet.ts.net:8445");
-    const laptop = parseTailnetBackend("https://laptop.tailnet.ts.net:8445");
+    const bunker = parseMobileBackend("https://bunker.example.com:8445");
+    const laptop = parseMobileBackend("https://laptop.example.com:8445");
     const seeded = JSON.stringify({
       version: 2,
       activeOrigin: bunker.origin,
@@ -66,15 +66,15 @@ describe("mobile saved-host manager", () => {
 
   it("switches hosts without any removal and restarts at home only after the selection persists", () => {
     const calls: string[] = [];
-    const failure = performHostSwitch("https://laptop.tailnet.ts.net:8445", {
+    const failure = performHostSwitch("https://laptop.example.com:8445", {
       restartAtHome: () => calls.push("restart-home"),
       select: (origin) => calls.push(`select:${origin}`),
     });
     expect(failure).toBeNull();
-    expect(calls).toEqual(["select:https://laptop.tailnet.ts.net:8445", "restart-home"]);
+    expect(calls).toEqual(["select:https://laptop.example.com:8445", "restart-home"]);
 
     const failedCalls: string[] = [];
-    const message = performHostSwitch("https://gone.tailnet.ts.net:8445", {
+    const message = performHostSwitch("https://gone.example.com:8445", {
       restartAtHome: () => failedCalls.push("restart-home"),
       select: () => {
         throw new Error("That saved host is no longer available.");
@@ -86,17 +86,17 @@ describe("mobile saved-host manager", () => {
 
   it("reloads after a successful removal and keeps state when removal fails", async () => {
     const calls: string[] = [];
-    const failure = await performHostRemoval("https://laptop.tailnet.ts.net:8445", {
+    const failure = await performHostRemoval("https://laptop.example.com:8445", {
       reload: () => calls.push("reload"),
       remove: async (origin) => {
         calls.push(`remove:${origin}`);
       },
     });
     expect(failure).toBeNull();
-    expect(calls).toEqual(["remove:https://laptop.tailnet.ts.net:8445", "reload"]);
+    expect(calls).toEqual(["remove:https://laptop.example.com:8445", "reload"]);
 
     const failedCalls: string[] = [];
-    const message = await performHostRemoval("https://laptop.tailnet.ts.net:8445", {
+    const message = await performHostRemoval("https://laptop.example.com:8445", {
       reload: () => failedCalls.push("reload"),
       remove: async () => {
         throw new Error("Android secure storage is unavailable");
@@ -107,7 +107,7 @@ describe("mobile saved-host manager", () => {
   });
 
   it("drops a late successful probe after the Add view is cancelled", async () => {
-    const backend = parseTailnetBackend("https://later.tailnet.ts.net:8445");
+    const backend = parseMobileBackend("https://later.example.com:8445");
     const controller = new AbortController();
     const calls: string[] = [];
     let finishProbe: (() => void) | undefined;
@@ -131,9 +131,9 @@ describe("mobile saved-host manager", () => {
   it("reuses one probing address form for startup and in-app add", () => {
     const saved: string[] = [];
     const markup = renderToStaticMarkup(
-      <TailnetAddressForm save={(backend) => saved.push(backend.origin)} submitLabel="Check and add" />,
+      <GatewayAddressForm save={(backend) => saved.push(backend.origin)} submitLabel="Check and add" />,
     );
-    expect(markup).toContain("Tailnet address");
+    expect(markup).toContain("Host address");
     expect(markup).toContain("Check and add");
     expect(markup).toContain("Use the full HTTPS address shown by the T4 gateway on your computer.");
     // Rendering the form saves nothing: persistence happens only after a

@@ -45,8 +45,7 @@ export interface PairStartFrame {
 	v: typeof PROTOCOL_VERSION;
 	type: "pair.start";
 	requestId: RequestId;
-	/** One-time six-digit pairing code. Omitted or empty when the peer requests
-	 * tailnet-owner auto-approval; non-empty codes must still be six digits. */
+	/** One-time six-digit pairing code. */
 	code?: string;
 	deviceId: string;
 	deviceName: string;

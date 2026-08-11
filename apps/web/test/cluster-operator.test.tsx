@@ -123,7 +123,7 @@ const session: SessionRef = {
       status: "running",
       currentStage: "verify",
       startedAt: "2026-07-20T12:01:00.000Z",
-      link: "https://ci.tailnet.ts.net/repos/repo-a/pipeline/42",
+      link: "https://ci.example.com/repos/repo-a/pipeline/42",
     },
   },
 };

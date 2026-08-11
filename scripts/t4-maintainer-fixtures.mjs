@@ -541,7 +541,7 @@ JSON
         cat >"$destination/compat/omp-app-matrix.json" <<JSON
 {"desktop":{"version":"1.2.3"},"verifiedRuntime":{"upstreamTag":"v1.2.3","upstreamCommit":"\${MOCK_UPSTREAM_COMMIT}","sourceTag":"t4code-1.2.3-appserver-1","sourceCommit":"\${MOCK_INTEGRATION_COMMIT}"}}
 JSON
-        printf 'service\n' >"$destination/scripts/tailnet-service.mjs"
+        printf 'service\n' >"$destination/scripts/gateway-service.mjs"
         printf 'gateway\n' >"$destination/scripts/tailnet-gateway.mjs"
         printf '<html>built</html>\n' >"$destination/apps/web/dist/index.html"
         printf '{"name":"ws"}\n' >"$destination/node_modules/.pnpm/ws@mock/node_modules/ws/package.json"
@@ -704,7 +704,7 @@ SH
     if [[ $script == */inspect-linux-update.mjs ]]; then
       exec "$MOCK_NODE_EXECUTABLE" "$@"
     fi
-    if [[ $script == */scripts/tailnet-service.mjs && $action == install ]]; then
+    if [[ $script == */scripts/gateway-service.mjs && $action == install ]]; then
       runtime=$(dirname -- "$(dirname -- "$script")")
       shift 2
       origin='' port='' web_root='' app_socket='' label='' deployment_identity='' defer_start=false
@@ -762,13 +762,13 @@ SH
       write_state gateway-health healthy
       exit 0
     fi
-    if [[ $script == */scripts/tailnet-service.mjs && $action == start ]]; then
+    if [[ $script == */scripts/gateway-service.mjs && $action == start ]]; then
       write_state gateway-enablement enabled
       write_state gateway-service active
       write_state gateway-health healthy
       exit 0
     fi
-    if [[ $script == */scripts/tailnet-service.mjs && $action == status ]]; then
+    if [[ $script == */scripts/gateway-service.mjs && $action == status ]]; then
       [[ $(read_state gateway-service inactive) == active ]]
       exit
     fi
@@ -955,7 +955,7 @@ mkdir -p -- \
   "$MOCK_RUNTIME_ROOT/scripts" \
   "$MOCK_RUNTIME_ROOT/apps/web/dist" \
   "$MOCK_RUNTIME_ROOT/node_modules/ws"
-printf 'service\n' >"$MOCK_RUNTIME_ROOT/scripts/tailnet-service.mjs"
+printf 'service\n' >"$MOCK_RUNTIME_ROOT/scripts/gateway-service.mjs"
 printf 'gateway\n' >"$MOCK_RUNTIME_ROOT/scripts/tailnet-gateway.mjs"
 printf '<html>runner</html>\n' >"$MOCK_RUNTIME_ROOT/apps/web/dist/index.html"
 printf '{"name":"ws"}\n' >"$MOCK_RUNTIME_ROOT/node_modules/ws/package.json"
@@ -1678,7 +1678,7 @@ export async function createRunnerFixture(options = {}) {
   await mkdir(join(runtimeRoot, "apps", "web", "dist"), { recursive: true });
   await mkdir(join(runtimeRoot, "node_modules", "ws"), { recursive: true });
   await writeFile(join(runtimeRoot, ".mock-kind"), "t4\n");
-  await writeFile(join(runtimeRoot, "scripts", "tailnet-service.mjs"), "service\n");
+  await writeFile(join(runtimeRoot, "scripts", "gateway-service.mjs"), "service\n");
   await writeFile(join(runtimeRoot, "scripts", "tailnet-gateway.mjs"), "gateway\n");
   await writeFile(join(runtimeRoot, "apps", "web", "dist", "index.html"), "<html>runner</html>\n");
   await writeFile(join(runtimeRoot, "node_modules", "ws", "package.json"), '{"name":"ws"}\n');

@@ -67,7 +67,7 @@ export interface CredentialAuthProvider<T> {
 
 const TOKEN = /^[A-Za-z0-9_-]{43}$/u;
 const OPAQUE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
-const MAGIC_DNS =
+const HOSTNAME =
   /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/iu;
 const MAX_CIPHERTEXT = 16_384;
 
@@ -147,45 +147,16 @@ function capabilities(value: unknown): readonly DeviceCapability[] {
 
 function ipAddress(value: string): string | null {
   const normalized = value.toLowerCase();
-  const kind = isIP(normalized);
-  if (kind === 4) {
-    const octets = normalized.split(".").map(Number);
-    const first = octets[0];
-    const second = octets[1];
-    if (
-      first !== undefined &&
-      second !== undefined &&
-      first === 100 &&
-      second >= 64 &&
-      second <= 127
-    )
-      return normalized;
-    return null;
-  }
-  if (kind !== 6) return null;
-  const mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/u)?.[1];
-  if (mapped !== undefined) return ipAddress(mapped);
-  const compact = normalized
-    .replace(/^\[|\]$/gu, "")
-    .split(":")
-    .filter(Boolean)
-    .map((part) => Number.parseInt(part, 16));
-  const first = compact.slice(0, 3);
-  if (first.length === 3 && first[0] === 0xfd7a && first[1] === 0x115c && first[2] === 0xa1e0)
-    return normalized;
-  return null;
+  if (isIP(normalized) === 0) return null;
+  return normalized;
 }
 
 function host(value: string): string {
   const normalized = value.trim().toLowerCase();
   const direct = ipAddress(normalized);
   if (direct !== null) return direct;
-  if (
-    !MAGIC_DNS.test(normalized) ||
-    normalized.endsWith(".local") ||
-    !normalized.endsWith(".ts.net")
-  )
-    throw new Error("remote address must be a Tailscale address");
+  if (!HOSTNAME.test(normalized) || normalized.endsWith(".local"))
+    throw new Error("remote address must be a hostname or IP address");
   return normalized;
 }
 

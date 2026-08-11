@@ -79,7 +79,7 @@ struct T4ConnectView: View {
                         .foregroundColor(t.txtBody)
                         .padding(.top, 14)
 
-                    TextField("Host (e.g. macbookpro.my-tailnet.ts.net)", text: $pairHost)
+                    TextField("Host (e.g. myhost.local)", text: $pairHost)
                         .padding(8)
                         .background { RoundedRectangle(cornerRadius: 8).fill(t.glassFill) }
                     TextField("6-digit code", text: $pairCode)
