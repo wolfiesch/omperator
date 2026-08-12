@@ -153,6 +153,43 @@ struct LiveTranscriptTests {
         #expect(timeline.blocks.map(\.blockIndex) == [0, 1, 2])
     }
 
+    /// The GTK bridge's streaming bubble reads the ordered timeline's `.text`
+    /// blocks (joined, revealed content) — the OMP-native host clears the
+    /// flattened streamingMessages buffer, so this is the authoritative source.
+    /// This mirrors `T4GtkBridge.streamingText`: text blocks only (no thinking
+    /// or tool input), and it must grow with the paced reveal.
+    @Test func streamingTextExtractsOnlyTextBlocksAndGrowsWithReveal() {
+        var timeline = LiveTurnTimeline()
+        timeline.apply(block(entryId: "assistant-1", index: 0, kind: "thinking",
+                             content: "Let me think…"))
+        timeline.apply(block(entryId: "assistant-1", index: 1, kind: "text",
+                             content: "Here is the answer."))
+        timeline.apply(block(entryId: "assistant-1", index: 2, kind: "tool-input",
+                             content: "{\"content\":\"x\"}", callId: "call-1", tool: "write"))
+
+        let extract = { (t: LiveTurnTimeline) in
+            t.blocks.filter { $0.kind == .text }.map(\.content).joined()
+        }
+
+        // Before the paced reveal runs, the text block is still empty.
+        #expect(extract(timeline) == "")
+
+        var seen: [String] = []
+        while timeline.advance(maxCatchUpFrames: 4) {
+            seen.append(extract(timeline))
+        }
+        seen.append(extract(timeline))
+
+        // Thinking and tool-input are excluded; only the text block streams in,
+        // growing monotonically to the full response.
+        #expect(seen.last == "Here is the answer.")
+        #expect(!seen.last!.contains("Let me think"))
+        #expect(!seen.last!.contains("content"))
+        for (before, after) in zip(seen, seen.dropFirst()) {
+            #expect(after.hasPrefix(before))
+        }
+    }
+
     @Test func liveTurnRevealsWholeGraphemesAndDoesNotDuplicateSnapshots() {
         var timeline = LiveTurnTimeline()
         let update = block(entryId: "assistant-1", index: 0, kind: "text",

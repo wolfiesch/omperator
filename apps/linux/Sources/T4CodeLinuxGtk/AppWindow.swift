@@ -39,6 +39,9 @@ final class AppWindow {
     private var pinnedToBottom = true
     private var lastScrollValue = 0.0
     private var lastScrollUpper = 0.0
+    /// Set while the app itself scrolls to the bottom; updateScrollPin ignores
+    /// those value-changes so our own auto-scroll never releases the pin.
+    private var programmaticScroll = false
     /// Per-session scroll position, saved on swap and restored on return.
     private var scrollPositions: [String: Double] = [:]
     // Panes (browser sidebar; terminal/files stay available in PanesFactory)
@@ -757,11 +760,13 @@ final class AppWindow {
 
     private func restoreScroll(_ saved: Double?) {
         guard let scroll = transcriptScroll else { return }
+        programmaticScroll = true
         if let saved {
             shim_scroll_set(scroll, saved)
         } else {
             shim_scroll_to_max(scroll)
         }
+        programmaticScroll = false
     }
 
     private func clearTranscript() {
@@ -809,7 +814,15 @@ final class AppWindow {
         // Only auto-scroll while the user is pinned near the bottom; scrolling
         // up during a stream must not fight the reader.
         guard pinnedToBottom, let scroll = transcriptScroll else { return }
+        scrollToBottomProgrammatically(scroll)
+    }
+
+    /// Auto-scroll helper: marks the value-change as app-initiated so the pin
+    /// handler doesn't mistake it for a user scroll and release the pin.
+    private func scrollToBottomProgrammatically(_ scroll: UnsafeMutablePointer<GtkWidget>) {
+        programmaticScroll = true
         shim_scroll_to_max(scroll)
+        programmaticScroll = false
     }
 
     /// Content grew (the scrolled window's upper bound changed). When pinned,
@@ -817,7 +830,7 @@ final class AppWindow {
     /// after layout, so the scroll lands on the true newest entry.
     private func followContentGrowth() {
         guard pinnedToBottom, let scroll = transcriptScroll else { return }
-        shim_scroll_to_max(scroll)
+        scrollToBottomProgrammatically(scroll)
     }
 
     /// Recompute the pin from the live scroll position (fires on value-changed).
@@ -828,14 +841,17 @@ final class AppWindow {
         let value = shim_adj_value(adj)
         let upper = shim_adj_upper(adj)
         let page = shim_adj_page(adj)
-        let nearBottom = value + page >= upper - 48
-        if value != lastScrollValue {
-            // The user moved the scrollbar: engage when near the bottom,
-            // release when they scroll up away from it.
-            pinnedToBottom = nearBottom
-        }
         lastScrollValue = value
         lastScrollUpper = upper
+        // Only the user's own scrolls move the pin. Our auto-scroll-to-bottom
+        // (programmaticScroll) must not release it — otherwise the pin switches
+        // itself off mid-stream whenever the page grows during the scroll.
+        guard !programmaticScroll else { return }
+        if value + page >= upper - 48 {
+            pinnedToBottom = true
+        } else {
+            pinnedToBottom = false
+        }
     }
 
     // MARK: - Composer

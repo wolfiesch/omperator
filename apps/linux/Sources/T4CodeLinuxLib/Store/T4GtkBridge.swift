@@ -39,8 +39,19 @@ public final class T4GtkBridge {
     }
 
     /// The assistant's in-progress streaming text for a session ("" when idle).
+    /// The OMP-native host streams ordered `assistant.block.update` frames into
+    /// `liveTurns` (and clears the flattened `streamingMessages` buffer), so the
+    /// ordered timeline is the authoritative source; the flattened buffer is a
+    /// fallback for hosts that only send `message.update`.
     public func streamingText(for sessionId: String) -> String {
-        store.streamingMessages[sessionId]?.text ?? ""
+        if let timeline = store.liveTurns[sessionId], !timeline.isEmpty {
+            let text = timeline.blocks
+                .filter { $0.kind == .text }
+                .map(\.content)
+                .joined()
+            if !text.isEmpty { return text }
+        }
+        return store.streamingMessages[sessionId]?.text ?? ""
     }
 
     // MARK: - Panes (terminal / browser / files)
