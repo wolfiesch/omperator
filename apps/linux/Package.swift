@@ -70,5 +70,22 @@ let package = Package(
             pkgConfig: "vte-2.91-gtk4",
             providers: [.apt(["libvte-2.91-gtk4-dev"])]
         ),
+        // GTK4 — pure-GTK UI surface (the production Linux app; SwiftCrossUI
+        // is only needed by the lib's SwiftUI-compat shims, not the UI here).
+        .systemLibrary(
+            name: "CT4Gtk",
+            path: "Sources/CT4Gtk",
+            pkgConfig: "gtk4",
+            providers: [.apt(["libgtk-4-dev"])]
+        ),
+        // Pure-GTK4 Linux app — imperative widgets over the shared store.
+        .executableTarget(
+            name: "T4CodeLinuxGtk",
+            dependencies: [
+                "T4CodeLinuxLib",
+                "CT4Gtk",
+            ],
+            path: "Sources/T4CodeLinuxGtk"
+        ),
     ]
 )
