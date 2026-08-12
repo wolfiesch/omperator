@@ -95,3 +95,55 @@ static inline int shim_adj_near_bottom(GtkAdjustment *adj, int threshold) {
     double page = gtk_adjustment_get_page_size(adj);
     return (value + page >= upper - (double)threshold) ? 1 : 0;
 }
+
+/* Remove every child of a GtkBox (unparenting destroys each child). The files
+   pane rebuilds its row list on refresh. */
+static inline void shim_box_clear(GtkWidget *box) {
+    GtkWidget *child;
+    while ((child = gtk_widget_get_first_child(box)) != NULL) {
+        gtk_widget_unparent(child);
+    }
+}
+
+/* Per-row activation for list rows (files pane). A SEPARATE global handler
+   slot from shim_pressed_handler so the app's button handling and the files
+   list don't trample each other. `userData` is a Swift-retained box; the
+   optional `destroyNotify` releases it when the connection is dropped. */
+typedef void (*ShimRowHandler)(void *userData);
+typedef void (*ShimRowDestroyNotify)(void *userData);
+static ShimRowHandler shim_row_handler = NULL;
+static void shim_row_trampoline(GtkGestureClick *g, int n, double x, double y, gpointer userData) {
+    (void)g; (void)n; (void)x; (void)y;
+    if (shim_row_handler) shim_row_handler(userData);
+}
+static inline void shim_on_row_activated(GtkWidget *widget, void *userData, ShimRowDestroyNotify destroyNotify) {
+    GtkGesture *gesture = gtk_gesture_click_new();
+    gtk_widget_add_controller(widget, GTK_EVENT_CONTROLLER(gesture));
+    g_signal_connect_data(gesture, "pressed", G_CALLBACK(shim_row_trampoline), userData, destroyNotify, G_CONNECT_DEFAULT);
+}
+static inline void shim_set_row_handler(ShimRowHandler h) { shim_row_handler = h; }
+static inline void shim_tag_colors(GtkTextTag *tag, const char *foreground, const char *background) {
+    g_object_set(tag, "foreground", foreground, "background", background, NULL);
+}
+static inline void shim_tag_fg(GtkTextTag *tag, const char *foreground) {
+    g_object_set(tag, "foreground", foreground, NULL);
+}
+
+/* Generic text-tag creation + property setters (theme-aware markdown). */
+static inline GtkTextTag *shim_tag_new(GtkTextBuffer *buf, const char *name) {
+    return gtk_text_buffer_create_tag(buf, name, NULL);
+}
+static inline void shim_tag_set_str(GtkTextTag *tag, const char *prop, const char *value) { g_object_set(tag, prop, value, NULL); }
+static inline void shim_tag_set_int(GtkTextTag *tag, const char *prop, int value) { g_object_set(tag, prop, value, NULL); }
+static inline void shim_tag_set_double(GtkTextTag *tag, const char *prop, double value) { g_object_set(tag, prop, value, NULL); }
+static inline double shim_adj_value(GtkAdjustment *adj) { return gtk_adjustment_get_value(adj); }
+static inline double shim_adj_upper(GtkAdjustment *adj) { return gtk_adjustment_get_upper(adj); }
+static inline double shim_adj_page(GtkAdjustment *adj) { return gtk_adjustment_get_page_size(adj); }
+
+/* Stack for pane switching */
+static inline GtkWidget *shim_stack(void) { return gtk_stack_new(); }
+static inline void shim_stack_add(GtkWidget *stack, GtkWidget *child, const char *name) { gtk_stack_add_named(GTK_STACK(stack), child, name); }
+static inline void shim_stack_show(GtkWidget *stack, const char *name) { gtk_stack_set_visible_child_name(GTK_STACK(stack), name); }
+static inline void shim_stack_set_transition(GtkWidget *stack) { gtk_stack_set_transition_type(GTK_STACK(stack), GTK_STACK_TRANSITION_TYPE_SLIDE_LEFT_RIGHT); gtk_stack_set_transition_duration(GTK_STACK(stack), 180); }
+static inline void shim_widget_show(GtkWidget *w) { gtk_widget_set_visible(w, 1); }
+static inline void shim_widget_hide(GtkWidget *w) { gtk_widget_set_visible(w, 0); }

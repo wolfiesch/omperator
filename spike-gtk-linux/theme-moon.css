@@ -71,6 +71,83 @@ window {
               0 0 6px rgba(156, 207, 216, 0.08);
 }
 
+/* ── Markdown / transcript elements ───────────────────────── */
+
+.md-h1 {
+  font-size: 15pt;
+  font-weight: 700;
+  color: #F6C177;
+  margin: 12px 0 6px 0;
+}
+
+.md-h2 {
+  font-size: 13pt;
+  font-weight: 700;
+  color: #F6C177;
+  margin: 10px 0 5px 0;
+}
+
+.md-h3 {
+  font-size: 11.5pt;
+  font-weight: 600;
+  color: #E0DEF4;
+  margin: 8px 0 4px 0;
+}
+
+.md-bold   { font-weight: 700; color: #F6C177; }
+.md-italic { font-style: italic; color: #E0DEF4; }
+
+.md-inline-code {
+  background-color: rgba(156, 207, 216, 0.12);
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-family: "JetBrains Mono", "Cascadia Code", monospace;
+  font-size: 9.5pt;
+  color: #9CCFD8;
+}
+
+.md-quote {
+  border-left: 3px solid rgba(246, 193, 119, 0.6);
+  padding: 4px 10px;
+  margin: 6px 0;
+  color: #908CAA;
+  font-style: italic;
+}
+
+.md-list {
+  padding-left: 18px;
+  color: #E0DEF4;
+}
+
+.md-link {
+  color: #C4A7E7;
+  text-decoration-line: underline;
+}
+
+/* ── Diff & terminal ──────────────────────────────────────── */
+
+.diff-add {
+  background-color: rgba(49, 116, 143, 0.35);
+  color: #9CCFD8;
+}
+
+.diff-remove {
+  background-color: rgba(235, 111, 146, 0.18);
+  color: #EB6F92;
+}
+
+.terminal {
+  background-color: #1F1D2E;
+  border: 1px solid #1B1930;
+  border-top-color: #393552;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-family: "JetBrains Mono", "Cascadia Code", monospace;
+  font-size: 10pt;
+  color: #E0DEF4;
+  box-shadow: inset 0 1px 3px rgba(14, 12, 24, 0.7);
+}
+
 /* ── Composer ─────────────────────────────────────────────── */
 
 .composer {

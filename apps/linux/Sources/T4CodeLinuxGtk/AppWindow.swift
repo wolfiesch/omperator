@@ -16,10 +16,8 @@ final class AppWindow {
     private var railRows: [String: UnsafeMutablePointer<GtkWidget>] = [:]
     private var transcriptView: UnsafeMutablePointer<GtkWidget>?
     private var transcriptBuffer: UnsafeMutablePointer<GtkTextBuffer>?
-    private var userTag: UnsafeMutablePointer<GtkTextTag>?
-    private var assistantTag: UnsafeMutablePointer<GtkTextTag>?
-    private var codeTag: UnsafeMutablePointer<GtkTextTag>?
-    private var mutedTag: UnsafeMutablePointer<GtkTextTag>?
+    /// Markdown/transcript text tags by name — theme-aware, re-tinted on switch.
+    private var tags: [String: UnsafeMutablePointer<GtkTextTag>] = [:]
     private var composerEntry: UnsafeMutablePointer<GtkWidget>?
     private var sendButton: UnsafeMutablePointer<GtkWidget>?
     private var statusLabel: UnsafeMutablePointer<GtkWidget>?
@@ -34,6 +32,15 @@ final class AppWindow {
     private var dark = true
     private var transcriptScroll: UnsafeMutablePointer<GtkWidget>?
     private var pinnedToBottom = true
+    private var lastScrollValue = 0.0
+    private var lastScrollUpper = 0.0
+    // Panes (terminal / browser / files)
+    private let panes = PanesFactory()
+    private var paneSidebar: UnsafeMutablePointer<GtkWidget>?
+    private var paneStack: UnsafeMutablePointer<GtkWidget>?
+    private var paneVisible = false
+    private var activePane = "terminal"
+    private var terminalFed = false
 
     init(app: UnsafeMutablePointer<GtkApplication>?) {
         guard let appPtr = app, let win = gtk_application_window_new(appPtr) else { return }
@@ -64,6 +71,10 @@ final class AppWindow {
         addClass(themeButton, "card")
         onSignal(themeButton, "clicked") { [weak self] in self?.toggleTheme() }
         shim_box_append(railHeader, themeButton)
+        let panesButton = shim_button("▤")
+        addClass(panesButton, "card")
+        onSignal(panesButton, "clicked") { [weak self] in self?.togglePanes() }
+        shim_box_append(railHeader, panesButton)
         shim_box_append(rail, railHeader)
 
         let railScroll = shim_scrolled_window()
@@ -104,10 +115,8 @@ final class AppWindow {
 
         transcriptBuffer = shim_text_buffer(transcriptView)
         if let buf = transcriptBuffer {
-            userTag = shim_tag(buf, "user", "foreground", "#F6C177")
-            assistantTag = shim_tag(buf, "assistant", "foreground", "#E0DEF4")
-            codeTag = shim_tag2(buf, "code", "family", "monospace", "background", "#2A273F")
-            mutedTag = shim_tag(buf, "muted", "foreground", "#6E6A86")
+            registerTags(buf)
+            applyTagTheme()
         }
 
         let composer = shim_box_new(1, 8)
@@ -123,10 +132,106 @@ final class AppWindow {
         shim_box_append(composer, sendButton)
         shim_box_append(center, composer)
 
+        buildPanesSidebar(root)
+
         shim_window_present(win)
     }
 
-    // MARK: - Theme
+    // MARK: - Panes sidebar
+
+    private func buildPanesSidebar(_ root: UnsafeMutablePointer<GtkWidget>?) {
+        let sidebar = shim_box_new(0, 6)
+        addClass(sidebar, "rail")
+        shim_widget_size(sidebar, 380)
+        paneSidebar = sidebar
+
+        // Tab strip: Terminal / Browser / Files
+        let tabs = shim_box_new(1, 4)
+        for (name, labelText) in [("terminal", "Terminal"), ("browser", "Browser"), ("files", "Files")] {
+            let button = shim_button(labelText)
+            addClass(button, "card")
+            let paneName = name
+            onSignal(button, "clicked") { [weak self] in self?.showPane(paneName) }
+            shim_widget_expand(button, 1)
+            shim_box_append(tabs, button)
+        }
+        shim_box_append(sidebar, tabs)
+
+        // Stack hosting the three widgets.
+        let stack = shim_stack()
+        shim_stack_set_transition(stack)
+        shim_widget_expand(stack, 0)
+        paneStack = stack
+        if let terminal = panes.terminalWidget(bridge: store) {
+            shim_stack_add(stack, terminal, "terminal")
+        }
+        if let browser = panes.browserWidget(bridge: store) {
+            shim_stack_add(stack, browser, "browser")
+        }
+        if let files = panes.filesWidget(bridge: store) {
+            shim_stack_add(stack, files, "files")
+        }
+        shim_stack_show(stack, activePane)
+        shim_box_append(sidebar, stack)
+
+        shim_widget_hide(sidebar)
+        shim_box_append(root, sidebar)
+
+        // Data callbacks.
+        panes.onTerminalInput = { [weak self] data in
+            guard let self, let session = self.store.selectedSession else { return }
+            let store = self.store
+            let sid = session.sessionId
+            Task { await store.sendTerminalInput(sessionId: sid, data: data) }
+        }
+        panes.onTerminalResize = { [weak self] cols, rows in
+            guard let self, let session = self.store.selectedSession else { return }
+            let store = self.store
+            let sid = session.sessionId
+            Task { await store.resizeTerminal(sessionId: sid, cols: cols, rows: rows) }
+        }
+        panes.onURLChanged = { [weak self] url in
+            guard let self, let session = self.store.selectedSession else { return }
+            self.store.setBrowserURL(for: session.sessionId, url: url)
+        }
+    }
+
+    private func togglePanes() {
+        paneVisible.toggle()
+        guard let sidebar = paneSidebar else { return }
+        if paneVisible { shim_widget_show(sidebar) } else { shim_widget_hide(sidebar) }
+    }
+
+    private func showPane(_ name: String) {
+        activePane = name
+        if let stack = paneStack { shim_stack_show(stack, name) }
+        if !paneVisible { togglePanes() }
+    }
+
+    private func refreshPanes() {
+        guard paneVisible, let session = store.selectedSession else { return }
+        let sid = session.sessionId
+        if activePane == "terminal" {
+            if !terminalFed {
+                terminalFed = true
+                let store = self.store
+                Task { await store.openTerminal(sessionId: sid) }
+            }
+            if let terminalId = store.activeTerminalId(for: sid) {
+                panes.feedTerminal(store.terminalOutput(terminalId))
+            }
+        } else if activePane == "browser" {
+            panes.loadURL(store.browserURL(for: sid))
+        } else if activePane == "files" {
+            let store = self.store
+            Task {
+                if let diff = await store.filesDiff(sessionId: sid) {
+                    let items = diff.changedPaths.map { PanesFactory.FileItem(path: $0, kind: "file", size: nil) }
+                    self.panes.setFiles(items)
+                }
+            }
+        }
+    }
 
     private func toggleTheme() {
         dark.toggle()
@@ -138,6 +243,75 @@ final class AppWindow {
             ? "/home/alexis/dev/omperator/spike-gtk-linux/theme-moon.css"
             : "/home/alexis/dev/omperator/spike-gtk-linux/theme-dawn.css"
         shim_css_load(path)
+        applyTagTheme()
+    }
+
+    // MARK: - Tags
+
+    /// All markdown/transcript tags (created once; colors applied per theme).
+    private static let tagNames = [
+        "user", "assistant", "muted",
+        "md-h1", "md-h2", "md-h3", "md-bold", "md-italic", "md-inline-code",
+        "md-link", "md-list", "md-quote",
+        "code-block", "diff-add", "diff-remove",
+    ]
+
+    private func registerTags(_ buf: UnsafeMutablePointer<GtkTextBuffer>) {
+        for name in Self.tagNames {
+            tags[name] = shim_tag_new(buf, name)
+        }
+        applyTagTheme()
+    }
+
+    private func applyTagTheme() {
+        let moon = dark
+        let gold = moon ? "#F6C177" : "#EA9D34"
+        let text = moon ? "#E0DEF4" : "#575279"
+        let codeFg = moon ? "#9CCFD8" : "#286983"
+        let codeBg = moon ? "#2A273F" : "#F2E9E1"
+        let linkFg = moon ? "#C4A7E7" : "#907AA9"
+        let quoteFg = moon ? "#908CAA" : "#6E6A8A"
+        let mutedFg = moon ? "#6E6A86" : "#797593"
+        let inlineCodeBg = moon ? "rgba(156,207,216,0.12)" : "rgba(86,148,159,0.16)"
+        let addBg = moon ? "rgba(49,116,143,0.35)" : "rgba(86,148,159,0.22)"
+        let removeFg = moon ? "#EB6F92" : "#B4637A"
+        let removeBg = moon ? "rgba(235,111,146,0.18)" : "rgba(180,99,122,0.16)"
+
+        setTag("user", fg: gold, weight: 600)
+        setTag("assistant", fg: text)
+        setTag("muted", fg: mutedFg)
+        setTag("md-h1", fg: gold, weight: 700, size: 15)
+        setTag("md-h2", fg: gold, weight: 700, size: 13)
+        setTag("md-h3", fg: text, weight: 600, size: 11.5)
+        setTag("md-bold", fg: gold, weight: 700)
+        setTag("md-italic", fg: text, style: 2) // PANGO_STYLE_ITALIC
+        setTag("md-inline-code", fg: codeFg, bg: inlineCodeBg, family: "JetBrains Mono")
+        setTag("md-link", fg: linkFg, underline: 1) // PANGO_UNDERLINE_SINGLE
+        setTag("md-list", fg: text)
+        setTag("md-quote", fg: quoteFg, style: 2)
+        setTag("code-block", fg: codeFg, bg: codeBg, family: "JetBrains Mono")
+        setTag("diff-add", fg: codeFg, bg: addBg)
+        setTag("diff-remove", fg: removeFg, bg: removeBg)
+    }
+
+    private func setTag(
+        _ name: String,
+        fg: String? = nil,
+        bg: String? = nil,
+        family: String? = nil,
+        weight: Int = 0,
+        size: Double = 0,
+        style: Int = 0,
+        underline: Int = 0
+    ) {
+        guard let tag = tags[name] else { return }
+        if let fg { shim_tag_set_str(tag, "foreground", fg) }
+        if let bg { shim_tag_set_str(tag, "background", bg) }
+        if let family { shim_tag_set_str(tag, "family", family) }
+        if weight > 0 { shim_tag_set_int(tag, "weight", Int32(weight)) }
+        if size > 0 { shim_tag_set_double(tag, "size-points", size) }
+        if style > 0 { shim_tag_set_int(tag, "style", Int32(style)) }
+        if underline > 0 { shim_tag_set_int(tag, "underline", Int32(underline)) }
     }
 
     // MARK: - Store bridge
@@ -161,6 +335,7 @@ final class AppWindow {
         refreshConnection()
         refreshRail()
         refreshTranscript()
+        refreshPanes()
     }
 
     private func refreshConnection() {
@@ -251,26 +426,26 @@ final class AppWindow {
     private func appendEntry(_ entry: TranscriptEntry) {
         guard let buf = transcriptBuffer else { return }
         let text = entry.body.isEmpty ? entry.headline : entry.body
-        let tag: UnsafeMutablePointer<GtkTextTag>?
-        if entry.kind == .message, entry.role == "user" {
-            tag = userTag
-        } else if entry.kind == .message {
-            tag = assistantTag
-        } else if text.contains("```") || entry.kind == .toolUse {
-            tag = codeTag
+        // Tool/review rows get the muted treatment; messages render markdown.
+        let segments: [StyledSegment]
+        if entry.kind == .message {
+            segments = renderTranscriptSegments(body: text, role: entry.role)
         } else {
-            tag = mutedTag
+            segments = [StyledSegment(text: text, tag: "muted")]
         }
-        var end = GtkTextIter()
-        gtk_text_buffer_get_end_iter(buf, &end)
-        let startOffset = gtk_text_iter_get_offset(&end)
-        shim_text_append(buf, text + "\n\n")
-        gtk_text_buffer_get_end_iter(buf, &end)
-        if let tag {
-            var start = GtkTextIter()
-            gtk_text_buffer_get_iter_at_offset(buf, &start, startOffset)
-            gtk_text_buffer_apply_tag(buf, tag, &start, &end)
+        for segment in segments {
+            var end = GtkTextIter()
+            gtk_text_buffer_get_end_iter(buf, &end)
+            let startOffset = gtk_text_iter_get_offset(&end)
+            shim_text_append(buf, segment.text)
+            gtk_text_buffer_get_end_iter(buf, &end)
+            if let tag = tags[segment.tag] {
+                var start = GtkTextIter()
+                gtk_text_buffer_get_iter_at_offset(buf, &start, startOffset)
+                gtk_text_buffer_apply_tag(buf, tag, &start, &end)
+            }
         }
+        shim_text_append(buf, "\n")
     }
 
     private func scrollTranscriptToBottom() {
@@ -282,9 +457,21 @@ final class AppWindow {
     }
 
     /// Recompute the pin from the live scroll position (fires on value-changed).
+    /// Content growth moves `upper` while `value` holds — that is NOT a user
+    /// scroll, so we only change the pin when `value` itself moved.
     private func updateScrollPin() {
         guard let scroll = transcriptScroll, let adj = shim_vadj(scroll) else { return }
-        pinnedToBottom = shim_adj_near_bottom(adj, 48) == 1
+        let value = shim_adj_value(adj)
+        let upper = shim_adj_upper(adj)
+        let page = shim_adj_page(adj)
+        let nearBottom = value + page >= upper - 48
+        if value != lastScrollValue {
+            // The user moved the scrollbar: engage when near the bottom,
+            // release when they scroll up away from it.
+            pinnedToBottom = nearBottom
+        }
+        lastScrollValue = value
+        lastScrollUpper = upper
     }
 
     // MARK: - Composer
