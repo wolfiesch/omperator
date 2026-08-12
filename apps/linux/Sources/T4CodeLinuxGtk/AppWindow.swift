@@ -34,23 +34,43 @@ final class AppWindow {
     private var pinnedToBottom = true
     private var lastScrollValue = 0.0
     private var lastScrollUpper = 0.0
-    // Panes (terminal / browser / files)
+    // Panes (browser sidebar; terminal/files stay available in PanesFactory)
     private let panes = PanesFactory()
     private var paneSidebar: UnsafeMutablePointer<GtkWidget>?
-    private var paneStack: UnsafeMutablePointer<GtkWidget>?
     private var paneVisible = false
-    private var activePane = "terminal"
-    private var terminalFed = false
     private var railBox: UnsafeMutablePointer<GtkWidget>?
     private var railVisible = true
     private var miniButton: UnsafeMutablePointer<GtkWidget>?
     private var miniMode = false
     private var fullSize: (width: Int, height: Int)?
+    // First-run onboarding (username + password login).
+    private var onboardingArmed = false
+    private var onboardingVisible = false
+    private var onboardingBackdrop: UnsafeMutablePointer<GtkWidget>?
+    private var onboardingCard: UnsafeMutablePointer<GtkWidget>?
+    private var loginEntry: UnsafeMutablePointer<GtkWidget>?
+    private var passwordEntry: UnsafeMutablePointer<GtkWidget>?
+    private var loginButton: UnsafeMutablePointer<GtkWidget>?
+    private var loginStatusLabel: UnsafeMutablePointer<GtkWidget>?
+    private var loginInProgress = false
+    // Settings panel (plain-language toggles).
+    private var settingsPanel: UnsafeMutablePointer<GtkWidget>?
+    private var settingsDarkCheck: UnsafeMutablePointer<GtkWidget>?
+    private var settingsCompactCheck: UnsafeMutablePointer<GtkWidget>?
+    private var settingsRailCheck: UnsafeMutablePointer<GtkWidget>?
+    private var settingsSyncing = false
+    // Rail relative-time refresh cadence (seconds).
+    private var lastRailTimeRefresh = -60.0
+    private var railTimeLabels: [String: UnsafeMutablePointer<GtkWidget>] = [:]
 
     init(app: UnsafeMutablePointer<GtkApplication>?) {
         guard let appPtr = app, let win = gtk_application_window_new(appPtr) else { return }
         window = win
         build(win)
+        // First run: no saved endpoint — offer the friendly login until the
+        // workspace actually connects (a live local gateway connects on its
+        // own, so the screen shows only when a sign-in is genuinely needed).
+        onboardingArmed = !store.hasSavedConnection
         startRefreshTimer()
     }
 
@@ -59,7 +79,11 @@ final class AppWindow {
     private func build(_ win: UnsafeMutablePointer<GtkWidget>) {
         shim_window(win, "T4 Code", 1180, 760)
 
-        let root = shim_box_new(1, 0)
+        // Window root is an overlay: the workspace beneath, the first-run
+        // login screen above (hidden until the store connects).
+        let root = shim_overlay_new()
+        let workspace = shim_box_new(1, 0)
+        shim_overlay_set_child(root, workspace)
         shim_window_set_child(win, root)
 
         // Rail (left)
@@ -67,7 +91,7 @@ final class AppWindow {
         railBox = rail
         addClass(rail, "rail")
         shim_widget_size(rail, 232)
-        shim_box_append(root, rail)
+        shim_box_append(workspace, rail)
 
         let railHeader = shim_box_new(1, 6)
         let railTitle = makeLabel("Sessions", "subtle")
@@ -88,7 +112,7 @@ final class AppWindow {
         // Center: header + transcript + composer
         let center = shim_box_new(0, 0)
         shim_widget_expand(center, 1)
-        shim_box_append(root, center)
+        shim_box_append(workspace, center)
 
         let header = shim_box_new(1, 8)
         addClass(header, "topbar")
@@ -109,7 +133,14 @@ final class AppWindow {
         addClass(panesButton, "flat-btn")
         onSignal(panesButton, "clicked") { [weak self] in self?.togglePanes() }
         shim_box_append(header, panesButton)
+        // Settings (plain-language toggles).
+        let settingsButton = shim_button("⚙")
+        addClass(settingsButton, "flat-btn")
+        onSignal(settingsButton, "clicked") { [weak self] in self?.toggleSettingsPanel() }
+        shim_box_append(header, settingsButton)
         shim_box_append(center, header)
+
+        buildSettingsPanel(center)
 
         let scroll = shim_scrolled_window()
         transcriptScroll = scroll
@@ -145,64 +176,219 @@ final class AppWindow {
         shim_box_append(composer, sendButton)
         shim_box_append(center, composer)
 
-        buildPanesSidebar(root)
+        buildPanesSidebar(workspace)
+
+        buildOnboarding(root)
 
         shim_window_present(win)
     }
 
-    // MARK: - Panes sidebar
+    // MARK: - Settings panel
 
-    private func buildPanesSidebar(_ root: UnsafeMutablePointer<GtkWidget>?) {
+    /// Small plain-language settings surface: a compact panel under the topbar
+    /// with three toggles backed by the existing AppWindow methods.
+    private func buildSettingsPanel(_ parent: UnsafeMutablePointer<GtkWidget>?) {
+        guard let parent else { return }
+        let panel = shim_box_new(1, 14)
+        addClass(panel, "settings-popover")
+        settingsPanel = panel
+
+        let darkCheck = shim_check_button("Dark mode")
+        onSignal(darkCheck, "toggled") { [weak self] in
+            guard let self, !self.settingsSyncing else { return }
+            self.toggleTheme()
+        }
+        shim_box_append(panel, darkCheck)
+        settingsDarkCheck = darkCheck
+
+        let compactCheck = shim_check_button("Compact window")
+        onSignal(compactCheck, "toggled") { [weak self] in
+            guard let self, !self.settingsSyncing else { return }
+            self.toggleMiniMode()
+        }
+        shim_box_append(panel, compactCheck)
+        settingsCompactCheck = compactCheck
+
+        let railCheck = shim_check_button("Show sidebar")
+        onSignal(railCheck, "toggled") { [weak self] in
+            guard let self, !self.settingsSyncing else { return }
+            self.toggleRail()
+        }
+        shim_box_append(panel, railCheck)
+        settingsRailCheck = railCheck
+
+        shim_widget_halign_start(panel)
+        shim_box_append(parent, panel)
+        shim_widget_hide(panel)
+    }
+
+    private func toggleSettingsPanel() {
+        guard let panel = settingsPanel else { return }
+        if shim_widget_visible(panel) != 0 {
+            shim_widget_hide(panel)
+            return
+        }
+        // Sync the checks with the live state before showing (suppressing the
+        // programmatic "toggled" emissions so they don't re-fire the toggles).
+        settingsSyncing = true
+        shim_check_set_active(settingsDarkCheck, dark ? 1 : 0)
+        shim_check_set_active(settingsCompactCheck, miniMode ? 1 : 0)
+        shim_check_set_active(settingsRailCheck, railVisible ? 1 : 0)
+        settingsSyncing = false
+        shim_widget_show(panel)
+    }
+
+    // MARK: - First-run onboarding (username + password)
+
+    /// Friendly login shown over the workspace until the store connects.
+    private func buildOnboarding(_ overlay: UnsafeMutablePointer<GtkWidget>?) {
+        guard let overlay else { return }
+        let backdrop = shim_box_new(0, 0)
+        addClass(backdrop, "onboarding")
+        shim_widget_fill(backdrop)
+        shim_overlay_add_overlay(overlay, backdrop)
+        onboardingBackdrop = backdrop
+
+        let card = shim_box_new(0, 12)
+        addClass(card, "login-card")
+        // Overlay children position themselves by their own alignment within
+        // the full overlay area — center the card over the dimmed workspace.
+        shim_widget_halign_center(card)
+        shim_widget_valign_center(card)
+        shim_widget_size(card, 340)
+
+        let title = makeLabel("Welcome to Omperator", "login-title")
+        shim_widget_halign_start(title)
+        shim_box_append(card, title)
+
+        let subtitle = makeLabel("Sign in to start working on your computer.", "login-subtle")
+        shim_widget_halign_start(subtitle)
+        shim_box_append(card, subtitle)
+
+        loginEntry = shim_entry()
+        addClass(loginEntry, "login-entry")
+        shim_entry_set_placeholder(loginEntry, "Username")
+        onSignal(loginEntry, "activate") { [weak self] in self?.submitLogin() }
+        shim_box_append(card, loginEntry)
+
+        passwordEntry = shim_entry()
+        addClass(passwordEntry, "login-entry")
+        shim_entry_set_placeholder(passwordEntry, "Password")
+        shim_entry_set_visibility(passwordEntry, 0)
+        onSignal(passwordEntry, "activate") { [weak self] in self?.submitLogin() }
+        shim_box_append(card, passwordEntry)
+
+        loginButton = shim_button("Sign in")
+        addClass(loginButton, "login-button")
+        shim_widget_expand(loginButton, 1)
+        onSignal(loginButton, "clicked") { [weak self] in self?.submitLogin() }
+        shim_box_append(card, loginButton)
+
+        loginStatusLabel = makeLabel("", "login-subtle")
+        shim_widget_halign_start(loginStatusLabel)
+        shim_box_append(card, loginStatusLabel)
+
+        shim_overlay_add_overlay(overlay, card)
+        onboardingCard = card
+        // Hidden until the store settles without a connection.
+        shim_widget_hide(backdrop)
+        shim_widget_hide(card)
+    }
+
+    /// Drive the onboarding visibility from the refresh loop. Shows the login
+    /// only when there is no saved endpoint AND the initial auto-connect to
+    /// the local gateway did not come up — a friendly first-run, never a gate
+    /// that blocks a working local setup.
+    private func refreshOnboarding() {
+        guard onboardingArmed, let backdrop = onboardingBackdrop, let card = onboardingCard else { return }
+        if store.connected {
+            onboardingArmed = false
+            if onboardingVisible {
+                onboardingVisible = false
+                shim_widget_hide(backdrop)
+                shim_widget_hide(card)
+            }
+            return
+        }
+        // Wait for the restore() attempt to settle before showing: a live
+        // local gateway connects on its own and must not flash the login over
+        // a working workspace.
+        if !onboardingVisible && !store.connecting {
+            onboardingVisible = true
+            shim_widget_show(backdrop)
+            shim_widget_show(card)
+        }
+    }
+
+    private func submitLogin() {
+        guard !loginInProgress else { return }
+        guard let loginEntry, let passwordEntry else { return }
+        let username = entryText(loginEntry)
+        let password = entryText(passwordEntry)
+        guard !username.isEmpty, !password.isEmpty else {
+            setLoginStatus("Enter your username and password to sign in.", isError: true)
+            return
+        }
+        loginInProgress = true
+        setLoginStatus("Signing in…", isError: false)
+        shim_widget_sensitive(loginButton, 0)
+        let store = self.store
+        Task {
+            var message: String?
+            do {
+                try await store.login(username: username, password: password)
+                // Account ready — connect to the workspace (local gateway).
+                await store.restore()
+            } catch {
+                message = error.localizedDescription
+            }
+            self.loginInProgress = false
+            shim_widget_sensitive(self.loginButton, 1)
+            if let message {
+                self.setLoginStatus(message, isError: true)
+            } else if !self.store.connected {
+                // Signed in, but the workspace hasn't connected yet (local
+                // gateway unreachable) — keep the screen up and say so.
+                self.setLoginStatus("Signed in — but your computer isn't reachable yet. Try again in a moment.", isError: true)
+            }
+        }
+    }
+
+    private func entryText(_ entry: UnsafeMutablePointer<GtkWidget>) -> String {
+        let textC = shim_entry_text(entry)
+        return (textC.map { String(cString: $0) } ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func setLoginStatus(_ text: String, isError: Bool) {
+        guard let label = loginStatusLabel else { return }
+        shim_label_set_text(label, text)
+        if isError {
+            addClass(label, "login-error")
+        } else {
+            shim_css_class_remove(label, "login-error")
+        }
+    }
+
+    // MARK: - Panes sidebar (browser only)
+
+    private func buildPanesSidebar(_ workspace: UnsafeMutablePointer<GtkWidget>?) {
         let sidebar = shim_box_new(0, 6)
         addClass(sidebar, "pane-sidebar")
         shim_widget_size(sidebar, 380)
         paneSidebar = sidebar
 
-        // Tab strip: Terminal / Browser / Files
-        let tabs = shim_box_new(1, 4)
-        for (name, labelText) in [("terminal", "Terminal"), ("browser", "Browser"), ("files", "Files")] {
-            let button = shim_button(labelText)
-            addClass(button, "flat-btn")
-            let paneName = name
-            onSignal(button, "clicked") { [weak self] in self?.showPane(paneName) }
-            shim_widget_expand(button, 1)
-            shim_box_append(tabs, button)
-        }
-        shim_box_append(sidebar, tabs)
-
-        // Stack hosting the three widgets.
-        let stack = shim_stack()
-        shim_stack_set_transition(stack)
-        shim_widget_expand(stack, 0)
-        paneStack = stack
-        if let terminal = panes.terminalWidget(bridge: store) {
-            shim_stack_add(stack, terminal, "terminal")
-        }
+        // The sidebar IS the browser pane — no tab strip. Terminal and Files
+        // stay available in PanesFactory for future callers, just not offered.
         if let browser = panes.browserWidget(bridge: store) {
-            shim_stack_add(stack, browser, "browser")
+            shim_widget_expand(browser, 1)
+            shim_widget_expand(browser, 0)
+            shim_box_append(sidebar, browser)
         }
-        if let files = panes.filesWidget(bridge: store) {
-            shim_stack_add(stack, files, "files")
-        }
-        shim_stack_show(stack, activePane)
-        shim_box_append(sidebar, stack)
 
         shim_widget_hide(sidebar)
-        shim_box_append(root, sidebar)
+        shim_box_append(workspace, sidebar)
 
-        // Data callbacks.
-        panes.onTerminalInput = { [weak self] data in
-            guard let self, let session = self.store.selectedSession else { return }
-            let store = self.store
-            let sid = session.sessionId
-            Task { await store.sendTerminalInput(sessionId: sid, data: data) }
-        }
-        panes.onTerminalResize = { [weak self] cols, rows in
-            guard let self, let session = self.store.selectedSession else { return }
-            let store = self.store
-            let sid = session.sessionId
-            Task { await store.resizeTerminal(sessionId: sid, cols: cols, rows: rows) }
-        }
         panes.onURLChanged = { [weak self] url in
             guard let self, let session = self.store.selectedSession else { return }
             self.store.setBrowserURL(for: session.sessionId, url: url)
@@ -245,35 +431,9 @@ final class AppWindow {
         }
     }
 
-    private func showPane(_ name: String) {
-        activePane = name
-        if let stack = paneStack { shim_stack_show(stack, name) }
-        if !paneVisible { togglePanes() }
-    }
-
     private func refreshPanes() {
         guard paneVisible, let session = store.selectedSession else { return }
-        let sid = session.sessionId
-        if activePane == "terminal" {
-            if !terminalFed {
-                terminalFed = true
-                let store = self.store
-                Task { await store.openTerminal(sessionId: sid) }
-            }
-            if let terminalId = store.activeTerminalId(for: sid) {
-                panes.feedTerminal(store.terminalOutput(terminalId))
-            }
-        } else if activePane == "browser" {
-            panes.loadURL(store.browserURL(for: sid))
-        } else if activePane == "files" {
-            let store = self.store
-            Task {
-                if let diff = await store.filesDiff(sessionId: sid) {
-                    let items = diff.changedPaths.map { PanesFactory.FileItem(path: $0, kind: "file", size: nil) }
-                    self.panes.setFiles(items)
-                }
-            }
-        }
+        panes.loadURL(store.browserURL(for: session.sessionId))
     }
 
     private func toggleTheme() {
@@ -317,6 +477,8 @@ final class AppWindow {
     private func refresh() {
         refreshConnection()
         refreshRail()
+        refreshRailTimes()
+        refreshOnboarding()
         refreshTranscript()
         refreshPanes()
     }
@@ -357,15 +519,18 @@ final class AppWindow {
             child = next
         }
         railRows.removeAll()
+        railTimeLabels.removeAll()
         for session in sessions.prefix(80) {
             let row = shim_box_new(0, 2)
             addClass(row, "rail-item")
-            let title = makeLabel(session.title.isEmpty ? session.sessionId : session.title, nil)
+            // Friendly title + relative recency only — no projects, IDs,
+            // revisions, status codes, or host fingerprints.
+            let title = makeLabel(session.title.isEmpty ? "Untitled session" : session.title, nil)
             shim_widget_halign_start(title)
             shim_box_append(row, title)
-            let sub = makeLabel("\(session.project.name ?? session.project.projectId) · \(session.status)", "muted")
-            shim_widget_halign_start(sub)
-            shim_box_append(row, sub)
+            let time = makeLabel(relativeTime(session.updatedAt), "muted")
+            shim_widget_halign_start(time)
+            shim_box_append(row, time)
             let sessionId = session.sessionId
             let captured = sessionId
             onPressed(row) { [weak self] in
@@ -377,8 +542,51 @@ final class AppWindow {
             }
             shim_box_append(railList, row)
             railRows[sessionId] = row
+            railTimeLabels[sessionId] = time
         }
     }
+
+    /// Re-render the rail's relative-time labels on a slow cadence so "2m ago"
+    /// stays truthful without rebuilding the rows every frame.
+    private func refreshRailTimes() {
+        let now = Date().timeIntervalSince1970
+        guard now - lastRailTimeRefresh >= 60 else { return }
+        lastRailTimeRefresh = now
+        for session in store.sessions.prefix(80) {
+            guard let label = railTimeLabels[session.sessionId] else { continue }
+            shim_label_set_text(label, relativeTime(session.updatedAt))
+        }
+    }
+
+    /// Friendly relative recency for the rail: "just now", "5m ago", "2h ago",
+    /// "yesterday", "3d ago", then the month-day ("Aug 3").
+    private func relativeTime(_ iso: String) -> String {
+        guard let date = Self.isoFormatter.date(from: iso) else { return "" }
+        let minutes = Int(Date().timeIntervalSince(date) / 60)
+        if minutes < 1 { return "just now" }
+        if minutes < 60 { return "\(minutes)m ago" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours)h ago" }
+        if hours < 48 { return "yesterday" }
+        let days = hours / 24
+        if days < 7 { return "\(days)d ago" }
+        return Self.dayFormatter.string(from: date)
+    }
+
+    private static let isoFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        // .withFractionalSeconds is required to parse host timestamps that
+        // carry millisecond precision (e.g. "2026-01-01T00:00:00.000Z");
+        // plain second-precision timestamps parse with the same options.
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let dayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d"
+        return formatter
+    }()
 
     private func refreshTranscript() {
         guard let selected = store.selectedSession else { return }

@@ -356,3 +356,45 @@ static inline int shim_x11_set_above(unsigned long xid, int above) {
     return 1;
 }
 #endif /* GDK_WINDOWING_X11 */
+
+/* ── Onboarding & settings surface ──────────────────────────
+   First-run login overlay (GtkOverlay), password-masked entries,
+   and the settings popover's check buttons. */
+
+static inline GtkWidget *shim_overlay_new(void) { return gtk_overlay_new(); }
+static inline void shim_overlay_set_child(GtkWidget *overlay, GtkWidget *child) { gtk_overlay_set_child(GTK_OVERLAY(overlay), child); }
+static inline void shim_overlay_add_overlay(GtkWidget *overlay, GtkWidget *child) { gtk_overlay_add_overlay(GTK_OVERLAY(overlay), child); }
+
+/* Fill the parent: expand on both axes and stretch to the full allocation
+   (used for the onboarding backdrop so it covers the whole window). */
+static inline void shim_widget_fill(GtkWidget *w) {
+    gtk_widget_set_hexpand(w, 1);
+    gtk_widget_set_vexpand(w, 1);
+    gtk_widget_set_halign(w, GTK_ALIGN_FILL);
+    gtk_widget_set_valign(w, GTK_ALIGN_FILL);
+}
+static inline void shim_widget_halign_center(GtkWidget *w) { gtk_widget_set_halign(w, GTK_ALIGN_CENTER); }
+static inline void shim_widget_valign_center(GtkWidget *w) { gtk_widget_set_valign(w, GTK_ALIGN_CENTER); }
+
+/* Password masking: visibility == 0 renders the input as dots. */
+static inline void shim_entry_set_visibility(GtkWidget *entry, int visible) { gtk_entry_set_visibility(GTK_ENTRY(entry), visible); }
+static inline void shim_entry_set_placeholder(GtkWidget *entry, const char *text) { gtk_entry_set_placeholder_text(GTK_ENTRY(entry), text); }
+
+/* Disable a widget (login button while signing in). */
+static inline void shim_widget_sensitive(GtkWidget *w, int sensitive) { gtk_widget_set_sensitive(w, sensitive); }
+
+/* Check buttons for the settings popover (plain-language toggles). */
+static inline GtkWidget *shim_check_button(const char *label) { return gtk_check_button_new_with_label(label); }
+static inline int shim_check_active(GtkWidget *w) { return gtk_check_button_get_active(GTK_CHECK_BUTTON(w)); }
+static inline void shim_check_set_active(GtkWidget *w, int active) { gtk_check_button_set_active(GTK_CHECK_BUTTON(w), active); }
+
+/* Popover for the settings surface. Attach via gtk_widget_set_parent and
+   pop up with gtk_popover_popup: gtk_popover_present does not show the
+   popover in GTK 4.22 (visible stays FALSE after present()). */
+static inline GtkWidget *shim_popover_new(void) { return gtk_popover_new(); }
+static inline void shim_popover_set_child(GtkWidget *popover, GtkWidget *child) { gtk_popover_set_child(GTK_POPOVER(popover), child); }
+static inline void shim_popover_attach(GtkWidget *popover, GtkWidget *anchor) { gtk_widget_set_parent(GTK_WIDGET(popover), anchor); }
+static inline void shim_popover_popup(GtkWidget *popover) { gtk_popover_popup(GTK_POPOVER(popover)); }
+
+/* Visibility queries (settings panel toggle state). */
+static inline int shim_widget_visible(GtkWidget *w) { return gtk_widget_get_visible(w); }

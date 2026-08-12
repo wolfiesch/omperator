@@ -404,3 +404,116 @@ scrollbar slider:hover {
 .card-header:hover { background: rgba(57,53,82,0.55); color: #E0DEF4; }
 .card-chevron { color: #6E6A86; font-size: 9pt; }
 .tool-card.collapsed, .code-block.collapsed, .advisory-card.collapsed { padding-bottom: 0; }
+
+/* ── First-run onboarding (login screen) ──────────────────── */
+
+/* Full-window dim backdrop over the workspace. */
+.onboarding {
+  background-color: rgba(35, 33, 54, 0.93);
+}
+
+.login-card {
+  background-color: #2A273F;
+  border: 1px solid #1B1930;
+  border-top-color: #393552;
+  border-radius: 0;
+  padding: 28px 32px;
+  box-shadow: 0 4px 18px rgba(14, 12, 24, 0.6),
+              0 0 12px rgba(246, 193, 119, 0.07);
+}
+
+.login-title {
+  color: #FFFFFF;
+  font-size: 19pt;
+  font-weight: 700;
+}
+
+.login-subtle {
+  color: #908CAA;
+  font-size: 10pt;
+}
+
+.login-entry,
+.login-entry text {
+  background-color: rgba(57, 53, 82, 0.55);
+  border: 1px solid rgba(86, 82, 110, 0.7);
+  border-top-color: rgba(144, 140, 170, 0.45);
+  border-radius: 0;
+  padding: 8px 12px;
+  color: #E0DEF4;
+  caret-color: #F6C177;
+  font-family: "Fira Sans", "Helvetica Neue", sans-serif;
+  font-size: 11pt;
+}
+
+.login-entry placeholder {
+  color: #6E6A86;
+}
+
+.login-button {
+  background-color: #F6C177;
+  color: #232136;
+  border: 1px solid #E8AE5F;
+  border-top-color: #F8CE90;
+  border-bottom-color: #D99A45;
+  border-radius: 0;
+  padding: 7px 14px;
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(14, 12, 24, 0.5),
+              0 0 6px rgba(246, 193, 119, 0.25);
+}
+
+.login-button:hover {
+  background-color: #F8CE90;
+  box-shadow: 0 1px 3px rgba(14, 12, 24, 0.5),
+              0 0 10px rgba(246, 193, 119, 0.4);
+}
+
+.login-button:active {
+  background-color: #E8AE5F;
+  box-shadow: inset 0 1px 2px rgba(27, 25, 48, 0.4);
+}
+
+.login-button:disabled {
+  background-color: #56526E;
+  color: #908CAA;
+  border-color: #393552;
+  box-shadow: none;
+}
+
+.login-error {
+  color: #EB6F92;
+  font-size: 10pt;
+}
+
+/* ── Settings popover (plain-language toggles) ────────────── */
+
+.settings-popover {
+  background-color: #2A273F;
+  border: 1px solid #393552;
+  border-radius: 0;
+  padding: 10px 14px;
+}
+
+.settings-popover checkbutton {
+  color: #E0DEF4;
+  font-size: 10.5pt;
+  padding: 4px 2px;
+}
+
+.settings-popover check {
+  background-color: #2A273F;
+  border: 1px solid #6E6A86;
+  border-radius: 0;
+  min-width: 14px;
+  min-height: 14px;
+}
+
+.settings-popover check:checked {
+  background-color: #F6C177;
+  border-color: #E8AE5F;
+}
+
+.settings-popover check:checked image {
+  color: #232136;
+}
