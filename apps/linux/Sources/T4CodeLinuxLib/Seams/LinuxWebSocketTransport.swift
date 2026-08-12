@@ -55,7 +55,10 @@ final class LinuxWebSocketTransport: HostWireTransport {
 
         // Resolve + connect (blocking, quick).
         let sockfd: Int32 = try Self.connectTCP(host: host, port: UInt16(port))
+        lock.lock()
         fd = sockfd
+        closed = false
+        lock.unlock()
 
         // HTTP/1.1 upgrade request.
         let path = endpoint.path.isEmpty ? "/" : endpoint.path
@@ -95,6 +98,10 @@ final class LinuxWebSocketTransport: HostWireTransport {
     }
 
     func send(_ data: Data) async throws {
+        lock.lock()
+        defer { lock.unlock() }
+        let fd = self.fd
+        guard fd >= 0, !closed else { throw HostClientError.transport("socket not open") }
         try Self.writeFrame(fd: fd, opcode: 0x1, payload: data)
     }
 
@@ -111,10 +118,12 @@ final class LinuxWebSocketTransport: HostWireTransport {
         let fd = self.fd
         self.fd = -1
         closed = true
-        lock.unlock()
         if fd >= 0 {
             var closePayload = Data([0x03, 0xE8]) // 1000 normal
             _ = try? Self.writeFrame(fd: fd, opcode: 0x8, payload: closePayload)
+        }
+        lock.unlock()
+        if fd >= 0 {
             shutdown(fd, Int32(SHUT_RDWR))
             Glibc.close(fd)
         }
@@ -145,11 +154,15 @@ final class LinuxWebSocketTransport: HostWireTransport {
                 case 0x0, 0x1, 0x2:
                     inbox?.yield(frame.payload)
                 case 0x8: // close
-                    _ = try? Self.writeFrame(fd: fd, opcode: 0x8, payload: Data([0x03, 0xE8]))
+                    lock.lock()
+                    if fd >= 0 { _ = try? Self.writeFrame(fd: fd, opcode: 0x8, payload: Data([0x03, 0xE8])) }
+                    lock.unlock()
                     inbox?.finish()
                     return
                 case 0x9: // ping → pong
-                    _ = try? Self.writeFrame(fd: fd, opcode: 0xA, payload: frame.payload)
+                    lock.lock()
+                    if fd >= 0 { _ = try? Self.writeFrame(fd: fd, opcode: 0xA, payload: frame.payload) }
+                    lock.unlock()
                 case 0xA: // pong
                     break
                 default:
@@ -273,9 +286,10 @@ final class LinuxWebSocketTransport: HostWireTransport {
         out.append(contentsOf: masked)
         var written = 0
         let count = out.count
-        let base = out.withUnsafeBytes { $0.baseAddress! }
         while written < count {
-            let n = write(fd, base.advanced(by: written), count - written)
+            let n = out.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> Int in
+                write(fd, raw.baseAddress!.advanced(by: written), count - written)
+            }
             if n < 0 {
                 if errno == EINTR { continue }
                 throw HostClientError.transport("frame write failed: \(String(cString: strerror(errno)))")
