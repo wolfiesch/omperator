@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import {
+  DEFAULT_TOKEN_TTL_MS,
   DEFAULT_TTL_MS,
   liveHosts,
   normalizeHostId,
@@ -12,9 +16,14 @@ import {
   pairSweep,
   parseHostRegistration,
   startRendezvous,
+  tokenSweep,
 } from "./rendezvous.mjs";
 
 const ORIGIN = "https://workstation.example-tailnet.ts.net:8445";
+
+function tempAccountsDir() {
+  return mkdtempSync(join(tmpdir(), "rdv-accounts-"));
+}
 
 test("registration fields are bounded and validated", () => {
   assert.equal(normalizeHostId("sha256:abcd"), "sha256:abcd");
@@ -200,5 +209,180 @@ test("pairing codes expire after the pair TTL", async () => {
     assert.equal(redeem.status, 404);
   } finally {
     await rendezvous.close();
+  }
+});
+
+test("accounts register, reject duplicates and invalid credentials, and log in", async () => {
+  const dir = tempAccountsDir();
+  const rendezvous = await startRendezvous({ listenPort: 0, accountsPath: join(dir, "accounts.json") });
+  const base = `http://${rendezvous.host}:${rendezvous.port}`;
+  const json = { "Content-Type": "application/json" };
+  try {
+    const register = (username, password) =>
+      fetch(`${base}/v1/accounts/register`, {
+        method: "POST",
+        headers: json,
+        body: JSON.stringify({ username, password }),
+      });
+
+    // Valid registration.
+    const ok = await register("alice", "correct-horse-battery");
+    assert.equal(ok.status, 200);
+    assert.deepEqual(await ok.json(), { ok: true });
+
+    // The account store is persisted on disk, not just in memory.
+    const onDisk = JSON.parse(await (await import("node:fs/promises")).readFile(join(dir, "accounts.json"), "utf8"));
+    assert.deepEqual(Object.keys(onDisk), ["alice"]);
+    assert.equal(typeof onDisk.alice.salt, "string");
+    assert.equal(typeof onDisk.alice.passHash, "string");
+    assert.notEqual(onDisk.alice.passHash, "correct-horse-battery");
+
+    // Duplicate username is rejected with 409.
+    const duplicate = await register("alice", "another-password");
+    assert.equal(duplicate.status, 409);
+    assert.equal((await duplicate.json()).ok, false);
+
+    // Invalid usernames are rejected (too short, too long, bad characters).
+    for (const username of ["", "ab", "x".repeat(33), "al ice", "alice!", "alice\n"]) {
+      const rejected = await register(username, "correct-horse-battery");
+      assert.equal(rejected.status, 400);
+    }
+    // Invalid passwords are rejected (too short, too long).
+    for (const password of ["", "short", "x".repeat(129)]) {
+      const rejected = await register(`bob${password.length}`, password);
+      assert.equal(rejected.status, 400);
+    }
+
+    // Login with the right credentials issues a 32-byte b64url bearer token.
+    const login = (username, password) =>
+      fetch(`${base}/v1/accounts/login`, {
+        method: "POST",
+        headers: json,
+        body: JSON.stringify({ username, password }),
+      });
+    const good = await login("alice", "correct-horse-battery");
+    assert.equal(good.status, 200);
+    const goodBody = await good.json();
+    assert.equal(goodBody.ok, true);
+    assert.match(goodBody.token, /^[A-Za-z0-9_-]{43}$/u);
+
+    // Wrong password and unknown user both answer 401 with ok: false.
+    const wrongPassword = await login("alice", "wrong-password");
+    assert.equal(wrongPassword.status, 401);
+    assert.equal((await wrongPassword.json()).ok, false);
+    const unknownUser = await login("nobody", "correct-horse-battery");
+    assert.equal(unknownUser.status, 401);
+    assert.equal((await unknownUser.json()).ok, false);
+  } finally {
+    await rendezvous.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("host directory is scoped to the bearer token account", async () => {
+  const dir = tempAccountsDir();
+  const rendezvous = await startRendezvous({ listenPort: 0, accountsPath: join(dir, "accounts.json") });
+  const base = `http://${rendezvous.host}:${rendezvous.port}`;
+  const json = { "Content-Type": "application/json" };
+  try {
+    for (const [username, password] of [
+      ["aliceA", "password-a1"],
+      ["aliceB", "password-b2"],
+    ]) {
+      const registered = await fetch(`${base}/v1/accounts/register`, {
+        method: "POST",
+        headers: json,
+        body: JSON.stringify({ username, password }),
+      });
+      assert.equal(registered.status, 200);
+    }
+    const login = async (username, password) => {
+      const response = await fetch(`${base}/v1/accounts/login`, {
+        method: "POST",
+        headers: json,
+        body: JSON.stringify({ username, password }),
+      });
+      return (await response.json()).token;
+    };
+    const tokenA = await login("aliceA", "password-a1");
+    const tokenB = await login("aliceB", "password-b2");
+    const bearerA = { ...json, Authorization: `Bearer ${tokenA}` };
+    const bearerB = { ...json, Authorization: `Bearer ${tokenB}` };
+
+    // Account-scoped announcements land under the announcing account.
+    for (const [headers, hostId] of [
+      [bearerA, "ha"],
+      [bearerB, "hb"],
+      [json, "hpublic"], // no token: unscoped, stays public
+    ]) {
+      const announced = await fetch(`${base}/v1/hosts`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ hostId, hostname: hostId, label: hostId, origin: ORIGIN }),
+      });
+      assert.equal(announced.status, 200);
+    }
+
+    const hostsOf = async (headers) => {
+      const response = await fetch(`${base}/v1/hosts`, { headers });
+      assert.equal(response.status, 200);
+      return (await response.json()).hosts.map((host) => host.hostId).sort();
+    };
+
+    // Each account sees only its own hosts; A's hosts are hidden from B.
+    assert.deepEqual(await hostsOf(bearerA), ["ha"]);
+    assert.deepEqual(await hostsOf(bearerB), ["hb"]);
+    // Unauthenticated requests still see the unscoped (public) list.
+    assert.deepEqual(await hostsOf(json), ["hpublic"]);
+
+    // A present-but-invalid token is rejected outright.
+    const bogus = await fetch(`${base}/v1/hosts`, {
+      headers: { Authorization: "Bearer not-a-real-token" },
+    });
+    assert.equal(bogus.status, 401);
+  } finally {
+    await rendezvous.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("account tokens expire after the token TTL", async () => {
+  const dir = tempAccountsDir();
+  const rendezvous = await startRendezvous({ listenPort: 0, accountsPath: join(dir, "accounts.json") });
+  const base = `http://${rendezvous.host}:${rendezvous.port}`;
+  const json = { "Content-Type": "application/json" };
+  try {
+    const registered = await fetch(`${base}/v1/accounts/register`, {
+      method: "POST",
+      headers: json,
+      body: JSON.stringify({ username: "carol", password: "password-c3" }),
+    });
+    assert.equal(registered.status, 200);
+
+    const login = await fetch(`${base}/v1/accounts/login`, {
+      method: "POST",
+      headers: json,
+      body: JSON.stringify({ username: "carol", password: "password-c3" }),
+    });
+    const token = (await login.json()).token;
+
+    await fetch(`${base}/v1/hosts`, {
+      method: "POST",
+      headers: { ...json, Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ hostId: "hc", hostname: "hc", label: "hc", origin: ORIGIN }),
+    });
+    const scoped = await fetch(`${base}/v1/hosts`, { headers: { Authorization: `Bearer ${token}` } });
+    assert.equal(scoped.status, 200);
+    assert.deepEqual((await scoped.json()).hosts.map((host) => host.hostId), ["hc"]);
+
+    // Force expiry by sweeping with a clock past the 30-day TTL.
+    tokenSweep(Date.now() + DEFAULT_TOKEN_TTL_MS + 1);
+
+    const expired = await fetch(`${base}/v1/hosts`, { headers: { Authorization: `Bearer ${token}` } });
+    assert.equal(expired.status, 401);
+    assert.equal((await expired.json()).ok, false);
+  } finally {
+    await rendezvous.close();
+    rmSync(dir, { recursive: true, force: true });
   }
 });

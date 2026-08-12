@@ -2,13 +2,16 @@
 //
 // rendezvous.mjs — public host registry + one-time pairing-code broker.
 //
-// Two roles:
+// Three roles:
 //
 // 1. Host directory. Gateways announce themselves (POST /v1/hosts,
 //    heartbeating every 30s); the native apps GET /v1/hosts to learn what
 //    computers are available. In the internet (public-relay) model the app
 //    resolves a host to its relay-based control room; in the private
 //    (tailnet) model it connects to the host's gateway origin directly.
+//    Announcements may carry an account bearer token, which scopes the
+//    host to that account: authenticated GETs then see only that account's
+//    hosts, while unauthenticated GETs see the unscoped (public) list.
 //
 // 2. Pairing broker. The host's relay adapter mints a 6-digit one-time code
 //    per control room (POST /v1/pair-links) and the phone redeems it
@@ -16,33 +19,46 @@
 //    stored only as sha256 hashes; the room additionally requires the code,
 //    so a compromised rendezvous cannot join rooms.
 //
+// 3. Accounts. POST /v1/accounts/register creates a username+password
+//    account; POST /v1/accounts/login verifies credentials and issues a
+//    30-day bearer token (stored only as a sha256 hash). Accounts are the
+//    one persistent state, kept in a JSON file (passwords are never stored
+//    plaintext — per-account random salt + sha256(salt + password)).
+//
 // Trust model: the directory is public; the pairing broker's codes are the
 // capability. A redeemer needs the 6-digit code the desktop displays; the
 // room key (inside the returned link) is end-to-end material the relay never
 // sees. Deploy behind TLS on a host both the gateways and the phones can
-// reach. Stateless with TTLs: losing it only hides hosts/codes until they
-// re-register.
+// reach. Stateless with TTLs (accounts aside): losing it only hides
+// hosts/codes until they re-register.
 //
 // Run standalone:  node scripts/rendezvous.mjs
 // Env: RDV_HOST (default 127.0.0.1), RDV_PORT (default 4195), RDV_TTL_MS
 // (default 90000), RDV_PAIR_TTL_MS (default 600000), RDV_SWEEP_MS
-// (default 15000).
+// (default 15000), RDV_ACCOUNTS_PATH (default <script dir>/rendezvous-accounts.json),
+// RDV_TOKEN_TTL_MS (default 30 days).
 
-import { createHash } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const DEFAULT_PORT = 4_195;
 export const DEFAULT_TTL_MS = 90_000;
 export const DEFAULT_PAIR_TTL_MS = 600_000;
 export const DEFAULT_SWEEP_MS = 15_000;
+export const DEFAULT_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
+const DEFAULT_ACCOUNTS_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "rendezvous-accounts.json");
 const MAX_HOSTS = 256;
 const MAX_CODES = 512;
 const MAX_TEXT = 512;
 
-const registry = new Map(); // hostId -> { hostId, hostname, label, origin, lastSeen }
+const registry = new Map(); // hostId -> { hostId, hostname, label, origin, account, lastSeen }
 const codes = new Map(); // sha256(code) -> { hostId, pairLink, lastSeen }
+const accounts = new Map(); // username -> { salt, passHash, createdAt }
+const tokens = new Map(); // sha256(token) -> { username, expiresAt }
+let accountsFile = DEFAULT_ACCOUNTS_PATH;
 
 function fail(message) {
   throw new Error(message);
@@ -159,15 +175,121 @@ export function pairSweep(now = Date.now(), ttlMs = DEFAULT_PAIR_TTL_MS) {
   }
 }
 
+/** A username is 3–32 characters of [A-Za-z0-9._-]. */
+export function normalizeUsername(value) {
+  if (typeof value !== "string" || !/^[A-Za-z0-9._-]{3,32}$/u.test(value)) fail("username is invalid");
+  return value;
+}
+
+/** A password is 8–128 characters. */
+export function normalizePassword(value) {
+  if (typeof value !== "string" || value.length < 8 || value.length > 128) fail("password is invalid");
+  return value;
+}
+
+export function parseAccountRegistration(body) {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) fail("registration is invalid");
+  return {
+    username: normalizeUsername(body.username),
+    password: normalizePassword(body.password),
+  };
+}
+
+/** Passwords are never stored plaintext: per-account random salt + sha256(salt + password). */
+export function hashPassword(salt, password) {
+  return createHash("sha256").update(salt, "utf8").update(password, "utf8").digest("hex");
+}
+
+function verifyPassword(entry, password) {
+  const candidate = Buffer.from(hashPassword(entry.salt, password), "hex");
+  const expected = Buffer.from(entry.passHash, "hex");
+  return candidate.length === expected.length && timingSafeEqual(candidate, expected);
+}
+
+/** Load the account store from disk, replacing whatever is in memory. */
+export function loadAccounts(filePath = accountsFile) {
+  accountsFile = filePath;
+  accounts.clear();
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(accountsFile, "utf8"));
+  } catch (error) {
+    if (error?.code === "ENOENT") return 0;
+    throw error;
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) fail("accounts file is malformed");
+  for (const [username, entry] of Object.entries(parsed)) {
+    if (
+      typeof username !== "string" ||
+      entry === null ||
+      typeof entry !== "object" ||
+      typeof entry.salt !== "string" ||
+      typeof entry.passHash !== "string" ||
+      !Number.isSafeInteger(entry.createdAt)
+    ) {
+      continue;
+    }
+    accounts.set(username, { salt: entry.salt, passHash: entry.passHash, createdAt: entry.createdAt });
+  }
+  return accounts.size;
+}
+
+/** Persist the account store (atomic tmp+rename so a crash cannot tear the file). */
+function saveAccounts() {
+  mkdirSync(dirname(accountsFile), { recursive: true });
+  const tmp = `${accountsFile}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(Object.fromEntries(accounts), null, 2)}\n`);
+  renameSync(tmp, accountsFile);
+}
+
+export function tokenTtlMs(input) {
+  const override = input.tokenTtlMs ?? input.RDV_TOKEN_TTL_MS;
+  if (override === undefined) return DEFAULT_TOKEN_TTL_MS;
+  const value = typeof override === "string" ? Number.parseInt(override, 10) : override;
+  if (!Number.isSafeInteger(value) || value <= 0) fail("account token TTL must be a positive integer");
+  return value;
+}
+
+/** Bearer tokens are stored only as sha256 hashes (they are the capability). */
+export function hashToken(token) {
+  return createHash("sha256").update(token, "utf8").digest("hex");
+}
+
+/** Issue a fresh 32-byte base64url bearer token for an account. */
+export function issueToken(username, now = Date.now(), ttlMs = DEFAULT_TOKEN_TTL_MS) {
+  const token = randomBytes(32).toString("base64url");
+  tokens.set(hashToken(token), { username, expiresAt: now + ttlMs });
+  return token;
+}
+
+export function tokenSweep(now = Date.now()) {
+  for (const [key, entry] of tokens) {
+    if (now >= entry.expiresAt) tokens.delete(key);
+  }
+}
+
+/** Resolve a bearer token to its account username, or undefined if invalid/expired. */
+export function usernameForToken(token, now = Date.now()) {
+  if (typeof token !== "string" || token === "") return undefined;
+  tokenSweep(now);
+  return tokens.get(hashToken(token))?.username;
+}
+
 export function registrySweep(now = Date.now(), ttlMs = DEFAULT_TTL_MS) {
   for (const [key, entry] of registry) {
     if (now - entry.lastSeen > ttlMs) registry.delete(key);
   }
 }
 
-export function liveHosts(now = Date.now(), ttlMs = DEFAULT_TTL_MS) {
+/**
+ * The live host list. `account` undefined yields the unscoped (public) hosts —
+ * the ones announced without a bearer token, so legacy clients keep working.
+ * Otherwise only that account's hosts are returned.
+ */
+export function liveHosts(now = Date.now(), ttlMs = DEFAULT_TTL_MS, account = undefined) {
   registrySweep(now, ttlMs);
   return [...registry.values()]
+    .filter((entry) => (account === undefined ? entry.account === undefined : entry.account === account))
     .map((entry) => ({
       hostId: entry.hostId,
       hostname: entry.hostname,
@@ -219,23 +341,97 @@ function requestPath(url) {
   }
 }
 
+function bearerToken(request) {
+  const header = request.headers.authorization;
+  if (typeof header !== "string") return undefined;
+  const match = /^Bearer\s+(.+)$/iu.exec(header.trim());
+  return match === null ? undefined : match[1];
+}
+
+/**
+ * Resolve the request's Bearer token to an account username. No token yields
+ * undefined; a present-but-invalid/expired token answers 401 and yields null.
+ */
+function accountFromRequest(request, response) {
+  const token = bearerToken(request);
+  if (token === undefined) return undefined;
+  const username = usernameForToken(token);
+  if (username === undefined) {
+    replyJson(response, 401, { ok: false, error: "invalid or expired token" });
+    return null;
+  }
+  return username;
+}
+
 async function handleRegistryRequest(request, response, pathname, method) {
   if (pathname === "/healthz" && (method === "GET" || method === "HEAD")) {
     const body = JSON.stringify({ ok: true });
     replyText(response, 200, "application/json; charset=utf-8", body, method === "HEAD");
     return true;
   }
+  if (pathname === "/v1/accounts/register" && method === "POST") {
+    const body = await readJsonBody(request, response);
+    if (body === undefined) return true;
+    let username;
+    let password;
+    try {
+      ({ username, password } = parseAccountRegistration(body));
+    } catch (error) {
+      replyJson(response, 400, { ok: false, error: error instanceof Error ? error.message : "invalid registration" });
+      return true;
+    }
+    if (accounts.has(username)) {
+      replyJson(response, 409, { ok: false, error: "username already exists" });
+      return true;
+    }
+    const salt = randomBytes(16).toString("hex");
+    accounts.set(username, { salt, passHash: hashPassword(salt, password), createdAt: Date.now() });
+    try {
+      saveAccounts();
+    } catch {
+      // Never diverge from disk: roll the account back if persistence fails.
+      accounts.delete(username);
+      replyJson(response, 500, { ok: false, error: "could not persist accounts" });
+      return true;
+    }
+    replyJson(response, 200, { ok: true });
+    return true;
+  }
+  if (pathname === "/v1/accounts/login" && method === "POST") {
+    const body = await readJsonBody(request, response);
+    if (body === undefined) return true;
+    let username;
+    let password;
+    try {
+      ({ username, password } = parseAccountRegistration(body));
+    } catch (error) {
+      replyJson(response, 400, { ok: false, error: error instanceof Error ? error.message : "invalid registration" });
+      return true;
+    }
+    const entry = accounts.get(username);
+    if (entry === undefined || !verifyPassword(entry, password)) {
+      // One message for unknown user and wrong password: no username enumeration.
+      replyJson(response, 401, { ok: false, error: "invalid username or password" });
+      return true;
+    }
+    replyJson(response, 200, { ok: true, token: issueToken(username) });
+    return true;
+  }
   if (pathname === "/v1/hosts" && (method === "GET" || method === "HEAD")) {
-    const body = JSON.stringify({ hosts: liveHosts() });
+    const account = accountFromRequest(request, response);
+    if (account === null) return true;
+    const body = JSON.stringify({ hosts: liveHosts(undefined, undefined, account) });
     replyText(response, 200, "application/json; charset=utf-8", body, method === "HEAD");
     return true;
   }
   if (pathname === "/v1/hosts" && method === "POST") {
+    const account = accountFromRequest(request, response);
+    if (account === null) return true;
     const body = await readJsonBody(request, response);
     if (body === undefined) return true;
     try {
       const registration = parseHostRegistration(body);
-      registry.set(registration.hostId, { ...registration, lastSeen: Date.now() });
+      registry.set(registration.hostId, { ...registration, account, lastSeen: Date.now() });
       if (registry.size > MAX_HOSTS) {
         // Drop the oldest announcement so one bot cannot crowd out the registry.
         const oldest = [...registry.values()].sort((a, b) => a.lastSeen - b.lastSeen)[0];
@@ -320,6 +516,8 @@ export function optionsFromEnvironment(environment = process.env) {
     listenPort: Number.isSafeInteger(port) && port > 0 ? port : DEFAULT_PORT,
     ttlMs: registryTtlMs({ RDV_TTL_MS: environment.RDV_TTL_MS }),
     pairTtlMs: pairTtlMs({ RDV_PAIR_TTL_MS: environment.RDV_PAIR_TTL_MS }),
+    tokenTtlMs: tokenTtlMs({ RDV_TOKEN_TTL_MS: environment.RDV_TOKEN_TTL_MS }),
+    accountsPath: environment.RDV_ACCOUNTS_PATH ?? DEFAULT_ACCOUNTS_PATH,
     sweepMs: Number.parseInt(environment.RDV_SWEEP_MS ?? String(DEFAULT_SWEEP_MS), 10),
   };
 }
@@ -330,8 +528,11 @@ export async function startRendezvous(input) {
     listenPort: input.listenPort ?? DEFAULT_PORT,
     ttlMs: registryTtlMs(input),
     pairTtlMs: pairTtlMs(input),
+    tokenTtlMs: tokenTtlMs(input),
+    accountsPath: input.accountsPath ?? input.RDV_ACCOUNTS_PATH ?? DEFAULT_ACCOUNTS_PATH,
     sweepMs: input.sweepMs ?? DEFAULT_SWEEP_MS,
   };
+  loadAccounts(options.accountsPath);
   const server = createServer((request, response) => {
     void (async () => {
       const method = request.method ?? "GET";
@@ -348,6 +549,7 @@ export async function startRendezvous(input) {
     try {
       registrySweep(undefined, options.ttlMs);
       pairSweep(undefined, options.pairTtlMs);
+      tokenSweep();
     } catch {
       // sweep failures are non-fatal
     }
