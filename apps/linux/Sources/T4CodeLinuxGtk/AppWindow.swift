@@ -15,7 +15,7 @@ final class AppWindow {
     private var railList: UnsafeMutablePointer<GtkWidget>?
     private var railRows: [String: UnsafeMutablePointer<GtkWidget>] = [:]
     private var railSearchEntry: UnsafeMutablePointer<GtkWidget>?
-    private var railGroupingDropdown: UnsafeMutablePointer<GtkWidget>?
+    private var railSegmentButtons: [RailGrouping: UnsafeMutablePointer<GtkWidget>] = [:]
     private var railSearchText = ""
     private var railGrouping: RailGrouping = .recency
     private var lastRailSignature = ""
@@ -123,19 +123,29 @@ final class AppWindow {
         }
         shim_box_append(rail, search)
 
-        // Grouping picker: Recent / Project / Status.
-        let groupingItems: [String] = ["Recent", "Project", "Status"]
-        let dropdown = groupingItems.withUnsafeBufferPointer { buf -> UnsafeMutablePointer<GtkWidget>? in
-            var cStrings: [UnsafePointer<CChar>?] = buf.map { UnsafePointer(($0 as NSString).utf8String) }
-            cStrings.append(nil)
-            return cStrings.withUnsafeBufferPointer { shim_dropdown($0.baseAddress) }
+        // Grouping picker: a segmented control (Recent / Project / Status).
+        // Segmented buttons, not a GtkDropDown — the dropdown's popup crashed
+        // (its notify::selected signal has a 3-arg signature the onSignal
+        // trampoline doesn't handle) and its translucent closed state clashed
+        // with the rail. Buttons use the plain 2-arg "clicked" signal and show
+        // all three modes with the active one highlighted.
+        let segmented = shim_box_new(1, 0)
+        addClass(segmented, "rail-segmented")
+        railSegmentButtons.removeAll()
+        for mode in [RailGrouping.recency, .project, .status] {
+            let label = mode == .recency ? "Recent" : (mode == .project ? "Project" : "Status")
+            let button = shim_button(label)
+            addClass(button, "rail-segment")
+            shim_widget_expand(button, 1)
+            let captured = mode
+            onPressed(button) { [weak self] in
+                self?.setRailGrouping(captured)
+            }
+            railSegmentButtons[mode] = button
+            shim_box_append(segmented, button)
         }
-        railGroupingDropdown = dropdown
-        addClass(dropdown, "rail-grouping")
-        onSignal(UnsafeMutableRawPointer(dropdown), "notify::selected") { [weak self] in
-            self?.railGroupingChanged()
-        }
-        shim_box_append(rail, dropdown)
+        shim_box_append(rail, segmented)
+        updateRailSegmentStates()
 
         let railScroll = shim_scrolled_window()
         shim_widget_expand(railScroll, 0)
@@ -549,10 +559,22 @@ final class AppWindow {
         lastRailSignature = ""  // force a rebuild
     }
 
-    private func railGroupingChanged() {
-        guard let dropdown = railGroupingDropdown else { return }
-        railGrouping = RailGrouping(rawValue: Int(shim_dropdown_selected(dropdown))) ?? .recency
-        lastRailSignature = ""
+    private func setRailGrouping(_ mode: RailGrouping) {
+        guard railGrouping != mode else { return }
+        railGrouping = mode
+        updateRailSegmentStates()
+        lastRailSignature = ""  // force a rebuild
+    }
+
+    /// Highlight the active segment (gold) and dim the rest.
+    private func updateRailSegmentStates() {
+        for (mode, button) in railSegmentButtons {
+            if mode == railGrouping {
+                addClass(button, "rail-segment-active")
+            } else {
+                removeClass(button, "rail-segment-active")
+            }
+        }
     }
 
     private func needsYou(_ session: SessionRef) -> Bool {

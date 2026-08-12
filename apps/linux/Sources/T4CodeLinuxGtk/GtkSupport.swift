@@ -45,6 +45,10 @@ func addClass(_ widget: UnsafeMutablePointer<GtkWidget>?, _ name: String) {
     shim_css_class(widget, name)
 }
 
+func removeClass(_ widget: UnsafeMutablePointer<GtkWidget>?, _ name: String) {
+    shim_css_class_remove(widget, name)
+}
+
 func makeLabel(_ text: String, _ cls: String? = nil) -> UnsafeMutablePointer<GtkWidget>? {
     let w = shim_label(text)
     if let cls { addClass(w, cls) }

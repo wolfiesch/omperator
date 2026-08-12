@@ -530,18 +530,6 @@ scrollbar slider:hover {
   min-height: 0;
   font-size: 9.5pt;
 }
-.rail-grouping {
-  margin: 0 10px 6px 10px;
-  min-height: 0;
-  font-size: 9pt;
-}
-.rail-grouping button {
-  background-color: rgba(255, 255, 255, 0.8);
-  border: 1px solid #CECACD;
-  color: #9893A5;
-  padding: 2px 8px;
-  min-height: 0;
-}
 .rail-section {
   color: #B4637A;
   font-size: 8.5pt;
@@ -549,4 +537,25 @@ scrollbar slider:hover {
   letter-spacing: 1px;
   padding: 8px 12px 2px 12px;
   text-transform: uppercase;
+}
+
+/* Segmented grouping control: Recent / Project / Status */
+.rail-segmented {
+  margin: 0 10px 6px 10px;
+  background-color: rgba(240, 233, 228, 0.8);
+  border: 1px solid #CECACD;
+  border-radius: 6px;
+}
+.rail-segment {
+  background-color: transparent;
+  border: none;
+  color: #9893A5;
+  padding: 3px 0;
+  min-height: 0;
+  font-size: 8.5pt;
+}
+.rail-segment-active {
+  background-color: rgba(180, 99, 122, 0.14);
+  color: #B4637A;
+  border-radius: 5px;
 }
