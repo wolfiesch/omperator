@@ -1,6 +1,15 @@
 import { defineConfig } from "vite-plus";
 
-const ignored = ["reference/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/coverage/**", "**/release/**"];
+const ignored = [
+  "reference/**",
+  "**/node_modules/**",
+  "**/dist/**",
+  "**/build/**",
+  "**/out/**",
+  "**/coverage/**",
+  "**/release/**",
+  "apps/windows/Sources/T4CodeWindowsLib/Resources/xterm*.js",
+];
 
 export default defineConfig({
   lint: {

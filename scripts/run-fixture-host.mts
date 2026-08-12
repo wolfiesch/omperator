@@ -1,7 +1,15 @@
 import { createInterface } from "node:readline";
-import { FixtureWebSocketServer } from "../packages/fixture-server/src/index.ts";
+import {
+  FixtureWebSocketServer,
+  SCENARIO_IDS,
+  type ScenarioId,
+} from "../packages/fixture-server/src/index.ts";
 const port = Number(process.argv[2] ?? 18788);
-const scenario = (process.argv[3] ?? "basic-v1") as any;
+const scenarioArgument = process.argv[3] ?? "basic-v1";
+const isScenarioId = (value: string): value is ScenarioId =>
+  SCENARIO_IDS.some((candidate) => candidate === value);
+if (!isScenarioId(scenarioArgument)) throw new RangeError(`unknown fixture scenario: ${scenarioArgument}`);
+const scenario = scenarioArgument;
 const autoApproveTerminal = process.argv.includes("--auto-approve-terminal");
 const server = new FixtureWebSocketServer({
   scenario,

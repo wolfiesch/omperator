@@ -217,3 +217,25 @@ The code-first pass intentionally does not claim pixel identity between GTK and 
 ## Demo-page validation pending
 
 Alexis confirmed no current example screenshots exist. When the demo page is published, validate its represented commit, compare its current assets against the pinned native captures and Windows output, and correct demonstrated residual visual deltas only. Do not use the old Vertical Rectangle, SwiftCrossUI Linux, or macOS screenshots as substitutes.
+
+## Verification evidence
+
+### Passing checks
+
+- Native Windows build and test: `swift test` completed on `x86_64-unknown-windows-msvc`; 58 tests in 8 suites passed.
+- Pinned Linux build and test: `Scripts/capture-linux-v2-reference.ps1` built `T4CodeLinuxGtk` from `d4fb75ff3cf24dbd4981948dc4c2d1a685c9b887` in the private Docker/Xvfb environment; 13 Linux tests passed before capture.
+- HostWire: 27 tests in 4 suites passed on Windows.
+- Fixture server: 45 tests in 4 files passed.
+- Relay, rendezvous, gateway, and legacy gateway service coverage: 60 tests passed; one native `systemd-analyze` check was skipped because that binary is unavailable in the Node container.
+- Fixture-host smoke: Bun started the `basic-v1` server with terminal auto-approval, announced the expected WebSocket URL, and accepted a TCP connection.
+- Deterministic native capture: all 18 required Linux states and all 18 matching Windows states rendered; normalized, side-by-side, overlay, absolute-difference, manifest, and contact-sheet outputs were regenerated.
+- `git diff --check` and the parity-artifact secret-pattern scan passed.
+- Lint delta: after excluding the two vendored minified xterm bundles, the branch reports 2 warnings and 29 errors versus 2 warnings and 30 errors on `origin/linux-port`. The changed fixture-host script removed one pre-existing explicit-`any` finding and adds no lint finding.
+
+### Repository-wide gates blocked by unchanged upstream failures
+
+- `pnpm check:release` passes.
+- `pnpm check:provenance` fails on the unchanged `provenance/t3code/imports/w1-remote-20260711.json`: one missing target at `records[2]` and checksum mismatches at `records[4]` and `records[5]`.
+- `pnpm typecheck` completes 9 of 13 tasks successfully. The concrete emitted diagnostic is the unchanged `apps/site/src/linux/LinuxLanding.tsx:13:13` (`entry` may be undefined); the runner marks the site plus three unchanged dependent tasks failed.
+- The final Node 24/Bun repository test attempt reaches one unchanged `packages/host-service/test/test-control-ownership.test.ts` timeout (`a seed whose inventory snapshot predates it fails instead of leaving the session unowned`): that package reports 461 passing, 1 skipped, and 1 failed test. `packages/host-service` is byte-for-byte unchanged from `origin/linux-port`.
+- `pnpm verify:affected:plan --base origin/linux-port` selects the full source gate plus fixture, tooling, maintainer, cluster, OMP lifecycle, iOS, and Android checks. The host runner cannot directly execute the generated extensionless `pnpm` subprocess on Windows; applicable migration-specific Swift, fixture, relay, service, capture, whitespace, and secret checks were therefore run directly as listed above. Gates requiring external OMP source directories remain unavailable.
