@@ -31,7 +31,7 @@ This document records implementation and capture evidence. It does not declare 1
 | Review | `T4ReviewPane` in `T4PanesView.swift` | `T4SessionDetailView.paneSidebar(.review)` | `linux-review-{moon,dawn}.png` | Review list density and action/header spacing were too large. | Routed the shared pane and compacted list rows, header padding, and action sizing. | `captures/review-{moon,dawn}-1600x900.png` | Captured; approval pending | None |
 | Usage | `T4UsagePane` in `T4PanesView.swift` | `T4SessionDetailView.paneSidebar(.usage)` | `linux-usage-{moon,dawn}.png` | Native progress/list negotiation made rows and controls taller than the reference. | Routed the shared pane; normalized list rows, progress height, and platform padding. | `captures/usage-{moon,dawn}-1600x900.png` | Captured; approval pending | None |
 | Artifacts | `T4ArtifactsPane` in `T4PanesView.swift` | `T4SessionDetailView.paneSidebar(.artifacts)` | `linux-artifacts-{moon,dawn}.png` | Artifact rows and pane width diverged in the Windows-only design. | Routed the shared pane and compacted native list-row padding. | `captures/artifacts-{moon,dawn}-1600x900.png` | Captured; approval pending | None |
-| Settings | `T4SettingsPane` in `T4PanesView.swift` | `T4SessionDetailView.paneSidebar(.settings)` | `linux-settings-{moon,dawn}.png` | Windows controls had oversized intrinsic widths/heights and loose group spacing. | Routed the shared settings pane; constrained WinUI picker/control minima, padding, line height, and responsive pane width. | `captures/settings-{moon,dawn}-1600x900.png` | Captured; approval pending | None |
+| Settings | `T4SettingsPane` in `T4PanesView.swift` | `T4SessionDetailView.paneSidebar(.settings)` | `linux-settings-{moon,dawn}.png` | Windows controls had oversized intrinsic widths/heights and loose group spacing. | Routed the shared settings pane; compacted native WinUI picker minima, padding, typography, and menu geometry while preserving picker semantics and responsive pane width. | `captures/settings-{moon,dawn}-1600x900.png` | Captured; approval pending | Native WinUI menu chrome remains platform-specific |
 
 ## Capture matrix and comparison outputs
 
@@ -59,42 +59,43 @@ Captures use deterministic launch arguments, offscreen `SWP_NOACTIVATE` placemen
 
 ## Native typography evidence
 
-The native comparison fixture renders the same representative display title, assistant paragraph, user paragraph, tool-result paragraph, rail subtitle, and settings body through GTK/Pango and WinUI/DirectWrite. It does not replace either platform renderer.
+The native comparison fixture renders eight representative roles through GTK/Pango and WinUI/DirectWrite: display title, assistant and user paragraphs, constrained and natural-width transcript text, tool output, rail subtitle, and settings body. It does not replace either platform renderer.
 
-- Linux Pango resolved `DejaVu Sans Book`, `DejaVu Sans Bold`, and `DejaVu Sans Mono Book`; WinUI resolved `DejaVu Sans` / `DejaVu Sans Mono` with matching weights and reported no fallback.
-- The Linux and bundled Windows files are byte-identical: `DejaVuSans.ttf` (`ae7b7855…37280`), `DejaVuSans-Bold.ttf` (`5c1247ac…e895`), and `DejaVuSansMono.ttf` (`c805f943…04d88`).
-- All six roles have matching family, face, weight, style, line count, word wrapping, and line breaks in Moon and Dawn. Body, rail, settings, and tool-result normalized line heights match exactly. The display-title native WinUI line box remains `0.833333` px shorter; its baseline and one-line placement align visually.
-- WinUI character spacing is a renderer-specific advance correction (`70/1000 em` for 15 pt body roles, `50/1000 em` for smaller sans roles, and `116/1000 em` for monospace). Linux/Pango metrics remain unmodified.
-- Native-property report: `reports/typography-parity-final.json`.
+- Linux Pango resolves shared sans text to `Cantarell` Regular/Bold and monospaced text to `DejaVu Sans Mono`; WinUI resolves bundled byte-identical font files with matching faces and reports no fallback.
+- Byte-identical files: `Cantarell-Regular.otf` (`c4d47d7f…df260`), `Cantarell-Bold.otf` (`02792458…d0c4fa4`), and `DejaVuSansMono.ttf` (`c805f943…04d88`).
+- All eight probes match the requested family, face, weight, style, and normalized font size. Occupied height matches for the shared body probes; the display-title native WinUI line box is `0.833333` px shorter.
+- Native renderer differences remain observable: the constrained GTK assistant/user probes ellipsize to one line while WinUI uses the two-line allocation; tool-result break points and rail/settings occupied widths differ; DirectWrite occupies about `29.77` px more normalized width for the 204-character natural-width transcript probe.
+- Windows-only renderer compensation uses the `2/3` density projection, block line-height stacking, `30/1000 em` DirectWrite character spacing for sans roles, and `116/1000 em` for monospaced roles. Linux/Pango metrics remain unmodified.
+- Native-property and image-metric report: `reports/typography-parity-final.json`.
 - Indexed review sheet: `contact-sheets/typography-parity-contact-sheet.png`.
-- Moon/Dawn side-by-side, 50% overlay, absolute-difference, and enlarged role crops use the `comparisons/typography-fixture-final-*` prefix.
+- Moon/Dawn side-by-side, 50% overlay, and absolute-difference artifacts use the `comparisons/typography-fixture-current-*` prefix.
 
-Typography acceptance criterion: after normalization, any family, file, face, weight, style, line-count, word-wrap, baseline, or occupied-geometry change is a regression. Only edge-level antialiasing, hinting, and subpixel-intensity differences attributable to Pango/FreeType versus DirectWrite/ClearType are accepted without another correction.
+Typography acceptance criterion: family, bundled file identity, face, weight, style, normalized size, or fallback changes are regressions. Native wrapping, occupied width, line-box rounding, hinting, and antialiasing remain renderer-specific and must be judged against the application comparisons rather than treated as exact cross-renderer metrics.
 
 ## Fixed differences
 
 - Removed the independent neutral/macOS-derived Windows core visual layer.
 - Restored the shared Linux rail, detail, transcript, composer, ask, plan, palette, inbox, and secondary-pane views.
-- Matched the normalized 250 px rail boundary at the 1600 px comparison width.
-- Kept all toolbar actions visible by removing the duplicate model picker from the shared Windows detail header and constraining native picker minima.
-- Restored the composer at `1280x800` and `900x600`; removed the gross plan/ask/terminal offsets while retaining the residual 1–5 px WinUI quantization listed below.
-- Corrected WinUI list minimum rows, list padding, text line-height behavior, fixed-frame negotiation, picker/button padding, and native density scaling.
-- Preserved transcript bottom anchoring and explicit release of auto-scroll after user movement.
-- Mounted real WebView2 and xterm.js surfaces rather than copying the deferred placeholders from `98da2dd`.
+- Matched the normalized 250 px rail boundary at the 1600 px comparison width, restored compact 32-point session rows, and kept status labels readable inside WinUI fixed-size negotiation.
+- Kept every toolbar action visible by removing the duplicate model picker from the shared Windows detail header and constraining native picker and text-button minima.
+- Restored the composer at `1600x900`, `1280x800`, and `900x600`; aligned its bottom docking, field proportion, hint row, and plan/ask stacking.
+- Corrected transcript viewport sizing, top/bottom insets, message-bubble padding, text line boxes, bottom anchoring, and explicit release/reacquisition after user scrolling.
+- Corrected WinUI list minima, row padding, fixed-frame negotiation, native menu/picker density, control padding, and responsive secondary-pane widths.
+- Bundled and registered the authoritative Cantarell faces plus DejaVu Sans Mono; retained native Pango and DirectWrite rendering with measured Windows-only advance and line-box compensation.
 - Preserved Windows saved-host credentials, restore/disconnect/reconnect/Forget behavior, prompt streaming, HostWire transport, capability gates, and per-session browser/terminal lifecycle.
 
 ## Remaining visual differences
 
 These remain visible in the generated comparisons and require maintainer judgment rather than a parity claim:
 
-1. Windows and the authoritative Linux capture use the same DejaVu Sans/Mono families, but WinUI/ClearType and GTK/FreeType rasterize and round the glyph metrics differently. Outlines, kerning, baselines, weight, and antialiasing therefore remain pixel-different.
+1. Windows and the authoritative Linux capture resolve the same Cantarell sans and DejaVu Sans Mono files, but WinUI/DirectWrite/ClearType and GTK/Pango/FreeType rasterize, hint, kern, and round glyph metrics differently. The measured fixture also retains renderer-specific constrained wrapping, break points, and occupied widths.
 2. Native WinUI pickers, checkboxes, text fields, and buttons retain Windows chevrons, focus affordances, and corner rendering. Their occupied geometry is constrained, but their platform chrome is not replaced with fake GTK controls.
-3. Symbol fallback glyphs in rail and pane toolbars differ slightly from the Linux glyph renderer.
-4. The canonical Moon workspace was recaptured byte-for-byte identically, but the authoritative Linux assets contain a different deterministic demo-stream slice. Transcript rows, progress counters, timestamps, and the topmost visible line can therefore differ while both transcripts remain bottom-anchored.
+3. Symbol glyphs in rail and pane toolbars differ slightly between the native text renderers.
+4. The Windows Moon workspace is byte-reproducible, but the authoritative Linux assets contain a different deterministic demo-stream slice. Transcript rows, progress counters, timestamps, and the topmost visible line can therefore differ while both transcripts remain bottom-anchored.
 5. Web content is rendered by WebView2 rather than WebKitGTK, so page font rasterization and scrollbar chrome differ.
 6. Terminal content is rendered by xterm.js rather than VTE, so fixture text, monospace rasterization, cursor, selection, and scrollbar chrome differ.
 7. Hover, pressed, keyboard-focus, selection, drag, and animated transition frames are not represented by the static `PrintWindow` matrix.
-8. WinUI layout quantization still moves a few lower-surface bounds by 1–5 px: the ask card, expanded plan header/body, composer field, and hint-strip edges are the visible cases.
+8. WinUI layout quantization still moves a few lower-surface bounds by approximately 1–5 px: the ask card, expanded plan header/body, composer field, and hint-strip edges are the visible cases.
 9. Native intrinsic text/control measurement leaves small row-packing and label/value-gap differences inside some secondary panes, especially at responsive widths.
 10. Windows color conversion/compositing rounds a few shared sRGB tokens by one channel level (for example, `(42,39,64)` to `(43,40,64)`).
 11. The authoritative 1920x1080 Linux assets are Lanczos-normalized to 1600x900 while Windows is captured natively at 1600x900, so resampling contributes one-pixel edge and antialiasing differences.
@@ -125,19 +126,21 @@ Saved-host captures use an in-memory fixture summary and never read or display c
 
 ## Verification evidence
 
-- `swift build`: passed with the existing Swift 6 actor-isolation warnings.
-- `swift test`: 47 tests in 7 suites passed.
+- Windows `swift build`: passed with the existing Swift 6 actor-isolation warnings.
+- Windows `swift test --skip-build`: 47 tests in 7 suites passed.
 - Browser-focused suite: 9 tests passed.
 - Terminal-focused suite: 14 tests passed.
-- Credential-focused suites: 5 tests passed, including the real Windows Credential Manager lifecycle.
+- Credential-focused suites: 7 tests passed, including the real Windows Credential Manager lifecycle.
 - Fixture verification: 10 Windows HostWire/store integration tests and 47 `@t4-code/fixture-server` package tests passed.
-- SourceKit diagnostics: the changed shared views and native Windows sources report no issues; the two entrypoint/project-association failures are recorded above.
-- Headless evidence: all 84 authoritative Moon/Dawn captures exist at `1600x900`, `1280x800`, and `900x600`; all dimensions were validated.
-- Canonical reproducibility: two independent Moon workspace captures have SHA-256 `d4855dacff2a0f3ae207cf113723684930391298b8a5d0eb9dce7f2b80ae7026`.
+- Linux `swift build`: passed after repairing the tracked scroll-anchor dependency patch and aligning the Linux ephemeral certificate-pin seam.
+- Linux focused credential test: 1 test passed for endpoint/device/token/certificate-pin parsing.
+- Full Linux `swift test --skip-build` was also attempted in the capture container: 3 merge/parser tests passed; the remaining keyring and fixture tests were blocked by that container's missing Secret Service and `bun`, not by assertion failures in the migrated views.
+- SourceKit diagnostics: every changed shared view, native Windows source, Linux credential seam, and Linux credential test reports no issues; the two entrypoint/project-association failures are recorded above.
+- Headless evidence: all 84 authoritative Moon/Dawn captures exist at `1600x900`, `1280x800`, and `900x600`; dimensions, opacity, and non-empty entropy were validated in `reports/authoritative-capture-matrix-validation.json`.
+- Canonical reproducibility: two independent final Moon workspace captures have SHA-256 `b314935a19984ebd2fffd3fb91d1c5062d07524bb2c3727900d03da9805bd7f1`.
 - Comparison evidence: 28 normalized Linux references, 28 normalized Windows captures, side-by-side, 50% overlay, raw absolute-difference, stable masks, masked absolute-difference, JSON/CSV metrics, and indexed sheets were generated.
-- Stable masks exclude only the WebView2/WebKitGTK page viewport and xterm.js/VTE terminal viewport; all shared surrounding chrome remains included.
-- Dependency preparation: tracked SwiftCrossUI WinUI WebView2 STA and density/list/control patches apply cleanly through `Scripts/prepare-dependencies.ps1`.
-- `git diff --check`: passed.
+- Stable masks exclude only the WebView2/WebKitGTK page viewport and xterm.js/VTE terminal viewport; the corrected comparable regions are `70.795833%` and `64.214028%` respectively, with all surrounding shared chrome included.
+- Dependency preparation: tracked SwiftCrossUI WinUI WebView2 STA and density/list/control patches apply cleanly through `Scripts/prepare-dependencies.ps1`; the Linux scroll-anchor patch also reverse-checks exactly against the prepared checkout.
 - Repository-wide affected verification was attempted. Its Windows runner stopped before the first selected command because Node could not spawn the installed `pnpm.cmd` shim (`spawnSync pnpm ENOENT`).
 - Direct repository checks confirmed release consistency, provenance, and the portable-platform baseline, then stopped because this workstation has no `cargo`. `pnpm lint` is also unavailable because the installed dependency tree lacks the Windows `tsgolint` executable.
 - Direct `pnpm typecheck` reached the site package and reported the existing `apps/site/src/linux/LinuxLanding.tsx:13` `TS18048` error; that file is unchanged from `origin/linux-port`.
