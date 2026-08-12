@@ -7,6 +7,12 @@ import CT4Gtk
 
 // MARK: - Signal callbacks
 
+enum RailGrouping: Int {
+    case recency = 0
+    case project = 1
+    case status = 2
+}
+
 final class GtkBox {
     let value: () -> Void
     init(_ value: @escaping () -> Void) { self.value = value }

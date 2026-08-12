@@ -411,3 +411,11 @@ static inline void shim_idle(GSourceFunc cb, gpointer userData) { g_idle_add(cb,
 static inline void shim_track_gone(void *gobject, void *userData, ShimTagGoneHandler notify) {
     g_object_weak_ref(G_OBJECT(gobject), (GWeakNotify)notify, userData);
 }
+
+/* Simple string dropdown for the rail grouping picker. */
+static inline GtkWidget *shim_dropdown(const char *const *items) {
+    GtkStringList *list = gtk_string_list_new(items);
+    return gtk_drop_down_new(G_LIST_MODEL(list), NULL);
+}
+static inline unsigned int shim_dropdown_selected(GtkWidget *dd) { return gtk_drop_down_get_selected(GTK_DROP_DOWN(dd)); }
+static inline void shim_dropdown_set_selected(GtkWidget *dd, unsigned int i) { gtk_drop_down_set_selected(GTK_DROP_DOWN(dd), i); }

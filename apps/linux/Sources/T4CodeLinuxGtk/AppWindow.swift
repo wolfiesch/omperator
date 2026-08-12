@@ -14,6 +14,11 @@ final class AppWindow {
     private var window: UnsafeMutablePointer<GtkWidget>?
     private var railList: UnsafeMutablePointer<GtkWidget>?
     private var railRows: [String: UnsafeMutablePointer<GtkWidget>] = [:]
+    private var railSearchEntry: UnsafeMutablePointer<GtkWidget>?
+    private var railGroupingDropdown: UnsafeMutablePointer<GtkWidget>?
+    private var railSearchText = ""
+    private var railGrouping: RailGrouping = .recency
+    private var lastRailSignature = ""
     private var transcriptView: UnsafeMutablePointer<GtkWidget>?
     private var transcriptBox: UnsafeMutablePointer<GtkWidget>?
     private var composerEntry: UnsafeMutablePointer<GtkWidget>?
@@ -106,6 +111,31 @@ final class AppWindow {
         onSignal(themeButton, "clicked") { [weak self] in self?.toggleTheme() }
         shim_box_append(railHeader, themeButton)
         shim_box_append(rail, railHeader)
+
+        // Session search: live-filters the rail by title / project / status /
+        // model as you type.
+        let search = shim_entry()
+        railSearchEntry = search
+        addClass(search, "rail-search")
+        shim_entry_set_placeholder(search, "Filter sessions…")
+        onSignal(UnsafeMutableRawPointer(search), "changed") { [weak self] in
+            self?.railSearchChanged()
+        }
+        shim_box_append(rail, search)
+
+        // Grouping picker: Recent / Project / Status.
+        let groupingItems: [String] = ["Recent", "Project", "Status"]
+        let dropdown = groupingItems.withUnsafeBufferPointer { buf -> UnsafeMutablePointer<GtkWidget>? in
+            var cStrings: [UnsafePointer<CChar>?] = buf.map { UnsafePointer(($0 as NSString).utf8String) }
+            cStrings.append(nil)
+            return cStrings.withUnsafeBufferPointer { shim_dropdown($0.baseAddress) }
+        }
+        railGroupingDropdown = dropdown
+        addClass(dropdown, "rail-grouping")
+        onSignal(UnsafeMutableRawPointer(dropdown), "notify::selected") { [weak self] in
+            self?.railGroupingChanged()
+        }
+        shim_box_append(rail, dropdown)
 
         let railScroll = shim_scrolled_window()
         shim_widget_expand(railScroll, 0)
@@ -514,16 +544,41 @@ final class AppWindow {
         shim_label_set_text(statusLabel, text)
     }
 
+    private func railSearchChanged() {
+        railSearchText = railSearchEntry.map { String(cString: shim_entry_text($0)) } ?? ""
+        lastRailSignature = ""  // force a rebuild
+    }
+
+    private func railGroupingChanged() {
+        guard let dropdown = railGroupingDropdown else { return }
+        railGrouping = RailGrouping(rawValue: Int(shim_dropdown_selected(dropdown))) ?? .recency
+        lastRailSignature = ""
+    }
+
+    private func needsYou(_ session: SessionRef) -> Bool {
+        (session.pendingApproval ?? false) || (session.pendingUserInput ?? false)
+    }
+
+    private func railMatches(_ session: SessionRef, query: String) -> Bool {
+        if query.isEmpty { return true }
+        if session.title.lowercased().contains(query) { return true }
+        if let name = session.project.name, name.lowercased().contains(query) { return true }
+        if session.status.lowercased().contains(query) { return true }
+        if let model = session.model, model.lowercased().contains(query) { return true }
+        return false
+    }
+
     private func refreshRail() {
         let sessions = store.sessions
-        guard sessions.count != lastSessionCount else { return }
-        lastSessionCount = sessions.count
+        let needsYouIds = sessions.filter(needsYou).map(\.sessionId).sorted().joined()
+        let signature = "\(railGrouping.rawValue)|\(railSearchText)|\(sessions.count)|\(needsYouIds)"
+        guard signature != lastRailSignature else { return }
+        lastRailSignature = signature
         rebuildRail(sessions)
     }
 
     private func rebuildRail(_ sessions: [SessionRef]) {
         guard let railList else { return }
-        // Clear existing rows.
         var child = gtk_widget_get_first_child(railList)
         while let c = child {
             let next = gtk_widget_get_next_sibling(c)
@@ -532,19 +587,66 @@ final class AppWindow {
         }
         railRows.removeAll()
         railTimeLabels.removeAll()
+
+        let query = railSearchText.lowercased().trimmingCharacters(in: .whitespaces)
+        let filtered = sessions.filter { railMatches($0, query: query) }
+        let byRecency = { (a: SessionRef, b: SessionRef) in a.updatedAt > b.updatedAt }
+        let needsYouList = filtered.filter(needsYou).sorted(by: byRecency)
+        let rest = filtered.filter { !needsYou($0) }.sorted(by: byRecency)
+
+        // Pinned "Needs you" section at the top of every grouping mode.
+        if !needsYouList.isEmpty {
+            appendRailSection("Needs you", needsYouList)
+        }
+
+        switch railGrouping {
+        case .recency:
+            appendRailRows(rest)
+        case .project:
+            var seen: [String] = []
+            var groups: [String: [SessionRef]] = [:]
+            for session in rest {
+                let key = session.project.name?.isEmpty == false ? session.project.name! : "No project"
+                if groups[key] == nil { seen.append(key) }
+                groups[key, default: []].append(session)
+            }
+            for key in seen.sorted(by: { $0.lowercased() < $1.lowercased() }) {
+                appendRailSection(key, groups[key] ?? [])
+            }
+        case .status:
+            var seen: [String] = []
+            var groups: [String: [SessionRef]] = [:]
+            for session in rest {
+                let key = session.status.isEmpty ? "Unknown" : session.status
+                if groups[key] == nil { seen.append(key) }
+                groups[key, default: []].append(session)
+            }
+            for key in seen.sorted(by: { $0.lowercased() < $1.lowercased() }) {
+                appendRailSection(key, groups[key] ?? [])
+            }
+        }
+    }
+
+    private func appendRailSection(_ title: String, _ sessions: [SessionRef]) {
+        guard let railList, !sessions.isEmpty else { return }
+        let header = makeLabel(title, "rail-section")
+        shim_widget_halign_start(header)
+        shim_box_append(railList, header)
+        appendRailRows(sessions)
+    }
+
+    private func appendRailRows(_ sessions: [SessionRef]) {
+        guard let railList else { return }
         for session in sessions.prefix(80) {
             let row = shim_box_new(0, 2)
             addClass(row, "rail-item")
-            // Friendly title + relative recency only — no projects, IDs,
-            // revisions, status codes, or host fingerprints.
             let title = makeLabel(session.title.isEmpty ? "Untitled session" : session.title, nil)
             shim_widget_halign_start(title)
             shim_box_append(row, title)
             let time = makeLabel(relativeTime(session.updatedAt), "muted")
             shim_widget_halign_start(time)
             shim_box_append(row, time)
-            let sessionId = session.sessionId
-            let captured = sessionId
+            let captured = session.sessionId
             onPressed(row) { [weak self] in
                 guard let self else { return }
                 let store = self.store
@@ -553,8 +655,8 @@ final class AppWindow {
                 }
             }
             shim_box_append(railList, row)
-            railRows[sessionId] = row
-            railTimeLabels[sessionId] = time
+            railRows[session.sessionId] = row
+            railTimeLabels[session.sessionId] = time
         }
     }
 

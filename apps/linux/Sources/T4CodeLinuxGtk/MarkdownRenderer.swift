@@ -99,10 +99,15 @@ private func proseLineSegments(_ line: String, defaultTag: String) -> [StyledSeg
         return content.isEmpty ? [] : [StyledSegment(text: content, tag: tag)]
     }
     // List rule wins over diff for "- …" so `- item` renders as a list item.
-    // Nested and ordered items match through `isListLine`; the indentation
-    // and the bullet/number stay in the emitted text.
-    if isListLine(line) {
-        return [StyledSegment(text: line, tag: "md-list")]
+    // The indentation + bullet/number stays as the md-list prefix; the content
+    // runs through the inline parser so **bold** / *italic* / `code` render
+    // inside list items.
+    if let prefixEnd = listPrefixEnd(line) {
+        let prefix = String(line[..<prefixEnd])
+        let content = String(line[prefixEnd...])
+        var segments = [StyledSegment(text: prefix, tag: "md-list")]
+        segments.append(contentsOf: inlineSegments(content, defaultTag: "md-list"))
+        return segments
     }
     if line.hasPrefix("> ") {
         let content = String(line.dropFirst(2))
@@ -121,11 +126,18 @@ private func proseLineSegments(_ line: String, defaultTag: String) -> [StyledSeg
 /// after it is not a list, and `+` is deliberately not a bullet so prose
 /// diff lines (`+ change`) keep their diff tag.
 private func isListLine(_ line: String) -> Bool {
+    listPrefixEnd(line) != nil
+}
+
+/// The index just past the list marker (indent + bullet/number + following
+/// space/tab) if this is a list line, else nil. The content after it is the
+/// item body, which is parsed for inline emphasis.
+private func listPrefixEnd(_ line: String) -> String.Index? {
     var i = line.startIndex
     while i < line.endIndex, line[i] == " " || line[i] == "\t" {
         i = line.index(after: i)
     }
-    guard i < line.endIndex else { return false }
+    guard i < line.endIndex else { return nil }
     if line[i] == "-" || line[i] == "*" || line[i] == "•" {
         i = line.index(after: i)
     } else if line[i].isNumber {
@@ -133,13 +145,13 @@ private func isListLine(_ line: String) -> Bool {
         while digits < line.endIndex, line[digits].isNumber {
             digits = line.index(after: digits)
         }
-        guard digits < line.endIndex, line[digits] == "." || line[digits] == ")" else { return false }
+        guard digits < line.endIndex, line[digits] == "." || line[digits] == ")" else { return nil }
         i = line.index(after: digits)
     } else {
-        return false
+        return nil
     }
-    guard i < line.endIndex, line[i] == " " || line[i] == "\t" else { return false }
-    return true
+    guard i < line.endIndex, line[i] == " " || line[i] == "\t" else { return nil }
+    return line.index(after: i)
 }
 
 /// `#` / `##` / `###` at line start, followed by a space/tab or end of line.
