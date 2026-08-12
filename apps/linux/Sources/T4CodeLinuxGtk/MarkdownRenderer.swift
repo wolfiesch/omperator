@@ -19,16 +19,22 @@ struct StyledSegment {
 /// - Assistant/other/nil roles are parsed as markdown-lite; plain text uses
 ///   the `assistant` tag.
 ///
-/// Tags emitted: md-h1, md-h2, md-h3, md-bold, md-italic, md-inline-code,
-/// md-list, md-quote, md-link, code-block, diff-add, diff-remove, user,
-/// assistant.
+/// Tags emitted: md-h1, md-h2, md-h3, md-bold, md-italic, md-bold-italic,
+/// md-inline-code, md-list, md-quote, md-link, code-block, diff-add,
+/// diff-remove, user, assistant.
 ///
 /// Text is rendered (markers stripped): heading `# `, quote `> `, and fenced
 /// code-block markers are dropped; bold/italic/code/link delimiters are
-/// dropped; list lines keep their `- ` / `• ` bullet; newlines are preserved
-/// (each original line maps to at most one output line, and dropped fence
-/// lines leave their line slot as a blank line, so block boundaries never
-/// merge).
+/// dropped; list lines keep their bullet or number — nested items keep their
+/// leading indentation as text, so each level renders visibly; newlines are
+/// preserved (each original line maps to at most one output line, and dropped
+/// fence lines leave their line slot as a blank line, so block boundaries
+/// never merge).
+///
+/// Emphasis follows simplified CommonMark rules: `***`/`___` → bold-italic,
+/// `**`/`__` → bold, `*`/`_` → italic, markers stripped. Emphasis never
+/// opens inside a word (`a**b**c`, `foo_bar_baz` stay literal) and never
+/// parses inside inline code spans.
 func renderTranscriptSegments(body: String, role: String?) -> [StyledSegment] {
     guard !body.isEmpty else { return [] }
     if role == "user" {
@@ -93,7 +99,9 @@ private func proseLineSegments(_ line: String, defaultTag: String) -> [StyledSeg
         return content.isEmpty ? [] : [StyledSegment(text: content, tag: tag)]
     }
     // List rule wins over diff for "- …" so `- item` renders as a list item.
-    if line.hasPrefix("- ") || line.hasPrefix("• ") {
+    // Nested and ordered items match through `isListLine`; the indentation
+    // and the bullet/number stay in the emitted text.
+    if isListLine(line) {
         return [StyledSegment(text: line, tag: "md-list")]
     }
     if line.hasPrefix("> ") {
@@ -104,6 +112,34 @@ private func proseLineSegments(_ line: String, defaultTag: String) -> [StyledSeg
         return [StyledSegment(text: line, tag: tag)]
     }
     return inlineSegments(line, defaultTag: defaultTag)
+}
+
+/// A list line: optional leading indentation, then a bullet (`-`, `*`,
+/// `•`) or an ordered marker (`1.`, `1)`), then whitespace. Nested items
+/// (`  - sub`, `    2. …`) match through their indentation, which stays in
+/// the emitted text so each level renders visibly. A bare `-` with nothing
+/// after it is not a list, and `+` is deliberately not a bullet so prose
+/// diff lines (`+ change`) keep their diff tag.
+private func isListLine(_ line: String) -> Bool {
+    var i = line.startIndex
+    while i < line.endIndex, line[i] == " " || line[i] == "\t" {
+        i = line.index(after: i)
+    }
+    guard i < line.endIndex else { return false }
+    if line[i] == "-" || line[i] == "*" || line[i] == "•" {
+        i = line.index(after: i)
+    } else if line[i].isNumber {
+        var digits = i
+        while digits < line.endIndex, line[digits].isNumber {
+            digits = line.index(after: digits)
+        }
+        guard digits < line.endIndex, line[digits] == "." || line[digits] == ")" else { return false }
+        i = line.index(after: digits)
+    } else {
+        return false
+    }
+    guard i < line.endIndex, line[i] == " " || line[i] == "\t" else { return false }
+    return true
 }
 
 /// `#` / `##` / `###` at line start, followed by a space/tab or end of line.
@@ -149,9 +185,10 @@ private func appendNewline(to segments: inout [StyledSegment], defaultTag: Strin
 
 // MARK: - Inline span parsing
 
-/// Scan a line for inline spans: `` `code` ``, `**bold**`, `*italic*`,
-/// `_italic_`, `[label](url)`. Content is emitted marker-stripped; text that
-/// never pairs up (or pairs with empty content) stays plain and literal.
+/// Scan a line for inline spans: `` `code` ``, `***bold-italic***`,
+/// `**bold**`/`__bold__`, `*italic*`/`_italic_`, `[label](url)`. Content is
+/// emitted marker-stripped; text that never pairs up (or pairs with empty
+/// content) stays plain and literal.
 private func inlineSegments(_ line: String, defaultTag: String) -> [StyledSegment] {
     var segments: [StyledSegment] = []
     var plainStart = line.startIndex
@@ -179,49 +216,34 @@ private func inlineSegments(_ line: String, defaultTag: String) -> [StyledSegmen
             continue
         }
 
-        if c == "*" {
-            let after = line.index(after: i)
-            if after < line.endIndex, line[after] == "*" {
-                // "**" — bold.
-                let contentStart = line.index(after: after)
-                if let close = findSubstring("**", in: line, after: contentStart), contentStart < close {
-                    flushPlain()
-                    segments.append(StyledSegment(text: String(line[contentStart..<close]), tag: "md-bold"))
-                    plainStart = line.index(close, offsetBy: 2)
-                    i = plainStart
-                    continue
-                }
-                // No closing pair: keep scanning past the first star.
-                i = after
-                continue
+        if c == "*" || c == "_" {
+            // Measure the run of identical markers at `i` (capped at 3 —
+            // longer runs never form emphasis here).
+            var runEnd = i
+            var runLen = 0
+            while runEnd < line.endIndex, line[runEnd] == c, runLen < 3 {
+                runLen += 1
+                runEnd = line.index(after: runEnd)
             }
-            // Single "*" — italic.
-            if let close = findItalicCloser(of: "*", in: line, after: i) {
-                let contentStart = line.index(after: i)
-                if contentStart < close {
+            // Try longest first: `***`/`___` → bold-italic, `**`/`__` →
+            // bold, `*`/`_` → italic.
+            var emitted = false
+            var len = runLen
+            while len >= 1 {
+                if let span = emphasisSpan(c, len: len, at: i, runEnd: runEnd, in: line),
+                   !span.content.isEmpty {
                     flushPlain()
-                    segments.append(StyledSegment(text: String(line[contentStart..<close]), tag: "md-italic"))
-                    plainStart = line.index(after: close)
-                    i = plainStart
-                    continue
+                    segments.append(StyledSegment(text: span.content, tag: emphasisTag(for: len)))
+                    plainStart = span.pastClose
+                    i = span.pastClose
+                    emitted = true
+                    break
                 }
+                len -= 1
             }
-            i = line.index(after: i)
-            continue
-        }
-
-        if c == "_" {
-            if let close = findItalicCloser(of: "_", in: line, after: i) {
-                let contentStart = line.index(after: i)
-                if contentStart < close {
-                    flushPlain()
-                    segments.append(StyledSegment(text: String(line[contentStart..<close]), tag: "md-italic"))
-                    plainStart = line.index(after: close)
-                    i = plainStart
-                    continue
-                }
+            if !emitted {
+                i = line.index(after: i)
             }
-            i = line.index(after: i)
             continue
         }
 
@@ -252,22 +274,89 @@ private func inlineSegments(_ line: String, defaultTag: String) -> [StyledSegmen
     return segments
 }
 
-/// An italic closer is a `*`/`_` that is not part of a `**`/`__` pair, so a
-/// `**bold**` embedded in a line doesn't accidentally close an earlier
-/// single-marker span.
-private func findItalicCloser(of char: Character, in line: String, after start: String.Index) -> String.Index? {
-    var j = line.index(after: start)
+/// The tag for an emphasis span of the given marker length.
+private func emphasisTag(for len: Int) -> String {
+    switch len {
+    case 3: return "md-bold-italic"
+    case 2: return "md-bold"
+    default: return "md-italic"
+    }
+}
+
+/// Try to parse an emphasis span at `start`: a run of `len` `char`s that is
+/// a valid opener, followed by non-empty content, closed by a valid run of
+/// the same length. Returns the marker-stripped content and the index just
+/// past the closer.
+private func emphasisSpan(
+    _ char: Character, len: Int, at start: String.Index, runEnd: String.Index, in line: String
+) -> (content: String, pastClose: String.Index)? {
+    // Opener: not preceded by an alphanumeric (no intraword emphasis, so
+    // `a**b**c` / `foo_bar_baz` stay literal), and not followed by
+    // whitespace.
+    let before = start > line.startIndex ? line[line.index(before: start)] : nil
+    if let b = before, !isEmphasisBoundary(b) { return nil }
+    let after = runEnd < line.endIndex ? line[runEnd] : nil
+    if let a = after, a.isWhitespace { return nil }
+
+    let contentStart = line.index(start, offsetBy: len)
+    guard let close = findEmphasisCloser(char: char, len: len, in: line, after: contentStart) else {
+        return nil
+    }
+    let content = String(line[contentStart..<close])
+    guard !content.isEmpty else { return nil }
+    return (content, line.index(close, offsetBy: len))
+}
+
+/// A character that may border an emphasis delimiter: whitespace or
+/// punctuation. Emphasis opens only after one of these (or line start) and
+/// must close before one (or line end).
+private func isEmphasisBoundary(_ c: Character) -> Bool {
+    c.isWhitespace || c.isPunctuation
+}
+
+/// Find a valid closer for an emphasis run of exactly `len` `char`s at or
+/// after `start`. The closer must be a run of exactly `len` (not part of a
+/// longer run), preceded by non-whitespace, and followed by whitespace,
+/// punctuation, or end of line. Inline code spans are skipped, so code
+/// content never supplies a closer.
+private func findEmphasisCloser(
+    char: Character, len: Int, in line: String, after start: String.Index
+) -> String.Index? {
+    var j = start
     while j < line.endIndex {
-        if line[j] == char {
-            let next = line.index(after: j)
-            let prev = line.index(before: j)
-            let nextIsPair = next < line.endIndex && line[next] == char
-            let prevIsPair = prev >= line.startIndex && line[prev] == char
-            if !nextIsPair && !prevIsPair {
-                return j
+        if line[j] == "`" {
+            let contentStart = line.index(after: j)
+            if let close = findIndex(of: "`", in: line, after: contentStart), contentStart < close {
+                j = line.index(after: close)
+                continue
             }
+            j = line.index(after: j)
+            continue
         }
-        j = line.index(after: j)
+        if line[j] != char {
+            j = line.index(after: j)
+            continue
+        }
+        var end = j
+        var runLen = 0
+        while end < line.endIndex, line[end] == char {
+            runLen += 1
+            end = line.index(after: end)
+        }
+        if runLen == len {
+            let before = j > line.startIndex ? line[line.index(before: j)] : nil
+            if let b = before, b.isWhitespace {
+                j = end
+                continue
+            }
+            let after = end < line.endIndex ? line[end] : nil
+            if let a = after, !isEmphasisBoundary(a) {
+                j = end
+                continue
+            }
+            return j
+        }
+        j = end
     }
     return nil
 }

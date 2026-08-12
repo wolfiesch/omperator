@@ -135,6 +135,7 @@ final class TranscriptWidgets {
     /// fires after AppWindow releases the factory can never dereference freed
     /// memory — same tradeoff GtkSupport.onSignal documents for its boxes.
     private lazy var tagTrackerHandle: UnsafeMutableRawPointer = Unmanaged.passRetained(self).toOpaque()
+    private lazy var labelTrackerHandle: UnsafeMutableRawPointer = Unmanaged.passRetained(self).toOpaque()
 
     // MARK: - Entry dispatch
 
@@ -421,7 +422,12 @@ final class TranscriptWidgets {
         shim_label_max_width_chars(label, Int32(maxChars))
         shim_widget_halign_start(label)
         shim_label_set_markup(label, proseMarkup(text, bubble: bubble))
-        if let label { liveLabels.append((label, text, bubble)) }
+        if let label {
+            liveLabels.append((label, text, bubble))
+            // Weak-ref the label: it dies with the transcript on clear/rebuild,
+            // so drop it from the re-tint list before applyTheme can touch it.
+            shim_track_gone(UnsafeMutableRawPointer(label), labelTrackerHandle, Self.labelGoneForwarder)
+        }
         return label
     }
 
@@ -462,6 +468,8 @@ final class TranscriptWidgets {
                 open = "span weight=\"600\" foreground=\"\(gold)\""
             case "md-bold":
                 open = "span foreground=\"\(gold)\" weight=\"700\""
+            case "md-bold-italic":
+                open = "span foreground=\"\(gold)\" weight=\"700\" font_style=\"italic\""
             case "md-italic":
                 open = "i"
             case "md-inline-code", "code-block":
@@ -545,6 +553,19 @@ final class TranscriptWidgets {
         let factory = Unmanaged<TranscriptWidgets>.fromOpaque(userData).takeUnretainedValue()
         guard let gone = goneObject else { return }
         factory.removeDeadTag(UnsafeMutableRawPointer(gone))
+    }
+
+    /// Weak-ref trampoline for prose labels: removes a dying label from the
+    /// re-tint list so applyTheme never re-marks-up a freed widget.
+    private static let labelGoneForwarder: ShimTagGoneHandler = { userData, goneObject in
+        guard let userData else { return }
+        let factory = Unmanaged<TranscriptWidgets>.fromOpaque(userData).takeUnretainedValue()
+        guard let gone = goneObject else { return }
+        factory.removeDeadLabel(UnsafeMutableRawPointer(gone))
+    }
+
+    private func removeDeadLabel(_ gone: UnsafeMutableRawPointer) {
+        liveLabels.removeAll { UnsafeMutableRawPointer($0.label) == gone }
     }
 
     private func removeDeadTag(_ gone: UnsafeMutableRawPointer) {

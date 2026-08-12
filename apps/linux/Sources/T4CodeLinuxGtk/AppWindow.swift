@@ -165,6 +165,13 @@ final class AppWindow {
             onSignal(UnsafeMutableRawPointer(adj), "value-changed") { [weak self] in
                 self?.updateScrollPin()
             }
+            // "changed" fires when the content's upper bound grows (a stream
+            // append laid out). When pinned, follow it to the true bottom —
+            // this is what keeps the tail in view during streaming and opens a
+            // session at its newest entry.
+            onSignal(UnsafeMutableRawPointer(adj), "changed") { [weak self] in
+                self?.followContentGrowth()
+            }
         }
 
         let composer = shim_box_new(1, 8)
@@ -677,6 +684,14 @@ final class AppWindow {
     private func scrollTranscriptToBottom() {
         // Only auto-scroll while the user is pinned near the bottom; scrolling
         // up during a stream must not fight the reader.
+        guard pinnedToBottom, let scroll = transcriptScroll else { return }
+        shim_scroll_to_max(scroll)
+    }
+
+    /// Content grew (the scrolled window's upper bound changed). When pinned,
+    /// chase the new bottom — called from the adjustment's "changed" signal,
+    /// after layout, so the scroll lands on the true newest entry.
+    private func followContentGrowth() {
         guard pinnedToBottom, let scroll = transcriptScroll else { return }
         shim_scroll_to_max(scroll)
     }

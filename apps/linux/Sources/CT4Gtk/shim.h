@@ -408,3 +408,6 @@ static inline void shim_scroll_set(GtkWidget *scroll, double value) {
     gtk_adjustment_set_value(adj, value);
 }
 static inline void shim_idle(GSourceFunc cb, gpointer userData) { g_idle_add(cb, userData); }
+static inline void shim_track_gone(void *gobject, void *userData, ShimTagGoneHandler notify) {
+    g_object_weak_ref(G_OBJECT(gobject), (GWeakNotify)notify, userData);
+}
