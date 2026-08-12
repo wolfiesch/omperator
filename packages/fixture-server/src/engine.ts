@@ -56,6 +56,10 @@ const SESSION_LIFECYCLE_COMMANDS = new Set([
   "session.restore",
   "session.delete",
 ]);
+const TERMINAL_ESCAPE_SEQUENCE = new RegExp(
+  `${String.fromCharCode(0x1b)}(?:\\[[0-?]*[ -/]*[@-~]|O.)`,
+  "g",
+);
 
 function isSessionLifecycleCommand(command: string): boolean {
   return SESSION_LIFECYCLE_COMMANDS.has(command);
@@ -849,7 +853,7 @@ export class FixtureEngine {
     this.emitTerminalData(state, frame, frame.data);
 
     let buffer = this.terminalInputBuffers.get(String(frame.terminalId)) ?? "";
-    const commandInput = frame.data.replace(/\u001b(?:\[[0-?]*[ -/]*[@-~]|O.)/g, "");
+    const commandInput = frame.data.replace(TERMINAL_ESCAPE_SEQUENCE, "");
     for (const character of commandInput) {
       if (character === "\r" || character === "\n") {
         const command = buffer.trim();
