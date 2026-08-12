@@ -34,6 +34,7 @@ static inline GtkTextTag *shim_code_tag(GtkTextBuffer *buf) { return gtk_text_bu
 static inline GtkWidget *shim_entry(void) { return gtk_entry_new(); }
 static inline void shim_entry_set_text(GtkWidget *entry, const char *text) { gtk_entry_buffer_set_text(gtk_entry_get_buffer(GTK_ENTRY(entry)), text, -1); }
 static inline void shim_css_class(GtkWidget *w, const char *name) { gtk_widget_add_css_class(w, name); }
+static inline void shim_css_class_remove(GtkWidget *w, const char *name) { gtk_widget_remove_css_class(w, name); }
 static inline void shim_widget_size(GtkWidget *w, int width) { gtk_widget_set_size_request(w, width, -1); }
 static inline void shim_widget_expand(GtkWidget *w, int horizontal) { if (horizontal) gtk_widget_set_hexpand(w, 1); else gtk_widget_set_vexpand(w, 1); }
 static inline void shim_widget_halign_start(GtkWidget *w) { gtk_widget_set_halign(w, GTK_ALIGN_START); }

@@ -16,6 +16,10 @@ import HostWire
 ///   fenced code (`codeBlock`), and `<advisory>` callouts (`advisoryCard`);
 /// - tool / turn rows: kind-colored cards (`toolCard`).
 ///
+/// Tool, code, and advisory cards are collapsible (`collapsibleCard`): they
+/// start collapsed to a single header row (chevron + title) and expand on
+/// click; user bubbles and prose blocks stay fully expanded.
+///
 /// Prose renders as GtkLabels (Pango markup), not text views: a wrapped
 /// GtkTextView measured inside a vertical box reports its height wrapped at a
 /// ~1-char width (GTK measures with for_size=-1 and uses the last layout's
@@ -200,38 +204,86 @@ final class TranscriptWidgets {
         proseLabelWidget(text, cssClass: "assistant-message", maxChars: 110, bubble: false)
     }
 
+    // MARK: - Collapsible cards
+
+    /// Wrap a card body under a single-row header that starts COLLAPSED and
+    /// expands on click. The header is a chevron (▸ collapsed / ▾ expanded)
+    /// plus the card title; `extras` (e.g. a code block's COPY button) are
+    /// appended to the row right of the clickable title area, so they stay
+    /// clickable without toggling the card. The body stays hidden (via
+    /// shim_widget_hide) until the title area is pressed (onPressed gesture),
+    /// then toggles between shown/hidden. User bubbles and prose never route
+    /// through here — only tool/code/advisory cards collapse.
+    ///
+    /// State is reflected in three CSS hooks for the theme:
+    /// - `.card-header` on the header row (the compact one-line strip),
+    /// - `.card-chevron` on the chevron glyph,
+    /// - `.collapsed` / `.expanded` on the card itself, so the theme can
+    ///   tighten the card's padding while collapsed.
+    private func collapsibleCard(
+        title: String,
+        titleClasses: [String],
+        body: UnsafeMutablePointer<GtkWidget>?,
+        extras: ((UnsafeMutablePointer<GtkWidget>) -> Void)? = nil
+    ) -> UnsafeMutablePointer<GtkWidget> {
+        let card = shim_box_new(0, 0)
+        addClass(card, "collapsed")
+
+        let header = shim_box_new(1, 8)
+        addClass(header, "card-header")
+
+        // Clickable title area: chevron + title, hexpanded so the whole row
+        // (up to any extras like COPY) is a press target.
+        let clickable = shim_box_new(1, 6)
+        shim_widget_expand(clickable, 1)
+        let chevron = makeLabel("▸", "card-chevron")
+        if let chevron { shim_box_append(clickable, chevron) }
+        if let titleLabel = makeLabel(title) {
+            for cls in titleClasses { addClass(titleLabel, cls) }
+            shim_widget_halign_start(titleLabel)
+            shim_box_append(clickable, titleLabel)
+        }
+        shim_box_append(header, clickable)
+        extras?(header!)
+        shim_box_append(card, header)
+
+        if let body {
+            shim_box_append(card, body)
+            shim_widget_hide(body)   // cards start collapsed
+            var expanded = false
+            onPressed(clickable) {
+                expanded.toggle()
+                if expanded {
+                    shim_css_class_remove(card, "collapsed")
+                    addClass(card, "expanded")
+                } else {
+                    shim_css_class_remove(card, "expanded")
+                    addClass(card, "collapsed")
+                }
+                if let chevron { shim_label_set_text(chevron, expanded ? "▾" : "▸") }
+                if expanded { shim_widget_show(body) } else { shim_widget_hide(body) }
+            }
+        }
+        return card!
+    }
+
     /// Fenced code block: header row (uppercase language + COPY button that
     /// writes the code to the clipboard), a divider, then a horizontally
     /// scrolled monospace text view whose buffer holds the syntax-highlighted
     /// tokens (tags named by token.tag, colored from `syntaxForegrounds`).
+    /// Starts collapsed to the header; clicking the language area expands the
+    /// divider + code body.
     func codeBlock(lang: String, code: String) -> UnsafeMutablePointer<GtkWidget>? {
-        let card = shim_box_new(0, 0)
-        addClass(card, "code-block")
-
-        // Header: language label + spacer + copy button.
-        let header = shim_box_new(1, 8)
         let langName = lang.trimmingCharacters(in: .whitespaces)
-        let langLabel = makeLabel(langName.isEmpty ? "code" : langName.uppercased(), "code-header")
-        shim_widget_halign_start(langLabel)
-        shim_box_append(header, langLabel)
-        let spacer = shim_box_new(1, 0)
-        shim_widget_expand(spacer, 1)
-        shim_box_append(header, spacer)
-        let copy = shim_button("COPY")
-        addClass(copy, "code-copy")
-        let payload = code
-        onSignal(copy, "clicked") { shim_clipboard_set_text(payload) }
-        shim_box_append(header, copy)
-        shim_box_append(card, header)
 
-        // Divider between header and body.
+        // Body: divider + horizontal-only scroller (collapsed until clicked).
+        // The card is capped at the column width and long lines scroll inside
+        // the block; the block grows vertically into the transcript's outer
+        // scroll.
+        let body = shim_box_new(0, 0)
         if let separator = shim_separator(1) {
-            shim_box_append(card, separator)
+            shim_box_append(body, separator)
         }
-
-        // Horizontal-only scroller: the card is capped at the column width and
-        // long lines scroll inside the block; the block grows vertically into
-        // the transcript's outer scroll.
         let scroll = shim_scrolled_window()
         shim_scrolled_policy(scroll, GTK_POLICY_AUTOMATIC, GTK_POLICY_NEVER)
         let tv = shim_text_view()
@@ -240,7 +292,20 @@ final class TranscriptWidgets {
             fillCodeBuffer(buf, code: code, language: lang)
         }
         shim_scrolled_set_child(scroll, tv)
-        shim_box_append(card, scroll)
+        shim_box_append(body, scroll)
+
+        let card = collapsibleCard(
+            title: langName.isEmpty ? "code" : langName.uppercased(),
+            titleClasses: ["code-header"],
+            body: body
+        ) { header in
+            let copy = shim_button("COPY")
+            addClass(copy, "code-copy")
+            let payload = code
+            onSignal(copy, "clicked") { shim_clipboard_set_text(payload) }
+            shim_box_append(header, copy)
+        }
+        addClass(card, "code-block")
         return card
     }
 
@@ -248,21 +313,23 @@ final class TranscriptWidgets {
     /// left rail via CSS) plus a per-kind class (`tool-tool-use`,
     /// `tool-tool-result`, `tool-thinking`, …) so the theme can tint the rail.
     /// Head is uppercased; the meta (tool output) wraps and is selectable.
+    /// Starts collapsed to the head row; clicking it expands the meta body.
     func toolCard(head: String, meta: String, kind: String) -> UnsafeMutablePointer<GtkWidget>? {
-        let card = shim_box_new(1, 10)
+        let metaText = meta.trimmingCharacters(in: .whitespacesAndNewlines)
+        var body: UnsafeMutablePointer<GtkWidget>?
+        if !metaText.isEmpty {
+            let bodyBox = shim_box_new(0, 3)
+            shim_box_append(bodyBox, metaLabelWidget(meta))
+            body = bodyBox
+        }
+        let card = collapsibleCard(
+            title: head.uppercased(),
+            titleClasses: ["tool-head"],
+            body: body
+        )
         addClass(card, "tool-card")
         let kindClass = "tool-" + kind.lowercased().replacingOccurrences(of: " ", with: "-")
         addClass(card, kindClass)
-
-        let content = shim_box_new(0, 3)
-        let headLabel = makeLabel(head.uppercased(), "tool-head")
-        shim_widget_halign_start(headLabel)
-        shim_box_append(content, headLabel)
-        if !meta.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let metaLabel = metaLabelWidget(meta)
-            shim_box_append(content, metaLabel)
-        }
-        shim_box_append(card, content)
         return card
     }
 
@@ -276,8 +343,28 @@ final class TranscriptWidgets {
 
     /// Full advisory card, with the optional guidance line (muted) above the
     /// body. The two-argument `advisoryCard(severity:body:)` delegates here.
+    /// Starts collapsed to the severity row; clicking it expands the guidance
+    /// + body.
     func advisoryCard(severity: String?, guidance: String?, body: String) -> UnsafeMutablePointer<GtkWidget>? {
-        let card = shim_box_new(0, 5)
+        let hasGuidance = guidance?.isEmpty == false
+        let hasBody = !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        var bodyBox: UnsafeMutablePointer<GtkWidget>?
+        if hasGuidance || hasBody {
+            let box = shim_box_new(0, 5)
+            if hasGuidance, let guidance {
+                shim_box_append(box, metaLabelWidget(guidance))
+            }
+            if hasBody, let bodyLabel = proseLabelWidget(body, cssClass: "assistant-message", maxChars: 110, bubble: false) {
+                shim_box_append(box, bodyLabel)
+            }
+            bodyBox = box
+        }
+        let headerText = (severity?.isEmpty == false ? severity! : "advisory").uppercased()
+        let card = collapsibleCard(
+            title: headerText,
+            titleClasses: ["advisory-severity", "accent"],
+            body: bodyBox
+        )
         addClass(card, "advisory-card")
         if let sev = severity?.lowercased(), !sev.isEmpty {
             if sev == "info" {
@@ -286,20 +373,6 @@ final class TranscriptWidgets {
                 addClass(card, "advisory-error")
             }
             // warning / concern / others keep the default gold callout.
-        }
-        let headerText = (severity?.isEmpty == false ? severity! : "advisory").uppercased()
-        let header = makeLabel(headerText, "advisory-severity")
-        addClass(header, "accent")
-        shim_widget_halign_start(header)
-        shim_box_append(card, header)
-        if let guidance, !guidance.isEmpty {
-            let guidanceLabel = metaLabelWidget(guidance)
-            shim_box_append(card, guidanceLabel)
-        }
-        if !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            if let bodyLabel = proseLabelWidget(body, cssClass: "assistant-message", maxChars: 110, bubble: false) {
-                shim_box_append(card, bodyLabel)
-            }
         }
         return card
     }

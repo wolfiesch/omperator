@@ -96,10 +96,6 @@ final class AppWindow {
         addClass(railToggle, "flat-btn")
         onSignal(railToggle, "clicked") { [weak self] in self?.toggleRail() }
         shim_box_append(header, railToggle)
-        let panesButton = shim_button("▤")
-        addClass(panesButton, "flat-btn")
-        onSignal(panesButton, "clicked") { [weak self] in self?.togglePanes() }
-        shim_box_append(header, panesButton)
         statusLabel = makeLabel("connecting…", "topbar-title")
         shim_widget_halign_start(statusLabel)
         shim_box_append(header, statusLabel)
@@ -109,6 +105,10 @@ final class AppWindow {
         addClass(miniButton, "flat-btn")
         onSignal(miniButton, "clicked") { [weak self] in self?.toggleMiniMode() }
         shim_box_append(header, miniButton)
+        let panesButton = shim_button("▤")
+        addClass(panesButton, "flat-btn")
+        onSignal(panesButton, "clicked") { [weak self] in self?.togglePanes() }
+        shim_box_append(header, panesButton)
         shim_box_append(center, header)
 
         let scroll = shim_scrolled_window()

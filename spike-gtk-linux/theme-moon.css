@@ -388,5 +388,19 @@ scrollbar slider:hover {
 .topbar-title {
   color: #FFFFFF;
   font-weight: 600;
-  font-size: 13px;
+  font-size: 17px;
 }
+
+/* Collapsible card headers (click to expand). */
+.card-header {
+  background: transparent;
+  border: none;
+  padding: 3px 8px;
+  min-height: 0;
+  color: #6E6A86;
+  font-weight: 600;
+  font-size: 9pt;
+}
+.card-header:hover { background: rgba(57,53,82,0.55); color: #E0DEF4; }
+.card-chevron { color: #6E6A86; font-size: 9pt; }
+.tool-card.collapsed, .code-block.collapsed, .advisory-card.collapsed { padding-bottom: 0; }
