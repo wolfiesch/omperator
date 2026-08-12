@@ -186,9 +186,11 @@ final class TranscriptWidgets {
     func userBubble(text: String, pending: Bool) -> UnsafeMutablePointer<GtkWidget>? {
         let row = shim_box_new(1, 0)          // full-width rail for right alignment
         shim_widget_expand(row, 1)
+        // GtkBox packs children left→right; a hexpand spacer before the bubble
+        // is what actually pushes it to the right edge.
+        shim_box_append(row, shim_spacer())
         let bubble = shim_box_new(0, 0)
         addClass(bubble, "user-bubble")
-        shim_widget_halign_end(bubble)
         if pending { shim_widget_opacity(bubble, 0.5) }
         if let label = proseLabelWidget(text, cssClass: "", maxChars: 48, bubble: true) {
             shim_box_append(bubble, label)

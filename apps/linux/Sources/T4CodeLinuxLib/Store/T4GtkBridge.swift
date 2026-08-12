@@ -38,6 +38,11 @@ public final class T4GtkBridge {
         store.transcript(for: sessionId)
     }
 
+    /// The assistant's in-progress streaming text for a session ("" when idle).
+    public func streamingText(for sessionId: String) -> String {
+        store.streamingMessages[sessionId]?.text ?? ""
+    }
+
     // MARK: - Panes (terminal / browser / files)
 
     public func openTerminal(sessionId: String) async { _ = await store.openTerminal(sessionId: sessionId) }

@@ -43,6 +43,8 @@ final class AppWindow {
     private var miniButton: UnsafeMutablePointer<GtkWidget>?
     private var miniMode = false
     private var fullSize: (width: Int, height: Int)?
+    private var streamingLabel: UnsafeMutablePointer<GtkWidget>?
+    private var lastStreamedText = ""
     // First-run onboarding (username + password login).
     private var onboardingArmed = false
     private var onboardingVisible = false
@@ -480,6 +482,7 @@ final class AppWindow {
         refreshRailTimes()
         refreshOnboarding()
         refreshTranscript()
+        refreshStreaming()
         refreshPanes()
     }
 
@@ -619,6 +622,35 @@ final class AppWindow {
         if let widget = transcriptWidgets.buildEntry(entry) {
             shim_box_append(box, widget)
         }
+    }
+
+    /// Live assistant text while a turn is streaming — appended at the
+    /// transcript's tail and replaced as it grows; removed when the turn
+    /// settles (the durable entry takes over).
+    private func refreshStreaming() {
+        guard let selected = store.selectedSession, let box = transcriptBox else { return }
+        let sid = selected.sessionId
+        let text = store.streamingText(for: sid)
+        if text.isEmpty {
+            if let label = streamingLabel {
+                shim_widget_destroy(label)
+                streamingLabel = nil
+                lastStreamedText = ""
+            }
+            return
+        }
+        guard text != lastStreamedText else { return }
+        lastStreamedText = text
+        if streamingLabel == nil {
+            let label = makeLabel("", "assistant-message")
+            shim_label_wrap_words(label)
+            shim_label_selectable(label)
+            shim_widget_halign_start(label)
+            shim_box_append(box, label)
+            streamingLabel = label
+        }
+        shim_label_set_text(streamingLabel, text)
+        scrollTranscriptToBottom()
     }
 
     private func scrollTranscriptToBottom() {
