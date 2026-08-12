@@ -147,3 +147,71 @@ static inline void shim_stack_show(GtkWidget *stack, const char *name) { gtk_sta
 static inline void shim_stack_set_transition(GtkWidget *stack) { gtk_stack_set_transition_type(GTK_STACK(stack), GTK_STACK_TRANSITION_TYPE_SLIDE_LEFT_RIGHT); gtk_stack_set_transition_duration(GTK_STACK(stack), 180); }
 static inline void shim_widget_show(GtkWidget *w) { gtk_widget_set_visible(w, 1); }
 static inline void shim_widget_hide(GtkWidget *w) { gtk_widget_set_visible(w, 0); }
+
+/* ── Transcript widgets ─────────────────────────────────────
+   Helpers for the per-entry transcript widget factory
+   (TranscriptWidgets.swift): alignment, opacity, clipboard,
+   scroll policy, code text-view, label text runs. */
+
+static inline void shim_widget_halign_end(GtkWidget *w) { gtk_widget_set_halign(w, GTK_ALIGN_END); }
+static inline void shim_widget_opacity(GtkWidget *w, double opacity) { gtk_widget_set_opacity(w, opacity); }
+
+static inline void shim_clipboard_set_text(const char *text) {
+    GdkDisplay *display = gdk_display_get_default();
+    if (display == NULL) return;
+    GdkClipboard *clipboard = gdk_display_get_clipboard(display);
+    gdk_clipboard_set_text(clipboard, text);
+}
+
+/* Scroll policies (GTK_POLICY_AUTOMATIC/ALWAYS/NEVER) — code blocks scroll
+   horizontally (AUTOMATIC) but never vertically (NEVER), so long blocks grow
+   into the transcript's outer scroll instead of nesting scrollbars. */
+static inline void shim_scrolled_policy(GtkWidget *scroll, GtkPolicyType hpolicy, GtkPolicyType vpolicy) {
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), hpolicy, vpolicy);
+}
+
+/* Code text views must not wrap: the longest line drives the width so the
+   horizontal scroller engages. (shim_text_view_setup enables WORD_CHAR.) */
+static inline void shim_text_view_nowrap(GtkWidget *tv) { gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(tv), GTK_WRAP_NONE); }
+
+static inline void shim_label_selectable(GtkWidget *w) { gtk_label_set_selectable(GTK_LABEL(w), 1); }
+static inline void shim_label_wrap(GtkWidget *w) {
+    gtk_label_set_wrap(GTK_LABEL(w), 1);
+    gtk_label_set_wrap_mode(GTK_LABEL(w), GTK_WRAP_WORD_CHAR);
+    gtk_label_set_xalign(GTK_LABEL(w), 0.0);
+}
+static inline void shim_label_set_markup(GtkWidget *w, const char *markup) { gtk_label_set_markup(GTK_LABEL(w), markup); }
+static inline void shim_label_max_width_chars(GtkWidget *w, int chars) { gtk_label_set_max_width_chars(GTK_LABEL(w), chars); }
+
+static inline GtkWidget *shim_separator(int horizontal) {
+    return gtk_separator_new(horizontal ? GTK_ORIENTATION_HORIZONTAL : GTK_ORIENTATION_VERTICAL);
+}
+
+/* Weak-ref a text tag so the widget factory can drop its tracking entry the
+   moment the tag is finalized (theme re-tints must never touch a freed tag —
+   transcript clears destroy buffers, and their tags go with them). */
+typedef void (*ShimTagGoneHandler)(void *userData, void *whereObjectWas);
+static inline void shim_tag_track_gone(GtkTextTag *tag, void *userData, ShimTagGoneHandler notify) {
+    g_object_weak_ref(G_OBJECT(tag), (GWeakNotify)notify, userData);
+}
+
+/* Append a run and tag exactly that run (unlike shim_text_append_code, which
+   tags from the current line start — that one is for whole-line diff/block
+   runs). Used by the syntax highlighter to tag individual tokens. */
+static inline void shim_text_append_tagged(GtkTextBuffer *buf, const char *text, GtkTextTag *tag) {
+    GtkTextIter end;
+    gtk_text_buffer_get_end_iter(buf, &end);
+    gint offset = gtk_text_iter_get_offset(&end);
+    gtk_text_buffer_insert(buf, &end, text, -1);
+    if (tag != NULL) {
+        GtkTextIter start;
+        gtk_text_buffer_get_iter_at_offset(buf, &start, offset);
+        GtkTextIter newEnd;
+        gtk_text_buffer_get_end_iter(buf, &newEnd);
+        gtk_text_buffer_apply_tag(buf, tag, &start, &newEnd);
+    }
+}
+static inline void shim_scroll_to_max(GtkWidget *scroll) {
+    GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroll));
+    gtk_adjustment_set_value(adj, gtk_adjustment_get_upper(adj) - gtk_adjustment_get_page_size(adj));
+}

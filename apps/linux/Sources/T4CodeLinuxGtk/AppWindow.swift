@@ -15,13 +15,12 @@ final class AppWindow {
     private var railList: UnsafeMutablePointer<GtkWidget>?
     private var railRows: [String: UnsafeMutablePointer<GtkWidget>] = [:]
     private var transcriptView: UnsafeMutablePointer<GtkWidget>?
-    private var transcriptBuffer: UnsafeMutablePointer<GtkTextBuffer>?
-    /// Markdown/transcript text tags by name — theme-aware, re-tinted on switch.
-    private var tags: [String: UnsafeMutablePointer<GtkTextTag>] = [:]
+    private var transcriptBox: UnsafeMutablePointer<GtkWidget>?
     private var composerEntry: UnsafeMutablePointer<GtkWidget>?
     private var sendButton: UnsafeMutablePointer<GtkWidget>?
     private var statusLabel: UnsafeMutablePointer<GtkWidget>?
     private var themeButton: UnsafeMutablePointer<GtkWidget>?
+    private let transcriptWidgets = TranscriptWidgets()
 
     private var renderedSessionId = ""
     private var renderedEntryCount = 0
@@ -98,10 +97,13 @@ final class AppWindow {
         let scroll = shim_scrolled_window()
         transcriptScroll = scroll
         shim_widget_expand(scroll, 0)
-        transcriptView = shim_text_view()
-        addClass(transcriptView, "transcript")
-        shim_text_view_setup(transcriptView)
-        shim_scrolled_set_child(scroll, transcriptView)
+        // Per-entry widget container: each transcript entry is a real widget
+        // (user bubble card, serif prose, code block, tool card) — a flat text
+        // view can't do right-aligned bubbles or structured code blocks.
+        let box = shim_box_new(0, 10)
+        addClass(box, "transcript")
+        transcriptBox = box
+        shim_scrolled_set_child(scroll, box)
         shim_box_append(center, scroll)
 
         // Bottom-pin: stay anchored to the newest content while the user is
@@ -111,12 +113,6 @@ final class AppWindow {
             onSignal(UnsafeMutableRawPointer(adj), "value-changed") { [weak self] in
                 self?.updateScrollPin()
             }
-        }
-
-        transcriptBuffer = shim_text_buffer(transcriptView)
-        if let buf = transcriptBuffer {
-            registerTags(buf)
-            applyTagTheme()
         }
 
         let composer = shim_box_new(1, 8)
@@ -246,72 +242,12 @@ final class AppWindow {
         applyTagTheme()
     }
 
-    // MARK: - Tags
+    // MARK: - Theme tags
 
-    /// All markdown/transcript tags (created once; colors applied per theme).
-    private static let tagNames = [
-        "user", "assistant", "muted",
-        "md-h1", "md-h2", "md-h3", "md-bold", "md-italic", "md-inline-code",
-        "md-link", "md-list", "md-quote",
-        "code-block", "diff-add", "diff-remove",
-    ]
-
-    private func registerTags(_ buf: UnsafeMutablePointer<GtkTextBuffer>) {
-        for name in Self.tagNames {
-            tags[name] = shim_tag_new(buf, name)
-        }
-        applyTagTheme()
-    }
-
+    /// Re-tint every transcript tag the widget factory owns for the active
+    /// theme (dark = Rosé Pine Moon, light = Dawn).
     private func applyTagTheme() {
-        let moon = dark
-        let gold = moon ? "#F6C177" : "#EA9D34"
-        let text = moon ? "#E0DEF4" : "#575279"
-        let codeFg = moon ? "#9CCFD8" : "#286983"
-        let codeBg = moon ? "#2A273F" : "#F2E9E1"
-        let linkFg = moon ? "#C4A7E7" : "#907AA9"
-        let quoteFg = moon ? "#908CAA" : "#6E6A8A"
-        let mutedFg = moon ? "#6E6A86" : "#797593"
-        let inlineCodeBg = moon ? "rgba(156,207,216,0.12)" : "rgba(86,148,159,0.16)"
-        let addBg = moon ? "rgba(49,116,143,0.35)" : "rgba(86,148,159,0.22)"
-        let removeFg = moon ? "#EB6F92" : "#B4637A"
-        let removeBg = moon ? "rgba(235,111,146,0.18)" : "rgba(180,99,122,0.16)"
-
-        setTag("user", fg: gold, weight: 600)
-        setTag("assistant", fg: text)
-        setTag("muted", fg: mutedFg)
-        setTag("md-h1", fg: gold, weight: 700, size: 15)
-        setTag("md-h2", fg: gold, weight: 700, size: 13)
-        setTag("md-h3", fg: text, weight: 600, size: 11.5)
-        setTag("md-bold", fg: gold, weight: 700)
-        setTag("md-italic", fg: text, style: 2) // PANGO_STYLE_ITALIC
-        setTag("md-inline-code", fg: codeFg, bg: inlineCodeBg, family: "JetBrains Mono")
-        setTag("md-link", fg: linkFg, underline: 1) // PANGO_UNDERLINE_SINGLE
-        setTag("md-list", fg: text)
-        setTag("md-quote", fg: quoteFg, style: 2)
-        setTag("code-block", fg: codeFg, bg: codeBg, family: "JetBrains Mono")
-        setTag("diff-add", fg: codeFg, bg: addBg)
-        setTag("diff-remove", fg: removeFg, bg: removeBg)
-    }
-
-    private func setTag(
-        _ name: String,
-        fg: String? = nil,
-        bg: String? = nil,
-        family: String? = nil,
-        weight: Int = 0,
-        size: Double = 0,
-        style: Int = 0,
-        underline: Int = 0
-    ) {
-        guard let tag = tags[name] else { return }
-        if let fg { shim_tag_set_str(tag, "foreground", fg) }
-        if let bg { shim_tag_set_str(tag, "background", bg) }
-        if let family { shim_tag_set_str(tag, "family", family) }
-        if weight > 0 { shim_tag_set_int(tag, "weight", Int32(weight)) }
-        if size > 0 { shim_tag_set_double(tag, "size-points", size) }
-        if style > 0 { shim_tag_set_int(tag, "style", Int32(style)) }
-        if underline > 0 { shim_tag_set_int(tag, "underline", Int32(underline)) }
+        transcriptWidgets.applyTheme(dark: dark)
     }
 
     // MARK: - Store bridge
@@ -415,45 +351,22 @@ final class AppWindow {
     }
 
     private func clearTranscript() {
-        guard let buf = transcriptBuffer else { return }
-        var start = GtkTextIter()
-        var end = GtkTextIter()
-        gtk_text_buffer_get_start_iter(buf, &start)
-        gtk_text_buffer_get_end_iter(buf, &end)
-        gtk_text_buffer_delete(buf, &start, &end)
+        guard let box = transcriptBox else { return }
+        shim_box_clear(box)
     }
 
     private func appendEntry(_ entry: TranscriptEntry) {
-        guard let buf = transcriptBuffer else { return }
-        let text = entry.body.isEmpty ? entry.headline : entry.body
-        // Tool/review rows get the muted treatment; messages render markdown.
-        let segments: [StyledSegment]
-        if entry.kind == .message {
-            segments = renderTranscriptSegments(body: text, role: entry.role)
-        } else {
-            segments = [StyledSegment(text: text, tag: "muted")]
+        guard let box = transcriptBox else { return }
+        if let widget = transcriptWidgets.buildEntry(entry) {
+            shim_box_append(box, widget)
         }
-        for segment in segments {
-            var end = GtkTextIter()
-            gtk_text_buffer_get_end_iter(buf, &end)
-            let startOffset = gtk_text_iter_get_offset(&end)
-            shim_text_append(buf, segment.text)
-            gtk_text_buffer_get_end_iter(buf, &end)
-            if let tag = tags[segment.tag] {
-                var start = GtkTextIter()
-                gtk_text_buffer_get_iter_at_offset(buf, &start, startOffset)
-                gtk_text_buffer_apply_tag(buf, tag, &start, &end)
-            }
-        }
-        shim_text_append(buf, "\n")
     }
 
     private func scrollTranscriptToBottom() {
         // Only auto-scroll while the user is pinned near the bottom; scrolling
         // up during a stream must not fight the reader.
-        guard pinnedToBottom else { return }
-        guard let view = transcriptView, let buf = transcriptBuffer else { return }
-        shim_scroll_bottom(view, buf)
+        guard pinnedToBottom, let scroll = transcriptScroll else { return }
+        shim_scroll_to_max(scroll)
     }
 
     /// Recompute the pin from the live scroll position (fires on value-changed).

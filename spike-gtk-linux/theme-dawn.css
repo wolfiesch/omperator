@@ -43,20 +43,25 @@ window {
   font-size: 10.5pt;
 }
 
+/* Right-aligned glass card; widget code positions it, we style the surface. */
 .user-bubble {
   background-color: rgba(255, 255, 255, 0.6);
   border: 1px solid #DFDAD9;
   border-top-color: #FFFFFF;
   border-bottom-color: #CECACD;
-  border-radius: 14px;
-  padding: 9px 12px;
+  border-radius: 16px;
+  padding: 10px 13px;
   color: #575279;
-  box-shadow: 0 1px 2px rgba(87, 82, 121, 0.15);
+  font-family: "Fira Sans", "Helvetica Neue", sans-serif;
+  box-shadow: 0 1px 2px rgba(87, 82, 121, 0.15),
+              0 0 8px rgba(255, 255, 255, 0.35);
 }
 
 .assistant-message {
   background-color: transparent;
   color: #575279;
+  font-family: "New York", "Charter", Georgia, serif;
+  font-size: 16px;
 }
 
 .code-block {
@@ -70,6 +75,121 @@ window {
   color: #56949F;
   box-shadow: inset 0 1px 3px rgba(87, 82, 121, 0.12),
               0 0 6px rgba(86, 148, 159, 0.08);
+}
+
+/* Code header row: uppercase done in widget code (no text-transform in GTK). */
+.code-header {
+  color: #797593;
+  font-size: 8.5pt;
+  font-weight: 700;
+  padding: 2px 2px 6px 2px;
+}
+
+.code-copy {
+  background-color: rgba(255, 255, 255, 0.65);
+  border: 1px solid #CECACD;
+  border-top-color: #FFFFFF;
+  border-bottom-color: #B6B1C0;
+  border-radius: 8px;
+  padding: 3px 10px;
+  color: #6E6A8A;
+  font-size: 8.5pt;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(87, 82, 121, 0.15);
+}
+
+.code-copy:hover {
+  background-color: #FFFFFF;
+  color: #575279;
+  box-shadow: 0 1px 2px rgba(87, 82, 121, 0.15),
+              0 0 8px rgba(86, 148, 159, 0.18);
+}
+
+.code-copy:active {
+  background-color: #F2E9E1;
+  box-shadow: inset 0 1px 2px rgba(87, 82, 121, 0.2);
+}
+
+/* ── Syntax highlighting ──────────────────────────────────── */
+
+.syn-keyword   { color: #907AA9; font-weight: 600; }
+.syn-string    { color: #56949F; }
+.syn-comment   { color: #9893A5; font-style: italic; }
+.syn-number    { color: #EA9D34; }
+.syn-type      { color: #286983; }
+.syn-function  { color: #D7827E; }
+.syn-attribute { color: #907AA9; font-style: italic; }
+.syn-plain     { color: #575279; }
+
+/* ── Tool & advisory cards ────────────────────────────────── */
+
+.tool-card {
+  background-color: #FFFAF3;
+  border: 1px solid #DFDAD9;
+  border-top-color: #FFFFFF;
+  border-left: 3px solid #286983;
+  border-radius: 10px;
+  padding: 10px 12px;
+  box-shadow: 0 1px 3px rgba(87, 82, 121, 0.15);
+}
+
+.tool-head {
+  color: #286983;
+  font-weight: 700;
+  font-size: 9.5pt;
+}
+
+.tool-meta {
+  color: #797593;
+  font-size: 9pt;
+}
+
+.advisory-card {
+  background-color: rgba(234, 157, 52, 0.1);
+  border: 1px solid rgba(234, 157, 52, 0.3);
+  border-top-color: rgba(234, 157, 52, 0.5);
+  border-left: 3px solid #EA9D34;
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: #575279;
+  box-shadow: 0 1px 3px rgba(87, 82, 121, 0.12),
+              0 0 8px rgba(234, 157, 52, 0.1);
+}
+
+/* Severity variants (widget adds advisory-<severity>; later rules win). */
+.advisory-info {
+  background-color: rgba(40, 105, 131, 0.08);
+  border-color: rgba(40, 105, 131, 0.3);
+  border-top-color: rgba(40, 105, 131, 0.5);
+  border-left-color: #286983;
+  box-shadow: 0 1px 3px rgba(87, 82, 121, 0.12),
+              0 0 8px rgba(40, 105, 131, 0.12);
+}
+
+.advisory-error {
+  background-color: rgba(180, 99, 122, 0.08);
+  border-color: rgba(180, 99, 122, 0.3);
+  border-top-color: rgba(180, 99, 122, 0.5);
+  border-left-color: #B4637A;
+  box-shadow: 0 1px 3px rgba(87, 82, 121, 0.12),
+              0 0 8px rgba(180, 99, 122, 0.12);
+}
+
+/* Tool-kind rail tints (widget adds tool-<kind>). */
+.tool-tool-use    { border-left-color: #286983; }
+.tool-tool-result { border-left-color: #56949F; }
+.tool-thinking    { border-left-color: #907AA9; }
+
+/* Prose/bubble/advisory bodies are GtkTextViews — keep the glass visible. */
+.user-bubble textview,
+.user-bubble textview text,
+.assistant-message textview,
+.assistant-message textview text,
+.tool-card textview,
+.tool-card textview text,
+.advisory-card textview,
+.advisory-card textview text {
+  background-color: transparent;
 }
 
 /* ── Markdown / transcript elements ───────────────────────── */
