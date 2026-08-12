@@ -49,7 +49,6 @@ static inline void shim_css_load(const char *path) {
     gtk_css_provider_load_from_path(provider, path);
     gtk_style_context_add_provider_for_display(gdk_display_get_default(), provider, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 }
-static inline void shim_add_tick(GtkWidget *widget, GtkTickCallback cb) { gtk_widget_add_tick_callback(widget, cb, NULL, NULL); }
 
 /* Text tags + widget management */
 static inline GtkTextTag *shim_tag(GtkTextBuffer *buf, const char *name, const char *p1, const char *v1) {
@@ -420,4 +419,12 @@ static inline GtkWidget *shim_button_child(GtkWidget *child) {
     GtkWidget *b = gtk_button_new();
     gtk_button_set_child(GTK_BUTTON(b), child);
     return b;
+}
+
+/* Frame-tick callback: fires each frame right before draw, AFTER layout — so
+   reading the content height here is never stale (unlike reacting to the
+   adjustment "changed" signal, which fires before the new text is measured).
+   Used to keep a streaming transcript pinned to the true bottom. */
+static inline void shim_add_tick(GtkWidget *w, GtkTickCallback cb, gpointer userData) {
+    gtk_widget_add_tick_callback(w, cb, userData, NULL);
 }

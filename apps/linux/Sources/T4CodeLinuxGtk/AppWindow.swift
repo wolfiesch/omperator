@@ -42,6 +42,9 @@ final class AppWindow {
     /// Set while the app itself scrolls to the bottom; updateScrollPin ignores
     /// those value-changes so our own auto-scroll never releases the pin.
     private var programmaticScroll = false
+    /// Content height seen by the last frame-tick, so the follow only scrolls
+    /// when the transcript actually grew.
+    private var lastTickUpper = 0.0
     /// Per-session scroll position, saved on swap and restored on return.
     private var scrollPositions: [String: Double] = [:]
     // Panes (browser sidebar; terminal/files stay available in PanesFactory)
@@ -208,14 +211,14 @@ final class AppWindow {
             onSignal(UnsafeMutableRawPointer(adj), "value-changed") { [weak self] in
                 self?.updateScrollPin()
             }
-            // "changed" fires when the content's upper bound grows (a stream
-            // append laid out). When pinned, follow it to the true bottom —
-            // this is what keeps the tail in view during streaming and opens a
-            // session at its newest entry.
-            onSignal(UnsafeMutableRawPointer(adj), "changed") { [weak self] in
-                self?.followContentGrowth()
-            }
         }
+        // Follow the bottom from a frame-tick, not the adjustment "changed"
+        // signal: the tick runs right before draw, AFTER layout, so the content
+        // height is final — the "changed" signal fired before the new text was
+        // measured and left the view one chunk short (newest line cut off until
+        // a scrollbar wiggle forced a re-measure).
+        let tickBox = GtkBox { [weak self] in self?.scrollFollowTick() }
+        shim_add_tick(scroll, tickForwarder, Unmanaged.passRetained(tickBox).toOpaque())
 
         let composer = shim_box_new(1, 8)
         addClass(composer, "composer")
@@ -825,11 +828,14 @@ final class AppWindow {
         programmaticScroll = false
     }
 
-    /// Content grew (the scrolled window's upper bound changed). When pinned,
-    /// chase the new bottom — called from the adjustment's "changed" signal,
-    /// after layout, so the scroll lands on the true newest entry.
-    private func followContentGrowth() {
-        guard pinnedToBottom, let scroll = transcriptScroll else { return }
+    /// Frame-tick follow: after layout each frame, if pinned and the content
+    /// grew since the last tick, scroll to the (now-final) bottom. Runs the
+    /// scroll only on change, so it costs a float compare per frame when idle.
+    private func scrollFollowTick() {
+        guard pinnedToBottom, let scroll = transcriptScroll, let adj = shim_vadj(scroll) else { return }
+        let upper = shim_adj_upper(adj)
+        guard upper != lastTickUpper else { return }
+        lastTickUpper = upper
         scrollToBottomProgrammatically(scroll)
     }
 

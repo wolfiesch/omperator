@@ -92,6 +92,14 @@ let idleForwarder: @convention(c) (UnsafeMutableRawPointer?) -> gboolean = { use
     return gboolean(0)
 }
 
+/// Forwarder for GTK frame-tick callbacks (box pattern; the box stays retained
+/// for the callback's lifetime, like onSignal). Returns true to keep ticking.
+let tickForwarder: @convention(c) (UnsafeMutablePointer<GtkWidget>?, OpaquePointer?, UnsafeMutableRawPointer?) -> gboolean = { _, _, userData in
+    guard let userData else { return gboolean(1) }
+    Unmanaged<GtkBox>.fromOpaque(userData).takeUnretainedValue().value()
+    return gboolean(1)
+}
+
 /// Run a block on the main actor from within a GLib callback (main thread).
 func onMainActor(_ action: @escaping @MainActor () -> Void) {
     MainActor.assumeIsolated { action() }
