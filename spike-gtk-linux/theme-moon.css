@@ -16,7 +16,7 @@ window {
   background-color: #2A273F;
   border: 1px solid #1B1930;
   border-top-color: #44415A;
-  border-radius: 14px;
+  border-radius: 0;
   padding: 10px;
   margin: 10px;
   box-shadow: 0 1px 3px rgba(14, 12, 24, 0.6);
@@ -24,7 +24,7 @@ window {
 
 .rail-item {
   padding: 8px 10px;
-  border-radius: 10px;
+  border-radius: 0;
   color: #E0DEF4;
 }
 
@@ -48,7 +48,7 @@ window {
   border: 1px solid rgba(86, 82, 110, 0.7);
   border-top-color: rgba(144, 140, 170, 0.5);
   border-bottom-color: rgba(27, 25, 48, 0.8);
-  border-radius: 16px;
+  border-radius: 0;
   padding: 10px 13px;
   color: #E0DEF4;
   font-family: "Fira Sans", "Helvetica Neue", sans-serif;
@@ -67,7 +67,7 @@ window {
   background-color: #2A273F;
   border: 1px solid #1B1930;
   border-top-color: #44415A;
-  border-radius: 8px;
+  border-radius: 0;
   padding: 10px 12px;
   font-family: "JetBrains Mono", "Cascadia Code", monospace;
   font-size: 10pt;
@@ -89,7 +89,7 @@ window {
   border: 1px solid rgba(86, 82, 110, 0.7);
   border-top-color: rgba(144, 140, 170, 0.4);
   border-bottom-color: rgba(27, 25, 48, 0.8);
-  border-radius: 8px;
+  border-radius: 0;
   padding: 3px 10px;
   color: #908CAA;
   font-size: 8.5pt;
@@ -127,7 +127,7 @@ window {
   border: 1px solid #1B1930;
   border-top-color: #393552;
   border-left: 3px solid #3E8FB0;
-  border-radius: 10px;
+  border-radius: 0;
   padding: 10px 12px;
   box-shadow: 0 1px 3px rgba(14, 12, 24, 0.5);
 }
@@ -148,7 +148,7 @@ window {
   border: 1px solid rgba(246, 193, 119, 0.25);
   border-top-color: rgba(246, 193, 119, 0.45);
   border-left: 3px solid #F6C177;
-  border-radius: 10px;
+  border-radius: 0;
   padding: 10px 12px;
   color: #E0DEF4;
   box-shadow: 0 1px 3px rgba(14, 12, 24, 0.4),
@@ -219,7 +219,7 @@ window {
 
 .md-inline-code {
   background-color: rgba(156, 207, 216, 0.12);
-  border-radius: 4px;
+  border-radius: 0;
   padding: 1px 4px;
   font-family: "JetBrains Mono", "Cascadia Code", monospace;
   font-size: 9.5pt;
@@ -260,7 +260,7 @@ window {
   background-color: #1F1D2E;
   border: 1px solid #1B1930;
   border-top-color: #393552;
-  border-radius: 8px;
+  border-radius: 0;
   padding: 10px 12px;
   font-family: "JetBrains Mono", "Cascadia Code", monospace;
   font-size: 10pt;
@@ -275,7 +275,7 @@ window {
   border: 1px solid rgba(86, 82, 110, 0.7);
   border-top-color: rgba(144, 140, 170, 0.45);
   border-bottom-color: rgba(27, 25, 48, 0.85);
-  border-radius: 16px;
+  border-radius: 0;
   padding: 8px 12px;
   margin: 10px 12px;
   box-shadow: 0 2px 6px rgba(14, 12, 24, 0.55),
@@ -303,7 +303,7 @@ window {
   border: 1px solid #E8AE5F;
   border-top-color: #F8CE90;
   border-bottom-color: #D99A45;
-  border-radius: 12px;
+  border-radius: 0;
   padding: 6px 14px;
   font-weight: 600;
   box-shadow: 0 1px 3px rgba(14, 12, 24, 0.5),
@@ -327,7 +327,7 @@ window {
   background-color: #2A273F;
   border: 1px solid #1B1930;
   border-top-color: #393552;
-  border-radius: 10px;
+  border-radius: 0;
   padding: 12px;
   box-shadow: 0 1px 3px rgba(14, 12, 24, 0.5);
 }
@@ -344,7 +344,7 @@ scrolledwindow {
 
 scrollbar slider {
   background-color: #56526E;
-  border-radius: 4px;
+  border-radius: 0;
   min-width: 6px;
 }
 

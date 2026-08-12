@@ -16,6 +16,15 @@ import HostWire
 ///   fenced code (`codeBlock`), and `<advisory>` callouts (`advisoryCard`);
 /// - tool / turn rows: kind-colored cards (`toolCard`).
 ///
+/// Prose renders as GtkLabels (Pango markup), not text views: a wrapped
+/// GtkTextView measured inside a vertical box reports its height wrapped at a
+/// ~1-char width (GTK measures with for_size=-1 and uses the last layout's
+/// height), so every prose block would balloon to thousands of pixels. Labels
+/// compute wrap height correctly; `max-width-chars` caps the natural width so
+/// the block never overflows the column. Code blocks keep the text-view +
+/// per-token-tag path (nowrap natural height is content-accurate), and the
+/// copy button writes the raw code to the clipboard.
+///
 /// Entry dispatch: AppWindow calls `buildEntry` once per transcript entry and
 /// parents the returned widget; the scroll pin / store wiring live elsewhere.
 
@@ -24,88 +33,34 @@ final class TranscriptWidgets {
 
     // MARK: - Theme hooks
 
-    /// Syntax token colors by tag name. The main agent may retint these before
-    /// building entries; defaults match theme-moon.css (Rosé Pine Moon) and the
-    /// app's dark-mode tag theme. Applied when a code block's tags are created.
-    static var syntaxForegrounds: [String: String] = [
-        "syn-keyword": "#C4A7E7",
-        "syn-string": "#9CCFD8",
-        "syn-comment": "#6E6A86",
-        "syn-number": "#F6C177",
-        "syn-type": "#3E8FB0",
-        "syn-function": "#EBBCBA",
-        "syn-attribute": "#C4A7E7",
-        "syn-plain": "#E0DEF4",
-        "diff-add": "#9CCFD8",
-        "diff-remove": "#EB6F92",
-    ]
-
-    /// Optional per-tag backgrounds (diff lines get a tint; everything else
-    /// stays transparent over the code card's surface).
-    static var syntaxBackgrounds: [String: String] = [
-        "diff-add": "rgba(49,116,143,0.35)",
-        "diff-remove": "rgba(235,111,146,0.18)",
-    ]
+    /// Syntax token colors by tag name. `applyTheme` swaps these between the
+    /// Moon and Dawn palettes and re-tints every live code tag.
+    static var syntaxForegrounds: [String: String] = ThemePalette.dark.syntaxForegrounds
+    static var syntaxBackgrounds: [String: String] = ThemePalette.dark.syntaxBackgrounds
 
     /// Extra Pango attributes per syntax tag: weight (Pango weight) / italics.
     static var syntaxWeights: [String: Int] = ["syn-keyword": 600]
     static var syntaxItalics: Set<String> = ["syn-comment", "syn-attribute"]
 
-    /// Markdown prose-tag colors (text-view path: proseLabel, advisory bodies).
-    /// Mirrors AppWindow.applyTagTheme so per-entry widgets match the old
-    /// single-buffer transcript until the main agent migrates fully.
-    static var proseForegrounds: [String: String] = [
-        "user": "#F6C177",
-        "assistant": "#E0DEF4",
-        "md-h1": "#F6C177",
-        "md-h2": "#F6C177",
-        "md-h3": "#E0DEF4",
-        "md-bold": "#F6C177",
-        "md-italic": "#E0DEF4",
-        "md-inline-code": "#9CCFD8",
-        "md-list": "#E0DEF4",
-        "md-quote": "#908CAA",
-        "md-link": "#C4A7E7",
-        "code-block": "#9CCFD8",
-        "diff-add": "#9CCFD8",
-        "diff-remove": "#EB6F92",
-    ]
-
-    static var proseBackgrounds: [String: String] = [
-        "md-inline-code": "rgba(156,207,216,0.12)",
-        "code-block": "#2A273F",
-        "diff-add": "rgba(49,116,143,0.35)",
-        "diff-remove": "rgba(235,111,146,0.18)",
-    ]
-
-    /// Pango-markup opens for the user bubble's label (inline markdown only —
-    /// no block layout in a chat bubble). "" renders plain.
-    private static let bubbleTagMarkup: [String: String] = [
-        "user": "span foreground=\"#F6C177\"",
-        "md-h1": "span foreground=\"#F6C177\" weight=\"700\"",
-        "md-h2": "span foreground=\"#F6C177\" weight=\"700\"",
-        "md-h3": "span foreground=\"#F6C177\" weight=\"600\"",
-        "md-bold": "span foreground=\"#F6C177\" weight=\"700\"",
-        "md-italic": "i",
-        "md-inline-code": "span foreground=\"#9CCFD8\" font_family=\"JetBrains Mono\"",
-        "md-link": "span foreground=\"#C4A7E7\" underline=\"single\"",
-        "md-list": "span",
-        "md-quote": "span foreground=\"#908CAA\" font_style=\"italic\"",
-        "code-block": "span foreground=\"#9CCFD8\" font_family=\"JetBrains Mono\"",
-        "diff-add": "span foreground=\"#9CCFD8\"",
-        "diff-remove": "span foreground=\"#EB6F92\"",
-        "assistant": "",
-    ]
-
-    /// One theme's tag colors. `applyTheme(dark:)` swaps between Moon and Dawn
-    /// (mirroring theme-moon.css / theme-dawn.css and AppWindow's own
-    /// applyTagTheme, so per-entry widgets and the old single-buffer transcript
-    /// agree). Only colors change; weights/sizes/styles are theme-independent.
-    private struct ThemePalette {
-        let syntaxForegrounds: [String: String]
+    /// One theme's prose/markup colors. `applyTheme(dark:)` swaps between Moon
+    /// and Dawn (mirroring theme-moon.css / theme-dawn.css and AppWindow's own
+    /// applyTagTheme). Only colors change; weights/sizes/styles are
+    /// theme-independent.
+    private struct ThemePalette {        let syntaxForegrounds: [String: String]
         let syntaxBackgrounds: [String: String]
         let proseForegrounds: [String: String]
         let proseBackgrounds: [String: String]
+
+        /// Accent colors used by the Pango-markup prose labels. Only these
+        /// change with the theme; body text inherits its color from the CSS
+        /// surface (bubble/card), so plain runs stay theme-correct for free.
+        var gold: String { proseForegrounds["user"] ?? "#F6C177" }
+        var text: String { proseForegrounds["assistant"] ?? "#E0DEF4" }
+        var codeFg: String { proseForegrounds["md-inline-code"] ?? "#9CCFD8" }
+        var link: String { proseForegrounds["md-link"] ?? "#C4A7E7" }
+        var quote: String { proseForegrounds["md-quote"] ?? "#908CAA" }
+        var add: String { proseForegrounds["diff-add"] ?? "#9CCFD8" }
+        var remove: String { proseForegrounds["diff-remove"] ?? "#EB6F92" }
 
         static let dark = ThemePalette(
             syntaxForegrounds: [
@@ -154,20 +109,18 @@ final class TranscriptWidgets {
         )
     }
 
-    /// Tags registered on each prose text-view buffer (created per buffer —
-    /// GtkTextTags belong to their buffer).
-    private static let proseTagNames = [
-        "user", "assistant", "md-h1", "md-h2", "md-h3", "md-bold", "md-italic",
-        "md-inline-code", "md-list", "md-quote", "md-link", "code-block",
-        "diff-add", "diff-remove",
-    ]
-
-    /// All tags this factory created, so `applyTheme` can re-tint them. Tags
-    /// are dropped (via a GObject weak ref) the moment their buffer frees
+    /// All code tags this factory created, so `applyTheme` can re-tint them.
+    /// Tags are dropped (via a GObject weak ref) the moment their buffer frees
     /// them, so a cleared transcript can never leave a dangling pointer behind.
     private var liveSyntaxTags: [(name: String, tag: UnsafeMutablePointer<GtkTextTag>)] = []
-    private var liveProseTags: [(name: String, tag: UnsafeMutablePointer<GtkTextTag>)] = []
-    private var proseTags: [String: UnsafeMutablePointer<GtkTextTag>] = [:]
+
+    /// The palette applied to newly built widgets (also used by `proseMarkup`
+    /// to color label spans). Updated by `applyTheme`.
+    private static var currentPalette: ThemePalette = .dark
+
+    /// Prose/bubble labels, kept so `applyTheme` can re-render their markup
+    /// with the current palette's accent colors.
+    private var liveLabels: [(label: UnsafeMutablePointer<GtkWidget>, text: String, bubble: Bool)] = []
 
     /// Opaque self reference for the tag weak-notify userData. Retained once
     /// and never released (bounded, one factory per app) so a notify that
@@ -180,7 +133,8 @@ final class TranscriptWidgets {
     /// Build the widget tree for one transcript entry.
     ///
     /// - `.message` + role "user" → `userBubble` (pending: false — the store
-    ///   has no per-entry pending flag; optimistic dimming is caller's choice).
+    ///   has no per-entry pending flag; optimistic dimming is the caller's
+    ///   choice).
     /// - `.message` (assistant/other) → vertical box of `proseLabel` /
     ///   `codeBlock` / `advisoryCard` per markdown block.
     /// - tool / turn-review / compaction / unknown → `toolCard`.
@@ -228,18 +182,18 @@ final class TranscriptWidgets {
         addClass(bubble, "user-bubble")
         shim_widget_halign_end(bubble)
         if pending { shim_widget_opacity(bubble, 0.5) }
-        if let label = bubbleLabel(text) {
+        if let label = proseLabelWidget(text, cssClass: "", maxChars: 48, bubble: true) {
             shim_box_append(bubble, label)
         }
         shim_box_append(row, bubble)
         return row
     }
 
-    /// Agent prose: markdown-lite text view — selectable (non-editable text
-    /// views still select), wrapping at the column width, serif via the
-    /// "assistant-message" CSS class.
+    /// Agent prose: markdown-lite, selectable, wrapping label capped at 110
+    /// chars (content-sized; the serif font comes from the "assistant-message"
+    /// CSS class).
     func proseLabel(text: String) -> UnsafeMutablePointer<GtkWidget>? {
-        markdownTextView(text, cssClass: "assistant-message")
+        proseLabelWidget(text, cssClass: "assistant-message", maxChars: 110, bubble: false)
     }
 
     /// Fenced code block: header row (uppercase language + COPY button that
@@ -301,10 +255,7 @@ final class TranscriptWidgets {
         shim_widget_halign_start(headLabel)
         shim_box_append(content, headLabel)
         if !meta.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let metaLabel = makeLabel(meta, "tool-meta")
-            shim_label_wrap(metaLabel)
-            shim_label_selectable(metaLabel)
-            shim_widget_halign_start(metaLabel)
+            let metaLabel = metaLabelWidget(meta)
             shim_box_append(content, metaLabel)
         }
         shim_box_append(card, content)
@@ -338,15 +289,12 @@ final class TranscriptWidgets {
         shim_widget_halign_start(header)
         shim_box_append(card, header)
         if let guidance, !guidance.isEmpty {
-            let guidanceLabel = makeLabel(guidance, "tool-meta")
-            shim_label_wrap(guidanceLabel)
-            shim_label_selectable(guidanceLabel)
-            shim_widget_halign_start(guidanceLabel)
+            let guidanceLabel = metaLabelWidget(guidance)
             shim_box_append(card, guidanceLabel)
         }
         if !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            if let bodyView = markdownTextView(body, cssClass: "assistant-message") {
-                shim_box_append(card, bodyView)
+            if let bodyLabel = proseLabelWidget(body, cssClass: "assistant-message", maxChars: 110, bubble: false) {
+                shim_box_append(card, bodyLabel)
             }
         }
         return card
@@ -354,108 +302,117 @@ final class TranscriptWidgets {
 
     // MARK: - Theme
 
-    /// Re-tint every tag this factory created for the given theme. GTK text
-    /// tags don't follow CSS, so AppWindow calls this on theme toggle (and
-    /// once at startup). Colors update in place; new entries pick up the same
-    /// palette from the static dictionaries.
+    /// Re-tint every tag and re-render every label this factory created for
+    /// the given theme. GTK text tags don't follow CSS, so AppWindow calls
+    /// this on theme toggle (and once at startup). Colors update in place;
+    /// new entries pick up the same palette from the static dictionaries.
     func applyTheme(dark: Bool) {
-        let palette = dark ? Self.ThemePalette.dark : Self.ThemePalette.light
+        let palette = dark ? ThemePalette.dark : ThemePalette.light
+        Self.currentPalette = palette
         Self.syntaxForegrounds = palette.syntaxForegrounds
         Self.syntaxBackgrounds = palette.syntaxBackgrounds
-        Self.proseForegrounds = palette.proseForegrounds
-        Self.proseBackgrounds = palette.proseBackgrounds
 
         for (name, tag) in liveSyntaxTags {
             if let fg = Self.syntaxForegrounds[name] { shim_tag_set_str(tag, "foreground", fg) }
             if let bg = Self.syntaxBackgrounds[name] { shim_tag_set_str(tag, "background", bg) }
         }
-        for (name, tag) in liveProseTags {
-            if let fg = Self.proseForegrounds[name] { shim_tag_set_str(tag, "foreground", fg) }
-            if let bg = Self.proseBackgrounds[name] { shim_tag_set_str(tag, "background", bg) }
+        for entry in liveLabels {
+            shim_label_set_markup(entry.label, proseMarkup(entry.text, bubble: entry.bubble))
         }
     }
 
-    /// Weak-ref trampoline: removes a dying tag from the tracking arrays so
-    /// `applyTheme` never touches freed memory after a transcript clear. The
-    /// factory instance outlives every tag it creates, so an unretained self
-    /// is safe here.
-    private static let tagGoneForwarder: ShimTagGoneHandler = { userData, goneObject in
-        guard let userData else { return }
-        let factory = Unmanaged<TranscriptWidgets>.fromOpaque(userData).takeUnretainedValue()
-        guard let gone = goneObject else { return }
-        factory.removeDeadTag(UnsafeMutableRawPointer(gone))
+    // MARK: - Prose labels (Pango markup)
+
+    /// Build a markdown-lite prose label. `maxChars` caps the natural width so
+    /// the block never overflows the column; short text keeps the label
+    /// content-sized. `bubble` selects the compact inline-only styling.
+    private func proseLabelWidget(
+        _ text: String,
+        cssClass: String,
+        maxChars: Int,
+        bubble: Bool
+    ) -> UnsafeMutablePointer<GtkWidget>? {
+        let label = shim_label("")
+        if !cssClass.isEmpty { addClass(label, cssClass) }
+        shim_label_wrap(label)
+        shim_label_selectable(label)
+        shim_label_max_width_chars(label, Int32(maxChars))
+        shim_widget_halign_start(label)
+        shim_label_set_markup(label, proseMarkup(text, bubble: bubble))
+        if let label { liveLabels.append((label, text, bubble)) }
+        return label
     }
 
-    private func removeDeadTag(_ gone: UnsafeMutableRawPointer) {
-        liveSyntaxTags.removeAll { UnsafeMutableRawPointer($0.tag) == gone }
-        liveProseTags.removeAll { UnsafeMutableRawPointer($0.tag) == gone }
+    /// Muted, wrapping, selectable meta/guidance label (tool output, advisory
+    /// guidance) capped at 110 chars.
+    private func metaLabelWidget(_ text: String) -> UnsafeMutablePointer<GtkWidget>? {
+        let label = makeLabel(text, "tool-meta")
+        shim_label_wrap(label)
+        shim_label_selectable(label)
+        shim_label_max_width_chars(label, 110)
+        shim_widget_halign_start(label)
+        return label
     }
 
-    private func trackTag(_ name: String, _ tag: UnsafeMutablePointer<GtkTextTag>, syntax: Bool) {
-        if syntax {
-            liveSyntaxTags.append((name, tag))
-        } else {
-            liveProseTags.append((name, tag))
-        }
-        shim_tag_track_gone(tag, tagTrackerHandle, Self.tagGoneForwarder)
-    }
+    /// Convert rendered markdown segments to a Pango-markup string. Text is
+    /// escaped; styled runs map through the theme palette. Block-level tags
+    /// (headings, fences) degrade to inline styling — chat bubbles and prose
+    /// blocks are inline-only, per Enclave.
+    private func proseMarkup(_ text: String, bubble: Bool) -> String {
+        let palette = Self.currentPalette
+        let gold = palette.gold
+        let code = palette.codeFg
+        let link = palette.link
+        let quote = palette.quote
+        let add = palette.add
+        let remove = palette.remove
 
-    // MARK: - Shared prose rendering
-
-    /// A wrapping, selectable text view filled with markdown-lite segments
-    /// (shared by proseLabel and advisory bodies). Tags are registered on the
-    /// buffer with the current `proseForegrounds`/`proseBackgrounds`.
-    private func markdownTextView(_ text: String, cssClass: String) -> UnsafeMutablePointer<GtkWidget>? {
-        let tv = shim_text_view()
-        shim_text_view_setup(tv)               // non-editable, WORD_CHAR wrap
-        addClass(tv, cssClass)
-        if let buf = shim_text_buffer(tv) {
-            registerProseTags(buf)
-            for segment in renderTranscriptSegments(body: text, role: "assistant") {
-                shim_text_append_tagged(buf, segment.text, proseTags[segment.tag])
+        var markup = ""
+        for segment in renderTranscriptSegments(body: text, role: "assistant") {
+            guard !segment.text.isEmpty else { continue }
+            let open: String
+            switch segment.tag {
+            case "md-h1":
+                open = bubble ? "span foreground=\"\(gold)\" weight=\"700\"" : "span size=\"15360\" weight=\"700\" foreground=\"\(gold)\""
+            case "md-h2":
+                open = bubble ? "span foreground=\"\(gold)\" weight=\"700\"" : "span size=\"13312\" weight=\"700\" foreground=\"\(gold)\""
+            case "md-h3":
+                open = "span weight=\"600\" foreground=\"\(gold)\""
+            case "md-bold":
+                open = "span foreground=\"\(gold)\" weight=\"700\""
+            case "md-italic":
+                open = "i"
+            case "md-inline-code", "code-block":
+                open = "span font_family=\"JetBrains Mono\" foreground=\"\(code)\""
+            case "md-link":
+                open = "span foreground=\"\(link)\" underline=\"single\""
+            case "md-list":
+                open = "span"
+            case "md-quote":
+                open = "span foreground=\"\(quote)\" font_style=\"italic\""
+            case "diff-add":
+                open = "span foreground=\"\(add)\""
+            case "diff-remove":
+                open = "span foreground=\"\(remove)\""
+            case "user":
+                open = "span foreground=\"\(gold)\" weight=\"600\""
+            default:
+                open = ""   // assistant / plain
+            }
+            if open.isEmpty {
+                markup += escapeMarkup(segment.text)
+            } else {
+                let close = open.hasPrefix("span") ? "</span>" : "</\(open)>"
+                markup += "<\(open)>\(escapeMarkup(segment.text))\(close)"
             }
         }
-        return tv
+        return markup
     }
 
-    private func registerProseTags(_ buf: UnsafeMutablePointer<GtkTextBuffer>) {
-        proseTags.removeAll(keepingCapacity: true)
-        for name in Self.proseTagNames {
-            if let tag = shim_tag_new(buf, name) {
-                proseTags[name] = tag
-                trackTag(name, tag, syntax: false)
-            }
-        }
-        applyProseTheme()
-    }
-
-    private func applyProseTheme() {
-        for (name, tag) in proseTags {
-            if let fg = Self.proseForegrounds[name] { shim_tag_set_str(tag, "foreground", fg) }
-            if let bg = Self.proseBackgrounds[name] { shim_tag_set_str(tag, "background", bg) }
-        }
-        setProseAttr("md-h1", weight: 700, size: 15)
-        setProseAttr("md-h2", weight: 700, size: 13)
-        setProseAttr("md-h3", weight: 600, size: 11.5)
-        setProseAttr("md-bold", weight: 700)
-        setProseAttr("md-italic", style: 2)      // PANGO_STYLE_ITALIC
-        setProseAttr("md-quote", style: 2)
-        setProseAttr("md-link", underline: 1)    // PANGO_UNDERLINE_SINGLE
-        setProseAttr("user", weight: 600)
-    }
-
-    private func setProseAttr(
-        _ name: String,
-        weight: Int = 0,
-        size: Double = 0,
-        style: Int = 0,
-        underline: Int = 0
-    ) {
-        guard let tag = proseTags[name] else { return }
-        if weight > 0 { shim_tag_set_int(tag, "weight", Int32(weight)) }
-        if size > 0 { shim_tag_set_double(tag, "size-points", size) }
-        if style > 0 { shim_tag_set_int(tag, "style", Int32(style)) }
-        if underline > 0 { shim_tag_set_int(tag, "underline", Int32(underline)) }
+    private func escapeMarkup(_ s: String) -> String {
+        s.replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
     }
 
     // MARK: - Code buffer
@@ -481,7 +438,7 @@ final class TranscriptWidgets {
                 if let weight = Self.syntaxWeights[token.tag] { shim_tag_set_int(created, "weight", Int32(weight)) }
                 if Self.syntaxItalics.contains(token.tag) { shim_tag_set_int(created, "style", 2) }
                 tagCache[token.tag] = created
-                trackTag(token.tag, created, syntax: true)
+                trackTag(token.tag, created)
                 tag = created
             } else {
                 tag = nil
@@ -490,37 +447,26 @@ final class TranscriptWidgets {
         }
     }
 
-    // MARK: - User bubble label (markdown-lite → Pango markup)
+    // MARK: - Tag tracking
 
-    /// Convert rendered markdown segments to a Pango-markup string for the
-    /// bubble's label. Text is escaped; styled runs map through
-    /// `bubbleTagMarkup`. Block-level tags (headings, fences) degrade to
-    /// inline styling — chat bubbles are inline-only, per Enclave.
-    private func bubbleLabel(_ text: String) -> UnsafeMutablePointer<GtkWidget>? {
-        let label = shim_label("")
-        shim_label_wrap(label)
-        shim_label_max_width_chars(label, 48)
-        shim_label_selectable(label)
-
-        var markup = ""
-        for segment in renderTranscriptSegments(body: text, role: "assistant") {
-            guard !segment.text.isEmpty else { continue }
-            let open = Self.bubbleTagMarkup[segment.tag] ?? ""
-            if open.isEmpty {
-                markup += escapeMarkup(segment.text)
-            } else {
-                let close = open.hasPrefix("span") ? "</span>" : "</\(open)>"
-                markup += "<\(open)>\(escapeMarkup(segment.text))\(close)"
-            }
-        }
-        shim_label_set_markup(label, markup)
-        return label
+    private func trackTag(_ name: String, _ tag: UnsafeMutablePointer<GtkTextTag>) {
+        liveSyntaxTags.append((name, tag))
+        shim_tag_track_gone(tag, tagTrackerHandle, Self.tagGoneForwarder)
     }
 
-    private func escapeMarkup(_ s: String) -> String {
-        s.replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
+    /// Weak-ref trampoline: removes a dying tag from the tracking array so
+    /// `applyTheme` never touches freed memory after a transcript clear. The
+    /// factory instance outlives every tag it creates (retained once in
+    /// `tagTrackerHandle`), so an unretained self here is safe.
+    private static let tagGoneForwarder: ShimTagGoneHandler = { userData, goneObject in
+        guard let userData else { return }
+        let factory = Unmanaged<TranscriptWidgets>.fromOpaque(userData).takeUnretainedValue()
+        guard let gone = goneObject else { return }
+        factory.removeDeadTag(UnsafeMutableRawPointer(gone))
+    }
+
+    private func removeDeadTag(_ gone: UnsafeMutableRawPointer) {
+        liveSyntaxTags.removeAll { UnsafeMutableRawPointer($0.tag) == gone }
     }
 }
 

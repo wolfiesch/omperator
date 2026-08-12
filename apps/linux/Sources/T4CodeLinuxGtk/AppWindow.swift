@@ -40,6 +40,8 @@ final class AppWindow {
     private var paneVisible = false
     private var activePane = "terminal"
     private var terminalFed = false
+    private var railBox: UnsafeMutablePointer<GtkWidget>?
+    private var railVisible = true
 
     init(app: UnsafeMutablePointer<GtkApplication>?) {
         guard let appPtr = app, let win = gtk_application_window_new(appPtr) else { return }
@@ -58,6 +60,7 @@ final class AppWindow {
 
         // Rail (left)
         let rail = shim_box_new(0, 0)
+        railBox = rail
         addClass(rail, "rail")
         shim_widget_size(rail, 232)
         shim_box_append(root, rail)
@@ -89,6 +92,10 @@ final class AppWindow {
 
         let header = shim_box_new(1, 8)
         addClass(header, "card")
+        let railToggle = shim_button("☰")
+        addClass(railToggle, "card")
+        onSignal(railToggle, "clicked") { [weak self] in self?.toggleRail() }
+        shim_box_append(header, railToggle)
         statusLabel = makeLabel("connecting…", "subtle")
         shim_widget_halign_start(statusLabel)
         shim_box_append(header, statusLabel)
@@ -196,6 +203,12 @@ final class AppWindow {
         paneVisible.toggle()
         guard let sidebar = paneSidebar else { return }
         if paneVisible { shim_widget_show(sidebar) } else { shim_widget_hide(sidebar) }
+    }
+
+    private func toggleRail() {
+        railVisible.toggle()
+        guard let rail = railBox else { return }
+        if railVisible { shim_widget_show(rail) } else { shim_widget_hide(rail) }
     }
 
     private func showPane(_ name: String) {
