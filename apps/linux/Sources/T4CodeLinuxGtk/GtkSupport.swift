@@ -75,6 +75,13 @@ func installMainActorPump() {
     }, nil)
 }
 
+/// Forwarder for one-shot GLib idle callbacks (box pattern, freed after run).
+let idleForwarder: @convention(c) (UnsafeMutableRawPointer?) -> gboolean = { userData in
+    guard let userData else { return gboolean(0) }
+    Unmanaged<GtkBox>.fromOpaque(userData).takeRetainedValue().value()
+    return gboolean(0)
+}
+
 /// Run a block on the main actor from within a GLib callback (main thread).
 func onMainActor(_ action: @escaping @MainActor () -> Void) {
     MainActor.assumeIsolated { action() }

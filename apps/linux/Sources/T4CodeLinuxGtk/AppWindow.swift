@@ -34,6 +34,8 @@ final class AppWindow {
     private var pinnedToBottom = true
     private var lastScrollValue = 0.0
     private var lastScrollUpper = 0.0
+    /// Per-session scroll position, saved on swap and restored on return.
+    private var scrollPositions: [String: Double] = [:]
     // Panes (browser sidebar; terminal/files stay available in PanesFactory)
     private let panes = PanesFactory()
     private var paneSidebar: UnsafeMutablePointer<GtkWidget>?
@@ -595,10 +597,20 @@ final class AppWindow {
         guard let selected = store.selectedSession else { return }
         let sid = selected.sessionId
         if sid != lastSelectedId {
+            // Leaving the previous session: remember its scroll position.
+            if !lastSelectedId.isEmpty, let scroll = transcriptScroll {
+                scrollPositions[lastSelectedId] = shim_scroll_get(scroll)
+            }
             lastSelectedId = sid
             renderedSessionId = sid
             renderedEntryCount = 0
             clearTranscript()
+            // Restore the incoming session's saved position, or open at the
+            // bottom on first visit. Deferred so the content has laid out.
+            let saved = scrollPositions[sid]
+            pinnedToBottom = saved == nil
+            let box = GtkBox { [weak self] in self?.restoreScroll(saved) }
+            shim_idle(idleForwarder, Unmanaged.passRetained(box).toOpaque())
         }
         let entries = store.transcript(for: sid)
         if entries.count < renderedEntryCount {
@@ -610,6 +622,15 @@ final class AppWindow {
         for entry in newEntries { appendEntry(entry) }
         renderedEntryCount = entries.count
         scrollTranscriptToBottom()
+    }
+
+    private func restoreScroll(_ saved: Double?) {
+        guard let scroll = transcriptScroll else { return }
+        if let saved {
+            shim_scroll_set(scroll, saved)
+        } else {
+            shim_scroll_to_max(scroll)
+        }
     }
 
     private func clearTranscript() {

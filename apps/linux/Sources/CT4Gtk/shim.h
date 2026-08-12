@@ -398,3 +398,13 @@ static inline void shim_popover_popup(GtkWidget *popover) { gtk_popover_popup(GT
 
 /* Visibility queries (settings panel toggle state). */
 static inline int shim_widget_visible(GtkWidget *w) { return gtk_widget_get_visible(w); }
+
+/* Scroll position save/restore (per-session scroll memory). */
+static inline double shim_scroll_get(GtkWidget *scroll) {
+    return gtk_adjustment_get_value(gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroll)));
+}
+static inline void shim_scroll_set(GtkWidget *scroll, double value) {
+    GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroll));
+    gtk_adjustment_set_value(adj, value);
+}
+static inline void shim_idle(GSourceFunc cb, gpointer userData) { g_idle_add(cb, userData); }
