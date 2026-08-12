@@ -568,3 +568,15 @@ scrollbar slider:hover {
   color: #F6C177;
   font-weight: 600;
 }
+
+/* Card header button: strip button chrome so it reads as a plain row that
+   happens to be clickable (activation, not a visible button). */
+.card-header-btn {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  margin: 0;
+  min-height: 0;
+}
+.card-header-btn:hover { background: transparent; }

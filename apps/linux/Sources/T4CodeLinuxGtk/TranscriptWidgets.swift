@@ -235,8 +235,9 @@ final class TranscriptWidgets {
         let header = shim_box_new(1, 8)
         addClass(header, "card-header")
 
-        // Clickable title area: chevron + title, hexpanded so the whole row
-        // (up to any extras like COPY) is a press target.
+        // Clickable title area: chevron + title inside a real GtkButton so
+        // activation works inside the transcript's scrolled window (a raw
+        // GtkGestureClick on a box loses the press to the scroller's drag).
         let clickable = shim_box_new(1, 6)
         shim_widget_expand(clickable, 1)
         let chevron = makeLabel("▸", "card-chevron")
@@ -246,7 +247,10 @@ final class TranscriptWidgets {
             shim_widget_halign_start(titleLabel)
             shim_box_append(clickable, titleLabel)
         }
-        shim_box_append(header, clickable)
+        let headerButton = shim_button_child(clickable)
+        addClass(headerButton, "card-header-btn")
+        shim_widget_expand(headerButton, 1)
+        shim_box_append(header, headerButton)
         extras?(header!)
         shim_box_append(card, header)
 
@@ -254,7 +258,7 @@ final class TranscriptWidgets {
             shim_box_append(card, body)
             shim_widget_hide(body)   // cards start collapsed
             var expanded = false
-            onPressed(clickable) {
+            onSignal(UnsafeMutableRawPointer(headerButton), "clicked") {
                 expanded.toggle()
                 if expanded {
                     shim_css_class_remove(card, "collapsed")

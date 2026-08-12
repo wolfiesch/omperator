@@ -412,3 +412,12 @@ static inline void shim_track_gone(void *gobject, void *userData, ShimTagGoneHan
     g_object_weak_ref(G_OBJECT(gobject), (GWeakNotify)notify, userData);
 }
 
+
+/* A flat button wrapping a custom child (card headers) — GtkButton activation
+   works reliably inside a GtkScrolledWindow where a bubble-phase
+   GtkGestureClick on a plain box can lose the press to the scroller's drag. */
+static inline GtkWidget *shim_button_child(GtkWidget *child) {
+    GtkWidget *b = gtk_button_new();
+    gtk_button_set_child(GTK_BUTTON(b), child);
+    return b;
+}
