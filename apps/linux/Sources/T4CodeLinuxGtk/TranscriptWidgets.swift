@@ -21,9 +21,13 @@ import HostWire
 /// ~1-char width (GTK measures with for_size=-1 and uses the last layout's
 /// height), so every prose block would balloon to thousands of pixels. Labels
 /// compute wrap height correctly; `max-width-chars` caps the natural width so
-/// the block never overflows the column. Code blocks keep the text-view +
-/// per-token-tag path (nowrap natural height is content-accurate), and the
-/// copy button writes the raw code to the clipboard.
+/// the block never overflows the column. Wrap mode is GTK_WRAP_WORD (see
+/// `shim_label_wrap_words`): GTK 4.22 measures WORD_CHAR-wrapped labels'
+/// one-line width as both min and natural, which pinned the transcript column
+/// to the widest paragraph and stopped re-wrap on rail/sidebar toggles.
+/// Code blocks keep the text-view + per-token-tag path (nowrap natural height
+/// is content-accurate), and the copy button writes the raw code to the
+/// clipboard.
 ///
 /// Entry dispatch: AppWindow calls `buildEntry` once per transcript entry and
 /// parents the returned widget; the scroll pin / store wiring live elsewhere.
@@ -334,7 +338,10 @@ final class TranscriptWidgets {
     ) -> UnsafeMutablePointer<GtkWidget>? {
         let label = shim_label("")
         if !cssClass.isEmpty { addClass(label, cssClass) }
-        shim_label_wrap(label)
+        // GTK_WRAP_WORD, not WORD_CHAR: GTK 4.22 measures a WORD_CHAR-wrapped
+        // label's one-line width as both min and natural, so it never re-wraps
+        // when the column resizes (right edge cut off). WORD wraps to any width.
+        shim_label_wrap_words(label)
         shim_label_selectable(label)
         shim_label_max_width_chars(label, Int32(maxChars))
         shim_widget_halign_start(label)
@@ -347,7 +354,7 @@ final class TranscriptWidgets {
     /// guidance) capped at 110 chars.
     private func metaLabelWidget(_ text: String) -> UnsafeMutablePointer<GtkWidget>? {
         let label = makeLabel(text, "tool-meta")
-        shim_label_wrap(label)
+        shim_label_wrap_words(label)
         shim_label_selectable(label)
         shim_label_max_width_chars(label, 110)
         shim_widget_halign_start(label)

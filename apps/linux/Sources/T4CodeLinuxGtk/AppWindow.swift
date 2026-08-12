@@ -28,6 +28,7 @@ final class AppWindow {
     private var lastSessionCount = -1
     private var lastConnected = false
     private var lastError: String?
+    private var lastTitle = ""
     private var dark = true
     private var transcriptScroll: UnsafeMutablePointer<GtkWidget>?
     private var pinnedToBottom = true
@@ -42,6 +43,9 @@ final class AppWindow {
     private var terminalFed = false
     private var railBox: UnsafeMutablePointer<GtkWidget>?
     private var railVisible = true
+    private var miniButton: UnsafeMutablePointer<GtkWidget>?
+    private var miniMode = false
+    private var fullSize: (width: Int, height: Int)?
 
     init(app: UnsafeMutablePointer<GtkApplication>?) {
         guard let appPtr = app, let win = gtk_application_window_new(appPtr) else { return }
@@ -70,13 +74,9 @@ final class AppWindow {
         shim_widget_halign_start(railTitle)
         shim_box_append(railHeader, railTitle)
         themeButton = shim_button("◐")
-        addClass(themeButton, "card")
+        addClass(themeButton, "flat-btn")
         onSignal(themeButton, "clicked") { [weak self] in self?.toggleTheme() }
         shim_box_append(railHeader, themeButton)
-        let panesButton = shim_button("▤")
-        addClass(panesButton, "card")
-        onSignal(panesButton, "clicked") { [weak self] in self?.togglePanes() }
-        shim_box_append(railHeader, panesButton)
         shim_box_append(rail, railHeader)
 
         let railScroll = shim_scrolled_window()
@@ -91,14 +91,24 @@ final class AppWindow {
         shim_box_append(root, center)
 
         let header = shim_box_new(1, 8)
-        addClass(header, "card")
+        addClass(header, "topbar")
         let railToggle = shim_button("☰")
-        addClass(railToggle, "card")
+        addClass(railToggle, "flat-btn")
         onSignal(railToggle, "clicked") { [weak self] in self?.toggleRail() }
         shim_box_append(header, railToggle)
-        statusLabel = makeLabel("connecting…", "subtle")
+        let panesButton = shim_button("▤")
+        addClass(panesButton, "flat-btn")
+        onSignal(panesButton, "clicked") { [weak self] in self?.togglePanes() }
+        shim_box_append(header, panesButton)
+        statusLabel = makeLabel("connecting…", "topbar-title")
         shim_widget_halign_start(statusLabel)
         shim_box_append(header, statusLabel)
+        // Right end: mini-mode toggle (compact always-on-top-capable window).
+        shim_box_append(header, shim_spacer())
+        miniButton = shim_button("⤢")
+        addClass(miniButton, "flat-btn")
+        onSignal(miniButton, "clicked") { [weak self] in self?.toggleMiniMode() }
+        shim_box_append(header, miniButton)
         shim_box_append(center, header)
 
         let scroll = shim_scrolled_window()
@@ -144,7 +154,7 @@ final class AppWindow {
 
     private func buildPanesSidebar(_ root: UnsafeMutablePointer<GtkWidget>?) {
         let sidebar = shim_box_new(0, 6)
-        addClass(sidebar, "rail")
+        addClass(sidebar, "pane-sidebar")
         shim_widget_size(sidebar, 380)
         paneSidebar = sidebar
 
@@ -152,7 +162,7 @@ final class AppWindow {
         let tabs = shim_box_new(1, 4)
         for (name, labelText) in [("terminal", "Terminal"), ("browser", "Browser"), ("files", "Files")] {
             let button = shim_button(labelText)
-            addClass(button, "card")
+            addClass(button, "flat-btn")
             let paneName = name
             onSignal(button, "clicked") { [weak self] in self?.showPane(paneName) }
             shim_widget_expand(button, 1)
@@ -209,6 +219,30 @@ final class AppWindow {
         railVisible.toggle()
         guard let rail = railBox else { return }
         if railVisible { shim_widget_show(rail) } else { shim_widget_hide(rail) }
+    }
+
+    // MARK: - Mini mode
+
+    private func toggleMiniMode() {
+        miniMode.toggle()
+        guard let win = window else { return }
+        if miniMode {
+            // Save the full geometry, then go compact: hide sidebars, shrink.
+            var w: Int32 = 0, h: Int32 = 0
+            shim_window_get_size(win, &w, &h)
+            fullSize = (Int(w), Int(h))
+            if railVisible { railVisible = false; railBox.map { shim_widget_hide($0) } }
+            if paneVisible { paneVisible = false; paneSidebar.map { shim_widget_hide($0) } }
+            shim_window_resize(win, 440, 560)
+            CompositorPin.setPinned(true, window: win)
+        } else {
+            // Restore: full size, sidebars back, unpin.
+            CompositorPin.setPinned(false, window: win)
+            if let size = fullSize { shim_window_resize(win, Int32(size.width), Int32(size.height)) }
+            railVisible = true
+            railBox.map { shim_widget_show($0) }
+            // The pane sidebar restores to its pre-mini visibility only if it was open.
+        }
     }
 
     private func showPane(_ name: String) {
@@ -290,11 +324,15 @@ final class AppWindow {
     private func refreshConnection() {
         let connected = store.connected
         let error = store.lastError
-        guard connected != lastConnected || error != lastError else { return }
+        let title = store.selectedSession?.title ?? ""
+        guard connected != lastConnected || error != lastError || title != lastTitle else { return }
         lastConnected = connected
         lastError = error
+        lastTitle = title
         let text: String
-        if let error, !error.isEmpty {
+        if !title.isEmpty {
+            text = title
+        } else if let error, !error.isEmpty {
             text = "⚠ \(error)"
         } else {
             text = connected ? "● connected" : "○ connecting…"

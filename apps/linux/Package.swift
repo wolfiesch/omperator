@@ -85,7 +85,8 @@ let package = Package(
                 "T4CodeLinuxLib",
                 "CT4Gtk",
             ],
-            path: "Sources/T4CodeLinuxGtk"
+            path: "Sources/T4CodeLinuxGtk",
+            linkerSettings: [.linkedLibrary("X11")]
         ),
     ]
 )

@@ -13,13 +13,24 @@ window {
 /* ── Session rail ─────────────────────────────────────────── */
 
 .rail {
-  background-color: #2A273F;
-  border: 1px solid #1B1930;
-  border-top-color: #44415A;
+  background-color: transparent;
+  border: none;
+  border-right: 1px solid #393552;
   border-radius: 0;
   padding: 10px;
-  margin: 10px;
-  box-shadow: 0 1px 3px rgba(14, 12, 24, 0.6);
+  margin: 0;
+  box-shadow: none;
+}
+
+/* Right pane sidebar (renamed from .rail in widget code; both styled). */
+.pane-sidebar {
+  background-color: transparent;
+  border: none;
+  border-left: 1px solid #393552;
+  border-radius: 0;
+  padding: 10px;
+  margin: 0;
+  box-shadow: none;
 }
 
 .rail-item {
@@ -36,7 +47,7 @@ window {
 /* ── Transcript ───────────────────────────────────────────── */
 
 .transcript {
-  background-color: #232136;
+  background-color: transparent;
   padding: 16px;
   font-family: "Fira Sans", "Helvetica Neue", sans-serif;
   font-size: 10.5pt;
@@ -45,35 +56,31 @@ window {
 /* Right-aligned glass card; widget code positions it, we style the surface. */
 .user-bubble {
   background-color: rgba(57, 53, 82, 0.55);
-  border: 1px solid rgba(86, 82, 110, 0.7);
-  border-top-color: rgba(144, 140, 170, 0.5);
-  border-bottom-color: rgba(27, 25, 48, 0.8);
+  border: 1px solid #393552;
   border-radius: 0;
   padding: 10px 13px;
   color: #E0DEF4;
   font-family: "Fira Sans", "Helvetica Neue", sans-serif;
-  box-shadow: 0 1px 2px rgba(14, 12, 24, 0.5),
-              0 0 8px rgba(144, 140, 170, 0.06);
+  font-size: 15px;
+  box-shadow: none;
 }
 
 .assistant-message {
   background-color: transparent;
   color: #E0DEF4;
   font-family: "New York", "Charter", Georgia, serif;
-  font-size: 16px;
+  font-size: 18px;
 }
 
 .code-block {
   background-color: #2A273F;
-  border: 1px solid #1B1930;
-  border-top-color: #44415A;
+  border: 1px solid #393552;
   border-radius: 0;
   padding: 10px 12px;
   font-family: "JetBrains Mono", "Cascadia Code", monospace;
-  font-size: 10pt;
+  font-size: 12.5pt;
   color: #9CCFD8;
-  box-shadow: inset 0 1px 3px rgba(14, 12, 24, 0.7),
-              0 0 6px rgba(156, 207, 216, 0.08);
+  box-shadow: none;
 }
 
 /* Code header row: uppercase done in widget code (no text-transform in GTK). */
@@ -194,21 +201,21 @@ window {
 /* ── Markdown / transcript elements ───────────────────────── */
 
 .md-h1 {
-  font-size: 15pt;
+  font-size: 17pt;
   font-weight: 700;
   color: #F6C177;
   margin: 12px 0 6px 0;
 }
 
 .md-h2 {
-  font-size: 13pt;
+  font-size: 15pt;
   font-weight: 700;
   color: #F6C177;
   margin: 10px 0 5px 0;
 }
 
 .md-h3 {
-  font-size: 11.5pt;
+  font-size: 13pt;
   font-weight: 600;
   color: #E0DEF4;
   margin: 8px 0 4px 0;
@@ -222,7 +229,7 @@ window {
   border-radius: 0;
   padding: 1px 4px;
   font-family: "JetBrains Mono", "Cascadia Code", monospace;
-  font-size: 9.5pt;
+  font-size: 12pt;
   color: #9CCFD8;
 }
 
@@ -304,7 +311,7 @@ window {
   border-top-color: #F8CE90;
   border-bottom-color: #D99A45;
   border-radius: 0;
-  padding: 6px 14px;
+  padding: 4px 12px;
   font-weight: 600;
   box-shadow: 0 1px 3px rgba(14, 12, 24, 0.5),
               0 0 6px rgba(246, 193, 119, 0.25);
@@ -350,4 +357,36 @@ scrollbar slider {
 
 scrollbar slider:hover {
   background-color: #6E6A86;
+}
+
+/* Flat glyph buttons (toggles) — no box until hover (retro-2005 toolbar). */
+.flat-btn {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 2px 7px;
+  color: #6E6A86;
+  font-weight: 500;
+  box-shadow: none;
+}
+.flat-btn:hover {
+  background: rgba(57,53,82,0.55);
+  color: #E0DEF4;
+}
+.flat-btn:active {
+  background: rgba(57,53,82,0.55);
+}
+
+/* Slim top bar: no card chrome, aligned with the sidebar header rows. */
+.topbar {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid #393552;
+  padding: 2px 6px;
+  min-height: 0;
+}
+.topbar-title {
+  color: #FFFFFF;
+  font-weight: 600;
+  font-size: 13px;
 }

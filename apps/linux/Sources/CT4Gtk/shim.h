@@ -180,6 +180,23 @@ static inline void shim_label_wrap(GtkWidget *w) {
     gtk_label_set_wrap_mode(GTK_LABEL(w), GTK_WRAP_WORD_CHAR);
     gtk_label_set_xalign(GTK_LABEL(w), 0.0);
 }
+
+/* Wrapping label for the transcript column. Deliberately uses GTK_WRAP_WORD,
+   NOT the WORD_CHAR mode that shim_label_wrap sets: on GTK 4.22 a GtkLabel
+   measured in GTK_WRAP_WORD_CHAR mode reports its one-line width as BOTH its
+   minimum and natural width (the "as many line breaks as possible" minimum
+   computation breaks for WORD_CHAR), so such a label can never shrink below
+   the full unwrapped text width. Inside the transcript scrolled window that
+   forces the column to the widest paragraph's one-line width: toggling the
+   rail/pane sidebar never shrinks the column, the label never re-wraps, and
+   the right edge of the text is cut off. GTK_WRAP_WORD measures correctly
+   (min = longest word, natural = capped wrap width), so labels re-wrap at
+   any allocated width, both directions. */
+static inline void shim_label_wrap_words(GtkWidget *w) {
+    gtk_label_set_wrap(GTK_LABEL(w), 1);
+    gtk_label_set_wrap_mode(GTK_LABEL(w), GTK_WRAP_WORD);
+    gtk_label_set_xalign(GTK_LABEL(w), 0.0);
+}
 static inline void shim_label_set_markup(GtkWidget *w, const char *markup) { gtk_label_set_markup(GTK_LABEL(w), markup); }
 static inline void shim_label_max_width_chars(GtkWidget *w, int chars) { gtk_label_set_max_width_chars(GTK_LABEL(w), chars); }
 
@@ -215,3 +232,126 @@ static inline void shim_scroll_to_max(GtkWidget *scroll) {
     GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroll));
     gtk_adjustment_set_value(adj, gtk_adjustment_get_upper(adj) - gtk_adjustment_get_page_size(adj));
 }
+
+/* Window sizing for mini mode */
+static inline void shim_window_resize(GtkWidget *win, int width, int height) { gtk_window_set_default_size(GTK_WINDOW(win), width, height); }
+static inline void shim_window_get_size(GtkWidget *win, int *width, int *height) { gtk_window_get_default_size(GTK_WINDOW(win), width, height); }
+static inline GtkWidget *shim_spacer(void) { GtkWidget *s = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0); gtk_widget_set_hexpand(s, 1); return s; }
+
+/* ── Compositor pin (always-on-top) ──────────────────────────
+   X11 EWMH support for CompositorPin.swift. `gdk_x11_*` resolve from
+   libgtk-4 itself (both backends are built in on this distro), while the
+   Xlib entry points are resolved at runtime via dlopen: GTK's pkg-config
+   link line does not include -lX11, so link-time Xlib references would be
+   undefined, but libX11 is already loaded into the process as libgtk-4's
+   dependency. dlopen/dlsym is the only zero-dependency way to reach it.
+   Guarded by GDK_WINDOWING_X11 (defined in gdkconfig.h via <gtk/gtk.h>)
+   so a hypothetical wayland-only GTK build still compiles. */
+
+#ifdef GDK_WINDOWING_X11
+#include <gdk/x11/gdkx.h>
+#include <X11/Xatom.h>
+#include <dlfcn.h>
+
+static inline const char *shim_window_title(GtkWidget *win) {
+    return win ? gtk_window_get_title(GTK_WINDOW(win)) : NULL;
+}
+
+/* The toplevel X11 window id of a realized GTK window, or 0 when the
+   surface is not an X11 surface (Wayland, or window not yet realized). */
+static inline unsigned long shim_x11_xid(GtkWidget *win) {
+    if (win == NULL) return 0;
+    GdkSurface *surface = gtk_native_get_surface(GTK_NATIVE(win));
+    if (surface == NULL || !GDK_IS_X11_SURFACE(surface)) return 0;
+    return (unsigned long)gdk_x11_surface_get_xid(surface);
+}
+
+/* Xlib function table resolved from the already-loaded libX11 (glibc's
+   dlopen/dlsym are always available — no extra link flags). */
+typedef Display *(*ShimXOpenDisplay)(const char *);
+typedef int (*ShimXCloseDisplay)(Display *);
+typedef Atom (*ShimXInternAtom)(Display *, const char *, Bool);
+typedef int (*ShimXGetWindowProperty)(Display *, Window, Atom, long, long, Bool, Atom, Atom *, int *, unsigned long *, unsigned long *, unsigned char **);
+typedef int (*ShimXChangeProperty)(Display *, Window, Atom, Atom, int, int, const unsigned char *, int);
+typedef int (*ShimXSync)(Display *, Bool);
+typedef int (*ShimXFree)(void *);
+
+typedef struct {
+    ShimXOpenDisplay open_display;
+    ShimXCloseDisplay close_display;
+    ShimXInternAtom intern_atom;
+    ShimXGetWindowProperty get_window_property;
+    ShimXChangeProperty change_property;
+    ShimXSync sync;
+    ShimXFree free;
+} ShimXlib;
+
+static inline int shim_x11_load(ShimXlib *x) {
+    void *h = dlopen("libX11.so.6", RTLD_LAZY);
+    if (h == NULL) return 0;
+    union { void *p; ShimXOpenDisplay fn; } u;
+#define SHIM_DLSYM(name, field) do { u.p = dlsym(h, name); x->field = u.fn; if (x->field == NULL) return 0; } while (0)
+    SHIM_DLSYM("XOpenDisplay", open_display);
+    SHIM_DLSYM("XCloseDisplay", close_display);
+    SHIM_DLSYM("XInternAtom", intern_atom);
+    SHIM_DLSYM("XGetWindowProperty", get_window_property);
+    SHIM_DLSYM("XChangeProperty", change_property);
+    SHIM_DLSYM("XSync", sync);
+    SHIM_DLSYM("XFree", free);
+#undef SHIM_DLSYM
+    return 1;
+}
+
+/* Add (above != 0) or remove (above == 0) EWMH _NET_WM_STATE_ABOVE on the
+   given X11 window id. Idempotent: reads the current state list, rewrites it
+   with the ABOVE bit added or removed. Returns 1 on success, 0 when the
+   display cannot be opened (headless) — the caller treats 0 as a no-op. */
+static inline int shim_x11_set_above(unsigned long xid, int above) {
+    if (xid == 0) return 0;
+    ShimXlib x;
+    if (!shim_x11_load(&x)) return 0;
+    Display *dpy = x.open_display(NULL);
+    if (dpy == NULL) return 0;
+    Window win = (Window)xid;
+    Atom net_wm_state = x.intern_atom(dpy, "_NET_WM_STATE", False);
+    Atom atom_above = x.intern_atom(dpy, "_NET_WM_STATE_ABOVE", False);
+
+    Atom actual_type = None;
+    int actual_format = 0;
+    unsigned long nitems = 0, bytes_after = 0;
+    unsigned char *prop = NULL;
+    int ok = x.get_window_property(dpy, win, net_wm_state, 0, 256, False, XA_ATOM,
+                                   &actual_type, &actual_format, &nitems, &bytes_after, &prop);
+    Atom *atoms = (ok == Success && actual_format == 32 && prop != NULL) ? (Atom *)prop : NULL;
+    int has = 0;
+    for (unsigned long i = 0; i < nitems; i++) {
+        if (atoms[i] == atom_above) { has = 1; break; }
+    }
+    if ((above && has) || (!above && !has)) {
+        if (prop != NULL) x.free(prop);
+        x.close_display(dpy);
+        return 1;
+    }
+
+    unsigned long total = above ? nitems + 1 : nitems - 1;
+    Atom *next = NULL;
+    if (above) {
+        next = (Atom *)calloc(total, sizeof(Atom));
+        memcpy(next, atoms, nitems * sizeof(Atom));
+        next[nitems] = atom_above;
+    } else {
+        next = (Atom *)malloc(total * sizeof(Atom));
+        unsigned long j = 0;
+        for (unsigned long i = 0; i < nitems; i++) {
+            if (atoms[i] != atom_above) next[j++] = atoms[i];
+        }
+    }
+    x.change_property(dpy, win, net_wm_state, XA_ATOM, 32, PropModeReplace,
+                      (unsigned char *)next, (int)total);
+    x.sync(dpy, False);
+    free(next);
+    if (prop != NULL) x.free(prop);
+    x.close_display(dpy);
+    return 1;
+}
+#endif /* GDK_WINDOWING_X11 */

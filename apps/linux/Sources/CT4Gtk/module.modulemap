@@ -1,5 +1,6 @@
 module CT4Gtk [system] {
   header "shim.h"
   link "gtk-4"
+  link "X11"
   export *
 }
