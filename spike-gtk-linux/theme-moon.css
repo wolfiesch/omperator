@@ -563,7 +563,8 @@ scrollbar slider:hover {
   font-size: 8.5pt;
 }
 .rail-segment-active {
-  background-color: rgba(246, 193, 119, 0.16);
+  /* Active = gold label + weight, no fill slab (the filled pill read as
+     generic UI; the accent color carries "selected" on its own). */
   color: #F6C177;
-  border-radius: 5px;
+  font-weight: 600;
 }
