@@ -11,19 +11,27 @@ struct EphemeralConnectionCredentials: Equatable {
     let endpoint: String
     let deviceId: String
     let deviceToken: String
+    let certificatePin: String?
 
-    init(endpoint: String, deviceId: String, deviceToken: String) {
+    init(
+        endpoint: String,
+        deviceId: String,
+        deviceToken: String,
+        certificatePin: String? = nil
+    ) {
         self.endpoint = endpoint
         self.deviceId = deviceId
         self.deviceToken = deviceToken
+        self.certificatePin = certificatePin
     }
 
-    /// Parse `-T4Endpoint=`, `-T4DeviceId=`, `-T4DeviceToken=` launch
-    /// overrides (the pairing/QA seam; mirrors the Apple version).
+    /// Parse the endpoint, device identity, token, and optional certificate-pin
+    /// launch overrides (the pairing/QA seam; mirrors the desktop clients).
     init?(arguments: [String] = ProcessInfo.processInfo.arguments) {
         var endpoint: String?
         var deviceId: String?
         var deviceToken: String?
+        var certificatePin: String?
         for argument in arguments {
             if argument.hasPrefix("-T4Endpoint=") {
                 endpoint = String(argument.dropFirst("-T4Endpoint=".count))
@@ -31,10 +39,18 @@ struct EphemeralConnectionCredentials: Equatable {
                 deviceId = String(argument.dropFirst("-T4DeviceId=".count))
             } else if argument.hasPrefix("-T4DeviceToken=") {
                 deviceToken = String(argument.dropFirst("-T4DeviceToken=".count))
+            } else if argument.hasPrefix("-T4CertificatePin=") {
+                let value = String(argument.dropFirst("-T4CertificatePin=".count))
+                certificatePin = value.isEmpty ? nil : value
             }
         }
         guard let endpoint, let deviceId, let deviceToken else { return nil }
-        self.init(endpoint: endpoint, deviceId: deviceId, deviceToken: deviceToken)
+        self.init(
+            endpoint: endpoint,
+            deviceId: deviceId,
+            deviceToken: deviceToken,
+            certificatePin: certificatePin
+        )
     }
 }
 

@@ -511,16 +511,18 @@ struct StatusPill: View {
     var body: some View {
         let (label, color) = Self.style(status)
 #if os(Windows)
-        // WINDOWS-GAP: WinUIBackend ellipsizes a single leading Text even
-        // through fixed sizing. Two intrinsic runs preserve the status label.
-        let uppercased = label.uppercased()
+        // WINDOWS-GAP: WinUIBackend can ellipsize even a fixed-size leading
+        // Text inside this constrained row. Intrinsic glyph runs preserve the
+        // complete status without changing the shared rail geometry.
+        let glyphs = label.uppercased().map(String.init)
         HStack(spacing: 0) {
-            Text(String(uppercased.prefix(3))).fixedSize()
-            Text(String(uppercased.dropFirst(3))).fixedSize()
+            ForEach(Array(glyphs.enumerated()), id: \.offset) { item in
+                Text(item.element).fixedSize()
+            }
         }
         .font(.system(size: 10, weight: .semibold))
         .foregroundColor(color)
-        .frame(width: t4PlatformMetric(34), alignment: .leading)
+        .frame(width: t4PlatformMetric(40), alignment: .leading)
 #else
         Text(label.uppercased())
             .font(.system(size: 10, weight: .semibold))

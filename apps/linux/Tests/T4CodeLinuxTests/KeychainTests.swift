@@ -44,7 +44,7 @@ struct KeychainTests {
         #expect(Keychain.get(key) == nil)
     }
 
-    /// EphemeralConnectionCredentials parses the launch-argument triple.
+    /// EphemeralConnectionCredentials parses the launch triple and optional pin.
     @Test
     func ephemeralCredentialsParse() {
         let args = [
@@ -52,12 +52,14 @@ struct KeychainTests {
             "-T4Endpoint=ws://127.0.0.1:9999/fixture",
             "-T4DeviceId=dev-1",
             "-T4DeviceToken=tok-1",
+            "-T4CertificatePin=sha256:fixture-pin",
         ]
         let creds = EphemeralConnectionCredentials(arguments: args)
         #expect(creds != nil)
         #expect(creds?.endpoint == "ws://127.0.0.1:9999/fixture")
         #expect(creds?.deviceId == "dev-1")
         #expect(creds?.deviceToken == "tok-1")
+        #expect(creds?.certificatePin == "sha256:fixture-pin")
 
         #expect(EphemeralConnectionCredentials(arguments: ["test"]) == nil)
         // Incomplete triples are rejected.

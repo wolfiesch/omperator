@@ -13,25 +13,31 @@ import GtkBackend
 enum T4TypographyRole: String, CaseIterable, Hashable, Sendable {
     case displayTitle = "display-title"
     case assistantBody = "assistant-paragraph"
+    case transcriptWide = "transcript-wide-paragraph"
+    case transcriptWideNatural = "transcript-wide-natural"
     case userBody = "user-paragraph"
     case toolResult = "tool-result-paragraph"
     case railSubtitle = "rail-subtitle"
     case settingsBody = "settings-body"
 
     var expectedWindowsFamily: String {
-        self == .toolResult ? "DejaVu Sans Mono" : "DejaVu Sans"
+        self == .toolResult ? "DejaVu Sans Mono" : "Cantarell"
     }
 
     var expectedWindowsFontFile: String {
         switch self {
-        case .displayTitle: "DejaVuSans-Bold.ttf"
+        case .displayTitle: "Cantarell-Bold.otf"
         case .toolResult: "DejaVuSansMono.ttf"
-        default: "DejaVuSans.ttf"
+        default: "Cantarell-Regular.otf"
         }
     }
 
     var expectedFontFace: String {
-        self == .displayTitle ? "Bold" : "Book"
+        switch self {
+        case .displayTitle: "Bold"
+        case .toolResult: "Book"
+        default: "Regular"
+        }
     }
 }
 
@@ -60,6 +66,7 @@ public struct T4TypographyFixtureView: View {
     @State private var theme = ThemeStore()
 
     private static let sample = "Typography parity keeps glyph size, weight, wrapping width, and line spacing aligned across Linux and Windows without replacing either platform text renderer."
+    private static let transcriptWideSample = "On it. The empty usage pane was a demo-data gap, not a render bug — the pane only had a live path. Seeding a sample `UsageReadResult` for captures, then retaking all 28 stills at 1920×1080 in **dawn** and **moon**."
 
     public init() {}
 
@@ -80,6 +87,23 @@ public struct T4TypographyFixtureView: View {
                         .font(.system(size: 15))
                         .foregroundColor(t.txt)
                         .frame(width: t4PlatformMetric(780), alignment: .leading)
+                }
+
+                fixtureSection("Transcript wide paragraph") {
+                    Text(Self.transcriptWideSample)
+                        .t4TypographyProbe(.transcriptWide)
+                        .font(.system(size: 15))
+                        .foregroundColor(t.txt)
+                        .frame(width: t4PlatformMetric(1568), alignment: .leading)
+                }
+
+                fixtureSection("Transcript wide natural advance") {
+                    Text(Self.transcriptWideSample)
+                        .t4TypographyProbe(.transcriptWideNatural)
+                        .font(.system(size: 15))
+                        .foregroundColor(t.txt)
+                        .lineLimit(1)
+                        .frame(width: t4PlatformMetric(1568), alignment: .leading)
                 }
 
                 fixtureSection("User paragraph") {
@@ -126,7 +150,7 @@ public struct T4TypographyFixtureView: View {
                 }
             }
             .padding(t4PlatformMetric(32))
-            .frame(width: t4PlatformMetric(900), alignment: .leading)
+            .frame(width: t4PlatformMetric(1632), alignment: .leading)
         }
         .colorScheme(theme.effective == .dark ? .dark : .light)
         .foregroundColor(t.txt)
@@ -248,7 +272,7 @@ private enum T4WindowsTypographyDiagnostics {
         guard let reportURL else { return }
         let report = Report(
             fontRegistrationComplete: T4WindowsFonts.areBundledFontsRegistered,
-            expectedSansFontFile: "DejaVuSans.ttf",
+            expectedSansFontFile: "Cantarell-Regular.otf",
             expectedMonospacedFontFile: "DejaVuSansMono.ttf",
             fallbackDetected: samples.values.contains(where: \.fallbackDetected),
             samples: samples
@@ -320,9 +344,22 @@ private enum T4LinuxTypographyDiagnostics {
         .map { String($0.dropFirst("-T4TypographyReport=".count)) }
         .flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
     private static var samples: [String: NativeSample] = [:]
+    private static var scheduled: Set<String> = []
 
     static func record(role: T4TypographyRole, label: Gtk.Label) {
-        guard reportURL != nil, samples[role.rawValue] == nil else { return }
+        guard reportURL != nil,
+              samples[role.rawValue] == nil,
+              scheduled.insert(role.rawValue).inserted
+        else { return }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            recordNow(role: role, label: label)
+            scheduled.remove(role.rawValue)
+        }
+    }
+
+    private static func recordNow(role: T4TypographyRole, label: Gtk.Label) {
+        guard samples[role.rawValue] == nil else { return }
         let resolvedFont = resolvedFont(for: label)
         let naturalSize = label.getNaturalSize()
         let horizontal = label.measure(orientation: .horizontal, forPerpendicularSize: -1)
@@ -395,7 +432,7 @@ private enum T4LinuxTypographyDiagnostics {
     private static func persist() {
         guard let reportURL else { return }
         let report = Report(
-            expectedSansFontconfigFamily: "DejaVu Sans",
+            expectedSansFontconfigFamily: "Cantarell",
 
             expectedMonospacedFontconfigFamily: "DejaVu Sans Mono",
             samples: samples

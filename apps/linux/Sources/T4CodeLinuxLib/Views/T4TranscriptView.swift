@@ -89,11 +89,35 @@ struct T4TranscriptView: View {
 struct T4UserBubble: View {
     let entry: TranscriptEntry
     let theme: Theme
-    private var verticalPadding: Int {
+    private var textTopPadding: Int {
+#if os(Windows)
+        8
+#else
+        9
+#endif
+    }
+
+    private var textBottomPadding: Int {
+#if os(Windows)
+        4
+#else
+        9
+#endif
+    }
+
+    private var chromeTopInset: Int {
+#if os(Windows)
+        2
+#else
+        0
+#endif
+    }
+
+    private var chromeBottomInset: Int {
 #if os(Windows)
         6
 #else
-        9
+        0
 #endif
     }
 
@@ -119,14 +143,19 @@ struct T4UserBubble: View {
                     .foregroundColor(theme.txt)
                     .textSelectionEnabled()
                     .padding(.horizontal, 12)
-                    .padding(.vertical, verticalPadding)
+                    .padding(.top, textTopPadding)
+                    .padding(.bottom, textBottomPadding)
                     .background {
                         RoundedRectangle(cornerRadius: 14)
                             .fill(theme.glassFill)
+                            .padding(.top, chromeTopInset)
+                            .padding(.bottom, chromeBottomInset)
                     }
                     .overlay {
                         RoundedRectangle(cornerRadius: 14)
                             .stroke(theme.line, style: StrokeStyle(width: 1))
+                            .padding(.top, chromeTopInset)
+                            .padding(.bottom, chromeBottomInset)
                     }
                     .frame(maxWidth: proxy.size.width * 0.85, alignment: .trailing)
             }

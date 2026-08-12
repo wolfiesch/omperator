@@ -1,9 +1,8 @@
 --- a/Sources/Gtk/Widgets/ScrolledWindow.swift
 +++ b/Sources/Gtk/Widgets/ScrolledWindow.swift
-@@ -3,6 +3,50 @@
+@@ -3,5 +3,49 @@
  public class ScrolledWindow: Widget {
      var child: Widget?
- 
 +    /// Omperator: stick-to-bottom anchoring for streaming transcripts. While
 +    /// enabled, the view stays pinned to the newest content as it grows when
 +    /// the scrollbar was within range of the bottom before the growth;

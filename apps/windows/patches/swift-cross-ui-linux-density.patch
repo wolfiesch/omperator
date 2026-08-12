@@ -57,7 +57,7 @@ index 2ded9817..32cf3846 100644
  public struct Picker<Value: Equatable>: View {
      /// The options to be offered by the picker.
 diff --git a/Sources/WinUIBackend/WinUIBackend.swift b/Sources/WinUIBackend/WinUIBackend.swift
-index 6252c91b..a6dc45a4 100644
+index 6252c91b..6f023396 100644
 --- a/Sources/WinUIBackend/WinUIBackend.swift
 +++ b/Sources/WinUIBackend/WinUIBackend.swift
 @@ -12,6 +12,15 @@ import Mutex
@@ -70,7 +70,7 @@ index 6252c91b..a6dc45a4 100644
 +private let omperatorDensityScale = 2.0 / 3.0
 +
 +private enum OmperatorFontFamilies {
-+    @MainActor static let sans = WinUI.FontFamily("DejaVu Sans")
++    @MainActor static let sans = WinUI.FontFamily("Cantarell")
 +    @MainActor static let monospaced = WinUI.FontFamily("DejaVu Sans Mono")
 +}
 
@@ -270,7 +270,7 @@ index 6252c91b..a6dc45a4 100644
              picker.actualForegroundColor =
                  environment.suggestedForegroundColor.resolve(in: environment).uwpColor
 
-@@ -2092,12 +2116,79 @@ extension EnvironmentValues {
+@@ -2092,12 +2116,103 @@ extension EnvironmentValues {
          brush.color = suggestedForegroundColor.resolve(in: self).uwpColor
          return brush
      }
@@ -282,6 +282,30 @@ index 6252c91b..a6dc45a4 100644
 +                brush.color = UWP.Color(a: 255, r: 255, g: 250, b: 243)
 +            case .dark:
 +                brush.color = UWP.Color(a: 255, r: 42, g: 39, b: 63)
++        }
++        return brush
++    }
++
++    @MainActor
++    var omperatorInputBorderBrush: WinUI.SolidColorBrush {
++        let brush = SolidColorBrush()
++        switch colorScheme {
++            case .light:
++                brush.color = UWP.Color(a: 255, r: 223, g: 218, b: 217)
++            case .dark:
++                brush.color = UWP.Color(a: 255, r: 57, g: 53, b: 82)
++        }
++        return brush
++    }
++
++    @MainActor
++    var omperatorInputFocusBrush: WinUI.SolidColorBrush {
++        let brush = SolidColorBrush()
++        switch colorScheme {
++            case .light:
++                brush.color = UWP.Color(a: 128, r: 234, g: 157, b: 52)
++            case .dark:
++                brush.color = UWP.Color(a: 115, r: 246, g: 193, b: 119)
 +        }
 +        return brush
 +    }
@@ -326,16 +350,16 @@ index 6252c91b..a6dc45a4 100644
 +            )
 +        } else if let textField = control as? TextBoxProtocol {
 +            let background = omperatorInputSurfaceBrush
-+            let clear = omperatorClearBrush
++            let border = omperatorInputBorderBrush
 +            textField.padding = Thickness(left: 6, top: 2, right: 6, bottom: 3)
 +            textField.background = background
-+            textField.borderBrush = clear
-+            textField.borderThickness = Thickness(left: 0, top: 0, right: 0, bottom: 0)
++            textField.borderBrush = border
++            textField.borderThickness = Thickness(left: 0.8, top: 0.8, right: 0.8, bottom: 0.8)
 +            textField.cornerRadius = CornerRadius(topLeft: 6, topRight: 6, bottomRight: 6, bottomLeft: 6)
 +            _ = textField.resources.insert("TextControlBackgroundPointerOver", background)
 +            _ = textField.resources.insert("TextControlBackgroundFocused", background)
-+            _ = textField.resources.insert("TextControlBorderBrushPointerOver", clear)
-+            _ = textField.resources.insert("TextControlBorderBrushFocused", clear)
++            _ = textField.resources.insert("TextControlBorderBrushPointerOver", border)
++            _ = textField.resources.insert("TextControlBorderBrushFocused", omperatorInputFocusBrush)
 +            _ = textField.resources.insert("TextControlPlaceholderForeground", omperatorPlaceholderBrush)
 +        } else if let picker = control as? CustomComboBox {
 +            let background = omperatorInputSurfaceBrush
@@ -351,7 +375,7 @@ index 6252c91b..a6dc45a4 100644
          control.foreground = winUIForegroundBrush
          control.isEnabled = isEnabled
          if resolvedFont.isItalic {
-@@ -2114,10 +2205,16 @@ extension EnvironmentValues {
+@@ -2114,10 +2229,16 @@ extension EnvironmentValues {
      @MainActor
      func apply(to textBlock: WinUI.TextBlock) {
          let resolvedFont = resolvedFont
@@ -370,7 +394,7 @@ index 6252c91b..a6dc45a4 100644
 
          if resolvedFont.isItalic {
              textBlock.fontStyle = .italic
-@@ -2126,20 +2223,52 @@ extension EnvironmentValues {
+@@ -2126,20 +2247,40 @@ extension EnvironmentValues {
  }
 
  extension Font.Resolved {
@@ -384,26 +408,14 @@ index 6252c91b..a6dc45a4 100644
 +        }
 +    }
 +
-+    /// DirectWrite's regular DejaVu advances are tighter than Pango's, while the
-+    /// real bold face already matches. Compensate regular body text only.
++    /// Cantarell's DirectWrite advances are slightly tighter than Pango's
++    /// normalized run. Monospaced text retains its independent correction.
 +    var winUICharacterSpacing: Int32 {
-+        if design == .monospaced { return 116 }
-+        switch weight {
-+            case .ultraLight, .thin, .light, .regular, .medium:
-+                return pointSize >= 15 ? 70 : 50
-+            case .semibold, .bold, .heavy, .black:
-+                return 0
-+        }
++        design == .monospaced ? 116 : 30
 +    }
 +
 +    var winUIFontSizeScale: Double {
-+        guard pointSize >= 18 else { return omperatorDensityScale }
-+        switch weight {
-+            case .semibold, .bold, .heavy, .black:
-+                return 0.79
-+            case .ultraLight, .thin, .light, .regular, .medium:
-+                return omperatorDensityScale
-+        }
++        omperatorDensityScale
 +    }
 +
      var winUIFontWeight: UInt16 {
@@ -428,7 +440,7 @@ index 6252c91b..a6dc45a4 100644
              case .bold:
                  700
              case .heavy:
-@@ -2150,6 +2279,10 @@ extension Font.Resolved {
+@@ -2150,6 +2291,10 @@ extension Font.Resolved {
      }
  }
 
@@ -439,7 +451,7 @@ index 6252c91b..a6dc45a4 100644
  final class CustomComboBox: ComboBox {
      var options: [String] = []
      var onChangeSelection: ((Int?) -> Void)?
-@@ -2228,15 +2361,21 @@ public class CustomWindow: WinUI.Window {
+@@ -2228,15 +2373,21 @@ public class CustomWindow: WinUI.Window {
      }
 
      var scaleFactor: Double {

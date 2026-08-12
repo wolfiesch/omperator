@@ -779,7 +779,10 @@ struct T4SettingsPane: View {
             }
             .padding(.horizontal, t4PlatformMetric(18))
 #if os(Windows)
-            .padding(.vertical, t4PlatformMetric(4))
+            // WINDOWS-GAP: start the settings groups at the same normalized
+            // vertical origin as GTK without inheriting WinUI's loose native
+            // control padding.
+            .padding(.vertical, t4PlatformMetric(12))
 #else
             .padding(.vertical, 16)
 #endif
@@ -841,6 +844,14 @@ struct T4SettingsPane: View {
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundColor(t.txt)
                         Spacer()
+#if os(Windows)
+                        settingsPicker(
+                            ["default"] + store.catalogModels.map(\.id),
+                            selected: roleValue(role.id)
+                        ) { new in
+                            Task { await setRole(role.id, new) }
+                        }
+#else
                         // LINUX-GAP: macOS Picker(label:selection:) with
                         // .pickerStyle(.menu) + .tint — SwiftCrossUI Picker
                         // takes options + Binding<Value?>; label is a sibling.
@@ -854,6 +865,7 @@ struct T4SettingsPane: View {
                             )
                         )
                         .pickerStyle(.menu)
+#endif
                     }
                 }
             }
@@ -870,6 +882,11 @@ struct T4SettingsPane: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(t.txt)
                 Spacer()
+#if os(Windows)
+                settingsPicker(thinkingLevels, selected: thinkingLevel()) { new in
+                    Task { await setThinkingLevel(new) }
+                }
+#else
                 Picker(
                     of: thinkingLevels,
                     selection: Binding(
@@ -880,6 +897,7 @@ struct T4SettingsPane: View {
                     )
                 )
                 .pickerStyle(.menu)
+#endif
             }
 
             cardRow {
@@ -887,6 +905,13 @@ struct T4SettingsPane: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(t.txt)
                 Spacer()
+#if os(Windows)
+                let selectedApproval = approvalModes.first { $0.id == approvalMode() }?.label ?? "Always ask"
+                settingsPicker(approvalModes.map(\.label), selected: selectedApproval) { new in
+                    guard let mode = approvalModes.first(where: { $0.label == new }) else { return }
+                    Task { await setApprovalMode(mode.id) }
+                }
+#else
                 Picker(
                     of: approvalModes.map(\.label),
                     selection: Binding(
@@ -900,6 +925,7 @@ struct T4SettingsPane: View {
                     )
                 )
                 .pickerStyle(.menu)
+#endif
             }
         }
     }
@@ -1048,6 +1074,14 @@ struct T4SettingsPane: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(t.txt)
                 Spacer()
+#if os(Windows)
+                settingsPicker(
+                    ["System", "Dark", "Light"],
+                    selected: Self.appearanceLabel(theme.mode)
+                ) { new in
+                    theme.mode = Self.appearance(from: new)
+                }
+#else
                 // LINUX-GAP: macOS binds the picker directly to $theme.mode;
                 // SwiftCrossUI pickers display `"\(option)"`, so options are
                 // human labels bridged to Appearance.
@@ -1061,6 +1095,7 @@ struct T4SettingsPane: View {
                     )
                 )
                 .pickerStyle(.menu)
+#endif
             }
         }
     }
@@ -1080,6 +1115,26 @@ struct T4SettingsPane: View {
                 .lineLimit(1)
         }
     }
+#if os(Windows)
+    /// GTK's menu picker is a compact text-sized pill without a disclosure
+    /// glyph. A WinUI ComboBox reserves a large arrow column and truncates
+    /// selectors in the authoritative narrow pane, so use the same native
+    /// menu-button seam as the session toolbar.
+    @ViewBuilder
+    private func settingsPicker(
+        _ options: [String],
+        selected: String,
+        onSelect: @escaping (String) -> Void
+    ) -> some View {
+        Menu(selected) {
+            ForEach(options, id: \.self) { option in
+                T4TextButton(option) { onSelect(option) }
+            }
+        }
+        .font(.system(size: 13))
+        .foregroundColor(t.txtBody)
+    }
+#endif
 
     private static func appearanceLabel(_ a: Appearance) -> String {
         switch a {
