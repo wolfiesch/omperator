@@ -23,6 +23,8 @@ export interface FixtureWebSocketOptions {
    * standalone host runner opts in so streamed scenarios play live.
    */
   realTime?: boolean;
+  /** Commands whose confirmation challenge is bypassed for explicit QA runners. */
+  autoApproveCommands?: readonly string[];
 }
 export class FixtureWebSocketServer {
   readonly engine: FixtureEngine;
@@ -45,7 +47,9 @@ export class FixtureWebSocketServer {
       typeof options.scenario === "object"
         ? options.scenario
         : loadScenario(options.scenario ?? "basic-v1");
-    this.engine = new FixtureEngine(seed, options.scheduler);
+    this.engine = new FixtureEngine(seed, options.scheduler, {
+      autoApproveCommands: options.autoApproveCommands,
+    });
     this.path = options.path ?? DEFAULT_PATH;
     if (!/^\/[A-Za-z0-9/_-]+$/u.test(this.path))
       throw new Error("fixture websocket path must be an absolute simple path");

@@ -81,6 +81,38 @@ export interface FixtureClient {
   readonly attached: boolean;
 }
 
+export type FixtureTerminalObservation =
+  | {
+      readonly kind: "open";
+      readonly sessionId: string;
+      readonly terminalId: string;
+      readonly cols: number;
+      readonly rows: number;
+    }
+  | {
+      readonly kind: "input";
+      readonly sessionId: string;
+      readonly terminalId: string;
+      readonly data: string;
+    }
+  | {
+      readonly kind: "resize";
+      readonly sessionId: string;
+      readonly terminalId: string;
+      readonly cols: number;
+      readonly rows: number;
+    }
+  | {
+      readonly kind: "close";
+      readonly sessionId: string;
+      readonly terminalId: string;
+      readonly reason?: string;
+    };
+
+export interface FixtureEngineOptions {
+  readonly autoApproveCommands?: readonly string[] | undefined;
+}
+
 export class FixtureEngine {
   readonly scheduler: VirtualScheduler;
   readonly seed: ScenarioSeed;
@@ -107,9 +139,19 @@ export class FixtureEngine {
   private controlRevision = 0;
   private createdSessions = new Map<string, CreatedFixtureSession>();
   private nextCreatedSession = 1;
-  constructor(seed: ScenarioSeed, scheduler = new VirtualScheduler()) {
+  private nextTerminal = 1;
+  private terminalSessions = new Map<string, string>();
+  private terminalInputBuffers = new Map<string, string>();
+  private terminalEventLog: FixtureTerminalObservation[] = [];
+  private readonly autoApproveCommands: ReadonlySet<string>;
+  constructor(
+    seed: ScenarioSeed,
+    scheduler = new VirtualScheduler(),
+    options: FixtureEngineOptions = {},
+  ) {
     this.seed = seed;
     this.scheduler = scheduler;
+    this.autoApproveCommands = new Set(options.autoApproveCommands ?? []);
     this.epoch = seed.epoch;
     this.revision = branded<Revision>(seed.revision);
     this.settingsRevision = branded<Revision>(seed.revision);
@@ -136,6 +178,10 @@ export class FixtureEngine {
   get sessions(): readonly SessionRef[] {
     return this.currentSessionRefs();
   }
+  /** Deterministic terminal commands observed by the fixture host. */
+  get terminalObservations(): readonly FixtureTerminalObservation[] {
+    return this.terminalEventLog.map((event) => ({ ...event }));
+  }
   get stateHash(): string {
     return canonicalSha256({
       seed: this.seed,
@@ -146,6 +192,8 @@ export class FixtureEngine {
       sessions: this.currentSessionRefs(),
       journal: this.journal.map((frame) => frame.cursor),
       durableEntries: this.durableEntries.map((entry) => entry.id),
+      terminals: [...this.terminalSessions],
+      terminalObservations: this.terminalEventLog,
       clients: [...this.clients].map(([id, state]) => ({
         id,
         closed: state.closed,
@@ -233,6 +281,7 @@ export class FixtureEngine {
         this.emitTerminalOutput(state, frame);
         break;
       case "terminal.resize":
+        this.observeTerminalResize(frame);
         break;
       case "terminal.close":
         this.emitTerminalExit(state, frame);
@@ -639,7 +688,10 @@ export class FixtureEngine {
       ...(frame.confirmationId === undefined ? {} : { confirmationId: frame.confirmationId }),
       args: frame.args,
     });
-    if (descriptor.confirmation === "challenge") {
+    if (
+      descriptor.confirmation === "challenge" &&
+      !this.autoApproveCommands.has(frame.command)
+    ) {
       if (frame.confirmationId !== undefined) {
         this.emit(state, {
           ...base,
@@ -751,9 +803,26 @@ export class FixtureEngine {
     if (frame.decision === "approve" && response.ok)
       this.emitCommandSideFrames(state, command, response);
   }
-  private emitTerminalOutput(
+  private openFixtureTerminal(frame: CommandFrame): string {
+    const ordinal = this.nextTerminal++;
+    const terminalId = ordinal === 1 ? "terminal-fixture" : `terminal-fixture-${ordinal}`;
+    const sessionId = String(frame.sessionId ?? this.seed.sessionId);
+    const cols = typeof frame.args.cols === "number" ? frame.args.cols : 80;
+    const rows = typeof frame.args.rows === "number" ? frame.args.rows : 24;
+    this.terminalSessions.set(terminalId, sessionId);
+    this.terminalInputBuffers.set(terminalId, "");
+    this.terminalEventLog.push({ kind: "open", sessionId, terminalId, cols, rows });
+    return terminalId;
+  }
+  private emitTerminalData(
     state: ClientState,
-    frame: Extract<ClientFrame, { type: "terminal.input" }>,
+    frame: {
+      readonly hostId: HostId;
+      readonly sessionId: SessionId;
+      readonly terminalId: string;
+      readonly encoding?: string;
+    },
+    data: string,
   ): void {
     this.emit(state, {
       v: V,
@@ -763,14 +832,67 @@ export class FixtureEngine {
       terminalId: frame.terminalId,
       cursor: this.currentCursor,
       stream: "stdout",
-      data: frame.data,
+      data,
       ...(frame.encoding === undefined ? {} : { encoding: frame.encoding }),
     } as unknown as ServerFrame);
+  }
+  private emitTerminalOutput(
+    state: ClientState,
+    frame: Extract<ClientFrame, { type: "terminal.input" }>,
+  ): void {
+    this.terminalEventLog.push({
+      kind: "input",
+      sessionId: String(frame.sessionId),
+      terminalId: String(frame.terminalId),
+      data: frame.data,
+    });
+    this.emitTerminalData(state, frame, frame.data);
+
+    let buffer = this.terminalInputBuffers.get(String(frame.terminalId)) ?? "";
+    const commandInput = frame.data.replace(/\u001b(?:\[[0-?]*[ -/]*[@-~]|O.)/g, "");
+    for (const character of commandInput) {
+      if (character === "\r" || character === "\n") {
+        const command = buffer.trim();
+        this.emitTerminalData(
+          state,
+          frame,
+          `\n\u001b[36mfixture output: ${command.length > 0 ? command : "(empty command)"}\u001b[0m\r\n$ `,
+        );
+        buffer = "";
+      } else if (character === "\u007f" || character === "\b") {
+        buffer = Array.from(buffer).slice(0, -1).join("");
+      } else if (character === "\u0003") {
+        this.emitTerminalData(state, frame, "^C\r\n$ ");
+        buffer = "";
+      } else if (character === "\t") {
+        buffer += "    ";
+      } else if (character >= " ") {
+        buffer += character;
+      }
+    }
+    this.terminalInputBuffers.set(String(frame.terminalId), buffer);
+  }
+  private observeTerminalResize(
+    frame: Extract<ClientFrame, { type: "terminal.resize" }>,
+  ): void {
+    this.terminalEventLog.push({
+      kind: "resize",
+      sessionId: String(frame.sessionId),
+      terminalId: String(frame.terminalId),
+      cols: frame.cols,
+      rows: frame.rows,
+    });
   }
   private emitTerminalExit(
     state: ClientState,
     frame: Extract<ClientFrame, { type: "terminal.close" }>,
   ): void {
+    this.terminalEventLog.push({
+      kind: "close",
+      sessionId: String(frame.sessionId),
+      terminalId: String(frame.terminalId),
+      ...(frame.reason === undefined ? {} : { reason: frame.reason }),
+    });
     this.emit(state, {
       v: V,
       type: "terminal.exit",
@@ -780,6 +902,8 @@ export class FixtureEngine {
       cursor: this.currentCursor,
       exitCode: 0,
     } as unknown as ServerFrame);
+    this.terminalSessions.delete(String(frame.terminalId));
+    this.terminalInputBuffers.delete(String(frame.terminalId));
   }
   private emitCommandSideFrames(
     state: ClientState,
@@ -817,6 +941,23 @@ export class FixtureEngine {
         revision: this.settingsRevision,
         settings: this.settings,
       });
+      return;
+    }
+    if (frame.command === "term.open") {
+      const terminalId = (response.result as { terminalId?: string } | undefined)?.terminalId;
+      if (terminalId !== undefined) {
+        this.emitTerminalData(
+          state,
+          {
+            hostId: branded<HostId>(this.seed.hostId),
+            sessionId: frame.sessionId ?? branded<SessionId>(this.seed.sessionId),
+            terminalId,
+          },
+          "\u001b[1;35mOmperator fixture terminal\u001b[0m\r\n" +
+            "\u001b[32mANSI / VT renderer ready\u001b[0m\r\n" +
+            "progress 0%\r\u001b[2Kprogress 100%\r\n$ ",
+        );
+      }
       return;
     }
     const targetSessionId = frame.sessionId ?? branded<SessionId>(this.seed.sessionId);
@@ -907,16 +1048,17 @@ export class FixtureEngine {
     }
   }
   private settingsWriteEdits(frame: CommandFrame): Record<string, unknown>[] | null {
-    if (
-      frame.command !== "settings.write" ||
-      frame.args.expectedRevision !== frame.expectedRevision ||
-      !Array.isArray(frame.args.edits) ||
-      frame.args.edits.length === 0 ||
-      frame.args.edits.length > 32
-    )
-      return null;
+    if (frame.command !== "settings.write") return null;
+
+    const candidates = Array.isArray(frame.args.edits)
+      ? frame.args.expectedRevision === frame.expectedRevision
+        ? frame.args.edits
+        : null
+      : Object.entries(frame.args).map(([path, value]) => ({ path, scope: "global", value }));
+    if (candidates === null || candidates.length === 0 || candidates.length > 32) return null;
+
     const edits: Record<string, unknown>[] = [];
-    for (const candidate of frame.args.edits) {
+    for (const candidate of candidates) {
       if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate))
         return null;
       const edit = candidate as Record<string, unknown>;
@@ -987,7 +1129,7 @@ export class FixtureEngine {
         ok: false,
         error: {
           code: "invalid_args",
-          message: "settings write edits are invalid or unavailable",
+          message: "settings write payload is invalid or unavailable",
         },
       };
     const targetSessionId = frame.sessionId ?? branded<SessionId>(this.seed.sessionId);
@@ -1143,10 +1285,28 @@ export class FixtureEngine {
     if (frame.command === "session.delete") return { ...base, ok: true, result: { deleted: true } };
     if (frame.command === "files.read")
       return { ...base, ok: true, result: { content: "", revision: this.revision } };
+    if (frame.command === "review.read")
+      return {
+        ...base,
+        ok: true,
+        result: {
+          reviewId:
+            typeof frame.args.reviewId === "string" ? frame.args.reviewId : "review-fixture",
+          status: "pending",
+          path: "src/fixture.ts",
+          findings: [
+            {
+              severity: "warning",
+              message: "Fixture review finding for the mobile application flow.",
+              line: 12,
+            },
+          ],
+        },
+      };
     if (
       frame.command === "files.write" ||
       frame.command === "files.patch" ||
-      frame.command.startsWith("review.")
+      frame.command === "review.apply"
     )
       return { ...base, ok: true, result: {} };
     if (frame.command === "files.list") return { ...base, ok: true, result: { entries: [] } };
@@ -1164,7 +1324,11 @@ export class FixtureEngine {
       };
     if (frame.command === "files.diff") return { ...base, ok: true, result: { diff: "" } };
     if (frame.command === "term.open")
-      return { ...base, ok: true, result: { terminalId: "terminal-fixture" } };
+      return {
+        ...base,
+        ok: true,
+        result: { terminalId: this.openFixtureTerminal(frame) },
+      };
     if (frame.command === "audit.read" || frame.command === "audit.tail")
       return { ...base, ok: true, result: { events: [] } };
     if (frame.command === "catalog.get")
