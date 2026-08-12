@@ -278,15 +278,24 @@ window {
 /* ── Composer ─────────────────────────────────────────────── */
 
 .composer {
-  background-color: rgba(57, 53, 82, 0.55);
-  border: 1px solid rgba(86, 82, 110, 0.7);
-  border-top-color: rgba(144, 140, 170, 0.45);
-  border-bottom-color: rgba(27, 25, 48, 0.85);
+  /* Lifted, near-opaque surface (Rosé Pine highlight) so the composer reads
+     as a clearly raised card against the dark background — the dark analogue
+     of the light theme's white-on-cream input. */
+  background-color: rgba(68, 65, 90, 0.96);
+  border: 1px solid rgba(110, 106, 134, 0.9);
+  border-top-color: rgba(167, 162, 190, 0.85);
+  border-bottom-color: rgba(27, 25, 48, 0.9);
   border-radius: 0;
   padding: 8px 12px;
   margin: 10px 12px;
   box-shadow: 0 2px 6px rgba(14, 12, 24, 0.55),
               0 0 8px rgba(246, 193, 119, 0.06);
+}
+
+.composer:focus-within {
+  border-color: rgba(246, 193, 119, 0.55);
+  box-shadow: 0 2px 6px rgba(14, 12, 24, 0.55),
+              0 0 12px rgba(246, 193, 119, 0.18);
 }
 
 .composer-entry,
