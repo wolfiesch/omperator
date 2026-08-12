@@ -864,6 +864,10 @@ final class AppWindow {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         shim_entry_clear(entry)
+        // Sending a message means "watch this turn": re-pin to the bottom so
+        // the reply streams into view (the user may have released the pin by
+        // scrolling up to read earlier).
+        pinnedToBottom = true
         let store = self.store
         let sid = selected.sessionId
         Task { await store.sendPrompt(sessionId: sid, text: trimmed) }

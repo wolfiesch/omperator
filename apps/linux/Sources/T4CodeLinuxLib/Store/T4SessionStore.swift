@@ -784,6 +784,18 @@ final class T4SessionStore: ObservableObject {
     private func appendDurableEntry(_ entry: TranscriptEntry, sessionId: String) {
         var entries = liveEntries[sessionId] ?? []
         guard !entries.contains(where: { $0.id == entry.id }) else { return }
+        // Echo dedup: sending a prompt can surface the same user message twice
+        // (a snapshot replace plus a live entry frame) with different entry ids.
+        // An identical message — same role, body, and parent — already present
+        // is the echo, not a genuine repeat (a real re-send sits under a new
+        // parent in a later turn).
+        if entry.kind == .message,
+           entries.contains(where: {
+               $0.kind == .message && $0.role == entry.role
+                   && $0.body == entry.body && $0.parentId == entry.parentId
+           }) {
+            return
+        }
         entries.append(entry)
         liveEntries[sessionId] = entries
     }
