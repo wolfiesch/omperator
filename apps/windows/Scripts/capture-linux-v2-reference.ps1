@@ -29,8 +29,12 @@ cd /src/apps/linux
 swift package resolve --scratch-path /tmp/t4-linux-build
 # The pinned Linux patch omits the final context line in its first two hunks.
 # Apply the corrected capture copy without changing the pinned source archive.
-if git -C /tmp/t4-linux-build/checkouts/swift-cross-ui apply --check /repo/apps/windows/Scripts/swift-cross-ui-scroll-bottom-anchor.patch; then
-  git -C /tmp/t4-linux-build/checkouts/swift-cross-ui apply /repo/apps/windows/Scripts/swift-cross-ui-scroll-bottom-anchor.patch
+anchor_patch=/repo/apps/windows/Scripts/swift-cross-ui-scroll-bottom-anchor.patch
+if git -C /tmp/t4-linux-build/checkouts/swift-cross-ui apply --check "$anchor_patch" >/dev/null 2>&1; then
+  git -C /tmp/t4-linux-build/checkouts/swift-cross-ui apply "$anchor_patch"
+elif ! git -C /tmp/t4-linux-build/checkouts/swift-cross-ui apply --reverse --check "$anchor_patch" >/dev/null 2>&1; then
+  echo "SwiftCrossUI scroll-anchor patch is neither applicable nor already applied." >&2
+  exit 1
 fi
 mkdir -p /tmp/fixture-deps
 printf '{"private":true}\n' >/tmp/fixture-deps/package.json
