@@ -1,0 +1,34 @@
+--- a/apps/linux/Sources/T4CodeLinuxGtk/AppWindow.swift
++++ b/apps/linux/Sources/T4CodeLinuxGtk/AppWindow.swift
+@@ -74,6 +74,19 @@
+         // First run: no saved endpoint — offer the friendly login until the
+         // workspace actually connects (a live local gateway connects on its
+         // own, so the screen shows only when a sign-in is genuinely needed).
+-        onboardingArmed = !store.hasSavedConnection
++        let captureState = ProcessInfo.processInfo.arguments
++            .first(where: { $0.hasPrefix("-T4CaptureState=") })
++            .map { String($0.dropFirst("-T4CaptureState=".count)) }
++        onboardingArmed = captureState == nil && store.hasSavedConnection == false
++        switch captureState {
++        case "browser": togglePanes()
++        case "settings": toggleSettingsPanel()
++        case "sidebar-hidden": toggleRail()
++        case "compact": toggleMiniMode()
++        case "dawn": toggleTheme()
++        default: break
++        }
++        store.selectDefaultVisibleSessionIfNeeded()
++        store.startDemoStreamIfNeeded()
+         startRefreshTimer()
+     }
+--- a/apps/linux/Sources/T4CodeLinuxLib/Store/T4GtkBridge.swift
++++ b/apps/linux/Sources/T4CodeLinuxLib/Store/T4GtkBridge.swift
+@@ -27,6 +27,8 @@
+     public var selectedSession: SessionRef? { store.selectedSession }
+
+     public func select(_ session: SessionRef?) { store.select(session) }
++    public func selectDefaultVisibleSessionIfNeeded() { store.selectDefaultVisibleSessionIfNeeded() }
++    public func startDemoStreamIfNeeded() { store.startDemoStreamIfNeeded() }
+
+     public func sendPrompt(sessionId: String, text: String) async {
+         await store.sendPrompt(sessionId: sessionId, text: text)
