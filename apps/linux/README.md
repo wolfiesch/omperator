@@ -1,6 +1,8 @@
 # T4 Code — Native Linux Client
 
-> **Swift + SwiftCrossUI (GTK4 backend)** port of the macOS/iOS app lineage in `apps/ios/`.
+> **Swift + pure GTK4** port of the macOS/iOS app lineage in `apps/ios/`. The
+> UI is imperative GTK4 (via the `CT4Gtk` C shim) driven by the shared
+> `T4SessionStore` — no SwiftCrossUI in the build graph.
 
 | | |
 |---|---|
@@ -10,20 +12,20 @@
 
 ---
 
-## Status — views ported and integrated
+## Status — pure-GTK4 app wired to the shared store
 
 | Component | State |
 |---|---|
 | **HostWire** (shared package, `apps/ios/HostWire`) | ✅ Builds + 21/21 tests on Linux |
-| **Store layer** (`T4SessionStore` + domain models) | ✅ SHARED sources symlinked into `Sources/T4CodeLinux/Store/`; guarded imports keep the Apple build byte-identical |
-| **Observation bridge** | ✅ OpenCombine `objectWillChange` → SwiftCrossUI `Publisher` via `T4UIObservation` (dual-stack, proven pattern) |
+| **Store layer** (`T4SessionStore` + domain models) | ✅ Shared sources in `T4CodeLinuxLib/Store`; the GTK window drives them through the public `T4GtkBridge` facade |
+| **UI** | ✅ Pure-GTK4 widgets — rail, transcript (markdown + syntax highlighting), composer, onboarding/login, settings, mini mode, compositor pinning |
 | **Wire transport** | ✅ `LinuxWebSocketTransport` (RFC 6455 client — distro libcurl can't do WebSockets); ws:// works, wss:// pending |
-| **Views** | ✅ All 19 ported: rail, workspace, transcript, composer, detail, 4 panes, palette, inbox, connect, search, plan strip, ask card, model menu |
-| **VTE terminal** | ✅ In the drawer — commit-signal input, char-size resize, host-PTY feed |
-| **WebKitGTK browser** | ✅ Full pane — back/forward/reload + URL field (notify::uri/is-loading signals) |
+| **VTE terminal** | ✅ `PanesFactory` terminal pane — commit-signal input, char-size resize, host-PTY feed |
+| **WebKitGTK browser** | ✅ `PanesFactory` browser pane — back/forward/reload + URL field (notify::uri/is-loading signals) |
 | **Keychain** | ✅ libsecret via `secret-tool` |
 | **Notifications** | ✅ `notify-send` + T4Notifier (byte-faithful to macOS) |
-| **Demo mode** | ✅ Renders rail + detail with exact Rosé Pine Dawn tokens |
+| **Themes** | ✅ Bundled CSS (`Sources/T4CodeLinux/themes/`), loaded via `Bundle.module` — no absolute paths |
+| **Demo mode** | ✅ Renders rail + detail with exact Rosé Pine tokens (`-T4Demo`) |
 | **Live fixture host** | ✅ Full wire flow (hello→welcome→catalog→attach→transcript) verified |
 
 ### Identity
@@ -33,14 +35,15 @@ gold "voice" (terminal/live accent) is the identity line across both modes
 (Moon gold `#F6C177` ↔ Dawn gold `#EA9D34`). Selection is **highlighted
 text**, never rounded pills. A 3px accent stripe anchors the rail's left
 edge. VT323 is the terminal voice (fontconfig monospace alias + explicit
-VTE font). Short structural labels are `.lineLimit(1)` — no mid-word wraps.
+VTE font). Short structural labels never wrap mid-word.
 
 ### Tests
 
-`swift test` in `apps/linux` — **12/12 across 4 suites**:
+`swift test` in `apps/linux` — **13/13 across 4 suites**:
 
-- **Fixture wire integration** (4): handshake/welcome (local auth), catalog.get,
-  session.attach, invalid-token rejection — all against the live fixture server.
+- **Fixture wire integration** (5): handshake/welcome (local auth), catalog.get,
+  session.attach, invalid-token rejection, restore-to-last-session — all
+  against the live fixture server.
 - **Store prompt flow** (2): connect → session inventory; select → attach →
   sendPrompt → streaming transcript entries land in projection models.
 - **Keychain seam** (3): ephemeral round-trip, persistent round-trip
@@ -54,21 +57,19 @@ shut it down after; no display needed.
 
 ### Performance
 
-`swift build -c release`: **1.58s** startup to window (debug: 2.89s, −45%),
-79MB binary (debug: 107MB). Observation bridge coalesces store
-`objectWillChange` bursts into one UI update per main-loop pass.
+Release builds of the pure-GTK4 app start faster than the SwiftCrossUI
+stack they replaced (imperative widgets, no declarative diffing). Streaming
+transcript updates paint on a main-loop frame tick with scroll-follow
+pinning; the store's `objectWillChange` churn is read directly per tick
+rather than forwarded through an observation bridge.
 
 ### Verification gaps (need a vision-capable session)
 
-~~Visual parity is structural-only right now.~~ A headless Xvfb + xdotool +
-ImageMagick sweep has since driven the live wire flow end to end with
-screenshot verification (see below). `LINUX-GAP:` comments still mark every
-macOS-only construct (animations, context menus, scroll-to-bottom, custom
-fonts, PhotosPicker/dictation attachments). Theme glass materials are GTK
-background/overlay approximations. The VTE echo round-trip (type → host echo
-→ render) is now driven end-to-end through the real drawer keyboard path
-against the fixture (`stream-v1` + `realTime`): keystrokes reach the host and
-echoed output paints in the VTE.
+`LINUX-GAP:` comments still mark every macOS-only construct (animations,
+context menus, custom fonts, PhotosPicker/dictation attachments). Theme
+glass materials are GTK background/overlay approximations. The VTE echo
+round-trip (type → host echo → render) is driven end-to-end through the
+real drawer keyboard path against the fixture (`stream-v1` + `realTime`).
 
 ### Headless UI sweep
 
@@ -81,19 +82,11 @@ DISPLAY=:99 GDK_BACKEND=x11 GSK_RENDERER=cairo \
   -T4DeviceToken=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA -T4Theme=dark
 ```
 
-Seams used: `-T4Theme=dark|light|system` (forces appearance), the existing
-`-T4Show*`/`-T4Send`/`-T4Demo` set, and `FIXTURE_LOG_FRAMES=1` on the fixture
-host to trace incoming frames. Panes (files, agents, search, review,
-artifacts, usage, settings, browser) render in-window as a right sidebar
-beside the transcript — macOS split style, no separate top-levels; the
-connect/pair and rename sheets are the only remaining separate windows.
-Three framework quirks surfaced and fixed: overlay strokes ate entry focus
-(glass/etched now draw background rings), `RepresentingWidget` never
-re-receives representable values after mount (terminal output now pushes
-through `T4TerminalFeeds`), and a WebKitWebView's natural size is the page
-height (it now sits inside a GtkScrolledWindow so the host window stays
-bounded and the page scrolls internally). An exact `.frame(height:)` on a
-VTE representable suppresses text paint — the drawer uses `minHeight`.
+Seams used: `-T4Theme=dark|light` (forces appearance; default dark),
+`-T4WindowSize=1920x1080` (exact capture geometry — resizing a realized
+WebKitGTK view on Xvfb races its compositor), the existing `-T4Show*`/
+`-T4Send`/`-T4Demo` set, and `FIXTURE_LOG_FRAMES=1` on the fixture host to
+trace incoming frames.
 
 ---
 
@@ -110,66 +103,40 @@ export DISPLAY=:0 XAUTHORITY=/run/user/1000/xauth_wCjaKU
 
 ---
 
-## Architecture for view ports — read this first
+## Architecture
 
-### Import discipline
+### Package layout (`apps/linux/Package.swift`)
 
-| File kind | Imports | Never |
-|---|---|---|
-| Store / model | `OpenCombine` | SwiftCrossUI |
-| View | `SwiftCrossUI` | OpenCombine |
-| Bridge | qualifies `SwiftCrossUI.ObservableObject` fully | — |
+- `T4CodeLinuxLib` — the library: shared store (`Store/`), seams
+  (`Seams/`), OpenCombine compat. Testable from SwiftPM test targets.
+- `T4CodeLinux` — the pure-GTK4 executable: `AppWindow.swift` (window +
+  rail + composer + onboarding/settings), `TranscriptWidgets.swift`
+  (per-entry transcript cards), `PanesFactory.swift` (terminal/browser/
+  files panes), `MarkdownRenderer.swift` + `SyntaxHighlighter.swift`
+  (styled transcript text), `CompositorPin.swift` (mini-mode pinning),
+  `GtkSupport.swift` (signal plumbing + main-actor pump).
+- `CT4Gtk` / `CVTE` / `CWebKit` — `systemLibrary` shims for GTK4, VTE
+  (vte-2.91-gtk4), and WebKitGTK (webkitgtk-6.0).
+- `themes/` under the executable target is copied into the module bundle;
+  both `main.swift` and `AppWindow.applyTheme()` load CSS via
+  `Bundle.module.url(forResource:subdirectory:)`.
 
-### Observation
+### Store access
 
-```swift
-@State var store = T4SessionStore()
-```
+The executable never touches `T4SessionStore` directly — `T4GtkBridge`
+exposes the surface the window needs in public HostWire/Foundation types,
+and `AppWindow` polls it on a main-loop refresh tick plus event-driven
+refreshes (streaming frames, send, selection).
 
-Works because `T4UIObservation` exposes `didChange` on every model. Views observe exactly like SwiftUI: `@State` for owned observables, plain properties for passed-in ones.
+### Launch seams (parsed from `CommandLine.arguments`)
 
-### Missing SwiftUI APIs
-
-Verify before reaching for these:
-
-`ScrollViewReader` · `contextMenu` · `toolbar` · `FocusState` · `hidden` · `zIndex` · `onKeyPress` · `withAnimation` (no-op shim exists) · `.custom` fonts · `NavigationSplitView`
-
-**Substitutes:** `SplitView` for panes · `List` for the rail · `.alert` / `.sheet` exist · `onTapGesture` / `onHover` exist
-
-### Native widgets
-
-| Pane / service | File | Backend |
-|---|---|---|
-| Browser | `Seams/BrowserPane.swift` | WebKitGTK via CWebKit |
-| Terminal | `Seams/TerminalPane.swift` | VTE via CVTE |
-| Notifications | `Seams/Notify.swift` | — |
-| Credentials | `Seams/Keychain.swift` | libsecret via `secret-tool` |
-| Native widget theme | `Seams/GtkTheme.swift` | display-wide CSS provider (USER priority) |
-
-### Theme
-
-`Views/Theme.swift` holds the exact macOS token values:
-
-- **Dark** — Rosé Pine dark = VR mono + amber
-- **Light** — Rosé Pine Dawn + gold
-
-Port the glass materials (`GlassBG` / `EtchedBG`) as background/overlay approximations — GTK4 has no materials; hairline borders + translucent fills are the target look. VT323 terminal voice: install the font and map via CSS if exact parity is needed.
-
----
-
-## Reference files — source of truth for 1:1 ports
-
-| Linux file | Port from (`apps/ios/Sources`) |
+| Seam | Effect |
 |---|---|
-| `Views/Rail.swift` *(todo)* | `T4SessionsView.swift` |
-| `Views/SessionDetail.swift` *(todo)* | `T4SessionDetailView.swift` |
-| `Views/Transcript.swift` *(todo)* | `T4TranscriptView.swift` |
-| `Views/Workspace.swift` *(todo)* | `T4WorkspaceView.swift` |
-| `Views/Panes.swift` *(todo)* | `T4PanesView.swift`, `T4FilesPane.swift`, `T4SearchPane.swift`, `T4InboxView.swift`, `T4AgentsPane.swift` |
-| `Views/Palette.swift` *(todo)* | `T4PaletteView.swift` |
-| `Views/Connect.swift` *(todo)* | `T4ConnectView.swift` |
-
-The store API is identical to the macOS app's — same method names, same published properties. Port view bodies; when a modifier doesn't exist, pick the closest SwiftCrossUI construct and note the substitution in a comment.
+| `-T4Endpoint=` / `-T4DeviceId=` / `-T4DeviceToken=` | pairing/QA overrides (Keychain seam) |
+| `-T4NoRestore` | fresh-state run; no Secret Service access |
+| `-T4Theme=dark\|light` | force appearance for headless sweeps |
+| `-T4WindowSize=WxH` | exact launch geometry (captures) |
+| `-T4Demo` / `-T4DemoStream` | store-level demo rail + streaming driver |
 
 ---
 

@@ -34,7 +34,7 @@ final class AppWindow {
     private var lastConnected = false
     private var lastError: String?
     private var lastTitle = ""
-    private var dark = true
+    private var dark = AppWindow.launchDark
     private var transcriptScroll: UnsafeMutablePointer<GtkWidget>?
     private var pinnedToBottom = true
     private var lastScrollValue = 0.0
@@ -78,6 +78,30 @@ final class AppWindow {
     private var lastRailTimeRefresh = -60.0
     private var railTimeLabels: [String: UnsafeMutablePointer<GtkWidget>] = [:]
 
+    /// Launch seam: -T4Theme=dark|light forces the appearance for headless
+    /// screenshot sweeps; anything else (including system) keeps the dark
+    /// Rosé Pine Moon default.
+    private static var launchDark: Bool {
+        guard let raw = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("-T4Theme=") }) else {
+            return true
+        }
+        return String(raw.dropFirst("-T4Theme=".count)) != "light"
+    }
+
+    /// Capture seam: -T4WindowSize=1920x1080 launches at exact capture
+    /// geometry — resizing a realized WebKitGTK view on Xvfb races its
+    /// compositor and can leave the browser pane unpainted.
+    private static var launchSize: (width: Int, height: Int) {
+        guard let raw = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("-T4WindowSize=") }) else {
+            return (1180, 760)
+        }
+        let parts = raw.dropFirst("-T4WindowSize=".count).split(separator: "x")
+        guard parts.count == 2, let w = Int(parts[0]), let h = Int(parts[1]) else {
+            return (1180, 760)
+        }
+        return (w, h)
+    }
+
     init(app: UnsafeMutablePointer<GtkApplication>?) {
         guard let appPtr = app, let win = gtk_application_window_new(appPtr) else { return }
         window = win
@@ -92,7 +116,7 @@ final class AppWindow {
     // MARK: - Build
 
     private func build(_ win: UnsafeMutablePointer<GtkWidget>) {
-        shim_window(win, "T4 Code", 1180, 760)
+        shim_window(win, "T4 Code", Int32(Self.launchSize.width), Int32(Self.launchSize.height))
 
         // Window root is an overlay: the workspace beneath, the first-run
         // login screen above (hidden until the store connects).
@@ -236,6 +260,10 @@ final class AppWindow {
         buildPanesSidebar(workspace)
 
         buildOnboarding(root)
+
+        // Apply the launch theme (main.swift preloads Moon; -T4Theme=light
+        // must land here or the CSS stays dark until the first toggle).
+        applyTheme()
 
         shim_window_present(win)
     }
@@ -499,10 +527,10 @@ final class AppWindow {
     }
 
     private func applyTheme() {
-        let path = dark
-            ? "/home/alexis/dev/omperator/spike-gtk-linux/theme-moon.css"
-            : "/home/alexis/dev/omperator/spike-gtk-linux/theme-dawn.css"
-        shim_css_load(path)
+        let name = dark ? "theme-moon" : "theme-dawn"
+        if let css = Bundle.module.url(forResource: name, withExtension: "css", subdirectory: "themes") {
+            shim_css_load(css.path)
+        }
         applyTagTheme()
     }
 

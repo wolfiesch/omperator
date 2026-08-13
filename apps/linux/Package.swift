@@ -1,25 +1,21 @@
 // swift-tools-version:5.10
 import PackageDescription
 
-/// T4CodeLinux — native Linux client (SwiftCrossUI/GTK4 backend) built from
-/// the same source lineage as the macOS/iOS SwiftUI app (apps/ios). See
+/// T4CodeLinux — native Linux client (pure GTK4) built from the same source
+/// lineage as the macOS/iOS SwiftUI app (apps/ios). See
 /// docs/adr/026-native-linux-client.md and ADR 020 for the product boundary.
 ///
-/// Layout: T4CodeLinuxLib is the library (store, views, seams — testable);
-/// T4CodeLinux is a thin executable that hosts the @main entry. SwiftPM test
-/// targets can only import libraries, not executables.
+/// Layout: T4CodeLinuxLib is the library (store, seams — testable);
+/// T4CodeLinux is the pure-GTK4 executable that hosts the window. SwiftPM
+/// test targets can only import libraries, not executables.
 ///
-/// NOTE: depends on `GtkBackend` directly rather than `DefaultBackend`, which
-/// drags the Windows-only WinUIBackend/CWinAppSDK into the build graph even
-/// on Linux (platform-conditional target deps still get compiled).
+/// The UI is imperative GTK4 via the CT4Gtk shim — no SwiftCrossUI in the
+/// graph. The lib keeps OpenCombine for the store's reactive layer and the
+/// CWebKit/CVTE system libraries for the browser/terminal panes.
 let package = Package(
     name: "T4CodeLinux",
     platforms: [.macOS(.v13)],
     dependencies: [
-        .package(
-            url: "https://github.com/moreSwift/swift-cross-ui",
-            revision: "199a85614e3b2346aa10736b12f969af14a1f1ea"
-        ),
         // 1:1 Combine API clone for Linux — the store ports with minimal edits.
         .package(url: "https://github.com/OpenCombine/OpenCombine", from: "0.14.0"),
         // CryptoKit API parity (SHA256 for the cert-pin fingerprint).
@@ -28,20 +24,9 @@ let package = Package(
         .package(name: "HostWire", path: "../ios/HostWire"),
     ],
     targets: [
-        .executableTarget(
-            name: "T4CodeLinux",
-            dependencies: [
-                "T4CodeLinuxLib",
-                .product(name: "SwiftCrossUI", package: "swift-cross-ui"),
-                .product(name: "GtkBackend", package: "swift-cross-ui"),
-            ],
-            path: "Sources/T4CodeLinux"
-        ),
         .target(
             name: "T4CodeLinuxLib",
             dependencies: [
-                .product(name: "SwiftCrossUI", package: "swift-cross-ui"),
-                .product(name: "GtkBackend", package: "swift-cross-ui"),
                 .product(name: "OpenCombine", package: "OpenCombine"),
                 .product(name: "Crypto", package: "swift-crypto"),
                 .product(name: "HostWire", package: "HostWire"),
@@ -70,8 +55,7 @@ let package = Package(
             pkgConfig: "vte-2.91-gtk4",
             providers: [.apt(["libvte-2.91-gtk4-dev"])]
         ),
-        // GTK4 — pure-GTK UI surface (the production Linux app; SwiftCrossUI
-        // is only needed by the lib's SwiftUI-compat shims, not the UI here).
+        // GTK4 — the pure-GTK UI surface (the production Linux app).
         .systemLibrary(
             name: "CT4Gtk",
             path: "Sources/CT4Gtk",
@@ -80,12 +64,13 @@ let package = Package(
         ),
         // Pure-GTK4 Linux app — imperative widgets over the shared store.
         .executableTarget(
-            name: "T4CodeLinuxGtk",
+            name: "T4CodeLinux",
             dependencies: [
                 "T4CodeLinuxLib",
                 "CT4Gtk",
             ],
-            path: "Sources/T4CodeLinuxGtk",
+            path: "Sources/T4CodeLinux",
+            resources: [.copy("themes")],
             linkerSettings: [.linkedLibrary("X11")]
         ),
     ]

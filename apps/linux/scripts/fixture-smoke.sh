@@ -38,6 +38,7 @@ cd "$ROOT/apps/linux"
     "-T4Endpoint=$URL" \
     -T4DeviceId=fixture-smoke \
     -T4DeviceToken=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA \
+    -T4Theme=light \
     > /tmp/t4-live.log 2>&1 &
 APP_PID=$!
 # Kill the app by PID *and* by name — a subshell wrapper would orphan it.
@@ -58,7 +59,9 @@ import -window root /tmp/t4-live.png
 magick /tmp/t4-live.png -crop "${WIDTH}x${HEIGHT}+${X}+${Y}" +repage /tmp/t4-live-win.png
 
 echo "== colors in window (expect #FAF4ED light bg / #FFFAF3 rail) =="
-magick /tmp/t4-live-win.png +dither -format "%c" histogram:info:- 2>/dev/null | sort -rn | head -5
+# head -5 closes early, magick then SIGPIPEs on colorful screenshots;
+# swallow that so the script reaches SMOKE-OK (histogram still printed).
+magick /tmp/t4-live-win.png +dither -format "%c" histogram:info:- 2>/dev/null | sort -rn | head -5 || true
 
 echo "== fixture client activity =="
 grep -c "client" /tmp/fixture-host.log || true

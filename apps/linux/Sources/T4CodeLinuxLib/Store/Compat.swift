@@ -6,6 +6,20 @@ import OpenCombine
 // Apple-side declarations so the shared code compiles unchanged; no logic
 // differences beyond what each seam documents.
 
+// MARK: - Model selector parsing (Linux view layer removed)
+
+/// Splits a model selector into (provider, model). "deepseek/deepseek-v4-flash"
+/// → ("deepseek", "deepseek-v4-flash"); "gpt-5.2" → (nil, "gpt-5.2").
+/// The iOS tree defines this in its view layer (T4ModelLabel.swift); with the
+/// SwiftCrossUI view layer gone on Linux, the shared store's catalog grouping
+/// (T4SessionModels.swift, symlinked) needs it here instead.
+func splitModelSelector(_ selector: String) -> (provider: String?, model: String) {
+    guard let slash = selector.firstIndex(of: "/") else { return (nil, selector) }
+    let provider = String(selector[..<slash])
+    let model = String(selector[selector.index(after: slash)...])
+    return provider.isEmpty || model.isEmpty ? (nil, selector) : (provider, model)
+}
+
 // MARK: - OpenCombine gaps (0.14 lacks Merge/MergeMany)
 
 /// Combine-compatible `merge(with:)` for the store's objectWillChange chains

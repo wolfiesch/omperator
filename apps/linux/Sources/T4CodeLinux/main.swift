@@ -13,7 +13,9 @@ let activate: ActFn = { appPtr, _ in
     guard let appPtr else { return }
     installMainActorPump()
     // Theme the moment the display exists (Rosé Pine Moon by default).
-    shim_css_load("/home/alexis/dev/omperator/spike-gtk-linux/theme-moon.css")
+    if let css = Bundle.module.url(forResource: "theme-moon", withExtension: "css", subdirectory: "themes") {
+        shim_css_load(css.path)
+    }
     MainActor.assumeIsolated {
         appWindow = AppWindow(app: appPtr)
     }
