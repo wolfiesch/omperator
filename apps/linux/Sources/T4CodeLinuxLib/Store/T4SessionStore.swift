@@ -615,6 +615,7 @@ final class T4SessionStore: ObservableObject {
     }
 
     private func receiveLiveTurnBlock(sessionId: String, event: SessionEvent) {
+        FileHandle.standardError.write("DBG liveTurnBlock recv\n".data(using:.utf8)!)
         // The ordered event supersedes the flattened compatibility projection.
         // Keep any already-arrived durable row pending while the new timeline
         // finishes revealing its final snapshot.
@@ -2357,6 +2358,7 @@ final class T4SessionStore: ObservableObject {
                     pendingAsk = PendingAsk(sessionId: frame.sessionId, request: ask)
                 }
                 let sid = frame.sessionId
+                FileHandle.standardError.write("DBG frametype=\(frame.event.type)\n".data(using:.utf8)!)
                 switch frame.event.type {
                 case "turn.start":
                     activeTurns.insert(sid)
@@ -2378,6 +2380,7 @@ final class T4SessionStore: ObservableObject {
                 case "message.update":
                     if case .string(let role) = frame.event.fields["role"], role == "assistant",
                        case .string(let text) = frame.event.fields["text"] {
+                        FileHandle.standardError.write("DBG msgupd textlen=\(text.count) reaslen=\(frame.event.fields["reasoning"] != nil ? 1 : 0)\n".data(using:.utf8)!)
                         let reasoning: String
                         if case .string(let value) = frame.event.fields["reasoning"] { reasoning = value }
                         else { reasoning = "" }

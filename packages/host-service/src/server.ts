@@ -1,3 +1,4 @@
+import { appendFileSync } from "node:fs";
 import { Buffer } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
 import type { FileHandle } from "node:fs/promises";
@@ -4344,6 +4345,7 @@ export class LocalAppserver implements AppserverHandle {
 						this.broadcast(sessionId, projection.appendEvent(asAppWireEvent(event)));
 				},
 				event: frame => {
+					try { appendFileSync("/tmp/host-events.log", `EVENT type=${String((frame as Record<string, unknown>).type)}\n`); } catch {}
 					const agentFrame = subagents.applyFrame(frame);
 					if (agentFrame) this.broadcast(sessionId, agentFrame);
 					const transcriptAgentId = subagentIdFromFrame(frame);

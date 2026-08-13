@@ -580,3 +580,9 @@ scrollbar slider:hover {
   min-height: 0;
 }
 .card-header-btn:hover { background: transparent; }
+
+/* Text selection: visible translucent iris wash, text keeps its color. */
+selection {
+  background-color: rgba(144, 122, 169, 0.35);
+  color: #E0DEF4;
+}

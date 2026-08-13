@@ -570,3 +570,9 @@ scrollbar slider:hover {
   min-height: 0;
 }
 .card-header-btn:hover { background: transparent; }
+
+/* Text selection: visible translucent rose wash, text keeps its color. */
+selection {
+  background-color: rgba(180, 99, 122, 0.22);
+  color: #575279;
+}
