@@ -734,6 +734,10 @@ export class TranscriptEventTranslator {
 	#activeAssistant: ActiveAssistant | undefined;
 	#assistantStreams = new Map<string, ActiveAssistant>();
 	#toolInputs = new Map<string, string>();
+	// Accumulated text/thinking per assistant block, for OMP runtimes that emit
+	// delta-only message_update frames (assistantMessageEvent.delta with no
+	// accumulated `partial`). Keyed by `${entryId}|${blockIndex}|${blockKind}`.
+	#blockContents = new Map<string, string>();
 	#projectedMessageIds = new Map<string, string | null>();
 	#knownDurableEntryIds = new Set<string>();
 	#pendingSettlements = new Map<string, { streamId: string; at: string }>();
@@ -811,12 +815,14 @@ export class TranscriptEventTranslator {
 				this.#turnAt = this.#nowIso();
 				this.#activeAssistant = undefined;
 				this.#toolInputs.clear();
+				this.#blockContents.clear();
 				return [{ type: "turn.start", at: this.#turnAt }];
 			case "turn_end": {
 				const at = this.#nowIso();
 				this.#turnAt = undefined;
 				this.#activeAssistant = this.#activeAssistant?.ended ? undefined : this.#activeAssistant;
 				this.#toolInputs.clear();
+				this.#blockContents.clear();
 				const error = turnErrorEvent(frame, at);
 				return error ? [error, { type: "turn.end", at }] : [{ type: "turn.end", at }];
 			}
@@ -1046,7 +1052,7 @@ export class TranscriptEventTranslator {
 		const messageEvents = this.emitMessage(snapshot);
 		const chunk = toolInputChunk(frame);
 		if (chunk === undefined) {
-			const block = assistantBlockUpdate(frame, correlated.active.entryId, snapshot.at);
+			const block = this.textOrThinkingBlock(frame, correlated.active.entryId, snapshot.at);
 			return block ? [...messageEvents, block] : messageEvents;
 		}
 		const raw = `${this.#toolInputs.get(chunk.callId) ?? ""}${chunk.delta}`.slice(0, 65_536);
@@ -1068,6 +1074,45 @@ export class TranscriptEventTranslator {
 				at: snapshot.at,
 			},
 		];
+	}
+	/// Emit an assistant.block.update for a text/thinking delta. Prefers the
+	/// runtime's accumulated `partial` snapshot; when the runtime emits
+	/// delta-only frames (no `partial`), accumulates `assistantMessageEvent
+	/// .delta` so streaming text still reaches the app.
+	private textOrThinkingBlock(
+		frame: Record<string, unknown>,
+		entryId: string,
+		at: string,
+	): TranscriptAssistantBlockUpdateEvent | undefined {
+		const event = asFrame(frame.assistantMessageEvent);
+		const blockIndex = asFiniteNumber(event.contentIndex);
+		if (!Number.isSafeInteger(blockIndex) || blockIndex === undefined || blockIndex < 0 || blockIndex > MAX_EVENT_COUNT)
+			return undefined;
+		const blockKind = event.type === "text_delta" ? "text" : event.type === "thinking_delta" ? "thinking" : undefined;
+		if (blockKind === undefined) return assistantBlockUpdate(frame, entryId, at);
+		const key = `${entryId}|${blockIndex}|${blockKind}`;
+		const partial = asFrame(event.partial);
+		const content = Array.isArray(partial?.content) ? partial.content : [];
+		const block = asFrame(content[blockIndex]);
+		const snapshotText = blockKind === "text" ? block.text : block.thinking;
+		if (typeof snapshotText === "string") {
+			// Authoritative accumulated snapshot — replace the accumulator.
+			this.#blockContents.set(key, snapshotText);
+		} else {
+			const delta = asString(event.delta);
+			if (delta === undefined) return undefined;
+			this.#blockContents.set(key, (this.#blockContents.get(key) ?? "") + delta);
+		}
+		const accumulated = this.#blockContents.get(key) ?? "";
+		if (!accumulated) return undefined;
+		return {
+			type: "assistant.block.update",
+			entryId,
+			blockIndex,
+			blockKind,
+			content: cleanText(accumulated, 65_536),
+			at,
+		};
 	}
 	private messageEnd(frame: Record<string, unknown>): TranscriptEvent[] {
 		const message = frame.message;

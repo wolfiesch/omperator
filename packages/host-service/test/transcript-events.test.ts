@@ -201,6 +201,34 @@ describe("appserver transcript event translator", () => {
 		});
 	});
 
+	test("accumulates delta-only text frames that carry no partial snapshot", () => {
+		const translator = new TranscriptEventTranslator(() => 99);
+		translator.translate({ type: "message_start", message: { role: "assistant", content: [] } });
+		const update = (delta: string) =>
+			translator.translate({
+				type: "message_update",
+				assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+				message: { role: "assistant", timestamp: 10, content: [] },
+			});
+
+		const first = update("Hello");
+		const second = update(" world");
+
+		// No `partial`: the translator must accumulate the deltas itself.
+		expect(first.at(-1)).toMatchObject({
+			type: "assistant.block.update",
+			blockKind: "text",
+			blockIndex: 0,
+			content: "Hello",
+		});
+		expect(second.at(-1)).toMatchObject({
+			type: "assistant.block.update",
+			blockKind: "text",
+			blockIndex: 0,
+			content: "Hello world",
+		});
+	});
+
 	test("redacts accumulated tool input even when a secret spans provider chunks", () => {
 		const translator = new TranscriptEventTranslator(() => 99);
 		translator.translate({ type: "message_start", message: { role: "assistant", content: [] } });
