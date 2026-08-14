@@ -411,6 +411,11 @@ async function startShare(rawCtx: unknown): Promise<string> {
   const nodeId = hostname();
 
   current = { link, token: shareToken, send, peers, ws, sessionId: sessionIdForShare, nodeId, stopped: false };
+  // The reconnect/onclose handlers below belong to THIS share. Binding it
+  // locally (not reading `current`) means a session switch — which replaces
+  // `current` — can't make a stale socket reconnect into the new share; the
+  // `stopped` flag set by stopShare() is what aborts the retry.
+  const share = current;
 
   // Register with the Tailscale gateway (push model): node announce + room.
   // The gateway serves /v1/rooms from these registrations; nothing on disk is
