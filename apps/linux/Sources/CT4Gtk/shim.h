@@ -428,3 +428,293 @@ static inline GtkWidget *shim_button_child(GtkWidget *child) {
 static inline void shim_add_tick(GtkWidget *w, GtkTickCallback cb, gpointer userData) {
     gtk_widget_add_tick_callback(w, cb, userData, NULL);
 }
+
+/* ── Composer (multiline, wrapping) ─────────────────────────
+   GtkTextView with word-char wrap inside a GtkScrolledWindow whose
+   min/max content heights give auto-grow to ~N lines, then internal
+   scroll. Enter-to-send is wired on the Swift side via shim_on_key. */
+
+static inline GtkWidget *shim_composer_view(void) {
+    GtkWidget *tv = gtk_text_view_new();
+    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(tv), GTK_WRAP_WORD_CHAR);
+    gtk_text_view_set_accepts_tab(GTK_TEXT_VIEW(tv), FALSE);
+    gtk_widget_set_hexpand(tv, 1);
+    return tv;
+}
+
+static inline void shim_scrolled_content_height(GtkWidget *scroll, int minHeight, int maxHeight) {
+    gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(scroll), minHeight);
+    gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(scroll), maxHeight);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+}
+
+/* Full buffer text. Returns a NEWLY ALLOCATED string — free with shim_free. */
+static inline char *shim_buffer_text(GtkTextBuffer *buf) {
+    GtkTextIter start, end;
+    gtk_text_buffer_get_bounds(buf, &start, &end);
+    return gtk_text_buffer_get_text(buf, &start, &end, TRUE);
+}
+
+static inline void shim_buffer_set_text(GtkTextBuffer *buf, const char *text) {
+    gtk_text_buffer_set_text(buf, text, -1);
+}
+
+static inline void shim_free(void *ptr) { g_free(ptr); }
+
+/* Scroll a text view's cursor into view after programmatic edits (send clear). */
+static inline void shim_text_scroll_cursor(GtkWidget *tv) {
+    GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tv));
+    GtkTextMark *mark = gtk_text_buffer_get_insert(buf);
+    gtk_text_view_scroll_mark_onscreen(GTK_TEXT_VIEW(tv), mark);
+}
+
+/* ── Generic key controller ─────────────────────────────────
+   One global handler slot (same pattern as shim_pressed_handler): keyval +
+   modifier state + the caller's userData box. Return nonzero to swallow. */
+
+typedef int (*ShimKeyHandler)(unsigned keyval, unsigned state, void *userData);
+static ShimKeyHandler shim_key_handler = NULL;
+static gboolean shim_key_trampoline(GtkEventControllerKey *ctl, unsigned keyval, unsigned keycode, GdkModifierType state, gpointer userData) {
+    (void)ctl; (void)keycode;
+    if (shim_key_handler) return shim_key_handler(keyval, (unsigned)state, userData) ? TRUE : FALSE;
+    return FALSE;
+}
+static inline void shim_on_key(GtkWidget *widget, void *userData) {
+    GtkEventController *ctl = gtk_event_controller_key_new();
+    gtk_widget_add_controller(widget, ctl);
+    g_signal_connect_data(ctl, "key-pressed", G_CALLBACK(shim_key_trampoline), userData, NULL, G_CONNECT_DEFAULT);
+}
+static inline void shim_set_key_handler(ShimKeyHandler h) { shim_key_handler = h; }
+
+/* ── Pictures / textures ─────────────────────────────────────
+   gdk_texture_new_from_bytes decodes PNG/JPEG/WebP/etc. through gdk-pixbuf
+   loaders — no extra dependency. NULL on decode failure. */
+
+static inline GtkWidget *shim_picture(void) { return gtk_picture_new(); }
+
+static inline void *shim_texture_from_bytes(const unsigned char *data, unsigned long len) {
+    GBytes *bytes = g_bytes_new(data, len);
+    GError *err = NULL;
+    void *tex = gdk_texture_new_from_bytes(bytes, &err);
+    g_bytes_unref(bytes);
+    if (err) { g_error_free(err); return NULL; }
+    return tex;
+}
+
+/* set_paintable adds its own ref; callers unref their texture handle after. */
+static inline void shim_picture_set_texture(GtkWidget *picture, void *texture) {
+    gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(texture));
+}
+
+static inline void shim_picture_fit(GtkWidget *picture) {
+    gtk_picture_set_content_fit(GTK_PICTURE(picture), GTK_CONTENT_FIT_CONTAIN);
+    gtk_picture_set_can_shrink(GTK_PICTURE(picture), TRUE);
+}
+
+static inline int shim_texture_width(void *t) { return gdk_texture_get_width(GDK_TEXTURE(t)); }
+static inline int shim_texture_height(void *t) { return gdk_texture_get_height(GDK_TEXTURE(t)); }
+static inline void shim_unref(void *obj) { if (obj) g_object_unref(obj); }
+
+/* Clipboard textures → PNG bytes for prompt upload (paste path). The returned
+   GBytes is caller-owned: copy then shim_gbytes_free. */
+static inline GBytes *shim_texture_png_bytes(void *texture) {
+    return gdk_texture_save_to_png_bytes(GDK_TEXTURE(texture));
+}
+static inline const unsigned char *shim_gbytes_data(GBytes *bytes, unsigned long *len) {
+    gsize size = 0;
+    const unsigned char *p = g_bytes_get_data(bytes, &size);
+    if (len) *len = (unsigned long)size;
+    return p;
+}
+static inline void shim_gbytes_free(GBytes *bytes) { if (bytes) g_bytes_unref(bytes); }
+
+/* ── File paths callback (open dialog + drag & drop) ─────────
+   One handler slot for "user picked/dropped these files"; the Swift side
+   dispatches on the userData box. Paths are owned by the shim — copy them. */
+
+typedef void (*ShimPathsHandler)(void *userData, char **paths, int count);
+static ShimPathsHandler shim_paths_handler = NULL;
+static inline void shim_set_paths_handler(ShimPathsHandler h) { shim_paths_handler = h; }
+
+/* Native open dialog (GTK 4.10+): image filter, multi-select. */
+static void shim_dialog_done(GObject *source, GAsyncResult *res, gpointer userData) {
+    GError *err = NULL;
+    GListModel *files = gtk_file_dialog_open_multiple_finish(GTK_FILE_DIALOG(source), res, &err);
+    if (err) { g_error_free(err); return; }
+    if (!files) return;
+    guint n = g_list_model_get_n_items(files);
+    char **paths = g_new0(char *, n);
+    int count = 0;
+    for (guint i = 0; i < n; i++) {
+        GFile *f = G_FILE(g_list_model_get_item(files, i));
+        char *p = g_file_get_path(f);
+        if (p) paths[count++] = p;
+        g_object_unref(f);
+    }
+    if (shim_paths_handler && count > 0) shim_paths_handler(userData, paths, count);
+    for (int i = 0; i < count; i++) g_free((void *)paths[i]);
+    g_free(paths);
+    g_object_unref(files);
+}
+
+static inline void shim_open_images_dialog(GtkWidget *parent, void *userData) {
+    GtkFileDialog *dialog = gtk_file_dialog_new();
+    gtk_file_dialog_set_title(dialog, "Attach images");
+    GListStore *filters = g_list_store_new(GTK_TYPE_FILE_FILTER);
+    GtkFileFilter *filter = gtk_file_filter_new();
+    gtk_file_filter_set_name(filter, "Images");
+    gtk_file_filter_add_mime_type(filter, "image/png");
+    gtk_file_filter_add_mime_type(filter, "image/jpeg");
+    gtk_file_filter_add_mime_type(filter, "image/webp");
+    gtk_file_filter_add_mime_type(filter, "image/gif");
+    g_list_store_append(filters, filter);
+    gtk_file_dialog_set_filters(dialog, G_LIST_MODEL(filters));
+    g_object_unref(filters);
+    g_object_unref(filter);
+    gtk_file_dialog_open_multiple(dialog, parent ? GTK_WINDOW(parent) : NULL, NULL, shim_dialog_done, userData);
+}
+
+/* Drag & drop of files (GdkFileList) onto the composer area. */
+static gboolean shim_drop_trampoline(GtkDropTarget *target, const GValue *value, double x, double y, gpointer userData) {
+    (void)target; (void)x; (void)y;
+    if (!G_VALUE_HOLDS(value, GDK_TYPE_FILE_LIST)) return FALSE;
+    GdkFileList *list = g_value_get_boxed(value);
+    GSList *files = gdk_file_list_get_files(list);
+    int count = g_slist_length(files);
+    if (count <= 0) return FALSE;
+    char **paths = g_new0(char *, count);
+    int n = 0;
+    for (GSList *l = files; l; l = l->next) {
+        char *p = g_file_get_path(G_FILE(l->data));
+        if (p) paths[n++] = p;
+    }
+    if (shim_paths_handler && n > 0) shim_paths_handler(userData, paths, n);
+    for (int i = 0; i < n; i++) g_free((void *)paths[i]);
+    g_free(paths);
+    return n > 0;
+}
+
+static inline void shim_drop_files(GtkWidget *widget, void *userData) {
+    GtkDropTarget *target = gtk_drop_target_new(GDK_TYPE_FILE_LIST, GDK_ACTION_COPY);
+    g_signal_connect_data(target, "drop", G_CALLBACK(shim_drop_trampoline), userData, NULL, G_CONNECT_DEFAULT);
+    gtk_widget_add_controller(widget, GTK_EVENT_CONTROLLER(target));
+}
+
+/* ── Clipboard image paste ───────────────────────────────────
+   Fully async read: gdk_clipboard_read_async + g_input_stream_read_bytes_async
+   chained to EOF. A BLOCKING read deadlocks the X11 backend — the selection
+   data flows through X events that the blocked main loop would have to
+   dispatch. Bytes arrive with their original mime (no re-encode). */
+
+typedef void (*ShimClipboardBytesHandler)(void *userData, const unsigned char *data, unsigned long len, const char *mime);
+static ShimClipboardBytesHandler shim_clipboard_bytes_handler = NULL;
+static inline void shim_set_clipboard_bytes_handler(ShimClipboardBytesHandler h) { shim_clipboard_bytes_handler = h; }
+
+typedef struct {
+    GByteArray *buf;
+    GInputStream *stream;
+    char *mime;
+    void *userData;
+} ShimClipRead;
+
+/* Only one clipboard read in flight — concurrent read_async operations on
+   the same X11 selection race inside GDK (the losing stream is finalized
+   while its ctx still points at it). Cleared on completion. */
+static int shim_clip_reading = 0;
+
+static void shim_clip_chunk_done(GObject *source, GAsyncResult *res, gpointer userData) {
+    ShimClipRead *ctx = userData;
+    GError *err = NULL;
+    /* ONE bounded read, no re-arm: the X11 clipboard stream is a single-shot
+       transfer that completes with the payload buffered; a second
+       read_bytes_async on it crashes in GIO dispatch. 32 MB covers any
+       clipboard image (the wire caps prompt images at 20 MB). */
+    GBytes *chunk = g_input_stream_read_bytes_finish(ctx->stream, res, &err);
+    if (err) { g_error_free(err); }
+    if (chunk) {
+        gsize n = g_bytes_get_size(chunk);
+        if (n > 0) g_byte_array_append(ctx->buf, (const guint8 *)g_bytes_get_data(chunk, NULL), n);
+        g_bytes_unref(chunk);
+    }
+    if (shim_clipboard_bytes_handler) {
+        shim_clipboard_bytes_handler(ctx->userData, ctx->buf->data, (unsigned long)ctx->buf->len, ctx->mime);
+    }
+    g_object_unref(ctx->stream);
+    g_byte_array_free(ctx->buf, TRUE);
+    /* ctx->mime is NOT freed: gdk_clipboard_read_finish's out_mime string is
+       borrowed clipboard storage on this stack (freeing it aborts with
+       "free(): invalid pointer"); the clipboard outlives the read. */
+    g_free(ctx);
+    shim_clip_reading = 0;
+}
+
+static void shim_clipboard_bytes_done(GObject *source, GAsyncResult *res, gpointer userData) {
+    GError *err = NULL;
+    char *out_mime = NULL;
+    GInputStream *stream = gdk_clipboard_read_finish(GDK_CLIPBOARD(source), res, (const char **)&out_mime, &err);
+    if (err) { g_error_free(err); }
+    if (!stream) {
+        if (shim_clipboard_bytes_handler) shim_clipboard_bytes_handler(userData, NULL, 0, NULL);
+        /* out_mime: borrowed, do not free (see shim_clip_chunk_done). */
+        shim_clip_reading = 0;
+        return;
+    }
+    ShimClipRead *ctx = g_new0(ShimClipRead, 1);
+    ctx->buf = g_byte_array_new();
+    ctx->stream = stream;
+    ctx->mime = out_mime;
+    ctx->userData = userData;
+    g_input_stream_read_bytes_async(ctx->stream, 32 * 1024 * 1024, G_PRIORITY_DEFAULT, NULL, shim_clip_chunk_done, ctx);
+}
+
+static inline int shim_clipboard_has_image(GtkWidget *widget) {
+    GdkClipboard *cb = gtk_widget_get_clipboard(widget);
+    GdkContentFormats *formats = gdk_clipboard_get_formats(cb);
+    return gdk_content_formats_contain_mime_type(formats, "image/png")
+        || gdk_content_formats_contain_mime_type(formats, "image/jpeg")
+        || gdk_content_formats_contain_mime_type(formats, "image/webp")
+        || gdk_content_formats_contain_mime_type(formats, "image/gif");
+}
+
+static inline void shim_clipboard_read_image(GtkWidget *widget, void *userData) {
+    if (shim_clip_reading) {
+        /* Complete empty so the caller's box/flag state unwinds cleanly. */
+        if (shim_clipboard_bytes_handler) shim_clipboard_bytes_handler(userData, NULL, 0, NULL);
+        return;
+    }
+    shim_clip_reading = 1;
+    static const char *mimes[] = { "image/png", "image/jpeg", "image/webp", "image/gif", NULL };
+    GdkClipboard *cb = gtk_widget_get_clipboard(widget);
+    gdk_clipboard_read_async(cb, mimes, G_PRIORITY_DEFAULT, NULL, shim_clipboard_bytes_done, userData);
+}
+
+/* ── Misc widgets ─────────────────────────────────────────── */
+
+static inline void shim_box_remove(GtkWidget *box, GtkWidget *child) {
+    gtk_box_remove(GTK_BOX(box), child);
+}
+
+static inline void shim_widget_size_wh(GtkWidget *w, int width, int height) {
+    gtk_widget_set_size_request(w, width, height);
+}
+
+static inline void shim_widget_margins(GtkWidget *w, int margin) {
+    gtk_widget_set_margin_top(w, margin);
+    gtk_widget_set_margin_bottom(w, margin);
+    gtk_widget_set_margin_start(w, margin);
+    gtk_widget_set_margin_end(w, margin);
+}
+
+/* Overlay removal (lightbox close) + explicit ref for async widget loads. */
+static inline void shim_overlay_remove(GtkWidget *overlay, GtkWidget *child) {
+    gtk_overlay_remove_overlay(GTK_OVERLAY(overlay), child);
+}
+static inline void *shim_ref(void *obj) { return obj ? g_object_ref(obj) : NULL; }
+
+/* Composer wrap: stop the scrolled window propagating the text view's
+   UNWRAPPED natural width (a long line would otherwise stretch the row past
+   the window instead of wrapping). Height propagation stays on so the
+   min/max content heights give auto-grow-then-scroll. */
+static inline void shim_scrolled_no_width_propagate(GtkWidget *scroll) {
+    gtk_scrolled_window_set_propagate_natural_width(GTK_SCROLLED_WINDOW(scroll), FALSE);
+}

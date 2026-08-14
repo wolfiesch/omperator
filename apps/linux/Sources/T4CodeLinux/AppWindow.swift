@@ -21,8 +21,27 @@ final class AppWindow {
     private var lastRailSignature = ""
     private var transcriptView: UnsafeMutablePointer<GtkWidget>?
     private var transcriptBox: UnsafeMutablePointer<GtkWidget>?
-    private var composerEntry: UnsafeMutablePointer<GtkWidget>?
+    private var composerView: UnsafeMutablePointer<GtkWidget>?
+    private var composerBuffer: UnsafeMutablePointer<GtkTextBuffer>?
+    private var attachStrip: UnsafeMutablePointer<GtkWidget>?
+    private var rootOverlay: UnsafeMutablePointer<GtkWidget>?
+    private var lightbox: UnsafeMutablePointer<GtkWidget>?
     private var sendButton: UnsafeMutablePointer<GtkWidget>?
+
+    /// One staged composer attachment (file pick, paste, or drop).
+    private struct Attachment {
+        let id: UUID
+        let data: Data
+        let mimeType: String
+        let name: String
+    }
+    private var attachments: [Attachment] = []
+    private var dropBox: GtkPathsBox?
+
+    /// Preview captures already rendered as transcript image rows, per
+    /// session (captureId → picture widget still awaiting its texture).
+    private var renderedCaptureIds: [String] = []
+    private var pendingCapturePictures: [String: UnsafeMutablePointer<GtkWidget>] = [:]
     private var statusLabel: UnsafeMutablePointer<GtkWidget>?
     private var themeButton: UnsafeMutablePointer<GtkWidget>?
     private let transcriptWidgets = TranscriptWidgets()
@@ -105,7 +124,14 @@ final class AppWindow {
     init(app: UnsafeMutablePointer<GtkApplication>?) {
         guard let appPtr = app, let win = gtk_application_window_new(appPtr) else { return }
         window = win
+        transcriptWidgets.bridge = store
+        transcriptWidgets.onZoom = { [weak self] texture in self?.showLightbox(texture) }
         build(win)
+        // Dev seam: -T4Attach=/path/to.png stages a composer attachment at
+        // startup (QA for the attachment strip without a file dialog).
+        if let seam = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("-T4Attach=") }) {
+            attachFiles([String(seam.dropFirst("-T4Attach=".count))])
+        }
         // First run: no saved endpoint — offer the friendly login until the
         // workspace actually connects (a live local gateway connects on its
         // own, so the screen shows only when a sign-in is genuinely needed).
@@ -119,11 +145,20 @@ final class AppWindow {
         shim_window(win, "T4 Code", Int32(Self.launchSize.width), Int32(Self.launchSize.height))
 
         // Window root is an overlay: the workspace beneath, the first-run
-        // login screen above (hidden until the store connects).
+        // login screen above (hidden until the store connects), and the
+        // image lightbox above everything.
         let root = shim_overlay_new()
+        rootOverlay = root
         let workspace = shim_box_new(1, 0)
         shim_overlay_set_child(root, workspace)
         shim_window_set_child(win, root)
+
+        // Esc closes the image lightbox when one is open.
+        onKey(win) { [weak self] keyval, _ in
+            guard let self, keyval == gdkKeyEscape, self.lightbox != nil else { return false }
+            self.hideLightbox()
+            return true
+        }
 
         // Rail (left)
         let rail = shim_box_new(0, 0)
@@ -246,15 +281,60 @@ final class AppWindow {
 
         let composer = shim_box_new(1, 8)
         addClass(composer, "composer")
-        composerEntry = shim_entry()
-        addClass(composerEntry, "composer-entry")
-        shim_widget_expand(composerEntry, 1)
-        onSignal(composerEntry, "activate") { [weak self] in self?.submitComposer() }
-        shim_box_append(composer, composerEntry)
+
+        // Attachment strip: chips with thumbnails, hidden until the first
+        // attachment lands (file pick, paste, or drop).
+        let strip = shim_box_new(0, 6)
+        addClass(strip, "attachment-strip")
+        shim_widget_hide(strip)
+        attachStrip = strip
+        shim_box_append(composer, strip)
+
+        // Input row: attach button + wrapping multiline text view (auto-grow
+        // to ~6 lines, then internal scroll) + send button.
+        let inputRow = shim_box_new(1, 8)
+        let attachButton = shim_button("📎")
+        addClass(attachButton, "flat-btn")
+        onSignal(attachButton, "clicked") { [weak self] in self?.openImagePicker() }
+        shim_box_append(inputRow, attachButton)
+
+        let composerScroll = shim_scrolled_window()
+        shim_scrolled_content_height(composerScroll, 30, 150)
+        shim_scrolled_no_width_propagate(composerScroll)
+        let view = shim_composer_view()
+        addClass(view, "composer-view")
+        composerView = view
+        composerBuffer = shim_text_buffer(view)
+        shim_scrolled_set_child(composerScroll, view)
+        shim_widget_expand(composerScroll, 1)
+        shim_box_append(inputRow, composerScroll)
+
+        // Enter sends; Shift+Enter inserts a newline. Ctrl+V with an image
+        // on the clipboard attaches it instead of pasting text.
+        onKey(view) { [weak self] keyval, state in
+            guard let self else { return false }
+            if (keyval == gdkKeyReturn || keyval == gdkKeyKPEnter) && (state & gdkShiftMask) == 0 {
+                self.submitComposer()
+                return true
+            }
+            if keyval == gdkKeyV && (state & gdkControlMask) != 0 && shim_clipboard_has_image(view) != 0 {
+                self.pasteClipboardImage(view: view)
+                return true
+            }
+            return false
+        }
+
+        // Drag & drop of image files onto the composer.
+        installPathsHandlerIfNeeded()
+        let drop = GtkPathsBox(releaseAfterUse: false) { [weak self] paths in self?.attachFiles(paths) }
+        dropBox = drop
+        shim_drop_files(composer, Unmanaged.passRetained(drop).toOpaque())
+
         sendButton = shim_button("➤")
         addClass(sendButton, "send-button")
         onSignal(sendButton, "clicked") { [weak self] in self?.submitComposer() }
-        shim_box_append(composer, sendButton)
+        shim_box_append(inputRow, sendButton)
+        shim_box_append(composer, inputRow)
         shim_box_append(center, composer)
 
         buildPanesSidebar(workspace)
@@ -565,8 +645,58 @@ final class AppWindow {
         refreshRailTimes()
         refreshOnboarding()
         refreshTranscript()
+        refreshCaptures()
         refreshStreaming()
         refreshPanes()
+    }
+
+    /// Preview captures render as image rows at the transcript tail. New
+    /// captures append once (tracked by captureId); a row whose texture is
+    /// still in flight (chunked capture.read) gets it on a later refresh.
+    private func refreshCaptures() {
+        guard let selected = store.selectedSession, let box = transcriptBox else { return }
+        let sid = selected.sessionId
+        var changed = false
+        for row in store.previewCaptureRows(for: sid) {
+            if let pic = pendingCapturePictures[row.captureId] {
+                if let data = store.captureImageData(row.captureId),
+                   let texture = AppWindow.texture(from: data) {
+                    shim_picture_set_texture(pic, texture)
+                    shim_unref(texture)
+                    shim_widget_show(pic)
+                    pendingCapturePictures.removeValue(forKey: row.captureId)
+                    changed = true
+                }
+                continue
+            }
+            guard !renderedCaptureIds.contains(row.captureId) else { continue }
+            renderedCaptureIds.append(row.captureId)
+            let pic = shim_picture()
+            shim_picture_fit(pic)
+            shim_widget_size_wh(pic, -1, 220)
+            addClass(pic, "transcript-image")
+            // Hidden until the capture texture resolves (in-flight fetch).
+            shim_widget_hide(pic)
+            if let data = store.captureImageData(row.captureId),
+               let texture = AppWindow.texture(from: data) {
+                shim_picture_set_texture(pic, texture)
+                shim_unref(texture)
+                shim_widget_show(pic)
+            } else {
+                pendingCapturePictures[row.captureId] = pic
+            }
+            shim_box_append(box, pic)
+            let captureId = row.captureId
+            onPressed(pic) { [weak self] in
+                guard let self,
+                      let data = self.store.captureImageData(captureId),
+                      let texture = AppWindow.texture(from: data) else { return }
+                self.showLightbox(texture)
+                shim_unref(texture)
+            }
+            changed = true
+        }
+        if changed { scrollTranscriptToBottom() }
     }
 
     private func refreshConnection() {
@@ -769,6 +899,8 @@ final class AppWindow {
             lastSelectedId = sid
             renderedSessionId = sid
             renderedEntryCount = 0
+            renderedCaptureIds = []
+            pendingCapturePictures = [:]
             clearTranscript()
             // Restore the incoming session's saved position, or open at the
             // bottom on first visit. Deferred so the content has laid out.
@@ -891,19 +1023,152 @@ final class AppWindow {
     // MARK: - Composer
 
     private func submitComposer() {
-        guard let entry = composerEntry, let selected = store.selectedSession else { return }
-        let buffer = shim_entry_buffer(entry)
-        let textC = gtk_entry_buffer_get_text(buffer)
+        guard let buffer = composerBuffer, let selected = store.selectedSession else { return }
+        let textC = shim_buffer_text(buffer)
         let text = textC.map { String(cString: $0) } ?? ""
+        shim_free(textC)
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        shim_entry_clear(entry)
+        let images = attachments.map { T4GtkBridge.GtkPromptImage(data: $0.data, mimeType: $0.mimeType) }
+        guard !trimmed.isEmpty || !images.isEmpty else { return }
+        shim_buffer_set_text(buffer, "")
+        if let view = composerView { shim_text_scroll_cursor(view) }
+        attachments = []
+        rebuildAttachmentStrip()
         // Sending a message means "watch this turn": re-pin to the bottom so
         // the reply streams into view (the user may have released the pin by
         // scrolling up to read earlier).
         pinnedToBottom = true
         let store = self.store
         let sid = selected.sessionId
-        Task { await store.sendPrompt(sessionId: sid, text: trimmed) }
+        Task { await store.sendPrompt(sessionId: sid, text: trimmed, images: images) }
+    }
+
+    // MARK: - Composer attachments
+
+    /// Wire limit (promptImageMaxCount): no more than 8 images per prompt.
+    private static let maxAttachments = 8
+
+    private func addAttachment(data: Data, mimeType: String, name: String) {
+        guard attachments.count < Self.maxAttachments else { return }
+        attachments.append(Attachment(id: UUID(), data: data, mimeType: mimeType, name: name))
+        rebuildAttachmentStrip()
+    }
+
+    private func removeAttachment(id: UUID) {
+        attachments.removeAll { $0.id == id }
+        rebuildAttachmentStrip()
+    }
+
+    private func rebuildAttachmentStrip() {
+        guard let strip = attachStrip else { return }
+        shim_box_clear(strip)
+        for attachment in attachments {
+            let chip = shim_box_new(0, 4)
+            addClass(chip, "attachment-chip")
+            if let texture = Self.texture(from: attachment.data) {
+                let pic = shim_picture()
+                shim_picture_fit(pic)
+                shim_widget_size_wh(pic, 40, 40)
+                shim_picture_set_texture(pic, texture)
+                // Click the staged thumbnail to preview it full-size.
+                onPressed(pic) { [weak self] in self?.showLightbox(texture) }
+                shim_box_append(chip, pic)
+            }
+            if let nameLabel = makeLabel(attachment.name, "chip-name") {
+                shim_box_append(chip, nameLabel)
+            }
+            let remove = shim_button("✕")
+            addClass(remove, "chip-remove")
+            onSignal(remove, "clicked") { [weak self] in self?.removeAttachment(id: attachment.id) }
+            shim_box_append(chip, remove)
+            shim_box_append(strip, chip)
+        }
+        if attachments.isEmpty { shim_widget_hide(strip) } else { shim_widget_show(strip) }
+    }
+
+    /// Decode image bytes into a GDK texture (nil when undecodable).
+    static func texture(from data: Data) -> UnsafeMutableRawPointer? {
+        data.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return nil }
+            return shim_texture_from_bytes(base.assumingMemoryBound(to: UInt8.self), UInt(raw.count))
+        }
+    }
+
+    private func attachFiles(_ paths: [String]) {
+        for path in paths {
+            guard let mime = Self.imageMimeType(for: path),
+                  let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else { continue }
+            addAttachment(data: data, mimeType: mime, name: URL(fileURLWithPath: path).lastPathComponent)
+        }
+    }
+
+    static func imageMimeType(for path: String) -> String? {
+        switch URL(fileURLWithPath: path).pathExtension.lowercased() {
+        case "png": return "image/png"
+        case "jpg", "jpeg": return "image/jpeg"
+        case "webp": return "image/webp"
+        case "gif": return "image/gif"
+        default: return nil
+        }
+    }
+
+    private func openImagePicker() {
+        installPathsHandlerIfNeeded()
+        let box = GtkPathsBox(releaseAfterUse: true) { [weak self] paths in self?.attachFiles(paths) }
+        shim_open_images_dialog(window, Unmanaged.passRetained(box).toOpaque())
+    }
+
+    /// One clipboard read at a time (GDK X11 races concurrent selection
+    /// reads; the shim guard is the backstop, this avoids even starting).
+    private var pasteInFlight = false
+
+    private func pasteClipboardImage(view: UnsafeMutablePointer<GtkWidget>?) {
+        guard !pasteInFlight else { return }
+        pasteInFlight = true
+        installClipboardBytesHandlerIfNeeded()
+        let box = GtkClipboardBox { [weak self] data, mime in
+            guard let self, let data, !data.isEmpty else { self?.pasteInFlight = false; return }
+            self.pasteInFlight = false
+            let mimeType = mime ?? "image/png"
+            self.addAttachment(data: data, mimeType: mimeType, name: "pasted-image.\(Self.imageExtension(for: mimeType))")
+        }
+        let boxPtr = Unmanaged.passRetained(box).toOpaque()
+        // Initiate the async read from an idle, not mid key-signal dispatch —
+        // the X11 selection request doesn't reliably go out from inside a
+        // key-pressed emission on this stack.
+        let start = GtkBox { shim_clipboard_read_image(view, boxPtr) }
+        shim_idle(idleForwarder, Unmanaged.passRetained(start).toOpaque())
+    }
+
+    static func imageExtension(for mimeType: String) -> String {
+        switch mimeType {
+        case "image/jpeg": return "jpg"
+        case "image/webp": return "webp"
+        case "image/gif": return "gif"
+        default: return "png"
+        }
+    }
+
+    // MARK: - Image lightbox
+
+    func showLightbox(_ texture: UnsafeMutableRawPointer) {
+        guard let root = rootOverlay, lightbox == nil else { return }
+        let backdrop = shim_box_new(0, 0)
+        addClass(backdrop, "lightbox-backdrop")
+        shim_widget_fill(backdrop)
+        let pic = shim_picture()
+        shim_picture_fit(pic)
+        shim_picture_set_texture(pic, texture)
+        shim_widget_margins(pic, 40)
+        shim_box_append(backdrop, pic)
+        onPressed(backdrop) { [weak self] in self?.hideLightbox() }
+        shim_overlay_add_overlay(root, backdrop)
+        lightbox = backdrop
+    }
+
+    private func hideLightbox() {
+        guard let root = rootOverlay, let lb = lightbox else { return }
+        lightbox = nil
+        shim_overlay_remove(root, lb)
     }
 }

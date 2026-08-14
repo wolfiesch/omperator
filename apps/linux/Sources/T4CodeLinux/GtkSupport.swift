@@ -104,3 +104,93 @@ let tickForwarder: @convention(c) (UnsafeMutablePointer<GtkWidget>?, OpaquePoint
 func onMainActor(_ action: @escaping @MainActor () -> Void) {
     MainActor.assumeIsolated { action() }
 }
+
+// MARK: - Key events (composer send keys, lightbox Esc)
+
+final class GtkKeyBox {
+    let handler: (UInt32, UInt32) -> Bool
+    init(_ handler: @escaping (UInt32, UInt32) -> Bool) { self.handler = handler }
+}
+
+private let keyForwarder: @convention(c) (UInt32, UInt32, UnsafeMutableRawPointer?) -> Int32 = { keyval, state, userData in
+    guard let userData else { return 0 }
+    return Unmanaged<GtkKeyBox>.fromOpaque(userData).takeUnretainedValue().handler(keyval, state) ? 1 : 0
+}
+
+private var keyHandlerInstalled = false
+
+/// GDK modifier bits (gdktypes.h) and keyvals (gdkkeysyms.h) — the C enum
+/// constants aren't imported into Swift; documented stable values.
+let gdkShiftMask: UInt32 = 1
+let gdkControlMask: UInt32 = 4
+let gdkKeyReturn: UInt32 = 0xFF0D
+let gdkKeyKPEnter: UInt32 = 0xFF8D
+let gdkKeyEscape: UInt32 = 0xFF1B
+let gdkKeyV: UInt32 = 0x76
+
+/// Key-pressed handler via GtkEventControllerKey. Return true to swallow.
+func onKey(_ widget: UnsafeMutablePointer<GtkWidget>?, _ handler: @escaping (UInt32, UInt32) -> Bool) {
+    guard let widget else { return }
+    if !keyHandlerInstalled {
+        keyHandlerInstalled = true
+        shim_set_key_handler(keyForwarder)
+    }
+    shim_on_key(widget, Unmanaged.passRetained(GtkKeyBox(handler)).toOpaque())
+}
+
+// MARK: - File paths (open dialog + drag & drop share one trampoline)
+
+final class GtkPathsBox {
+    let handler: ([String]) -> Void
+    /// One-shot sources (open dialog) balance their passRetained after firing;
+    /// repeated sources (drop target) stay retained for the widget lifetime.
+    let releaseAfterUse: Bool
+    init(releaseAfterUse: Bool, _ handler: @escaping ([String]) -> Void) {
+        self.releaseAfterUse = releaseAfterUse
+        self.handler = handler
+    }
+}
+
+private let pathsForwarder: @convention(c) (UnsafeMutableRawPointer?, UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?, Int32) -> Void = { userData, paths, count in
+    guard let userData else { return }
+    let unmanaged = Unmanaged<GtkPathsBox>.fromOpaque(userData)
+    let box = unmanaged.takeUnretainedValue()
+    var out: [String] = []
+    if let paths {
+        for i in 0..<Int(count) {
+            if let p = paths[i] { out.append(String(cString: p)) }
+        }
+    }
+    box.handler(out)
+    if box.releaseAfterUse { unmanaged.release() }
+}
+
+private var pathsHandlerInstalled = false
+
+func installPathsHandlerIfNeeded() {
+    guard !pathsHandlerInstalled else { return }
+    pathsHandlerInstalled = true
+    shim_set_paths_handler(pathsForwarder)
+}
+
+// MARK: - Clipboard image bytes (paste, one-shot per read)
+
+final class GtkClipboardBox {
+    let handler: (Data?, String?) -> Void
+    init(_ handler: @escaping (Data?, String?) -> Void) { self.handler = handler }
+}
+
+private let clipboardBytesForwarder: @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<UInt8>?, UInt, UnsafePointer<CChar>?) -> Void = { userData, data, len, mime in
+    guard let userData else { return }
+    let box = Unmanaged<GtkClipboardBox>.fromOpaque(userData).takeRetainedValue()
+    let bytes = data.map { Data(bytes: $0, count: Int(len)) }
+    box.handler(bytes, mime.map { String(cString: $0) })
+}
+
+private var clipboardBytesHandlerInstalled = false
+
+func installClipboardBytesHandlerIfNeeded() {
+    guard !clipboardBytesHandlerInstalled else { return }
+    clipboardBytesHandlerInstalled = true
+    shim_set_clipboard_bytes_handler(clipboardBytesForwarder)
+}

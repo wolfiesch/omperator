@@ -1,6 +1,7 @@
 import Foundation
 import CT4Gtk
 import HostWire
+import T4CodeLinuxLib
 
 /// Per-entry transcript widgets for the pure-GTK4 app. Each builder returns a
 /// standalone widget tree that AppWindow parents into the transcript column;
@@ -39,6 +40,16 @@ import HostWire
 @MainActor
 final class TranscriptWidgets {
 
+    // MARK: - Image rows
+
+    /// Store facade for artifact byte fetches; set by AppWindow.
+    var bridge: T4GtkBridge?
+    /// Click-to-zoom callback (AppWindow's lightbox).
+    var onZoom: ((UnsafeMutableRawPointer) -> Void)?
+    /// Decoded artifact textures by artifactId. Reffed and kept for the app
+    /// lifetime so transcript rebuilds never refetch (host bounds a session
+    /// to 64 transcript images; the cache is sized by the wire, not the UI).
+    private var imageCache: [String: UnsafeMutableRawPointer] = [:]
     // MARK: - Theme hooks
 
     /// Syntax token colors by tag name. `applyTheme` swaps these between the
@@ -151,13 +162,74 @@ final class TranscriptWidgets {
         switch entry.kind {
         case .message:
             let text = entry.body.isEmpty ? entry.headline : entry.body
+            let body: UnsafeMutablePointer<GtkWidget>?
             if entry.role == "user" {
-                return userBubble(text: text, pending: false)
+                body = userBubble(text: text, pending: false)
+            } else {
+                body = assistantBlocks(text)
             }
-            return assistantBlocks(text)
+            let images = imageArtifacts(of: entry)
+            guard !images.isEmpty, let body else { return body }
+            let column = shim_box_new(0, 8)
+            shim_box_append(column, body)
+            for artifact in images {
+                if let row = imageRow(sessionId: entry.sessionId, artifact: artifact) {
+                    shim_box_append(column, row)
+                }
+            }
+            return column
         default:
             return toolCard(head: entry.headline, meta: entry.body, kind: entry.kind?.rawValue ?? "unknown")
         }
+    }
+
+    /// Image artifact descriptors carried on a durable entry (data.artifacts;
+    /// both inline and attachment dispositions render as preview rows).
+    private func imageArtifacts(of entry: TranscriptEntry) -> [ArtifactDescriptor] {
+        (entry.data.array("artifacts") ?? [])
+            .compactMap { ArtifactDescriptor(from: $0) }
+            .filter { $0.kind == "image" }
+    }
+
+    /// One transcript image row: cached texture when available, otherwise a
+    /// placeholder that resolves asynchronously via artifact.read. Click opens
+    /// the lightbox (once the texture exists).
+    private func imageRow(sessionId: String, artifact: ArtifactDescriptor) -> UnsafeMutablePointer<GtkWidget>? {
+        let pic = shim_picture()
+        shim_picture_fit(pic)
+        shim_widget_size_wh(pic, -1, 180)
+        addClass(pic, "transcript-image")
+        // Hidden until the texture lands: a fetch failure (offline, demo
+        // mode) must not leave an empty bordered box in the transcript.
+        shim_widget_hide(pic)
+        if let cached = imageCache[artifact.artifactId] {
+            shim_picture_set_texture(pic, cached)
+            shim_widget_show(pic)
+        } else if let bridge {
+            // Hold the widget across the async fetch: a transcript rebuild may
+            // unparent the row while the bytes are in flight — the extra ref
+            // keeps the pointer valid; setting a paintable on an unparented
+            // widget is a no-op display-wise.
+            let picRef = shim_ref(pic)
+            let artifactId = artifact.artifactId
+            Task { @MainActor [weak self] in
+                defer { shim_unref(picRef) }
+                guard let self,
+                      let data = await bridge.imageArtifactBytes(sessionId: sessionId, artifactId: artifactId),
+                      let texture = AppWindow.texture(from: data) else { return }
+                self.imageCache[artifactId] = texture
+                shim_picture_set_texture(pic, texture)
+                shim_widget_show(pic)
+            }
+        }
+        let artifactId = artifact.artifactId
+        onPressed(pic) { [weak self] in self?.zoomArtifact(artifactId) }
+        return pic
+    }
+
+    private func zoomArtifact(_ artifactId: String) {
+        guard let texture = imageCache[artifactId] else { return }
+        onZoom?(texture)
     }
 
     private func assistantBlocks(_ text: String) -> UnsafeMutablePointer<GtkWidget>? {

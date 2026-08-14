@@ -289,8 +289,8 @@ window {
               0 0 8px rgba(234, 157, 52, 0.07);
 }
 
-.composer-entry,
-.composer-entry text {
+.composer-view,
+.composer-view text {
   background-color: transparent;
   border: none;
   box-shadow: none;
@@ -300,8 +300,57 @@ window {
   font-size: 10.5pt;
 }
 
-.composer-entry placeholder {
+/* Wrapping composer: the scrolled window draws nothing itself. */
+.composer scrolledwindow,
+.composer scrolledwindow viewport {
+  background-color: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.attachment-strip {
+  padding: 2px 0;
+}
+
+.attachment-chip {
+  background-color: rgba(255, 250, 243, 0.92);
+  border: 1px solid rgba(121, 117, 147, 0.55);
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+
+.chip-name {
   color: #797593;
+  font-size: 9pt;
+}
+
+.chip-remove {
+  background-color: transparent;
+  border: none;
+  box-shadow: none;
+  color: #797593;
+  padding: 2px 6px;
+}
+
+.chip-remove:hover {
+  color: #B4637A;
+}
+
+/* Transcript image previews (artifact rows + preview captures). */
+.transcript-image {
+  border: 1px solid rgba(121, 117, 147, 0.45);
+  border-radius: 4px;
+  margin: 4px 0;
+}
+
+/* Files pane thumbnails. */
+.file-thumb {
+  border-radius: 3px;
+}
+
+/* Click-to-zoom lightbox: light wash over the whole window. */
+.lightbox-backdrop {
+  background-color: rgba(250, 244, 237, 0.85);
 }
 
 .send-button {

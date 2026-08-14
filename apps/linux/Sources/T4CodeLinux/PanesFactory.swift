@@ -441,6 +441,19 @@ public final class PanesFactory {
 
     private var filesScroll: UnsafeMutablePointer<GtkWidget>?
     private var filesList: UnsafeMutablePointer<GtkWidget>?
+    /// Thumbnail textures by file path (image files only); loaded async via
+    /// the bridge's binary-safe files.read. Reffed for the pane's lifetime.
+    private var thumbnailCache: [String: UnsafeMutableRawPointer] = [:]
+
+    /// Don't thumbnail files above this size — decode cost isn't worth it.
+    private static let thumbnailMaxBytes = 4 * 1024 * 1024
+
+    /// True for image files worth a thumbnail (extension-driven; the bytes
+    /// still have to decode through the GDK loaders).
+    static func isImageFile(_ path: String) -> Bool {
+        ["png", "jpg", "jpeg", "webp", "gif"].contains(
+            URL(fileURLWithPath: path).pathExtension.lowercased())
+    }
 
     /// Row activation (tap a changed file) → drill in with
     /// `store.readFile(sessionId:path:)` or navigate `store.listFiles` for a
@@ -479,6 +492,31 @@ public final class PanesFactory {
             let isDir = item.kind == "directory"
             let row = shim_box_new(1, 6)
             shim_css_class(row, isDir ? "dir-row" : "file-row")
+            if !isDir, Self.isImageFile(item.path), (item.size ?? 0) <= Self.thumbnailMaxBytes {
+                let pic = shim_picture()
+                shim_picture_fit(pic)
+                shim_widget_size_wh(pic, 28, 28)
+                shim_css_class(pic, "file-thumb")
+                shim_widget_hide(pic)
+                if let cached = thumbnailCache[item.path] {
+                    shim_picture_set_texture(pic, cached)
+                    shim_widget_show(pic)
+                } else if let bridge {
+                    let picRef = shim_ref(pic)
+                    let path = item.path
+                    Task { @MainActor [weak self] in
+                        defer { shim_unref(picRef) }
+                        guard let self,
+                              let data = await bridge.fileImageBytes(sessionId: bridge.selectedSession?.sessionId ?? "", path: path),
+                              !data.isEmpty, data.count <= Self.thumbnailMaxBytes,
+                              let texture = AppWindow.texture(from: data) else { return }
+                        self.thumbnailCache[path] = texture
+                        shim_picture_set_texture(pic, texture)
+                        shim_widget_show(pic)
+                    }
+                }
+                shim_box_append(row, pic)
+            }
             let label = shim_label(isDir ? item.path + "/" : item.path)
             shim_widget_halign_start(label)
             shim_box_append(row, label)

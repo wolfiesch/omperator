@@ -25,6 +25,8 @@
 | **Keychain** | ✅ libsecret via `secret-tool` |
 | **Notifications** | ✅ `notify-send` + T4Notifier (byte-faithful to macOS) |
 | **Themes** | ✅ Bundled CSS (`Sources/T4CodeLinux/themes/`), loaded via `Bundle.module` — no absolute paths |
+| **Composer** | ✅ Multiline wrapping text view (Enter sends, Shift+Enter newline, auto-grow to ~6 lines) with image attachments — file picker (📎), clipboard paste, drag & drop; chips preview on click |
+| **Image previews** | ✅ Transcript artifact rows (chunked `artifact.read` → `GdkTexture`), preview-capture rows, files-pane thumbnails; click opens a lightbox (Esc/click closes) |
 | **Demo mode** | ✅ Renders rail + detail with exact Rosé Pine tokens (`-T4Demo`) |
 | **Live fixture host** | ✅ Full wire flow (hello→welcome→catalog→attach→transcript) verified |
 
@@ -137,6 +139,7 @@ refreshes (streaming frames, send, selection).
 | `-T4Theme=dark\|light` | force appearance for headless sweeps |
 | `-T4WindowSize=WxH` | exact launch geometry (captures) |
 | `-T4Demo` / `-T4DemoStream` | store-level demo rail + streaming driver |
+| `-T4Attach=/path.png` | stage a composer attachment at startup (QA for the attachment strip) |
 
 ---
 

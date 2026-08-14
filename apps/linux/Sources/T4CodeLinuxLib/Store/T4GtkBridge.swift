@@ -32,6 +32,64 @@ public final class T4GtkBridge {
         await store.sendPrompt(sessionId: sessionId, text: text)
     }
 
+    // MARK: - Images (prompt attachments + transcript artifacts + captures)
+
+    /// One composer attachment in public form (raw bytes + wire mimeType).
+    public struct GtkPromptImage: Sendable {
+        public let data: Data
+        public let mimeType: String
+        public init(data: Data, mimeType: String) {
+            self.data = data
+            self.mimeType = mimeType
+        }
+    }
+
+    /// Send a prompt with image attachments (uploaded first via
+    /// session.image.begin/chunk; formats pass through unchanged).
+    public func sendPrompt(sessionId: String, text: String, images: [GtkPromptImage]) async {
+        await store.sendPrompt(sessionId: sessionId, text: text,
+                               images: images.map { T4SessionStore.PromptImage(data: $0.data, mimeType: $0.mimeType) })
+    }
+
+    /// Full byte read of one transcript image artifact: loops artifact.read
+    /// chunks until `complete`. Returns nil when the fetch fails partway.
+    public func imageArtifactBytes(sessionId: String, artifactId: String) async -> Data? {
+        var bytes = Data()
+        var offset = 0
+        while true {
+            guard let chunk = await store.artifactRead(sessionId: sessionId, artifactId: artifactId, offset: offset),
+                  let part = chunk.decodedBytes else { return nil }
+            bytes.append(part)
+            if chunk.complete { return bytes }
+            offset = chunk.nextOffset
+        }
+    }
+
+    /// One preview capture row in public form (transcript image rows).
+    public struct GtkCaptureRow: Sendable {
+        public let captureId: String
+        public let mimeType: String
+        public let capturedAt: Int
+    }
+
+    /// Capture rows for a session (one per preview.capture push/command).
+    public func previewCaptureRows(for sessionId: String) -> [GtkCaptureRow] {
+        (store.previewCaptureRowsBySession[sessionId] ?? []).map {
+            GtkCaptureRow(captureId: $0.captureId, mimeType: $0.mimeType, capturedAt: $0.capturedAt)
+        }
+    }
+
+    /// Decoded bytes of a preview capture (nil until the chunked fetch lands).
+    public func captureImageData(_ captureId: String) -> Data? {
+        store.previewCaptureImages[captureId]?.data
+    }
+
+    /// Binary-safe file read for image thumbnails: files.read returns base64
+    /// content for binary payloads (the host auto-detects), decoded here.
+    public func fileImageBytes(sessionId: String, path: String) async -> Data? {
+        await store.readFileBytes(sessionId: sessionId, path: path)
+    }
+
     public func cancel(sessionId: String) async { await store.cancel(sessionId: sessionId) }
 
     public func transcript(for sessionId: String) -> [TranscriptEntry] {

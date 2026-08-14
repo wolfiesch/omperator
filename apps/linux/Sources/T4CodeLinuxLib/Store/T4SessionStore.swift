@@ -1312,10 +1312,24 @@ final class T4SessionStore: ObservableObject {
         }
     }
 
+    /// One composer attachment: raw image bytes plus the wire mimeType the
+    /// host records. PNG/JPEG/WebP pass through unchanged (the Apple store
+    /// JPEG-re-encodes; the Linux client keeps the source format so UI
+    /// screenshots don't smear).
+    struct PromptImage: Sendable, Equatable {
+        let data: Data
+        let mimeType: String
+
+        init(data: Data, mimeType: String = "image/jpeg") {
+            self.data = data
+            self.mimeType = mimeType
+        }
+    }
+
     /// Send a user prompt to a session (session.prompt), uploading any images
     /// first (session.image.begin/chunk → imageId refs). No-op with a clear
     /// error when not connected — the composer is disabled in that state.
-    func sendPrompt(sessionId: String, text: String, images: [Data] = []) async {
+    func sendPrompt(sessionId: String, text: String, images: [PromptImage] = []) async {
         guard let client, connected, !hostId.isEmpty else {
             lastError = "Not connected to a host."
             return
@@ -1562,14 +1576,15 @@ final class T4SessionStore: ObservableObject {
         }
     }
 
-    /// Upload one JPEG: begin {mimeType,size,sha256} → chunk loop (base64,
+    /// Upload one image: begin {mimeType,size,sha256} → chunk loop (base64,
     /// host-chunk-sized slices) → the imageId a prompt can reference.
-    private func uploadImage(_ data: Data, sessionId: String) async throws -> String {
+    private func uploadImage(_ image: PromptImage, sessionId: String) async throws -> String {
         guard let client else { throw T4WireError.invalidFrame(path: "client", reason: "not connected") }
+        let data = image.data
         let sha = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         let begin = try await client.sendCommand(CommandIntent(
             hostId: hostId, command: "session.image.begin",
-            args: ["mimeType": .string("image/jpeg"), "size": .number(Double(data.count)), "sha256": .string(sha)],
+            args: ["mimeType": .string(image.mimeType), "size": .number(Double(data.count)), "sha256": .string(sha)],
             sessionId: sessionId))
         let (imageId, chunkBytes) = try begin.imageBeginResult()
         var offset = 0
@@ -1583,6 +1598,28 @@ final class T4SessionStore: ObservableObject {
             offset += slice.count
         }
         return imageId
+    }
+
+    /// Binary-safe file read for image thumbnails: the host returns base64
+    /// content for binary payloads (files-authority.ts auto-detects), so
+    /// decode that arm; text files come back as UTF-8 data.
+    func readFileBytes(sessionId: String, path: String) async -> Data? {
+        guard let client, connected, !hostId.isEmpty else { return nil }
+        do {
+            let result = try await client.sendCommand(CommandIntent(
+                hostId: hostId, command: "files.read",
+                args: ["path": .string(path)], sessionId: sessionId))
+            let (content, _) = try result.filesReadResult()
+            if case .object(let obj) = result.result,
+               case .string(let encoding) = obj["encoding"] ?? .null,
+               encoding == "base64" {
+                return Data(base64Encoded: content)
+            }
+            return Data(content.utf8)
+        } catch {
+            t4log.error("files.read(bytes) failed: \(error)")
+            return nil
+        }
     }
 
     /// Demo mode: fake inventory/transcripts render ONLY with -T4Demo in the
@@ -2018,7 +2055,7 @@ final class T4SessionStore: ObservableObject {
     /// command-gating feature names for the panes (preview, search, watch).
     private static let clientFeatures = [
         "resume", "prompt.lease", "controller.lease", "prompt.images", "transcript.page",
-        "session.delta", "files.list", "terminal.io",
+        "transcript.images", "session.delta", "files.list", "terminal.io",
         "preview.control", "files.search", "files.diff", "transcript.search",
         "session.watch", "host.watch", "project.reveal",
         "session.observer", "session.unverified", "session.fork",
