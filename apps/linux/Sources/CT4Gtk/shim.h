@@ -718,3 +718,62 @@ static inline void *shim_ref(void *obj) { return obj ? g_object_ref(obj) : NULL;
 static inline void shim_scrolled_no_width_propagate(GtkWidget *scroll) {
     gtk_scrolled_window_set_propagate_natural_width(GTK_SCROLLED_WINDOW(scroll), FALSE);
 }
+
+/* ── Copy chrome (context menu + hover) ─────────────────────
+   Right-click gesture (button 3) that shares the global pressed-handler
+   slot, click position captured in ROOT-window coordinates so a shared
+   window-anchored popover can be positioned anywhere. */
+
+static double shim_menu_x = 0, shim_menu_y = 0;
+
+static void shim_rightclick_trampoline(GtkGestureClick *g, int n, double x, double y, gpointer userData) {
+    (void)n;
+    GtkWidget *w = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(g));
+    GtkRoot *root = w ? gtk_widget_get_root(w) : NULL;
+    graphene_point_t in = GRAPHENE_POINT_INIT((float)x, (float)y);
+    graphene_point_t out;
+    gboolean okc = root && gtk_widget_compute_point(w, GTK_WIDGET(root), &in, &out);
+    if (okc) {
+        shim_menu_x = out.x;
+        shim_menu_y = out.y;
+    } else {
+        shim_menu_x = x;
+        shim_menu_y = y;
+    }
+    if (shim_pressed_handler) shim_pressed_handler(userData);
+}
+
+static inline void shim_menu_click_pos(double *x, double *y) { *x = shim_menu_x; *y = shim_menu_y; }
+
+static inline void shim_on_right_click(GtkWidget *widget, void *userData) {
+    GtkGesture *g = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(g), 3);
+    /* CAPTURE phase: claim the sequence before inner text views show their
+       own editing menu (Cut/Copy/Paste) — element copy wins on right-click. */
+    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(g), GTK_PHASE_CAPTURE);
+    g_signal_connect_data(g, "pressed", G_CALLBACK(shim_rightclick_trampoline), userData, NULL, G_CONNECT_DEFAULT);
+    gtk_widget_add_controller(widget, GTK_EVENT_CONTROLLER(g));
+}
+
+
+
+/* Popover positioning (window coordinates) + dismiss. */
+static inline void shim_popover_point_to(GtkWidget *popover, double x, double y) {
+    GdkRectangle r = { (int)x, (int)y, 1, 1 };
+    gtk_popover_set_pointing_to(GTK_POPOVER(popover), &r);
+}
+static inline void shim_popover_popdown(GtkWidget *popover) { gtk_popover_popdown(GTK_POPOVER(popover)); }
+
+static inline void shim_widget_valign_start(GtkWidget *w) { gtk_widget_set_valign(w, GTK_ALIGN_START); }
+
+/* Copy an image to the clipboard as PNG (texture → PNG bytes → provider). */
+static inline void shim_clipboard_set_texture(void *texture) {
+    GdkDisplay *display = gdk_display_get_default();
+    if (!display || !texture) return;
+    GdkClipboard *clipboard = gdk_display_get_clipboard(display);
+    GBytes *bytes = gdk_texture_save_to_png_bytes(GDK_TEXTURE(texture));
+    GdkContentProvider *provider = gdk_content_provider_new_for_bytes("image/png", bytes);
+    gdk_clipboard_set_content(clipboard, provider);
+    g_object_unref(provider);
+    g_bytes_unref(bytes);
+}

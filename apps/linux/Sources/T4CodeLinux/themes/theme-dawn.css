@@ -353,6 +353,43 @@ window {
   background-color: rgba(250, 244, 237, 0.85);
 }
 
+/* Copy chrome: hover-revealed ghost button + right-click menu. */
+.copy-ghost {
+  background-color: rgba(255, 250, 243, 0.9);
+  border: 1px solid rgba(121, 117, 147, 0.5);
+  border-radius: 4px;
+  box-shadow: none;
+  color: #797593;
+  padding: 1px 6px;
+  margin: 4px;
+}
+
+.copy-ghost:hover {
+  color: #575279;
+  border-color: rgba(234, 157, 52, 0.6);
+}
+
+.copy-menu {
+  background-color: rgba(255, 250, 243, 0.98);
+  border: 1px solid rgba(121, 117, 147, 0.5);
+  border-radius: 6px;
+  padding: 4px;
+}
+
+.copy-menu-item {
+  background-color: transparent;
+  border: none;
+  box-shadow: none;
+  color: #575279;
+  padding: 6px 14px;
+  border-radius: 4px;
+}
+
+.copy-menu-item:hover {
+  background-color: rgba(242, 233, 222, 0.9);
+  color: #EA9D34;
+}
+
 .send-button {
   background-color: #EA9D34;
   color: #FFFAF3;

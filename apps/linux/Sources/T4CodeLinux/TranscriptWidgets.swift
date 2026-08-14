@@ -40,6 +40,60 @@ import T4CodeLinuxLib
 @MainActor
 final class TranscriptWidgets {
 
+    // MARK: - Copy chrome
+
+    /// What a transcript element offers to copy. The hover ghost copies the
+    /// first available (text > markdown > image); the right-click menu lists
+    /// every available item.
+    struct CopyPayload {
+        var text: String?
+        var markdown: String?
+    }
+
+    /// Context-menu presenter (AppWindow's shared popover): root-window x/y
+    /// plus the items to show.
+    var onCopyMenu: ((Double, Double, [AppWindow.CopyMenuItem]) -> Void)?
+
+    /// Present the shared context menu at the last right-click position.
+    private func presentCopyMenu(_ items: [AppWindow.CopyMenuItem]) {
+        guard let present = onCopyMenu, !items.isEmpty else { return }
+        let (x, y) = menuClickPos()
+        present(x, y, items)
+    }
+
+    private func menuItems(for payload: CopyPayload) -> [AppWindow.CopyMenuItem] {
+        var items: [AppWindow.CopyMenuItem] = []
+        if let text = payload.text {
+            items.append(("Copy Text", { shim_clipboard_set_text(text) }))
+        }
+        if let md = payload.markdown {
+            items.append(("Copy Markdown", { shim_clipboard_set_text(md) }))
+        }
+        return items
+    }
+
+    /// Wrap an element with copy affordances: a subtle always-visible ⧉
+    /// ghost button at the top-right (copies the default payload: text, else
+    /// markdown) and a right-click context menu listing every format.
+    private func withCopyChrome(_ widget: UnsafeMutablePointer<GtkWidget>?, payload: CopyPayload) -> UnsafeMutablePointer<GtkWidget>? {
+        guard let widget else { return nil }
+        let overlay = shim_overlay_new()
+        shim_overlay_set_child(overlay, widget)
+        let ghost = shim_button("⧉")
+        addClass(ghost, "copy-ghost")
+        shim_widget_halign_end(ghost)
+        shim_widget_valign_start(ghost)
+        let defaultText = payload.text ?? payload.markdown
+        onSignal(ghost, "clicked") {
+            if let defaultText { shim_clipboard_set_text(defaultText) }
+        }
+        shim_overlay_add_overlay(overlay, ghost)
+        onRightClick(overlay) { [weak self] in
+            self?.presentCopyMenu(self?.menuItems(for: payload) ?? [])
+        }
+        return overlay
+    }
+
     // MARK: - Image rows
 
     /// Store facade for artifact byte fetches; set by AppWindow.
@@ -169,17 +223,29 @@ final class TranscriptWidgets {
                 body = assistantBlocks(text)
             }
             let images = imageArtifacts(of: entry)
-            guard !images.isEmpty, let body else { return body }
-            let column = shim_box_new(0, 8)
-            shim_box_append(column, body)
-            for artifact in images {
-                if let row = imageRow(sessionId: entry.sessionId, artifact: artifact) {
-                    shim_box_append(column, row)
+            var content = body
+            if !images.isEmpty, let body {
+                let column = shim_box_new(0, 8)
+                shim_box_append(column, body)
+                for artifact in images {
+                    if let row = imageRow(sessionId: entry.sessionId, artifact: artifact) {
+                        shim_box_append(column, row)
+                    }
                 }
+                content = column
             }
-            return column
+            // Copy affordances: rendered plain text always; the raw markdown
+            // source as a second menu item for assistant messages (user text
+            // has no markdown, so one item is enough there).
+            let plain = renderTranscriptSegments(body: text, role: entry.role).map(\.text).joined()
+            var payload = CopyPayload(text: plain)
+            if entry.role != "user", plain != text { payload.markdown = text }
+            return withCopyChrome(content, payload: payload)
         default:
-            return toolCard(head: entry.headline, meta: entry.body, kind: entry.kind?.rawValue ?? "unknown")
+            let head = entry.headline
+            let meta = entry.body
+            let card = toolCard(head: head, meta: meta, kind: entry.kind?.rawValue ?? "unknown")
+            return withCopyChrome(card, payload: CopyPayload(text: meta.isEmpty ? head : head + "\n\n" + meta))
         }
     }
 
@@ -224,6 +290,12 @@ final class TranscriptWidgets {
         }
         let artifactId = artifact.artifactId
         onPressed(pic) { [weak self] in self?.zoomArtifact(artifactId) }
+        onRightClick(pic) { [weak self] in
+            guard let self else { return }
+            self.presentCopyMenu([("Copy Image", { [weak self] in
+                if let t = self?.imageCache[artifactId] { shim_clipboard_set_texture(t) }
+            })])
+        }
         return pic
     }
 

@@ -126,6 +126,7 @@ final class AppWindow {
         window = win
         transcriptWidgets.bridge = store
         transcriptWidgets.onZoom = { [weak self] texture in self?.showLightbox(texture) }
+        transcriptWidgets.onCopyMenu = { [weak self] x, y, items in self?.showCopyMenu(x: x, y: y, items: items) }
         build(win)
         // Dev seam: -T4Attach=/path/to.png stages a composer attachment at
         // startup (QA for the attachment strip without a file dialog).
@@ -1070,8 +1071,13 @@ final class AppWindow {
                 shim_picture_fit(pic)
                 shim_widget_size_wh(pic, 40, 40)
                 shim_picture_set_texture(pic, texture)
-                // Click the staged thumbnail to preview it full-size.
+                // Click the staged thumbnail to preview it full-size;
+                // right-click copies the image.
                 onPressed(pic) { [weak self] in self?.showLightbox(texture) }
+                onRightClick(pic) { [weak self] in
+                    let (x, y) = menuClickPos()
+                    self?.showCopyMenu(x: x, y: y, items: [("Copy Image", { shim_clipboard_set_texture(texture) })])
+                }
                 shim_box_append(chip, pic)
             }
             if let nameLabel = makeLabel(attachment.name, "chip-name") {
@@ -1160,6 +1166,12 @@ final class AppWindow {
         shim_picture_fit(pic)
         shim_picture_set_texture(pic, texture)
         shim_widget_margins(pic, 40)
+        onRightClick(pic) { [weak self] in
+            let (x, y) = menuClickPos()
+            self?.showCopyMenu(x: x, y: y, items: [("Copy Image", {
+                shim_clipboard_set_texture(texture)
+            })])
+        }
         shim_box_append(backdrop, pic)
         onPressed(backdrop) { [weak self] in self?.hideLightbox() }
         shim_overlay_add_overlay(root, backdrop)
@@ -1170,5 +1182,46 @@ final class AppWindow {
         guard let root = rootOverlay, let lb = lightbox else { return }
         lightbox = nil
         shim_overlay_remove(root, lb)
+    }
+
+    // MARK: - Copy context menu
+
+    typealias CopyMenuItem = (label: String, action: () -> Void)
+
+    private var copyMenu: UnsafeMutablePointer<GtkWidget>?
+    private var copyMenuBox: UnsafeMutablePointer<GtkWidget>?
+
+    /// One shared popover for every transcript element's right-click menu.
+    /// Window-anchored so transcript rebuilds never orphan it; content is
+    /// rebuilt per open. `x`/`y` are root-window coordinates (from the
+    /// shim's right-click trampoline).
+    func showCopyMenu(x: Double, y: Double, items: [CopyMenuItem]) {
+        guard let win = window, !items.isEmpty else { return }
+        if copyMenu == nil {
+            let pop = shim_popover_new()
+            addClass(pop, "copy-menu")
+            let box = shim_box_new(0, 2)
+            shim_popover_set_child(pop, box)
+            shim_popover_attach(pop, win)
+            copyMenu = pop
+            copyMenuBox = box
+        }
+        guard let pop = copyMenu, let box = copyMenuBox else { return }
+        shim_box_clear(box)
+        for item in items {
+            let btn = shim_button(item.label)
+            addClass(btn, "copy-menu-item")
+            onSignal(btn, "clicked") { [weak self] in
+                item.action()
+                self?.hideCopyMenu()
+            }
+            shim_box_append(box, btn)
+        }
+        shim_popover_point_to(pop, x, y)
+        shim_popover_popup(pop)
+    }
+
+    private func hideCopyMenu() {
+        if let pop = copyMenu { shim_popover_popdown(pop) }
     }
 }

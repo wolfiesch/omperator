@@ -194,3 +194,27 @@ func installClipboardBytesHandlerIfNeeded() {
     clipboardBytesHandlerInstalled = true
     shim_set_clipboard_bytes_handler(clipboardBytesForwarder)
 }
+
+// MARK: - Right-click (context menu trigger)
+
+/// Shares the pressed-handler slot: the shim's right-click trampoline
+/// forwards through shim_pressed_handler with the same userData box.
+/// Click position (root-window coords) is read via shim_menu_click_pos.
+func onRightClick(_ widget: UnsafeMutablePointer<GtkWidget>?, _ action: @escaping () -> Void) {
+    guard let widget else { return }
+    if !pressedHandlerInstalled {
+        pressedHandlerInstalled = true
+        shim_set_pressed_handler(pressedForwarder)
+    }
+    shim_on_right_click(widget, Unmanaged.passRetained(GtkBox(action)).toOpaque())
+}
+
+/// The last right-click position in root-window coordinates. MUST live in
+/// this file: the C shim is header-only, so its `static` globals are
+/// per-translation-unit — only this file's TU shares storage with the
+/// trampoline that records the position.
+func menuClickPos() -> (Double, Double) {
+    var x = 0.0, y = 0.0
+    shim_menu_click_pos(&x, &y)
+    return (x, y)
+}
