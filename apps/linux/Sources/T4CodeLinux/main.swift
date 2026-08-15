@@ -11,12 +11,23 @@ var appWindow: AppWindow?
 
 let activate: ActFn = { appPtr, _ in
     guard let appPtr else { return }
-    installMainActorPump()
-    // Theme the moment the display exists (Rosé Pine Moon by default).
-    if let css = Bundle.module.url(forResource: "theme-moon", withExtension: "css", subdirectory: "themes") {
-        shim_css_load(css.path)
-    }
     MainActor.assumeIsolated {
+        // One window per process. GApplication delivers a second "activate"
+        // when the app is launched again while it is already running (same
+        // application id on the same session bus — the new process forwards
+        // the launch and exits). Replacing `appWindow` here would free the
+        // previous controller while its 33ms refresh timeout is still
+        // registered with a pass-unretained pointer; the next tick then
+        // retains the freed AppWindow and SIGSEGVs (startRefreshTimer).
+        if let existing = appWindow {
+            existing.present()
+            return
+        }
+        installMainActorPump()
+        // Theme the moment the display exists (Rosé Pine Moon by default).
+        if let css = Bundle.module.url(forResource: "theme-moon", withExtension: "css", subdirectory: "themes") {
+            shim_css_load(css.path)
+        }
         appWindow = AppWindow(app: appPtr)
     }
 }

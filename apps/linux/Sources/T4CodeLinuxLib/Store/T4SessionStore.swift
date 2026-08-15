@@ -1056,7 +1056,7 @@ final class T4SessionStore: ObservableObject {
         if !Self.demoMode, let session {
             UserDefaults.standard.set(session.sessionId, forKey: Self.lastSessionIdKey)
         }
-        if connected, let session { Task { await attach(sessionId: session.sessionId) } }
+        if connected, let session, !isDraftSession(session.sessionId) { Task { await attach(sessionId: session.sessionId) } }
     }
 
     /// Demo stream driver (-T4DemoStream): replays a live turn into the hero
@@ -1152,6 +1152,7 @@ final class T4SessionStore: ObservableObject {
     /// not view-driven: a view race once left sessions permanently empty).
     private func attachSelectedIfNeeded() {
         guard connected, let selected = selectedSession,
+              !isDraftSession(selected.sessionId),
               liveEntries[selected.sessionId] == nil else { return }
         Task {
             await attach(sessionId: selected.sessionId)
@@ -1264,11 +1265,12 @@ final class T4SessionStore: ObservableObject {
     }
 
     /// Run a mutation under a freshly acquired lease of the right kind.
-    private func withLease(sessionId: String, kind: LeaseKind = .prompt, release: Bool = true, mutation: (String) async -> Void) async {
+    /// `refreshBeforeMutation` reloads the inventory so revision-carrying
+    /// mutations carry the post-acquire revision; prompts omit the revision
+    /// entirely (optional on the wire), so they skip that round trip.
+    private func withLease(sessionId: String, kind: LeaseKind = .prompt, release: Bool = true, refreshBeforeMutation: Bool = true, mutation: (String) async -> Void) async {
         guard let leaseId = await acquireLease(sessionId: sessionId, kind: kind) else { return }
-        // Lease acquire bumps the session revision; refresh so the mutation
-        // carries the current one (the host rejects stale revisions).
-        await refresh()
+        if refreshBeforeMutation { await refresh() }
         await mutation(leaseId)
         if release { await releaseLease(sessionId: sessionId, leaseId: leaseId, kind: kind) }
     }
@@ -1330,6 +1332,10 @@ final class T4SessionStore: ObservableObject {
     /// first (session.image.begin/chunk → imageId refs). No-op with a clear
     /// error when not connected — the composer is disabled in that state.
     func sendPrompt(sessionId: String, text: String, images: [PromptImage] = []) async {
+        if isDraftSession(sessionId) {
+            await sendDraftPrompt(sessionId: sessionId, text: text, images: images)
+            return
+        }
         guard let client, connected, !hostId.isEmpty else {
             lastError = "Not connected to a host."
             return
@@ -1339,7 +1345,7 @@ final class T4SessionStore: ObservableObject {
             for image in images {
                 refs.append(.object(["imageId": .string(try await uploadImage(image, sessionId: sessionId))]))
             }
-            await withLease(sessionId: sessionId, release: false) { leaseId in
+            await withLease(sessionId: sessionId, release: false, refreshBeforeMutation: false) { leaseId in
                 var args: [String: JSONValue] = ["message": .string(text), "leaseId": .string(leaseId)]
                 if !refs.isEmpty { args["images"] = .array(refs) }
                 do {
@@ -1404,6 +1410,66 @@ final class T4SessionStore: ObservableObject {
             lastError = "\(error)"
             return nil
         }
+    }
+
+    // MARK: - Draft sessions (instant "+")
+
+    /// True for local draft sessions (no host record yet).
+    func isDraftSession(_ sessionId: String) -> Bool {
+        sessionId.hasPrefix("draft-")
+    }
+
+    /// Create a local draft session and select it — instant, no host round
+    /// trip. The first prompt creates the real session in the background
+    /// (sendDraftPrompt), hiding the daemon's spawn latency behind a live UI.
+    func startDraftSession() {
+        guard let project = selectedSession?.project ?? sessions.first?.project else { return }
+        let draftId = "draft-\(UUID().uuidString.lowercased())"
+        let now = ISO8601DateFormatter().string(from: Date())
+        var projectFields: [String: JSONValue] = ["projectId": .string(project.projectId)]
+        if let name = project.name { projectFields["name"] = .string(name) }
+        let json: JSONValue = .object([
+            "hostId": .string(hostId),
+            "sessionId": .string(draftId),
+            "project": .object(projectFields),
+            "revision": .string("draft"),
+            "title": .string("New Session"),
+            "status": .string("idle"),
+            "updatedAt": .string(now),
+        ])
+        guard let data = try? JSONEncoder().encode(json),
+              let draft = try? JSONDecoder().decode(SessionRef.self, from: data) else { return }
+        sessions.insert(draft, at: 0)
+        select(draft)
+    }
+
+    /// First send on a draft: optimistic bubble now, real session behind it.
+    /// createSession's failure path leaves the draft + bubble in place with
+    /// lastError set, so a retry just sends again.
+    private func sendDraftPrompt(sessionId: String, text: String, images: [PromptImage]) async {
+        guard let draft = sessions.first(where: { $0.sessionId == sessionId }) else { return }
+        let entryJson: JSONValue = .object([
+            "id": .string("optimistic-\(UUID().uuidString.lowercased())"),
+            "hostId": .string(hostId),
+            "sessionId": .string(sessionId),
+            "kind": .string("message"),
+            "timestamp": .string(ISO8601DateFormatter().string(from: Date())),
+            "data": .object(["role": .string("user"), "text": .string(text)]),
+        ])
+        if let data = try? JSONEncoder().encode(entryJson),
+           let durable = try? JSONDecoder().decode(DurableEntry.self, from: data) {
+            liveEntries[sessionId] = (liveEntries[sessionId] ?? []) + [TranscriptEntry(from: durable)]
+        }
+        guard let created = await createSession(projectId: draft.project.projectId) else { return }
+        sessions.removeAll { $0.sessionId == sessionId }
+        // Migrate the bubble onto the real session id; the durable user entry
+        // arrives as an echo of this same text and is dropped by the existing
+        // echo dedup in appendDurableEntry, so the bubble never duplicates.
+        if let pending = liveEntries.removeValue(forKey: sessionId) {
+            liveEntries[created.sessionId] = pending
+        }
+        select(created)
+        await sendPrompt(sessionId: created.sessionId, text: text, images: images)
     }
 
     /// Copy an observer/unverified session into a fresh session this app owns.
@@ -2265,7 +2331,15 @@ final class T4SessionStore: ObservableObject {
         guard let client, connected, !hostId.isEmpty, await client.isReady else { return }
         do {
             let result = try await client.sendCommand(CommandIntent(hostId: hostId, command: "session.list"))
+            let drafts = sessions.filter { isDraftSession($0.sessionId) }
             sessions = try result.sessionListResult().sessions
+            // Drafts have no host record; keep them at the top of the rail
+            // through inventory reloads until their first prompt resolves.
+            if !drafts.isEmpty {
+                sessions.insert(contentsOf: drafts.filter { draft in
+                    !sessions.contains(where: { $0.sessionId == draft.sessionId })
+                }, at: 0)
+            }
             markLive()
             reconcileSelection()
             attachSelectedIfNeeded()
@@ -2362,7 +2436,11 @@ final class T4SessionStore: ObservableObject {
                 pendingTranscriptEntries.removeValue(forKey: snapshot.sessionId)
                 toolStreamingTasks.removeValue(forKey: snapshot.sessionId)?.cancel()
                 liveTools.removeValue(forKey: snapshot.sessionId)
-                liveEntries[snapshot.sessionId] = snapshot.entries.map { TranscriptEntry(from: $0) }
+                // Keep optimistic (not-yet-durable) bubble entries ahead of the
+                // snapshot: a fresh draft session's snapshot is empty and would
+                // otherwise wipe the just-sent prompt off the screen.
+                let optimistic = (liveEntries[snapshot.sessionId] ?? []).filter { $0.id.hasPrefix("optimistic-") }
+                liveEntries[snapshot.sessionId] = optimistic + snapshot.entries.map { TranscriptEntry(from: $0) }
                 // The snapshot is the live tail at the current cursor; older
                 // history paging restarts from unknown (hasMore = nil).
                 pagingState[snapshot.sessionId] = TranscriptPaging(nextCursor: nil, hasMore: nil, loading: false)
@@ -2395,7 +2473,7 @@ final class T4SessionStore: ObservableObject {
                     pendingAsk = PendingAsk(sessionId: frame.sessionId, request: ask)
                 }
                 let sid = frame.sessionId
-                FileHandle.standardError.write("DBG frametype=\(frame.event.type)\n".data(using:.utf8)!)
+                FileHandle.standardError.write("DBG frametype=\(frame.event.type) sid=\(sid.prefix(8)) sel=\((selectedSession?.sessionId ?? "none").prefix(8))\n".data(using:.utf8)!)
                 switch frame.event.type {
                 case "turn.start":
                     activeTurns.insert(sid)

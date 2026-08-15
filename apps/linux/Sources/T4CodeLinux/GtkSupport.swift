@@ -127,6 +127,8 @@ let gdkKeyReturn: UInt32 = 0xFF0D
 let gdkKeyKPEnter: UInt32 = 0xFF8D
 let gdkKeyEscape: UInt32 = 0xFF1B
 let gdkKeyV: UInt32 = 0x76
+let gdkKeyN: UInt32 = 0x6E
+let gdkKeyNUpper: UInt32 = 0x4E
 
 /// Key-pressed handler via GtkEventControllerKey. Return true to swallow.
 func onKey(_ widget: UnsafeMutablePointer<GtkWidget>?, _ handler: @escaping (UInt32, UInt32) -> Bool) {

@@ -3350,7 +3350,11 @@ export class LocalAppserver implements AppserverHandle {
 		const created = await this.createSession(command.args);
 		const createdSessionId = created.sessionId as SessionId;
 		const projection = this.#projections.get(createdSessionId)!;
-		if (!this.#externalRuntimes.has(createdSessionId)) await this.ensureSupervisor(createdSessionId);
+		// Spawn-only start: the writer process exists when create returns (the
+		// ownership fence), but the ~2s RPC handshake finishes in the background
+		// and is awaited by the first prompt — session.open stays instant.
+		if (!this.#externalRuntimes.has(createdSessionId))
+			await this.ensureSupervisor(createdSessionId, false, false);
 		await this.broadcastIndex(projection.indexUpsert());
 		return {
 			frame: response(this.hostId, command, true, {
@@ -4245,6 +4249,7 @@ export class LocalAppserver implements AppserverHandle {
 	private async ensureSupervisor(
 		sessionId: SessionId,
 		ignoreLifecycleFence = false,
+		waitForReady = true,
 	): Promise<RpcChildSupervisor> {
 		if (this.#externalRuntimes.has(sessionId)) throw new ExternalRuntimeCommandError();
 		if (this.#draining) throw new Error("appserver is draining");
@@ -4256,8 +4261,13 @@ export class LocalAppserver implements AppserverHandle {
 		const pending = this.#startPromises.get(sessionId);
 		if (pending) return pending;
 		const existing = this.#supervisors.get(sessionId);
-		if (existing) return existing;
-		const start = Promise.resolve().then(() => this.startSupervisor(sessionId, ignoreLifecycleFence));
+		if (existing) {
+			// Spawn-only starts (session.create returns before the handshake)
+			// resolve here: the first prompt awaits the deferred readiness.
+			await existing.whenReady();
+			return existing;
+		}
+		const start = Promise.resolve().then(() => this.startSupervisor(sessionId, ignoreLifecycleFence, waitForReady));
 		this.#startPromises.set(sessionId, start);
 		try {
 			return await start;
@@ -4268,6 +4278,7 @@ export class LocalAppserver implements AppserverHandle {
 	private async startSupervisor(
 		sessionId: SessionId,
 		ignoreLifecycleFence = false,
+		waitForReady = true,
 	): Promise<RpcChildSupervisor> {
 		const existing = this.#supervisors.get(sessionId);
 		if (existing) return existing;
@@ -4428,7 +4439,19 @@ export class LocalAppserver implements AppserverHandle {
 		);
 		this.#supervisors.set(sessionId, supervisor);
 		try {
-		await supervisor.start();
+		if (waitForReady) {
+			await supervisor.start();
+		} else {
+			// Spawn-only: the writer process exists now (the create-time fence);
+			// the RPC handshake finishes in the background and is awaited by the
+			// first prompt via the pending start promise.
+			supervisor.startSpawned();
+			void supervisor.whenReady().catch(error => {
+				void this.cleanupFailedSupervisor(sessionId, supervisor, error).catch(cleanupError =>
+					this.#log("supervisor.deferred-cleanup-failed", { sessionId, error: String(cleanupError) }),
+				);
+			});
+		}
 		if (this.#supervisors.get(sessionId) !== supervisor) throw new Error("rpc child exited during startup");
 		// Record ownership for prompt-driven adoptions too (not just observer
 		// promotion), so the reconciling control state settles back to writable
@@ -4438,13 +4461,20 @@ export class LocalAppserver implements AppserverHandle {
 		this.#log("supervisor.spawn", { sessionId });
 		return supervisor;
 		} catch (error) {
-			if (this.#supervisors.get(sessionId) === supervisor) this.#supervisors.delete(sessionId);
-			this.#promptLifecycle.releaseAll(sessionId, "failed");
-			this.#transcripts.delete(sessionId);
-			this.disposeSubagentState(sessionId);
-			// Await the process, not just the supervisor. `stop()` signals and
-			// returns, so a caller that cleans up the session's files immediately
-			// would race a child still holding — and able to rewrite — its lock.
+			await this.cleanupFailedSupervisor(sessionId, supervisor, error);
+			throw error;
+		}
+	}
+	/** Cleanup after a failed supervisor start (shared by the awaited and
+	 * spawn-only paths). Rethrows the original error for awaited callers. */
+	private async cleanupFailedSupervisor(sessionId: SessionId, supervisor: RpcChildSupervisor, error: unknown): Promise<void> {
+		if (this.#supervisors.get(sessionId) === supervisor) this.#supervisors.delete(sessionId);
+		this.#promptLifecycle.releaseAll(sessionId, "failed");
+		this.#transcripts.delete(sessionId);
+		this.disposeSubagentState(sessionId);
+		// Await the process, not just the supervisor. `stop()` signals and
+		// returns, so a caller that cleans up the session's files immediately
+		// would race a child still holding — and able to rewrite — its lock.
 		const child = supervisor.child();
 		supervisor.stop("SIGTERM");
 		if (child && !(await this.childExitedWithinLifecycleTimeout(child))) {
@@ -4456,7 +4486,6 @@ export class LocalAppserver implements AppserverHandle {
 				throw new SessionRuntimeStuckError(error);
 		}
 		throw error;
-		}
 	}
 	private async message(ws: AppWs, raw: string | Uint8Array): Promise<void> {
 		this.#inflightMessages += 1;

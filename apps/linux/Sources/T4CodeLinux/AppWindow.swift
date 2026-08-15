@@ -147,6 +147,13 @@ final class AppWindow {
         startRefreshTimer()
     }
 
+    /// Bring the existing window forward. A second app launch while one is
+    /// already running delivers a remote "activate" (GApplication forwards it
+    /// and the new process exits) — present the window, never rebuild it.
+    func present() {
+        if let window { shim_window_present(window) }
+    }
+
     // MARK: - Build
 
     private func build(_ win: UnsafeMutablePointer<GtkWidget>) {
@@ -162,10 +169,17 @@ final class AppWindow {
         shim_window_set_child(win, root)
 
         // Esc closes the image lightbox when one is open.
-        onKey(win) { [weak self] keyval, _ in
-            guard let self, keyval == gdkKeyEscape, self.lightbox != nil else { return false }
-            self.hideLightbox()
-            return true
+        onKey(win) { [weak self] keyval, state in
+            guard let self else { return false }
+            if keyval == gdkKeyEscape, self.lightbox != nil {
+                self.hideLightbox()
+                return true
+            }
+            if (keyval == gdkKeyN || keyval == gdkKeyNUpper), (state & gdkControlMask) != 0 {
+                self.newSession()
+                return true
+            }
+            return false
         }
 
         // Rail (left)
@@ -179,6 +193,12 @@ final class AppWindow {
         let railTitle = makeLabel("Sessions", "subtle")
         shim_widget_halign_start(railTitle)
         shim_box_append(railHeader, railTitle)
+        // New session: creates untitled in the selected session's project
+        // (fallback: first known project), then selects it — the iOS flow.
+        let newButton = shim_button("+")
+        addClass(newButton, "flat-btn")
+        onSignal(newButton, "clicked") { [weak self] in self?.newSession() }
+        shim_box_append(railHeader, newButton)
         themeButton = shim_button("◐")
         addClass(themeButton, "flat-btn")
         onSignal(themeButton, "clicked") { [weak self] in self?.toggleTheme() }
@@ -267,6 +287,11 @@ final class AppWindow {
         // view can't do right-aligned bubbles or structured code blocks.
         let box = shim_box_new(0, 10)
         addClass(box, "transcript")
+        // Chat convention: a transcript shorter than the viewport sinks to
+        // the bottom so the conversation grows upward from the composer; once
+        // content exceeds the viewport, valign END is a no-op and the
+        // scrolled window + bottom-pin take over.
+        shim_widget_valign_end(box)
         transcriptBox = box
         shim_scrolled_set_child(scroll, box)
         shim_box_append(center, scroll)
@@ -632,19 +657,39 @@ final class AppWindow {
 
     // MARK: - Store bridge
 
+    /// Holds the window controller strongly for the lifetime of the refresh
+    /// timeout source. The source's GLib destroy notify releases the box, so
+    /// the tick can never retain a freed AppWindow no matter how the owning
+    /// reference is dropped while the main loop is still running.
+    private final class RefreshTimerBox {
+        let controller: AppWindow
+        init(_ controller: AppWindow) { self.controller = controller }
+    }
+
+    private let refreshTimerRelease: @convention(c) (UnsafeMutableRawPointer?) -> Void = { userData in
+        guard let userData else { return }
+        Unmanaged<RefreshTimerBox>.fromOpaque(userData).release()
+    }
+
     private func startRefreshTimer() {
         // Kick off the async connect.
         Task { [store] in
             await store.restore()
         }
         // Poll the store's state and repaint what changed. GLib owns the loop;
-        // the main actor is pumped by installMainActorPump().
-        g_timeout_add(33, { userData in
+        // the main actor is pumped by installMainActorPump(). The box keeps
+        // `self` alive for the source's whole lifetime (passRetained here,
+        // released by refreshTimerRelease when the source is destroyed), so a
+        // repeated GApplication activation can never leave this tick retaining
+        // a freed controller.
+        let box = RefreshTimerBox(self)
+        let userData = Unmanaged.passRetained(box).toOpaque()
+        g_timeout_add_full(0, 33, { userData in
             guard let userData else { return gboolean(0) }
-            let win = Unmanaged<AppWindow>.fromOpaque(userData).takeUnretainedValue()
-            MainActor.assumeIsolated { win.refresh() }
+            let box = Unmanaged<RefreshTimerBox>.fromOpaque(userData).takeUnretainedValue()
+            MainActor.assumeIsolated { box.controller.refresh() }
             return gboolean(1)
-        }, Unmanaged.passUnretained(self).toOpaque())
+        }, userData, refreshTimerRelease)
     }
 
     private func refresh() {
@@ -852,6 +897,12 @@ final class AppWindow {
             railRows[session.sessionId] = row
             railTimeLabels[session.sessionId] = time
         }
+    }
+
+    /// "+" in the rail header: open a local draft session instantly (the
+    /// host session is created in the background on the first prompt).
+    private func newSession() {
+        store.startDraftSession()
     }
 
     /// Re-render the rail's relative-time labels on a slow cadence so "2m ago"

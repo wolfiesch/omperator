@@ -445,6 +445,10 @@ static inline GtkWidget *shim_composer_view(void) {
 static inline void shim_scrolled_content_height(GtkWidget *scroll, int minHeight, int maxHeight) {
     gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(scroll), minHeight);
     gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(scroll), maxHeight);
+    /* Without natural-height propagation the window requests only its
+       minimum and the text view clips past ~2 lines; with it the composer
+       grows line-by-line up to maxHeight, then scrolls internally. */
+    gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(scroll), TRUE);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
 }
 
@@ -765,6 +769,7 @@ static inline void shim_popover_point_to(GtkWidget *popover, double x, double y)
 static inline void shim_popover_popdown(GtkWidget *popover) { gtk_popover_popdown(GTK_POPOVER(popover)); }
 
 static inline void shim_widget_valign_start(GtkWidget *w) { gtk_widget_set_valign(w, GTK_ALIGN_START); }
+static inline void shim_widget_valign_end(GtkWidget *w) { gtk_widget_set_valign(w, GTK_ALIGN_END); }
 
 /* Copy an image to the clipboard as PNG (texture → PNG bytes → provider). */
 static inline void shim_clipboard_set_texture(void *texture) {

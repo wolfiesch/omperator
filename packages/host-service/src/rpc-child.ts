@@ -563,6 +563,20 @@ export class RpcChildSupervisor {
 		return this.#lastActivityAt;
 	}
 	async start(): Promise<void> {
+		this.startSpawned();
+		await this.whenReady();
+	}
+	/** The child's readiness (RPC hello + protocol negotiation). Await before
+	 * issuing RPC calls; spawn-only callers leave this to the first caller. */
+	whenReady(): Promise<void> {
+		if (!this.#readiness) return Promise.reject(new Error("rpc child not started"));
+		return this.#readiness;
+	}
+	#readiness?: Promise<void>;
+	/** Spawn the child and start the read pumps without awaiting the RPC hello
+	 * or protocol negotiation. The writer process exists from this point — the
+	 * create-time ownership fence — while readiness finishes in the background. */
+	startSpawned(): void {
 		if (this.#child) throw new Error("child already started");
 		this.#child = this.factory.spawn({ session: this.session, argv: this.argv, cwd: this.session.cwd });
 		const ready = Promise.withResolvers<void>();
@@ -578,44 +592,49 @@ export class RpcChildSupervisor {
 			})
 			.catch(() => undefined);
 		const timer = setTimeout(() => ready.reject(new Error("rpc child ready timeout")), 10_000);
-		try {
-			await ready.promise;
-			if (this.#supportsProtocolV2) {
-				this.#protocolV2 = true;
-				const abort = new AbortController();
-				const negotiationTimer = setTimeout(() => abort.abort(), this.protocolNegotiationTimeoutMs);
-				let negotiated: RpcResponse;
-				try {
-					negotiated = await this.call(
-						{ type: "negotiate_protocol", protocolVersion: 2 },
-						"rpc-protocol",
-						abort.signal,
-						undefined,
-						false,
-					);
-				} catch (error) {
-					if (abort.signal.aborted)
-						throw new Error("rpc protocol v2 negotiation timed out", { cause: error });
-					throw error;
-				} finally {
-					clearTimeout(negotiationTimer);
+		this.#readiness = (async () => {
+			try {
+				await ready.promise;
+				if (this.#supportsProtocolV2) {
+					this.#protocolV2 = true;
+					const abort = new AbortController();
+					const negotiationTimer = setTimeout(() => abort.abort(), this.protocolNegotiationTimeoutMs);
+					let negotiated: RpcResponse;
+					try {
+						negotiated = await this.call(
+							{ type: "negotiate_protocol", protocolVersion: 2 },
+							"rpc-protocol",
+							abort.signal,
+							undefined,
+							false,
+						);
+					} catch (error) {
+						if (abort.signal.aborted)
+							throw new Error("rpc protocol v2 negotiation timed out", { cause: error });
+						throw error;
+					} finally {
+						clearTimeout(negotiationTimer);
+					}
+					if (
+						!negotiated.success ||
+						!negotiated.data ||
+						typeof negotiated.data !== "object" ||
+						Array.isArray(negotiated.data) ||
+						(negotiated.data as Record<string, unknown>).protocolVersion !== 2
+					)
+						throw new Error("rpc protocol v2 negotiation failed");
 				}
-				if (
-					!negotiated.success ||
-					!negotiated.data ||
-					typeof negotiated.data !== "object" ||
-					Array.isArray(negotiated.data) ||
-					(negotiated.data as Record<string, unknown>).protocolVersion !== 2
-				)
-					throw new Error("rpc protocol v2 negotiation failed");
+			} catch (error) {
+				this.stop();
+				throw error;
+			} finally {
+				clearTimeout(timer);
+				this.#readyReject = undefined;
 			}
-		} catch (error) {
-			this.stop();
-			throw error;
-		} finally {
-			clearTimeout(timer);
-			this.#readyReject = undefined;
-		}
+		})();
+		// Spawn-only callers don't await readiness; keep a background rejection
+		// from surfacing as an unhandled rejection (start()/whenReady rethrow it).
+		void this.#readiness.catch(() => undefined);
 	}
 	async call(
 		command: Record<string, unknown>,

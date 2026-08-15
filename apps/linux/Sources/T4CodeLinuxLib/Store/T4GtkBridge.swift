@@ -28,6 +28,16 @@ public final class T4GtkBridge {
 
     public func select(_ session: SessionRef?) { store.select(session) }
 
+    public func createSession(projectId: String) async -> SessionRef? {
+        await store.createSession(projectId: projectId)
+    }
+
+    /// Instant new session: opens a local draft immediately; the host session
+    /// is created in the background on the first prompt.
+    public func startDraftSession() {
+        store.startDraftSession()
+    }
+
     public func sendPrompt(sessionId: String, text: String) async {
         await store.sendPrompt(sessionId: sessionId, text: text)
     }
