@@ -2797,6 +2797,25 @@ export class LocalAppserver implements AppserverHandle {
 			const reasoning = update.sessionUpdate === "agent_thought_chunk";
 			if (reasoning) turn.reasoning = projectMessageText(turn.reasoning + content.text);
 			else turn.text = projectMessageText(turn.text + content.text);
+			// Ordered blocks for clients that stream via assistant.block.update
+			// (the native apps' live-turn timeline). The flattened
+			// message.update below stays for compatibility clients. Block
+			// order is stable per turn: thinking is index 0, text index 1 —
+			// the external runtime model accumulates each into one buffer.
+			const block: { blockKind: "thinking" | "text"; blockIndex: number; content: string } = reasoning
+				? { blockKind: "thinking", blockIndex: 0, content: turn.reasoning }
+				: { blockKind: "text", blockIndex: 1, content: turn.text };
+			if (block.content.length > 0) {
+				const blockFrame = this.#projections.get(sessionId)?.appendEvent(
+					asAppWireEvent({
+						type: "assistant.block.update",
+						entryId: turn.assistantEntryId,
+						...block,
+						at,
+					}),
+				);
+				if (blockFrame) this.broadcast(sessionId, blockFrame);
+			}
 			const messageFrame = this.#projections.get(sessionId)?.appendEvent(
 				asAppWireEvent({
 					type: "message.update",

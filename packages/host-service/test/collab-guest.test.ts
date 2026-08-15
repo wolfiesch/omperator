@@ -411,3 +411,68 @@ describe("collab gateway room discovery", () => {
 		}
 	});
 });
+
+describe("collab bridge event projection", () => {
+	function harness() {
+		const events: Array<Record<string, unknown>> = [];
+		const emit = {
+			rebase: () => {},
+			appendEntry: () => {},
+			appendEvent: (event: never) => events.push(event),
+			setStreaming: () => {},
+			fatal: () => {},
+		};
+		return { events, emit: emit as never as import("../src/collab/bridge.ts").CollabBridgeHandlers };
+	}
+
+	test("message_update extracts text/reasoning from event.message and emits growing block updates", async () => {
+		const { projectCollabEvent } = await import("../src/collab/bridge.ts");
+		const { events, emit } = harness();
+		const message = (text: string, thinking: string) => ({
+			role: "assistant",
+			content: [
+				...(thinking ? [{ type: "thinking", thinking }] : []),
+				...(text ? [{ type: "text", text }] : []),
+			],
+		});
+		projectCollabEvent({ type: "agent_start" }, emit);
+		projectCollabEvent({ type: "message_update", message: message("", "let me think") } as never, emit);
+		projectCollabEvent({ type: "message_update", message: message("", "let me think step") } as never, emit);
+		projectCollabEvent({ type: "message_update", message: message("answer", "let me think step") } as never, emit);
+
+		const updates = events.filter(e => e.type === "message.update");
+		// Extraction must read event.message.content, not event.content.
+		expect(updates[0]).toMatchObject({ text: "", reasoning: "let me think" });
+		expect(updates[1]).toMatchObject({ text: "", reasoning: "let me think step" });
+		expect(updates[2]).toMatchObject({ text: "answer", reasoning: "let me think step" });
+
+		const blocks = events.filter(e => e.type === "assistant.block.update");
+		// Snapshot-only frames project thinking at index 0, text at index 1,
+		// each accumulating — the letter-by-letter stream the native apps show.
+		expect(blocks).toEqual([
+			expect.objectContaining({ blockKind: "thinking", blockIndex: 0, content: "let me think" }),
+			expect.objectContaining({ blockKind: "thinking", blockIndex: 0, content: "let me think step" }),
+			expect.objectContaining({ blockKind: "thinking", blockIndex: 0, content: "let me think step" }),
+			expect.objectContaining({ blockKind: "text", blockIndex: 1, content: "answer" }),
+		]);
+	});
+
+	test("assistantMessageEvent deltas accumulate per block", async () => {
+		const { projectCollabEvent } = await import("../src/collab/bridge.ts");
+		const { events, emit } = harness();
+		const frame = (delta: string) => ({
+			type: "message_update",
+			message: { role: "assistant", content: [] },
+			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+		});
+		projectCollabEvent({ type: "agent_start" }, emit);
+		projectCollabEvent(frame("hel") as never, emit);
+		projectCollabEvent(frame("lo") as never, emit);
+
+		const blocks = events.filter(e => e.type === "assistant.block.update");
+		expect(blocks).toEqual([
+			expect.objectContaining({ blockKind: "text", blockIndex: 0, content: "hel" }),
+			expect.objectContaining({ blockKind: "text", blockIndex: 0, content: "hello" }),
+		]);
+	});
+});

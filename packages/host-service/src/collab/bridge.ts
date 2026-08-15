@@ -102,6 +102,111 @@ export function projectCollabFrame(frame: CollabHostFrame, host: HostId, session
 	return false;
 }
 
+/** Per-bridge accumulated block content for the runtime's delta frames. */
+const collabBlockContents = new WeakMap<CollabBridgeHandlers, Map<string, string>>();
+
+/** Stable non-empty entryId for live blocks (the timeline drops empty ids). */
+const COLLAB_ASSISTANT_ENTRY_ID = "collab:assistant";
+
+/** Read a string field off an unknown record without trusting its shape. */
+function collabString(value: unknown, key: string): string | undefined {
+	if (value && typeof value === "object" && key in value) {
+		const v = (value as Record<string, unknown>)[key];
+		if (typeof v === "string") return v;
+	}
+	return undefined;
+}
+
+/** Read a number field off an unknown record without trusting its shape. */
+function collabNumber(value: unknown, key: string): number | undefined {
+	if (value && typeof value === "object" && key in value) {
+		const v = (value as Record<string, unknown>)[key];
+		if (typeof v === "number" && Number.isSafeInteger(v)) return v;
+	}
+	return undefined;
+}
+
+/**
+ * Emit ordered assistant.block.update events for a collab message frame, so
+ * native clients' live-turn timelines stream text and thinking letter by
+ * letter. Delta frames (assistantMessageEvent text_delta/thinking_delta)
+ * accumulate per contentIndex; snapshot-only frames project the accumulated
+ * extraction with stable indices (thinking 0, text 1). Mirrors the RPC
+ * translator's textOrThinkingBlock.
+ */
+function emitCollabBlockUpdates(
+	event: CollabEvent,
+	message: unknown,
+	emit: CollabBridgeHandlers,
+	text: string,
+	reasoning: string,
+	at: string,
+): void {
+	let store = collabBlockContents.get(emit);
+	if (!store) {
+		store = new Map();
+		collabBlockContents.set(emit, store);
+	}
+	const ame = "assistantMessageEvent" in event ? event.assistantMessageEvent : undefined;
+	const ameType = collabString(ame, "type");
+	const blockKind = ameType === "text_delta" ? "text" : ameType === "thinking_delta" ? "thinking" : undefined;
+	if (blockKind) {
+		const blockIndex = collabNumber(ame, "contentIndex") ?? 0;
+		const key = `${blockIndex}|${blockKind}`;
+		// Prefer the runtime's accumulated partial snapshot when present.
+		const partial = ame && typeof ame === "object" && "partial" in ame ? ame.partial : undefined;
+		const partialContent = partial && typeof partial === "object" && "content" in partial ? partial.content : undefined;
+		const blocks = Array.isArray(partialContent) ? partialContent : [];
+		const block = blocks[blockIndex];
+		const snapshot = blockKind === "text" ? collabString(block, "text") : collabString(block, "thinking");
+		if (snapshot !== undefined) store.set(key, snapshot);
+		else {
+			const delta = collabString(ame, "delta");
+			if (delta === undefined) return;
+			store.set(key, (store.get(key) ?? "") + delta);
+		}
+		const content = store.get(key) ?? "";
+		if (!content) return;
+		emit.appendEvent({
+			type: "assistant.block.update",
+			entryId: COLLAB_ASSISTANT_ENTRY_ID,
+			blockIndex,
+			blockKind,
+			content,
+			at,
+		});
+		return;
+	}
+	// Snapshot-only frame: project the accumulated extraction as blocks —
+	// but only for kinds the delta path has not produced this turn (the
+	// delta path is authoritative when both shapes appear in one stream).
+	// Assistant content only — the collab host echoes user prompts back as
+	// message_update frames, and those must never become assistant blocks.
+	const role = collabString(message, "role");
+	if (role !== "assistant") return;
+	const hasDelta = (kind: string) => [...store.keys()].some(k => k.endsWith(`|${kind}`));
+	if (reasoning && !hasDelta("thinking")) {
+		emit.appendEvent({
+			type: "assistant.block.update",
+			entryId: COLLAB_ASSISTANT_ENTRY_ID,
+			blockIndex: 0,
+			blockKind: "thinking",
+			content: reasoning,
+			at,
+		});
+	}
+	if (text && !hasDelta("text")) {
+		emit.appendEvent({
+			type: "assistant.block.update",
+			entryId: COLLAB_ASSISTANT_ENTRY_ID,
+			blockIndex: 1,
+			blockKind: "text",
+			content: text,
+			at,
+		});
+	}
+}
+
 /** Convert one raw collab entry to a durable entry using the OMP projector. */
 export function projectCollabEntry(
 	raw: CollabWireEntry,
@@ -128,6 +233,7 @@ export function projectCollabEvent(event: CollabEvent, emit: CollabBridgeHandler
 	switch (event.type) {
 		case "turn_start":
 		case "agent_start":
+			collabBlockContents.get(emit)?.clear();
 			emit.appendEvent({ type: "turn.start", at });
 			return;
 		case "turn_end":
@@ -136,8 +242,11 @@ export function projectCollabEvent(event: CollabEvent, emit: CollabBridgeHandler
 			return;
 		case "message_update":
 		case "message_start": {
-			const { text, reasoning } = messageTextAndReasoning(event);
+			// Extract from event.message — the runtime snapshot lives there,
+			// not on the event itself (reading event.content always yields "").
+			const { text, reasoning } = messageTextAndReasoning(event.message);
 			emit.appendEvent({ type: "message.update", entryId: "", role: "assistant", text, reasoning, at });
+			emitCollabBlockUpdates(event, event.message, emit, text, reasoning, at);
 			return;
 		}
 		case "tool_execution_start": {

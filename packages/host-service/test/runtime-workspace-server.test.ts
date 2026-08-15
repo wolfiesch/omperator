@@ -482,6 +482,19 @@ test("routes an external runtime session through appserver-owned workspace ident
 		client.sendJson(sessionCommand("prompt-external", "session.prompt", { message: "run externally" }));
 		await promptEntered.promise;
 		expect(prompted).toBe("run externally");
+		// The external chunk path must ALSO emit ordered assistant.block.update
+		// events (the native apps' live-turn streaming path) alongside the
+		// flattened message.update compatibility events.
+		const streamed: Array<Record<string, unknown>> = [];
+		for (let i = 0; i < 20 && !streamed.some(e => e.type === "tool.start"); i++) {
+			const frame = await client.nextServer();
+			if (frame.type === "event") streamed.push(frame.event as Record<string, unknown>);
+		}
+		const blocks = streamed.filter(e => e.type === "assistant.block.update");
+		expect(blocks).toEqual([
+			expect.objectContaining({ blockKind: "text", blockIndex: 1, content: "external response" }),
+			expect.objectContaining({ blockKind: "text", blockIndex: 1, content: "external response complete" }),
+		]);
 		expect(await sessionEvent(client, "tool.result")).toMatchObject({ ok: true, result: { status: "completed" } });
 		client.sendJson(sessionCommand("cancel-external", "session.cancel"));
 		expect(await approveChallenge(client, "cancel-external", publicSessionId)).toMatchObject({

@@ -77,6 +77,13 @@ final class AppWindow {
     private var fullSize: (width: Int, height: Int)?
     private var streamingLabel: UnsafeMutablePointer<GtkWidget>?
     private var lastStreamedText = ""
+    // Live thinking row while a turn streams (collapsed card; expand to watch
+    // the reasoning grow letter by letter).
+    private var streamingThinkingCard: UnsafeMutablePointer<GtkWidget>?
+    private var streamingThinkingBody: UnsafeMutablePointer<GtkWidget>?
+    private var streamingThinkingChevron: UnsafeMutablePointer<GtkWidget>?
+    private var streamingThinkingExpanded = false
+    private var lastStreamedReasoning = ""
     // First-run onboarding (username + password login).
     private var onboardingArmed = false
     private var onboardingVisible = false
@@ -936,6 +943,16 @@ final class AppWindow {
     private func clearTranscript() {
         guard let box = transcriptBox else { return }
         shim_box_clear(box)
+        // The box clear destroyed the streaming widgets too — reset their
+        // refs so the next stream rebuilds them in the new session (setting
+        // text on the orphaned widget would silently show nothing).
+        streamingLabel = nil
+        lastStreamedText = ""
+        streamingThinkingCard = nil
+        streamingThinkingBody = nil
+        streamingThinkingChevron = nil
+        streamingThinkingExpanded = false
+        lastStreamedReasoning = ""
     }
 
     private func appendEntry(_ entry: TranscriptEntry) {
@@ -951,6 +968,7 @@ final class AppWindow {
     private func refreshStreaming() {
         guard let selected = store.selectedSession, let box = transcriptBox else { return }
         let sid = selected.sessionId
+        refreshStreamingThinking(sessionId: sid, box: box)
         let text = store.streamingText(for: sid)
         if text.isEmpty {
             if let label = streamingLabel {
@@ -972,6 +990,80 @@ final class AppWindow {
         }
         shim_label_set_text(streamingLabel, text)
         scrollTranscriptToBottom()
+    }
+
+    /// Live thinking card: a collapsed THINKING-styled row that streams the
+    /// turn's reasoning. Collapsed it shows a "Thinking…" header; expanding
+    /// reveals the reasoning as it grows letter by letter (the store's reveal
+    /// pacing feeds it). Removed at settle — the durable entry's own thinking
+    /// card replaces it.
+    private func refreshStreamingThinking(sessionId: String, box: UnsafeMutablePointer<GtkWidget>) {
+        let reasoning = store.streamingReasoning(for: sessionId)
+        if reasoning.isEmpty {
+            if let card = streamingThinkingCard {
+                shim_widget_destroy(card)
+                streamingThinkingCard = nil
+                streamingThinkingBody = nil
+                streamingThinkingChevron = nil
+                streamingThinkingExpanded = false
+                lastStreamedReasoning = ""
+            }
+            return
+        }
+        if streamingThinkingCard == nil {
+            let card = shim_box_new(0, 4)
+            addClass(card, "tool-card")
+            addClass(card, "tool-thinking")
+            addClass(card, "collapsed")
+            let header = shim_box_new(1, 8)
+            addClass(header, "card-header")
+            let chevron = makeLabel("▸", "card-chevron")
+            shim_box_append(header, chevron)
+            let title = makeLabel("Thinking", "tool-head")
+            shim_widget_halign_start(title)
+            shim_box_append(header, title)
+            let headerButton = shim_button_child(header)
+            addClass(headerButton, "card-header-btn")
+            onSignal(UnsafeMutableRawPointer(headerButton), "clicked") { [weak self] in
+                self?.toggleStreamingThinking()
+            }
+            shim_box_append(card, headerButton)
+            let bodyLabel = makeLabel("", "tool-meta")
+            shim_label_wrap_words(bodyLabel)
+            shim_label_selectable(bodyLabel)
+            shim_widget_halign_start(bodyLabel)
+            shim_widget_hide(bodyLabel)
+            shim_box_append(card, bodyLabel)
+            shim_box_append(box, card)
+            streamingThinkingCard = card
+            streamingThinkingBody = bodyLabel
+            streamingThinkingChevron = chevron
+        }
+        guard reasoning != lastStreamedReasoning else { return }
+        lastStreamedReasoning = reasoning
+        if let body = streamingThinkingBody {
+            shim_label_set_text(body, reasoning)
+        }
+        if streamingThinkingExpanded { scrollTranscriptToBottom() }
+    }
+
+    private func toggleStreamingThinking() {
+        streamingThinkingExpanded.toggle()
+        let expanded = streamingThinkingExpanded
+        if let chevron = streamingThinkingChevron { shim_label_set_text(chevron, expanded ? "▾" : "▸") }
+        if let body = streamingThinkingBody {
+            if expanded { shim_widget_show(body) } else { shim_widget_hide(body) }
+        }
+        if let card = streamingThinkingCard {
+            if expanded {
+                shim_css_class_remove(card, "collapsed")
+                addClass(card, "expanded")
+            } else {
+                shim_css_class_remove(card, "expanded")
+                addClass(card, "collapsed")
+            }
+        }
+        if expanded { scrollTranscriptToBottom() }
     }
 
     private func scrollTranscriptToBottom() {

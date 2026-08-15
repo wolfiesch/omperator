@@ -112,6 +112,20 @@ public final class T4GtkBridge {
         return store.streamingMessages[sessionId]?.text ?? ""
     }
 
+    /// The assistant's in-progress THINKING for a session ("" when idle or
+    /// not thinking). Same sources as streamingText: ordered thinking blocks
+    /// first, flattened buffer reasoning as fallback.
+    public func streamingReasoning(for sessionId: String) -> String {
+        if let timeline = store.liveTurns[sessionId], !timeline.isEmpty {
+            let thinking = timeline.blocks
+                .filter { $0.kind == .thinking }
+                .map(\.content)
+                .joined()
+            if !thinking.isEmpty { return thinking }
+        }
+        return store.streamingMessages[sessionId]?.reasoning ?? ""
+    }
+
     // MARK: - Panes (terminal / browser / files)
 
     public func openTerminal(sessionId: String) async { _ = await store.openTerminal(sessionId: sessionId) }

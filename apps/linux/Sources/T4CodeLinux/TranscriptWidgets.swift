@@ -220,7 +220,23 @@ final class TranscriptWidgets {
             if entry.role == "user" {
                 body = userBubble(text: text, pending: false)
             } else {
-                body = assistantBlocks(text)
+                // Reasoning gets a collapsed THINKING card above the prose —
+                // matching macOS T4ThinkingBlock. When thinking is ALL the
+                // entry has (headlineBody maps empty text to body=reasoning),
+                // the card is the whole render: no duplicate expanded prose.
+                let reasoning = entry.data.string("reasoning") ?? ""
+                if !reasoning.isEmpty {
+                    let column = shim_box_new(0, 8)
+                    if let card = toolCard(head: "thinking", meta: reasoning, kind: "thinking") {
+                        shim_box_append(column, card)
+                    }
+                    if !text.isEmpty && text != reasoning, let blocks = assistantBlocks(text) {
+                        shim_box_append(column, blocks)
+                    }
+                    body = column
+                } else {
+                    body = assistantBlocks(text)
+                }
             }
             let images = imageArtifacts(of: entry)
             var content = body
