@@ -45,6 +45,17 @@ enum T4StorePacing {
     #else
     static let sleepNs: UInt64 = 16_666_667
     #endif
+    #if os(Linux)
+    /// Reveal catch-up per pacing tick. The typewriter pacing exists for
+    /// SwiftUI diffing cost on Apple platforms; the pure-GTK4 app repaints
+    /// the newest content each refresh tick, and the paced reveal delays
+    /// BOTH the stream and every settled row queued behind it (they defer
+    /// until the reveal catches up). 1 = reveal everything on the next tick —
+    /// the transcript shows what OMP sent as it arrives.
+    static let revealCatchUpFrames = 1
+    #else
+    static let revealCatchUpFrames = 2
+    #endif
 }
 
 #if canImport(os)
@@ -592,7 +603,7 @@ final class T4SessionStore: ObservableObject {
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             while !Task.isCancelled, var next = self.streamingMessages[sessionId] {
-                let hasMore = next.advance(maxCatchUpFrames: 2)
+                let hasMore = next.advance(maxCatchUpFrames: T4StorePacing.revealCatchUpFrames)
                 self.streamingMessages[sessionId] = next
                 if !hasMore {
                     self.finishPendingAssistantEntry(sessionId: sessionId)
@@ -735,7 +746,7 @@ final class T4SessionStore: ObservableObject {
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             while !Task.isCancelled, var next = self.liveTurns[sessionId] {
-                let hasMore = next.advance(maxCatchUpFrames: 2)
+                let hasMore = next.advance(maxCatchUpFrames: T4StorePacing.revealCatchUpFrames)
                 self.liveTurns[sessionId] = next
                 self.finishPendingLiveTurnEntries(sessionId: sessionId)
                 if !hasMore { break }
