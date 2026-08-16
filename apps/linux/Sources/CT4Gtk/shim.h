@@ -5,6 +5,7 @@ static inline GtkWidget *shim_box_new(int horizontal, int spacing) { return gtk_
 static inline void shim_box_append(GtkWidget *box, GtkWidget *child) { gtk_box_append(GTK_BOX(box), child); }
 static inline GtkWidget *shim_label(const char *text) { return gtk_label_new(text); }
 static inline GtkWidget *shim_button(const char *text) { return gtk_button_new_with_label(text); }
+static inline void shim_button_set_label(GtkWidget *w, const char *text) { gtk_button_set_label(GTK_BUTTON(w), text); }
 static inline GtkWidget *shim_scrolled_window(void) { return gtk_scrolled_window_new(); }
 static inline void shim_scrolled_set_child(GtkWidget *scroll, GtkWidget *child) { gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), child); }
 static inline GtkWidget *shim_text_view(void) { return gtk_text_view_new(); }

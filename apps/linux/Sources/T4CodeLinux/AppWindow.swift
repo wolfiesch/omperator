@@ -27,6 +27,14 @@ final class AppWindow {
     private var rootOverlay: UnsafeMutablePointer<GtkWidget>?
     private var lightbox: UnsafeMutablePointer<GtkWidget>?
     private var sendButton: UnsafeMutablePointer<GtkWidget>?
+    private var stopButton: UnsafeMutablePointer<GtkWidget>?
+    private var queueButton: UnsafeMutablePointer<GtkWidget>?
+    private var queueStrip: UnsafeMutablePointer<GtkWidget>?
+    private var composerTurnActive = false
+    private var composerBusy = false
+    private var composerChromeSessionId = ""
+    private var lastQueueSignature = ""
+    private var confirmingCancel = false
 
     /// One staged composer attachment (file pick, paste, or drop).
     private struct Attachment {
@@ -91,15 +99,12 @@ final class AppWindow {
     private var miniButton: UnsafeMutablePointer<GtkWidget>?
     private var miniMode = false
     private var fullSize: (width: Int, height: Int)?
-    private var streamingLabel: UnsafeMutablePointer<GtkWidget>?
-    private var lastStreamedText = ""
-    // Live thinking row while a turn streams (collapsed card; expand to watch
-    // the reasoning grow letter by letter).
-    private var streamingThinkingCard: UnsafeMutablePointer<GtkWidget>?
-    private var streamingThinkingBody: UnsafeMutablePointer<GtkWidget>?
-    private var streamingThinkingChevron: UnsafeMutablePointer<GtkWidget>?
-    private var streamingThinkingExpanded = false
-    private var lastStreamedReasoning = ""
+    /// Settled transcript rows (and captures). Live streaming widgets live in
+    /// `liveTailBox` so a growing turn never lands above later durable rows.
+    private var durableBox: UnsafeMutablePointer<GtkWidget>?
+    private var liveTailBox: UnsafeMutablePointer<GtkWidget>?
+    private var liveWidgets: [String: LiveStreamWidget] = [:]
+    private var liveOrder: [String] = []
     // First-run onboarding (username + password login).
     private var onboardingArmed = false
     private var onboardingVisible = false
@@ -327,6 +332,12 @@ final class AppWindow {
         // scrolled window + bottom-pin take over.
         shim_widget_valign_end(box)
         transcriptBox = box
+        let durable = shim_box_new(0, 10)
+        durableBox = durable
+        shim_box_append(box, durable)
+        let live = shim_box_new(0, 8)
+        liveTailBox = live
+        shim_box_append(box, live)
         shim_scrolled_set_child(scroll, box)
         shim_box_append(center, scroll)
 
@@ -346,8 +357,14 @@ final class AppWindow {
         let tickBox = GtkBox { [weak self] in self?.scrollFollowTick() }
         shim_add_tick(scroll, tickForwarder, Unmanaged.passRetained(tickBox).toOpaque())
 
-        let composer = shim_box_new(1, 8)
+        let composer = shim_box_new(0, 8)
         addClass(composer, "composer")
+
+        let queues = shim_box_new(0, 4)
+        addClass(queues, "queue-strip")
+        shim_widget_hide(queues)
+        queueStrip = queues
+        shim_box_append(composer, queues)
 
         // Attachment strip: chips with thumbnails, hidden until the first
         // attachment lands (file pick, paste, or drop).
@@ -396,6 +413,20 @@ final class AppWindow {
         let drop = GtkPathsBox(releaseAfterUse: false) { [weak self] paths in self?.attachFiles(paths) }
         dropBox = drop
         shim_drop_files(composer, Unmanaged.passRetained(drop).toOpaque())
+
+        let stop = shim_button("Stop")
+        addClass(stop, "stop-button")
+        shim_widget_hide(stop)
+        onSignal(stop, "clicked") { [weak self] in self?.stopComposer() }
+        stopButton = stop
+        shim_box_append(inputRow, stop)
+
+        let queue = shim_button("Queue")
+        addClass(queue, "queue-button")
+        shim_widget_hide(queue)
+        onSignal(queue, "clicked") { [weak self] in self?.queueComposer() }
+        queueButton = queue
+        shim_box_append(inputRow, queue)
 
         sendButton = shim_button("➤")
         addClass(sendButton, "send-button")
@@ -830,6 +861,8 @@ final class AppWindow {
         refreshCaptures()
         refreshStreaming()
         refreshPanes()
+        refreshComposer()
+        refreshCancelConfirmation()
     }
 
     /// Preview captures render as image rows at the transcript tail. New
@@ -867,7 +900,7 @@ final class AppWindow {
             } else {
                 pendingCapturePictures[row.captureId] = pic
             }
-            shim_box_append(box, pic)
+            shim_box_append(durableBox ?? box, pic)
             let captureId = row.captureId
             onPressed(pic) { [weak self] in
                 guard let self,
@@ -1175,128 +1208,293 @@ final class AppWindow {
     }
 
     private func clearTranscript() {
-        guard let box = transcriptBox else { return }
-        shim_box_clear(box)
-        // The box clear destroyed the streaming widgets too — reset their
-        // refs so the next stream rebuilds them in the new session (setting
-        // text on the orphaned widget would silently show nothing).
-        streamingLabel = nil
-        lastStreamedText = ""
-        streamingThinkingCard = nil
-        streamingThinkingBody = nil
-        streamingThinkingChevron = nil
-        streamingThinkingExpanded = false
-        lastStreamedReasoning = ""
+        if let durable = durableBox { shim_box_clear(durable) }
+        if let live = liveTailBox { shim_box_clear(live) }
+        liveWidgets.removeAll()
+        liveOrder.removeAll()
     }
 
     private func appendEntry(_ entry: TranscriptEntry) {
-        guard let box = transcriptBox else { return }
+        guard let box = durableBox else { return }
         if let widget = transcriptWidgets.buildEntry(entry) {
             shim_box_append(box, widget)
         }
     }
 
-    /// Live assistant text while a turn is streaming — appended at the
-    /// transcript's tail and replaced as it grows; removed when the turn
-    /// settles (the durable entry takes over).
+    private struct LiveStreamWidget {
+        var root: UnsafeMutablePointer<GtkWidget>
+        var body: UnsafeMutablePointer<GtkWidget>?
+        var committed: UnsafeMutablePointer<GtkWidget>?
+        var tail: UnsafeMutablePointer<GtkWidget>?
+        var buffer: UnsafeMutablePointer<GtkTextBuffer>?
+        var chevron: UnsafeMutablePointer<GtkWidget>?
+        var lastText = ""
+        var lastCommitted = ""
+        var lastTail = ""
+        var expanded = true
+    }
+
+    /// Live turn at the transcript tail: thinking, tools, and assistant text
+    /// in wire order. Tool output appends into a text buffer; prose labels
+    /// only relayout the current line (committed paragraphs stay put).
     private func refreshStreaming() {
-        guard let selected = store.selectedSession, let box = transcriptBox else { return }
-        let sid = selected.sessionId
-        refreshStreamingThinking(sessionId: sid, box: box)
-        let text = store.streamingText(for: sid)
-        if text.isEmpty {
-            if let label = streamingLabel {
-                shim_widget_destroy(label)
-                streamingLabel = nil
-                lastStreamedText = ""
+        guard store.selectedSession != nil, liveTailBox != nil else { return }
+        let sid = store.selectedSession!.sessionId
+        let blocks = store.liveTurnBlocks(for: sid)
+        if blocks.isEmpty {
+            if !liveOrder.isEmpty {
+                if let live = liveTailBox { shim_box_clear(live) }
+                liveWidgets.removeAll()
+                liveOrder.removeAll()
             }
             return
         }
-        guard text != lastStreamedText else { return }
-        lastStreamedText = text
-        if streamingLabel == nil {
-            let label = makeLabel("", "assistant-message")
-            shim_label_wrap_words(label)
-            shim_label_selectable(label)
-            shim_widget_halign_start(label)
-            shim_box_append(box, label)
-            streamingLabel = label
-        }
-        shim_label_set_text(streamingLabel, text)
-        scrollTranscriptToBottom()
-    }
-
-    /// Live thinking card: a collapsed THINKING-styled row that streams the
-    /// turn's reasoning. Collapsed it shows a "Thinking…" header; expanding
-    /// reveals the reasoning as it grows letter by letter (the store's reveal
-    /// pacing feeds it). Removed at settle — the durable entry's own thinking
-    /// card replaces it.
-    private func refreshStreamingThinking(sessionId: String, box: UnsafeMutablePointer<GtkWidget>) {
-        let reasoning = store.streamingReasoning(for: sessionId)
-        if reasoning.isEmpty {
-            if let card = streamingThinkingCard {
-                shim_widget_destroy(card)
-                streamingThinkingCard = nil
-                streamingThinkingBody = nil
-                streamingThinkingChevron = nil
-                streamingThinkingExpanded = false
-                lastStreamedReasoning = ""
-            }
+        let ids = blocks.map(\.id)
+        if liveOrder != Array(ids.prefix(liveOrder.count)) || liveOrder.count > ids.count {
+            rebuildLiveTail(blocks)
+            scrollTranscriptToBottom()
             return
         }
-        if streamingThinkingCard == nil {
-            let card = shim_box_new(0, 4)
-            addClass(card, "tool-card")
-            addClass(card, "tool-thinking")
-            addClass(card, "collapsed")
-            let header = shim_box_new(1, 8)
-            addClass(header, "card-header")
-            let chevron = makeLabel("▸", "card-chevron")
-            shim_box_append(header, chevron)
-            let title = makeLabel("Thinking", "tool-head")
-            shim_widget_halign_start(title)
-            shim_box_append(header, title)
-            let headerButton = shim_button_child(header)
-            addClass(headerButton, "card-header-btn")
-            onSignal(UnsafeMutableRawPointer(headerButton), "clicked") { [weak self] in
-                self?.toggleStreamingThinking()
+        var changed = false
+        for block in blocks {
+            if liveWidgets[block.id] == nil {
+                guard let widget = makeLiveWidget(block), let live = liveTailBox else { continue }
+                shim_box_append(live, widget.root)
+                liveWidgets[block.id] = widget
+                liveOrder.append(block.id)
+                changed = true
             }
-            shim_box_append(card, headerButton)
-            let bodyLabel = makeLabel("", "tool-meta")
-            shim_label_wrap_words(bodyLabel)
-            shim_label_selectable(bodyLabel)
-            shim_widget_halign_start(bodyLabel)
-            shim_widget_hide(bodyLabel)
-            shim_box_append(card, bodyLabel)
-            shim_box_append(box, card)
-            streamingThinkingCard = card
-            streamingThinkingBody = bodyLabel
-            streamingThinkingChevron = chevron
+            if updateLiveWidget(block) { changed = true }
         }
-        guard reasoning != lastStreamedReasoning else { return }
-        lastStreamedReasoning = reasoning
-        if let body = streamingThinkingBody {
-            shim_label_set_text(body, reasoning)
+        let desired = Set(ids)
+        if liveOrder.contains(where: { !desired.contains($0) }) {
+            for id in liveOrder where !desired.contains(id) {
+                if let widget = liveWidgets.removeValue(forKey: id) {
+                    shim_widget_destroy(widget.root)
+                }
+            }
+            liveOrder = ids
+            changed = true
         }
-        if streamingThinkingExpanded { scrollTranscriptToBottom() }
+        if changed { scrollTranscriptToBottom() }
     }
 
-    private func toggleStreamingThinking() {
-        streamingThinkingExpanded.toggle()
-        let expanded = streamingThinkingExpanded
-        if let chevron = streamingThinkingChevron { shim_label_set_text(chevron, expanded ? "▾" : "▸") }
-        if let body = streamingThinkingBody {
+    private func rebuildLiveTail(_ blocks: [T4GtkBridge.GtkLiveBlock]) {
+        guard let live = liveTailBox else { return }
+        shim_box_clear(live)
+        liveWidgets.removeAll()
+        liveOrder.removeAll()
+        for block in blocks {
+            guard let widget = makeLiveWidget(block) else { continue }
+            shim_box_append(live, widget.root)
+            liveWidgets[block.id] = widget
+            liveOrder.append(block.id)
+            _ = updateLiveWidget(block)
+        }
+    }
+
+    private func makeLiveWidget(_ block: T4GtkBridge.GtkLiveBlock) -> LiveStreamWidget? {
+        switch block.kind {
+        case .thinking:
+            return makeLiveThinking(block)
+        case .text:
+            return makeLiveText()
+        case .tool:
+            return makeLiveTool(block)
+        }
+    }
+
+    private func makeLiveThinking(_ block: T4GtkBridge.GtkLiveBlock) -> LiveStreamWidget? {
+        guard let card = shim_box_new(0, 4) else { return nil }
+        addClass(card, "tool-card")
+        addClass(card, "tool-thinking")
+        addClass(card, "expanded")
+        let header = shim_box_new(1, 8)
+        addClass(header, "card-header")
+        let chevron = makeLabel("▾", "card-chevron")
+        shim_box_append(header, chevron)
+        let title = makeLabel("Thinking", "tool-head")
+        shim_widget_halign_start(title)
+        shim_box_append(header, title)
+        let headerButton = shim_button_child(header)
+        addClass(headerButton, "card-header-btn")
+        let id = block.id
+        onSignal(UnsafeMutableRawPointer(headerButton), "clicked") { [weak self] in
+            self?.toggleLiveBlock(id: id)
+        }
+        shim_box_append(card, headerButton)
+        let body = shim_box_new(0, 0)
+        let committed = makeLabel("", "tool-meta")
+        shim_label_wrap_words(committed)
+        shim_label_selectable(committed)
+        shim_widget_halign_start(committed)
+        shim_widget_hide(committed)
+        let tail = makeLabel("", "tool-meta")
+        shim_label_wrap_words(tail)
+        shim_label_selectable(tail)
+        shim_widget_halign_start(tail)
+        shim_box_append(body, committed)
+        shim_box_append(body, tail)
+        shim_box_append(card, body)
+        return LiveStreamWidget(
+            root: card, body: body, committed: committed, tail: tail,
+            buffer: nil, chevron: chevron, expanded: true
+        )
+    }
+
+    private func makeLiveText() -> LiveStreamWidget? {
+        guard let column = shim_box_new(0, 0) else { return nil }
+        let committed = makeLabel("", "assistant-message")
+        shim_label_wrap_words(committed)
+        shim_label_selectable(committed)
+        shim_widget_halign_start(committed)
+        shim_widget_hide(committed)
+        let tail = makeLabel("", "assistant-message")
+        shim_label_wrap_words(tail)
+        shim_label_selectable(tail)
+        shim_widget_halign_start(tail)
+        shim_box_append(column, committed)
+        shim_box_append(column, tail)
+        return LiveStreamWidget(
+            root: column, body: column, committed: committed, tail: tail,
+            buffer: nil, chevron: nil, expanded: true
+        )
+    }
+
+    private func makeLiveTool(_ block: T4GtkBridge.GtkLiveBlock) -> LiveStreamWidget? {
+        guard let card = shim_box_new(0, 4) else { return nil }
+        addClass(card, "tool-card")
+        addClass(card, "tool-tool-use")
+        addClass(card, "expanded")
+        let header = shim_box_new(1, 8)
+        addClass(header, "card-header")
+        let titleText = liveToolTitle(block)
+        let title = makeLabel(titleText, "tool-head")
+        shim_widget_halign_start(title)
+        shim_box_append(header, title)
+        shim_box_append(card, header)
+        let tv = shim_text_view()
+        shim_text_view_setup(tv)
+        let buf = shim_text_buffer(tv)
+        let scroll = shim_scrolled_window()
+        shim_scrolled_set_child(scroll, tv)
+        shim_scrolled_content_height(scroll, 24, 220)
+        shim_box_append(card, scroll)
+        return LiveStreamWidget(
+            root: card, body: scroll, committed: title, tail: nil,
+            buffer: buf, chevron: nil, expanded: true
+        )
+    }
+
+    private func liveToolTitle(_ block: T4GtkBridge.GtkLiveBlock) -> String {
+        let name = block.title.isEmpty ? "tool" : block.title
+        switch block.phase {
+        case "running", "generating":
+            return name.uppercased() + " · " + block.phase
+        case "failed":
+            return name.uppercased() + " · error"
+        default:
+            return name.uppercased()
+        }
+    }
+
+    @discardableResult
+    private func updateLiveWidget(_ block: T4GtkBridge.GtkLiveBlock) -> Bool {
+        guard var widget = liveWidgets[block.id] else { return false }
+        var changed = false
+        switch block.kind {
+        case .thinking, .text:
+            let full = block.text
+            if widget.expanded {
+                if applySplitLabels(full, widget: &widget) { changed = true }
+            } else if full != widget.lastText {
+                widget.lastText = full
+                changed = true
+            }
+        case .tool:
+            let title = liveToolTitle(block)
+            if let titleLabel = widget.committed, title != widget.lastCommitted {
+                shim_label_set_text(titleLabel, title)
+                widget.lastCommitted = title
+                changed = true
+            }
+            if let buf = widget.buffer {
+                let body = block.progress
+                if applyDeltaBuffer(buf, full: body, last: &widget.lastText) {
+                    changed = true
+                }
+            }
+        }
+        if changed { liveWidgets[block.id] = widget }
+        return changed
+    }
+
+    private func applySplitLabels(_ full: String, widget: inout LiveStreamWidget, force: Bool = false) -> Bool {
+        guard force || full != widget.lastText else { return false }
+        let committed: String
+        let tail: String
+        if let idx = full.lastIndex(of: "\n") {
+            committed = String(full[...idx])
+            tail = String(full[full.index(after: idx)...])
+        } else {
+            committed = ""
+            tail = full
+        }
+        var changed = false
+        if committed != widget.lastCommitted {
+            widget.lastCommitted = committed
+            if let label = widget.committed {
+                if committed.isEmpty {
+                    shim_widget_hide(label)
+                } else {
+                    shim_label_set_text(label, committed)
+                    shim_widget_show(label)
+                }
+            }
+            changed = true
+        }
+        if tail != widget.lastTail {
+            widget.lastTail = tail
+            if let label = widget.tail { shim_label_set_text(label, tail) }
+            changed = true
+        }
+        widget.lastText = full
+        return changed
+    }
+
+    private func applyDeltaBuffer(
+        _ buf: UnsafeMutablePointer<GtkTextBuffer>,
+        full: String,
+        last: inout String
+    ) -> Bool {
+        guard full != last else { return false }
+        if !last.isEmpty, full.hasPrefix(last) {
+            let suffix = String(full.dropFirst(last.count))
+            if !suffix.isEmpty { shim_text_append(buf, suffix) }
+        } else {
+            shim_buffer_set_text(buf, full)
+        }
+        last = full
+        return true
+    }
+
+    private func toggleLiveBlock(id: String) {
+        guard var widget = liveWidgets[id] else { return }
+        widget.expanded.toggle()
+        let expanded = widget.expanded
+        if let chevron = widget.chevron { shim_label_set_text(chevron, expanded ? "▾" : "▸") }
+        if let body = widget.body {
             if expanded { shim_widget_show(body) } else { shim_widget_hide(body) }
         }
-        if let card = streamingThinkingCard {
-            if expanded {
-                shim_css_class_remove(card, "collapsed")
-                addClass(card, "expanded")
-            } else {
-                shim_css_class_remove(card, "expanded")
-                addClass(card, "collapsed")
-            }
+        if expanded {
+            shim_css_class_remove(widget.root, "collapsed")
+            addClass(widget.root, "expanded")
+            _ = applySplitLabels(widget.lastText, widget: &widget, force: true)
+        } else {
+            shim_css_class_remove(widget.root, "expanded")
+            addClass(widget.root, "collapsed")
         }
+        liveWidgets[id] = widget
         if expanded { scrollTranscriptToBottom() }
     }
 
@@ -1349,25 +1547,133 @@ final class AppWindow {
 
     // MARK: - Composer
 
-    private func submitComposer() {
-        guard let buffer = composerBuffer, let selected = store.selectedSession else { return }
+    private func composerText() -> String {
+        guard let buffer = composerBuffer else { return "" }
         let textC = shim_buffer_text(buffer)
         let text = textC.map { String(cString: $0) } ?? ""
         shim_free(textC)
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let images = attachments.map { T4GtkBridge.GtkPromptImage(data: $0.data, mimeType: $0.mimeType) }
-        guard !trimmed.isEmpty || !images.isEmpty else { return }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func clearComposerDraft() {
+        guard let buffer = composerBuffer else { return }
         shim_buffer_set_text(buffer, "")
         if let view = composerView { shim_text_scroll_cursor(view) }
         attachments = []
         rebuildAttachmentStrip()
-        // Sending a message means "watch this turn": re-pin to the bottom so
-        // the reply streams into view (the user may have released the pin by
-        // scrolling up to read earlier).
+    }
+
+    /// Idle: session.prompt. Live turn: session.steer. Draft stays until the
+    /// host accepts, so a busy rejection does not eat the message.
+    private func submitComposer() {
+        guard !composerBusy, let selected = store.selectedSession else { return }
+        let trimmed = composerText()
+        let images = attachments.map { T4GtkBridge.GtkPromptImage(data: $0.data, mimeType: $0.mimeType) }
+        let live = store.hasLiveTurn(sessionId: selected.sessionId)
+        if live {
+            guard !trimmed.isEmpty else { return }
+            guard images.isEmpty else { return }
+            pinnedToBottom = true
+            composerBusy = true
+            let sid = selected.sessionId
+            Task { [store] in
+                let ok = await store.steer(sessionId: sid, text: trimmed)
+                self.composerBusy = false
+                if ok { self.clearComposerDraft() }
+                self.refreshComposer()
+            }
+            return
+        }
+        guard !trimmed.isEmpty || !images.isEmpty else { return }
         pinnedToBottom = true
-        let store = self.store
+        composerBusy = true
         let sid = selected.sessionId
-        Task { await store.sendPrompt(sessionId: sid, text: trimmed, images: images) }
+        Task { [store] in
+            let ok = await store.sendPrompt(sessionId: sid, text: trimmed, images: images)
+            self.composerBusy = false
+            if ok { self.clearComposerDraft() }
+            self.refreshComposer()
+        }
+    }
+
+    private func queueComposer() {
+        guard !composerBusy, let selected = store.selectedSession else { return }
+        guard store.hasLiveTurn(sessionId: selected.sessionId) else { return }
+        let trimmed = composerText()
+        guard !trimmed.isEmpty, attachments.isEmpty else { return }
+        pinnedToBottom = true
+        composerBusy = true
+        let sid = selected.sessionId
+        Task { [store] in
+            let ok = await store.followUp(sessionId: sid, text: trimmed)
+            self.composerBusy = false
+            if ok { self.clearComposerDraft() }
+            self.refreshComposer()
+        }
+    }
+
+    private func stopComposer() {
+        guard let selected = store.selectedSession else { return }
+        let sid = selected.sessionId
+        Task { [store] in await store.cancel(sessionId: sid) }
+    }
+
+    /// Stop / Queue / Steer appear only while this session has a live turn.
+    private func refreshComposer() {
+        let sid = store.selectedSession?.sessionId ?? ""
+        let live = !sid.isEmpty && store.hasLiveTurn(sessionId: sid)
+        if live != composerTurnActive || sid != composerChromeSessionId {
+            composerTurnActive = live
+            composerChromeSessionId = sid
+            if live {
+                if let stop = stopButton { shim_widget_show(stop) }
+                if let queue = queueButton { shim_widget_show(queue) }
+                if let send = sendButton { shim_button_set_label(send, "Steer") }
+            } else {
+                if let stop = stopButton { shim_widget_hide(stop) }
+                if let queue = queueButton { shim_widget_hide(queue) }
+                if let send = sendButton { shim_button_set_label(send, "➤") }
+            }
+        }
+        refreshQueueChips()
+    }
+
+    private func refreshQueueChips() {
+        let sid = store.selectedSession?.sessionId ?? ""
+        let items = sid.isEmpty ? [] : store.queuedMessages(for: sid)
+        let signature = items.map { "\($0.kind):\($0.text)" }.joined(separator: "|")
+        guard signature != lastQueueSignature else { return }
+        lastQueueSignature = signature
+        guard let strip = queueStrip else { return }
+        shim_box_clear(strip)
+        if items.isEmpty {
+            shim_widget_hide(strip)
+            return
+        }
+        for item in items {
+            let prefix = item.kind == .steering ? "Steer" : "Queued"
+            let label = makeLabel("\(prefix) · \(item.text)", "queue-chip")
+            if let label {
+                shim_label_wrap_words(label)
+                shim_widget_halign_start(label)
+                shim_box_append(strip, label)
+            }
+        }
+        shim_widget_show(strip)
+    }
+
+    /// session.cancel is confirmation-gated. Stop already expressed the
+    /// intent, so approve that challenge instead of leaving cancel hung.
+    private func refreshCancelConfirmation() {
+        guard let challenge = store.pendingConfirmation else { return }
+        let summary = challenge.summary.lowercased()
+        guard summary.contains("session.cancel") else { return }
+        guard !confirmingCancel else { return }
+        confirmingCancel = true
+        Task { [store] in
+            await store.confirm(.approve)
+            self.confirmingCancel = false
+        }
     }
 
     // MARK: - Composer attachments

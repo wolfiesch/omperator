@@ -345,6 +345,31 @@ window {
   color: #EB6F92;
 }
 
+.queue-strip {
+  padding: 0;
+}
+
+.queue-chip {
+  color: #908CAA;
+  font-size: 9pt;
+}
+
+.stop-button,
+.queue-button {
+  background-color: transparent;
+  color: #E0DEF4;
+  border: 1px solid rgba(110, 106, 134, 0.9);
+  border-radius: 0;
+  padding: 4px 10px;
+  font-weight: 600;
+}
+
+.stop-button:hover,
+.queue-button:hover {
+  border-color: rgba(246, 193, 119, 0.55);
+  color: #F6C177;
+}
+
 /* Transcript image previews (artifact rows + preview captures). */
 .transcript-image {
   border: 1px solid rgba(110, 106, 134, 0.6);

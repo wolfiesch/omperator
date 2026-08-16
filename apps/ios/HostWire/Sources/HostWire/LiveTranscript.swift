@@ -26,6 +26,13 @@ public struct StreamingAssistantBuffer: Equatable, Sendable {
         text == targetText && reasoning == targetReasoning
     }
 
+    /// Jump to the latest host snapshot. Linux paints from this immediately;
+    /// Apple platforms keep `advance()` for SwiftUI-friendly typewriter diffs.
+    public mutating func snapToTarget() {
+        text = targetText
+        reasoning = targetReasoning
+    }
+
     /// Accept the latest complete host snapshot. Non-prefix corrections replace
     /// immediately; ordinary append-only inference remains frame-paced.
     public mutating func receive(text: String, reasoning: String) {
@@ -107,6 +114,10 @@ public struct LiveTurnBlock: Equatable, Identifiable, Sendable {
 
     public var toolCallId: String? { callId }
     public var isCaughtUp: Bool { content == targetContent }
+
+    fileprivate mutating func snapToTarget() {
+        content = targetContent
+    }
 
     /// A useful partial value while the raw JSON arguments are still invalid.
     /// Write/edit/eval calls therefore look like the TUI: the payload itself
@@ -239,6 +250,10 @@ public struct LiveTurnTimeline: Equatable, Sendable {
 
     public var isEmpty: Bool { blocks.isEmpty }
     public var isCaughtUp: Bool { blocks.allSatisfy(\.isCaughtUp) }
+
+    public mutating func snapToTarget() {
+        for index in blocks.indices { blocks[index].snapToTarget() }
+    }
 
     @discardableResult
     public mutating func apply(_ event: SessionEvent) -> Bool {
@@ -398,6 +413,10 @@ public struct LiveToolCall: Equatable, Identifiable, Sendable {
 
     fileprivate var isCaughtUp: Bool { input == targetInput }
 
+    fileprivate mutating func snapToTarget() {
+        input = targetInput
+    }
+
     fileprivate mutating func advance() {
         guard input != targetInput else { return }
         guard targetInput.hasPrefix(input) else {
@@ -435,6 +454,10 @@ public struct LiveToolProjection: Equatable, Sendable {
     public init() {}
 
     public var isCaughtUp: Bool { calls.allSatisfy(\.isCaughtUp) }
+
+    public mutating func snapToTarget() {
+        for index in calls.indices { calls[index].snapToTarget() }
+    }
 
     public mutating func apply(_ event: SessionEvent) {
         guard event.type == "tool.input.update"

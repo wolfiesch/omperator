@@ -28,34 +28,13 @@ import os
 #endif
 
 
-/// Frame pacing for the streaming reveal loops. On Linux each reveal tick can
-/// change text height, which ripples a full SwiftCrossUI layout recompute up
-/// the tree (bottomUpUpdate → root), so 60fps pacing costs ~60 full-tree
-/// layout passes per second on a live session and pegs the main thread. Linux
-/// paces at 4fps (250ms) — still fluid to the eye — which keeps those passes
-/// at ~4Hz. macOS keeps the original 60fps pacing.
+/// Frame pacing for the streaming reveal loops. Apple platforms typewriter
+/// host snapshots so SwiftUI diffs stay small. Linux snaps to the latest
+/// snapshot on the event itself — a paced reveal held durable rows behind
+/// an empty live buffer, which is why the GTK transcript lagged the TUI.
 enum T4StorePacing {
-    #if os(Linux)
-    /// Measured on a dense transcript during an active stream (Xvfb,
-    /// software GL): CPU is flat across 250ms / 66ms / 33ms / 16.7ms ticks —
-    /// the cost is per content-change, not per tick — so the old 250ms
-    /// throttle bought nothing and only made reveals choppy. Linux uses the
-    /// same 60fps cadence as macOS.
     static let sleepNs: UInt64 = 16_666_667
-    #else
-    static let sleepNs: UInt64 = 16_666_667
-    #endif
-    #if os(Linux)
-    /// Reveal catch-up per pacing tick. The typewriter pacing exists for
-    /// SwiftUI diffing cost on Apple platforms; the pure-GTK4 app repaints
-    /// the newest content each refresh tick, and the paced reveal delays
-    /// BOTH the stream and every settled row queued behind it (they defer
-    /// until the reveal catches up). 1 = reveal everything on the next tick —
-    /// the transcript shows what OMP sent as it arrives.
-    static let revealCatchUpFrames = 1
-    #else
     static let revealCatchUpFrames = 2
-    #endif
 }
 
 #if canImport(os)
@@ -598,6 +577,12 @@ final class T4SessionStore: ObservableObject {
     private func receiveStreamingMessage(sessionId: String, text: String, reasoning: String) {
         var buffer = streamingMessages[sessionId] ?? StreamingAssistantBuffer()
         buffer.receive(text: text, reasoning: reasoning)
+        #if os(Linux)
+        buffer.snapToTarget()
+        streamingMessages[sessionId] = buffer
+        finishPendingAssistantEntry(sessionId: sessionId)
+        return
+        #else
         streamingMessages[sessionId] = buffer
         guard streamingTasks[sessionId] == nil else { return }
         let task = Task { @MainActor [weak self] in
@@ -614,6 +599,7 @@ final class T4SessionStore: ObservableObject {
             if !Task.isCancelled { self.streamingTasks[sessionId] = nil }
         }
         streamingTasks[sessionId] = task
+        #endif
     }
 
     private func clearStreamingMessage(sessionId: String) {
@@ -626,17 +612,20 @@ final class T4SessionStore: ObservableObject {
     }
 
     private func receiveLiveTurnBlock(sessionId: String, event: SessionEvent) {
-        FileHandle.standardError.write("DBG liveTurnBlock recv\n".data(using:.utf8)!)
         // The ordered event supersedes the flattened compatibility projection.
-        // Keep any already-arrived durable row pending while the new timeline
-        // finishes revealing its final snapshot.
         streamingTasks.removeValue(forKey: sessionId)?.cancel()
         streamingMessages.removeValue(forKey: sessionId)
 
         var timeline = liveTurns[sessionId] ?? LiveTurnTimeline()
         guard timeline.apply(event) else { return }
+        #if os(Linux)
+        timeline.snapToTarget()
+        liveTurns[sessionId] = timeline
+        finishPendingLiveTurnEntries(sessionId: sessionId)
+        #else
         liveTurns[sessionId] = timeline
         scheduleLiveTurnFrames(sessionId: sessionId)
+        #endif
     }
 
     #if DEBUG
@@ -736,12 +725,26 @@ final class T4SessionStore: ObservableObject {
     private func receiveLiveTurnToolLifecycle(sessionId: String, event: SessionEvent) -> Bool {
         guard var timeline = liveTurns[sessionId],
               timeline.applyToolLifecycle(event) else { return false }
+        #if os(Linux)
+        timeline.snapToTarget()
+        liveTurns[sessionId] = timeline
+        finishPendingLiveTurnEntries(sessionId: sessionId)
+        #else
         liveTurns[sessionId] = timeline
         scheduleLiveTurnFrames(sessionId: sessionId)
+        #endif
         return true
     }
 
     private func scheduleLiveTurnFrames(sessionId: String) {
+        #if os(Linux)
+        if var next = liveTurns[sessionId] {
+            next.snapToTarget()
+            liveTurns[sessionId] = next
+        }
+        finishPendingLiveTurnEntries(sessionId: sessionId)
+        return
+        #else
         guard liveTurnTasks[sessionId] == nil else { return }
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -755,6 +758,7 @@ final class T4SessionStore: ObservableObject {
             if !Task.isCancelled { self.liveTurnTasks[sessionId] = nil }
         }
         liveTurnTasks[sessionId] = task
+        #endif
     }
 
     private func finishPendingLiveTurnEntries(sessionId: String) {
@@ -819,6 +823,13 @@ final class T4SessionStore: ObservableObject {
     private func receiveToolEvent(sessionId: String, event: SessionEvent) {
         var projection = liveTools[sessionId] ?? LiveToolProjection()
         projection.apply(event)
+        #if os(Linux)
+        projection.snapToTarget()
+        if projection.calls.isEmpty { liveTools.removeValue(forKey: sessionId) }
+        else { liveTools[sessionId] = projection }
+        finishPendingToolEntries(sessionId: sessionId)
+        return
+        #else
         if projection.calls.isEmpty { liveTools.removeValue(forKey: sessionId) }
         else { liveTools[sessionId] = projection }
         guard !projection.isCaughtUp, toolStreamingTasks[sessionId] == nil else { return }
@@ -836,6 +847,7 @@ final class T4SessionStore: ObservableObject {
             if !Task.isCancelled { self.toolStreamingTasks[sessionId] = nil }
         }
         toolStreamingTasks[sessionId] = task
+        #endif
     }
 
     private func finishPendingToolEntries(sessionId: String) {
@@ -849,8 +861,15 @@ final class T4SessionStore: ObservableObject {
     }
 
     private func shouldDeferTranscriptEntry(_ entry: TranscriptEntry, sessionId: String) -> Bool {
+        #if os(Linux)
+        // Durable rows must not wait on a typewriter. The TUI already shows
+        // the settled tool; holding it behind an unrevealed assistant buffer
+        // is why the GTK transcript looked frozen mid-turn.
+        return false
+        #else
         if pendingTranscriptEntries[sessionId]?.isEmpty == false { return true }
         return !pendingTranscriptEntryIsReady(entry, sessionId: sessionId)
+        #endif
     }
 
     private func pendingTranscriptEntryIsReady(
@@ -1342,20 +1361,23 @@ final class T4SessionStore: ObservableObject {
     /// Send a user prompt to a session (session.prompt), uploading any images
     /// first (session.image.begin/chunk → imageId refs). No-op with a clear
     /// error when not connected — the composer is disabled in that state.
-    func sendPrompt(sessionId: String, text: String, images: [PromptImage] = []) async {
+    /// Returns true only when the host accepted the command, so the composer
+    /// can keep the draft on `session_busy` / lease failure.
+    @discardableResult
+    func sendPrompt(sessionId: String, text: String, images: [PromptImage] = []) async -> Bool {
         if isDraftSession(sessionId) {
-            await sendDraftPrompt(sessionId: sessionId, text: text, images: images)
-            return
+            return await sendDraftPrompt(sessionId: sessionId, text: text, images: images)
         }
         guard let client, connected, !hostId.isEmpty else {
             lastError = "Not connected to a host."
-            return
+            return false
         }
         do {
             var refs: [JSONValue] = []
             for image in images {
                 refs.append(.object(["imageId": .string(try await uploadImage(image, sessionId: sessionId))]))
             }
+            var accepted = false
             await withLease(sessionId: sessionId, release: false, refreshBeforeMutation: false) { leaseId in
                 var args: [String: JSONValue] = ["message": .string(text), "leaseId": .string(leaseId)]
                 if !refs.isEmpty { args["images"] = .array(refs) }
@@ -1366,14 +1388,56 @@ final class T4SessionStore: ObservableObject {
                         hostId: hostId, command: "session.prompt", args: args,
                         sessionId: sessionId))
                     t4log.notice("prompt accepted for \(sessionId, privacy: .public)")
+                    accepted = true
                 } catch {
                     t4log.error("prompt failed: \(error)")
                     lastError = "\(error)"
                 }
             }
+            return accepted
         } catch {
             lastError = "\(error)"
+            return false
         }
+    }
+
+    /// Mid-turn correction (session.steer). Extra steers land on the host
+    /// steering queue instead of being rejected as session_busy.
+    @discardableResult
+    func steer(sessionId: String, text: String) async -> Bool {
+        await sendTurnMessage(sessionId: sessionId, command: "session.steer", text: text)
+    }
+
+    /// Queue a follow-up for after the current turn (session.followUp).
+    @discardableResult
+    func followUp(sessionId: String, text: String) async -> Bool {
+        await sendTurnMessage(sessionId: sessionId, command: "session.followUp", text: text)
+    }
+
+    private func sendTurnMessage(sessionId: String, command: String, text: String) async -> Bool {
+        if isDraftSession(sessionId) {
+            lastError = "Wait for the session to start before steering."
+            return false
+        }
+        guard let client, connected, !hostId.isEmpty else {
+            lastError = "Not connected to a host."
+            return false
+        }
+        var accepted = false
+        await withLease(sessionId: sessionId, release: false, refreshBeforeMutation: false) { leaseId in
+            do {
+                _ = try await client.sendCommand(CommandIntent(
+                    hostId: hostId, command: command,
+                    args: ["message": .string(text), "leaseId": .string(leaseId)],
+                    sessionId: sessionId))
+                t4log.notice("\(command) accepted for \(sessionId, privacy: .public)")
+                accepted = true
+            } catch {
+                t4log.error("\(command) failed: \(error)")
+                lastError = "\(error)"
+            }
+        }
+        return accepted
     }
 
     /// Interrupt a running turn (session.cancel).
@@ -1457,8 +1521,9 @@ final class T4SessionStore: ObservableObject {
     /// First send on a draft: optimistic bubble now, real session behind it.
     /// createSession's failure path leaves the draft + bubble in place with
     /// lastError set, so a retry just sends again.
-    private func sendDraftPrompt(sessionId: String, text: String, images: [PromptImage]) async {
-        guard let draft = sessions.first(where: { $0.sessionId == sessionId }) else { return }
+    @discardableResult
+    private func sendDraftPrompt(sessionId: String, text: String, images: [PromptImage]) async -> Bool {
+        guard let draft = sessions.first(where: { $0.sessionId == sessionId }) else { return false }
         let entryJson: JSONValue = .object([
             "id": .string("optimistic-\(UUID().uuidString.lowercased())"),
             "hostId": .string(hostId),
@@ -1471,7 +1536,7 @@ final class T4SessionStore: ObservableObject {
            let durable = try? JSONDecoder().decode(DurableEntry.self, from: data) {
             liveEntries[sessionId] = (liveEntries[sessionId] ?? []) + [TranscriptEntry(from: durable)]
         }
-        guard let created = await createSession(projectId: draft.project.projectId) else { return }
+        guard let created = await createSession(projectId: draft.project.projectId) else { return false }
         sessions.removeAll { $0.sessionId == sessionId }
         // Migrate the bubble onto the real session id; the durable user entry
         // arrives as an echo of this same text and is dropped by the existing
@@ -1480,7 +1545,7 @@ final class T4SessionStore: ObservableObject {
             liveEntries[created.sessionId] = pending
         }
         select(created)
-        await sendPrompt(sessionId: created.sessionId, text: text, images: images)
+        return await sendPrompt(sessionId: created.sessionId, text: text, images: images)
     }
 
     /// Copy an observer/unverified session into a fresh session this app owns.
@@ -2458,11 +2523,9 @@ final class T4SessionStore: ObservableObject {
             case .entry(let entryFrame):
                 let entry = TranscriptEntry(from: entryFrame.entry)
                 let sid = entryFrame.sessionId
-                // A settled row can arrive in the same provider burst as its
-                // final delta. Keep it pending until the live projection has
-                // revealed that final snapshot. Once any row is pending, all
-                // later rows join the same queue so a fast tool cannot settle
-                // ahead of earlier paced assistant content.
+                // Apple: keep the durable row pending until the typewriter
+                // has revealed the matching live snapshot. Linux snaps live
+                // state immediately, so this is a no-op there.
                 if shouldDeferTranscriptEntry(entry, sessionId: sid) {
                     enqueuePendingTranscriptEntry(entry, sessionId: sid)
                     finishPendingTranscriptEntries(sessionId: sid)
@@ -2484,7 +2547,6 @@ final class T4SessionStore: ObservableObject {
                     pendingAsk = PendingAsk(sessionId: frame.sessionId, request: ask)
                 }
                 let sid = frame.sessionId
-                FileHandle.standardError.write("DBG frametype=\(frame.event.type) sid=\(sid.prefix(8)) sel=\((selectedSession?.sessionId ?? "none").prefix(8))\n".data(using:.utf8)!)
                 switch frame.event.type {
                 case "turn.start":
                     activeTurns.insert(sid)
@@ -2504,9 +2566,12 @@ final class T4SessionStore: ObservableObject {
                 case "assistant.block.update":
                     receiveLiveTurnBlock(sessionId: sid, event: frame.event)
                 case "message.update":
+                    // Ordered `assistant.block.update` already drives the live
+                    // timeline. The flattened copy is compatibility-only; applying
+                    // both doubles store work per token and fights the timeline.
+                    if liveTurns[sid] != nil { break }
                     if case .string(let role) = frame.event.fields["role"], role == "assistant",
                        case .string(let text) = frame.event.fields["text"] {
-                        FileHandle.standardError.write("DBG msgupd textlen=\(text.count) reaslen=\(frame.event.fields["reasoning"] != nil ? 1 : 0)\n".data(using:.utf8)!)
                         let reasoning: String
                         if case .string(let value) = frame.event.fields["reasoning"] { reasoning = value }
                         else { reasoning = "" }

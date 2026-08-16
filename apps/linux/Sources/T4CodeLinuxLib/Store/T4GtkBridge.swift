@@ -54,7 +54,8 @@ public final class T4GtkBridge {
         store.startDraftSession()
     }
 
-    public func sendPrompt(sessionId: String, text: String) async {
+    @discardableResult
+    public func sendPrompt(sessionId: String, text: String) async -> Bool {
         await store.sendPrompt(sessionId: sessionId, text: text)
     }
 
@@ -72,7 +73,8 @@ public final class T4GtkBridge {
 
     /// Send a prompt with image attachments (uploaded first via
     /// session.image.begin/chunk; formats pass through unchanged).
-    public func sendPrompt(sessionId: String, text: String, images: [GtkPromptImage]) async {
+    @discardableResult
+    public func sendPrompt(sessionId: String, text: String, images: [GtkPromptImage]) async -> Bool {
         await store.sendPrompt(sessionId: sessionId, text: text,
                                images: images.map { T4SessionStore.PromptImage(data: $0.data, mimeType: $0.mimeType) })
     }
@@ -118,6 +120,51 @@ public final class T4GtkBridge {
 
     public func cancel(sessionId: String) async { await store.cancel(sessionId: sessionId) }
 
+    /// Mid-turn correction. Extra steers are queued by the host.
+    @discardableResult
+    public func steer(sessionId: String, text: String) async -> Bool {
+        await store.steer(sessionId: sessionId, text: text)
+    }
+
+    /// Follow-up to run after the current turn.
+    @discardableResult
+    public func followUp(sessionId: String, text: String) async -> Bool {
+        await store.followUp(sessionId: sessionId, text: text)
+    }
+
+    public var pendingConfirmation: ConfirmationChallenge? { store.pendingConfirmation }
+    public func confirm(_ decision: ConfirmDecision) async { await store.confirm(decision) }
+
+    public struct GtkQueuedMessage {
+        public enum Kind { case steering, followUp }
+        public let kind: Kind
+        public let text: String
+    }
+
+    /// Host-queued steer and follow-up texts for the composer chips.
+    public func queuedMessages(for sessionId: String) -> [GtkQueuedMessage] {
+        let session = store.sessions.first(where: { $0.sessionId == sessionId })
+            ?? store.selectedSession.flatMap { $0.sessionId == sessionId ? $0 : nil }
+        return Self.parseQueuedMessages(session?.liveState)
+    }
+
+    private static func parseQueuedMessages(_ liveState: JSONValue?) -> [GtkQueuedMessage] {
+        guard case .object(let live) = liveState else { return [] }
+        guard case .object(let queued) = live["queuedMessages"] else { return [] }
+        var out: [GtkQueuedMessage] = []
+        func append(_ key: String, kind: GtkQueuedMessage.Kind) {
+            guard case .array(let items) = queued[key] else { return }
+            for item in items {
+                if case .string(let text) = item, !text.isEmpty {
+                    out.append(GtkQueuedMessage(kind: kind, text: text))
+                }
+            }
+        }
+        append("steering", kind: .steering)
+        append("followUp", kind: .followUp)
+        return out
+    }
+
     public func transcript(for sessionId: String) -> [TranscriptEntry] {
         store.transcript(for: sessionId)
     }
@@ -150,6 +197,98 @@ public final class T4GtkBridge {
             if !thinking.isEmpty { return thinking }
         }
         return store.streamingMessages[sessionId]?.reasoning ?? ""
+    }
+
+    /// One in-flight transcript block, in wire order (thinking, text, tools).
+    public struct GtkLiveBlock {
+        public enum Kind { case thinking, text, tool }
+        public let id: String
+        public let kind: Kind
+        public let title: String
+        public let text: String
+        public let progress: String
+        public let result: String
+        public let phase: String
+    }
+
+    /// Live turn as the GTK transcript should paint it: ordered timeline
+    /// blocks when present, otherwise flattened text/reasoning plus any
+    /// tool projection that is not already in the timeline.
+    public func liveTurnBlocks(for sessionId: String) -> [GtkLiveBlock] {
+        var blocks: [GtkLiveBlock] = []
+        var seenToolIds = Set<String>()
+        if let timeline = store.liveTurns[sessionId], !timeline.isEmpty {
+            for block in timeline.blocks {
+                switch block.kind {
+                case .thinking:
+                    guard !block.content.isEmpty else { continue }
+                    blocks.append(GtkLiveBlock(
+                        id: block.id, kind: .thinking, title: "Thinking",
+                        text: block.content, progress: "", result: "", phase: ""
+                    ))
+                case .text:
+                    guard !block.content.isEmpty else { continue }
+                    blocks.append(GtkLiveBlock(
+                        id: block.id, kind: .text, title: "",
+                        text: block.content, progress: "", result: "", phase: ""
+                    ))
+                case .toolInput:
+                    if let callId = block.toolCallId { seenToolIds.insert(callId) }
+                    blocks.append(Self.toolBlock(
+                        id: block.id,
+                        tool: block.tool,
+                        title: block.title,
+                        preview: block.previewText,
+                        progress: block.progress,
+                        result: block.result,
+                        phase: block.phase.rawValue
+                    ))
+                }
+            }
+        } else if let buffer = store.streamingMessages[sessionId] {
+            if !buffer.reasoning.isEmpty {
+                blocks.append(GtkLiveBlock(
+                    id: "\(sessionId):thinking", kind: .thinking, title: "Thinking",
+                    text: buffer.reasoning, progress: "", result: "", phase: ""
+                ))
+            }
+            if !buffer.text.isEmpty {
+                blocks.append(GtkLiveBlock(
+                    id: "\(sessionId):text", kind: .text, title: "",
+                    text: buffer.text, progress: "", result: "", phase: ""
+                ))
+            }
+        }
+        if let projection = store.liveTools[sessionId] {
+            for call in projection.calls where !seenToolIds.contains(call.id) {
+                blocks.append(Self.toolBlock(
+                    id: call.id,
+                    tool: call.tool,
+                    title: call.title,
+                    preview: call.input,
+                    progress: call.progress,
+                    result: call.result,
+                    phase: call.phase.rawValue
+                ))
+            }
+        }
+        return blocks
+    }
+
+    private static func toolBlock(
+        id: String, tool: String, title: String,
+        preview: String, progress: String, result: String, phase: String
+    ) -> GtkLiveBlock {
+        let head = title.isEmpty ? tool : title
+        var body = progress
+        if body.isEmpty { body = preview }
+        if !result.isEmpty {
+            body = body.isEmpty ? result : body + "\n" + result
+        }
+        return GtkLiveBlock(
+            id: id, kind: .tool, title: head,
+            text: preview, progress: body, result: result, phase: phase
+        )
     }
 
     // MARK: - Panes (terminal / browser / files)

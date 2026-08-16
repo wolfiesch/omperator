@@ -190,6 +190,24 @@ struct LiveTranscriptTests {
         }
     }
 
+    @Test func snapToTargetJumpsToHostSnapshotWithoutPacing() {
+        var timeline = LiveTurnTimeline()
+        timeline.apply(block(entryId: "assistant-1", index: 0, kind: "text",
+                             content: "Here is the answer."))
+        #expect(timeline.blocks[0].content == "")
+        timeline.snapToTarget()
+        #expect(timeline.blocks[0].content == "Here is the answer.")
+        #expect(timeline.isCaughtUp)
+
+        var buffer = StreamingAssistantBuffer()
+        buffer.receive(text: "Hello", reasoning: "Hmm")
+        #expect(buffer.text == "")
+        buffer.snapToTarget()
+        #expect(buffer.text == "Hello")
+        #expect(buffer.reasoning == "Hmm")
+        #expect(buffer.isCaughtUp)
+    }
+
     @Test func liveTurnRevealsWholeGraphemesAndDoesNotDuplicateSnapshots() {
         var timeline = LiveTurnTimeline()
         let update = block(entryId: "assistant-1", index: 0, kind: "text",
