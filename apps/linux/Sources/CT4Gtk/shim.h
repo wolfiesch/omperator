@@ -782,3 +782,43 @@ static inline void shim_clipboard_set_texture(void *texture) {
     g_object_unref(provider);
     g_bytes_unref(bytes);
 }
+
+/* ── Rail popout/popin + resizable dividers ─────────────────
+   GtkRevealer gives the native slide transition (width animates, child
+   clips). Drag gesture drives the rail/pane width; snap-collapse handled
+   on the Swift side. */
+
+static inline GtkWidget *shim_revealer(void) {
+    GtkWidget *r = gtk_revealer_new();
+    gtk_revealer_set_transition_type(GTK_REVEALER(r), GTK_REVEALER_TRANSITION_TYPE_SLIDE_LEFT);
+    gtk_revealer_set_transition_duration(GTK_REVEALER(r), 220);
+    return r;
+}
+static inline void shim_revealer_set_child(GtkWidget *r, GtkWidget *child) { gtk_revealer_set_child(GTK_REVEALER(r), child); }
+static inline void shim_revealer_set_reveal(GtkWidget *r, int reveal) { gtk_revealer_set_reveal_child(GTK_REVEALER(r), reveal); }
+static inline int shim_revealer_revealed(GtkWidget *r) { return gtk_revealer_get_child_revealed(GTK_REVEALER(r)); }
+
+typedef void (*ShimDragHandler)(void *userData, double offsetX, double offsetY, int ended);
+static ShimDragHandler shim_drag_handler = NULL;
+static void shim_drag_update_trampoline(GtkGestureDrag *g, double ox, double oy, gpointer ud) {
+    (void)g;
+    if (shim_drag_handler) shim_drag_handler(ud, ox, oy, 0);
+}
+static void shim_drag_end_trampoline(GtkGestureDrag *g, double ox, double oy, gpointer ud) {
+    (void)g;
+    if (shim_drag_handler) shim_drag_handler(ud, ox, oy, 1);
+}
+/* ended==2 marks drag-begin so the caller captures the start width. */
+static void shim_drag_begin_trampoline(GtkGestureDrag *g, double x, double y, gpointer ud) {
+    (void)g; (void)x; (void)y;
+    if (shim_drag_handler) shim_drag_handler(ud, 0, 0, 2);
+}
+static inline void shim_on_drag(GtkWidget *widget, void *userData) {
+    GtkGesture *g = gtk_gesture_drag_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(g), 0);
+    g_signal_connect_data(g, "drag-begin", G_CALLBACK(shim_drag_begin_trampoline), userData, NULL, G_CONNECT_DEFAULT);
+    g_signal_connect_data(g, "drag-update", G_CALLBACK(shim_drag_update_trampoline), userData, NULL, G_CONNECT_DEFAULT);
+    g_signal_connect_data(g, "drag-end", G_CALLBACK(shim_drag_end_trampoline), userData, NULL, G_CONNECT_DEFAULT);
+    gtk_widget_add_controller(widget, GTK_EVENT_CONTROLLER(g));
+}
+static inline void shim_set_drag_handler(ShimDragHandler h) { shim_drag_handler = h; }

@@ -672,3 +672,13 @@ selection {
   background-color: rgba(144, 122, 169, 0.35);
   color: #E0DEF4;
 }
+
+/* Resizable sidebar drag handles (rail + panes). The strip stays visible when
+   the rail is collapsed so a drag from the left edge reopens it. */
+.pane-divider {
+  min-width: 6px;
+  background-color: transparent;
+}
+.pane-divider:hover {
+  background-color: rgba(154, 140, 220, 0.35);
+}

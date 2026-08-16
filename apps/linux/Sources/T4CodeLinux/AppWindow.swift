@@ -71,7 +71,14 @@ final class AppWindow {
     private var paneSidebar: UnsafeMutablePointer<GtkWidget>?
     private var paneVisible = false
     private var railBox: UnsafeMutablePointer<GtkWidget>?
+    private var railRevealerBox: UnsafeMutablePointer<GtkWidget>?
     private var railVisible = true
+    /// Rail width, persisted across launches.
+    private var railWidth = UserDefaults.standard.object(forKey: "t4.railWidth") as? Int ?? 232
+    private var railDragStartWidth = 0
+    /// Right panes sidebar width, persisted.
+    private var paneWidth = UserDefaults.standard.object(forKey: "t4.paneWidth") as? Int ?? 380
+    private var paneDragStartWidth = 0
     private var miniButton: UnsafeMutablePointer<GtkWidget>?
     private var miniMode = false
     private var fullSize: (width: Int, height: Int)?
@@ -179,15 +186,23 @@ final class AppWindow {
                 self.newSession()
                 return true
             }
+            if (keyval == gdkKeyB || keyval == gdkKeyBUpper), (state & gdkControlMask) != 0 {
+                self.toggleRail()
+                return true
+            }
             return false
         }
 
-        // Rail (left)
+        // Rail (left), wrapped in a revealer for the slide popout/popin.
         let rail = shim_box_new(0, 0)
         railBox = rail
         addClass(rail, "rail")
-        shim_widget_size(rail, 232)
-        shim_box_append(workspace, rail)
+        shim_widget_size(rail, Int32(railWidth))
+        let railRevealer = shim_revealer()
+        railRevealerBox = railRevealer
+        shim_revealer_set_child(railRevealer, rail)
+        shim_box_append(workspace, railRevealer)
+        shim_box_append(workspace, makeRailDivider())
 
         let railHeader = shim_box_new(1, 6)
         let railTitle = makeLabel("Sessions", "subtle")
@@ -245,6 +260,9 @@ final class AppWindow {
         railList = shim_box_new(0, 2)
         shim_scrolled_set_child(railScroll, railList)
         shim_box_append(rail, railScroll)
+        // Reveal AFTER the rail content is fully built so the revealer
+        // measures the populated child, not the empty box.
+        shim_revealer_set_reveal(railRevealer, railVisible ? 1 : 0)
 
         // Center: header + transcript + composer
         let center = shim_box_new(0, 0)
@@ -573,7 +591,7 @@ final class AppWindow {
     private func buildPanesSidebar(_ workspace: UnsafeMutablePointer<GtkWidget>?) {
         let sidebar = shim_box_new(0, 6)
         addClass(sidebar, "pane-sidebar")
-        shim_widget_size(sidebar, 380)
+        shim_widget_size(sidebar, Int32(paneWidth))
         paneSidebar = sidebar
 
         // The sidebar IS the browser pane — no tab strip. Terminal and Files
@@ -585,6 +603,7 @@ final class AppWindow {
         }
 
         shim_widget_hide(sidebar)
+        shim_box_append(workspace, makePaneDivider())
         shim_box_append(workspace, sidebar)
 
         panes.onURLChanged = { [weak self] url in
@@ -593,16 +612,89 @@ final class AppWindow {
         }
     }
 
+    private func toggleRail() {
+        railVisible.toggle()
+        guard let revealer = railRevealerBox else { return }
+        shim_revealer_set_reveal(revealer, railVisible ? 1 : 0)
+        if let check = settingsRailCheck { settingsSyncing = true; shim_check_set_active(check, railVisible ? 1 : 0); settingsSyncing = false }
+    }
+
+    /// Drag handle between the rail and the transcript. Dragging left of the
+    /// min width snaps the rail closed; dragging right of the collapsed edge
+    /// reopens it. Width clamps to 180-400 and persists across launches.
+    private func makeRailDivider() -> UnsafeMutablePointer<GtkWidget> {
+        let divider = shim_box_new(0, 0)!
+        addClass(divider, "pane-divider")
+        onDrag(divider) { [weak self] ox, _, phase in
+            guard let self else { return }
+            switch phase {
+            case 2: self.railDragStartWidth = self.railWidth
+            case 0: self.applyRailDrag(offsetX: ox)
+            case 1: self.finishRailDrag(offsetX: ox)
+            default: break
+            }
+        }
+        return divider
+    }
+
+    private func applyRailDrag(offsetX: Double) {
+        guard let rail = railBox else { return }
+        let proposed = railDragStartWidth + Int(offsetX)
+        if proposed < 160 {
+            if railVisible {
+                railVisible = false
+                if let r = railRevealerBox { shim_revealer_set_reveal(r, 0) }
+                if let check = settingsRailCheck { settingsSyncing = true; shim_check_set_active(check, 0); settingsSyncing = false }
+            }
+            return
+        }
+        if !railVisible {
+            railVisible = true
+            if let r = railRevealerBox { shim_revealer_set_reveal(r, 1) }
+            if let check = settingsRailCheck { settingsSyncing = true; shim_check_set_active(check, 1); settingsSyncing = false }
+        }
+        let clamped = min(400, max(180, proposed))
+        railWidth = clamped
+        shim_widget_size(rail, Int32(clamped))
+    }
+
+    private func finishRailDrag(offsetX: Double) {
+        applyRailDrag(offsetX: offsetX)
+        UserDefaults.standard.set(railWidth, forKey: "t4.railWidth")
+    }
+
     private func togglePanes() {
         paneVisible.toggle()
         guard let sidebar = paneSidebar else { return }
         if paneVisible { shim_widget_show(sidebar) } else { shim_widget_hide(sidebar) }
     }
 
-    private func toggleRail() {
-        railVisible.toggle()
-        guard let rail = railBox else { return }
-        if railVisible { shim_widget_show(rail) } else { shim_widget_hide(rail) }
+    private func makePaneDivider() -> UnsafeMutablePointer<GtkWidget> {
+        let divider = shim_box_new(0, 0)!
+        addClass(divider, "pane-divider")
+        onDrag(divider) { [weak self] ox, _, phase in
+            guard let self else { return }
+            switch phase {
+            case 2: self.paneDragStartWidth = self.paneWidth
+            case 0: self.applyPaneDrag(offsetX: ox)
+            case 1: self.finishPaneDrag(offsetX: ox)
+            default: break
+            }
+        }
+        return divider
+    }
+
+    private func applyPaneDrag(offsetX: Double) {
+        guard let sidebar = paneSidebar else { return }
+        // Dragging the pane divider LEFT widens the sidebar.
+        let clamped = min(600, max(280, paneDragStartWidth - Int(offsetX)))
+        paneWidth = clamped
+        shim_widget_size(sidebar, Int32(clamped))
+    }
+
+    private func finishPaneDrag(offsetX: Double) {
+        applyPaneDrag(offsetX: offsetX)
+        UserDefaults.standard.set(paneWidth, forKey: "t4.paneWidth")
     }
 
     // MARK: - Mini mode
@@ -615,7 +707,7 @@ final class AppWindow {
             var w: Int32 = 0, h: Int32 = 0
             shim_window_get_size(win, &w, &h)
             fullSize = (Int(w), Int(h))
-            if railVisible { railVisible = false; railBox.map { shim_widget_hide($0) } }
+            if railVisible { railVisible = false; railRevealerBox.map { shim_revealer_set_reveal($0, 0) } }
             if paneVisible { paneVisible = false; paneSidebar.map { shim_widget_hide($0) } }
             shim_window_resize(win, 440, 560)
             CompositorPin.setPinned(true, window: win)
@@ -624,7 +716,7 @@ final class AppWindow {
             CompositorPin.setPinned(false, window: win)
             if let size = fullSize { shim_window_resize(win, Int32(size.width), Int32(size.height)) }
             railVisible = true
-            railBox.map { shim_widget_show($0) }
+            railRevealerBox.map { shim_revealer_set_reveal($0, 1) }
             // The pane sidebar restores to its pre-mini visibility only if it was open.
         }
     }

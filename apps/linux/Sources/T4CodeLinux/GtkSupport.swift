@@ -129,6 +129,8 @@ let gdkKeyEscape: UInt32 = 0xFF1B
 let gdkKeyV: UInt32 = 0x76
 let gdkKeyN: UInt32 = 0x6E
 let gdkKeyNUpper: UInt32 = 0x4E
+let gdkKeyB: UInt32 = 0x62
+let gdkKeyBUpper: UInt32 = 0x42
 
 /// Key-pressed handler via GtkEventControllerKey. Return true to swallow.
 func onKey(_ widget: UnsafeMutablePointer<GtkWidget>?, _ handler: @escaping (UInt32, UInt32) -> Bool) {
@@ -219,4 +221,27 @@ func menuClickPos() -> (Double, Double) {
     var x = 0.0, y = 0.0
     shim_menu_click_pos(&x, &y)
     return (x, y)
+}
+
+/// Drag gesture (any button). Phase: 2 = begin, 0 = update, 1 = end; offsets
+/// are cumulative from the drag start.
+final class GtkDragBox {
+    let handler: (Double, Double, Int) -> Void
+    init(_ handler: @escaping (Double, Double, Int) -> Void) { self.handler = handler }
+}
+
+private let dragForwarder: @convention(c) (UnsafeMutableRawPointer?, Double, Double, Int32) -> Void = { userData, ox, oy, ended in
+    guard let userData else { return }
+    Unmanaged<GtkDragBox>.fromOpaque(userData).takeUnretainedValue().handler(ox, oy, Int(ended))
+}
+
+private var dragHandlerInstalled = false
+
+func onDrag(_ widget: UnsafeMutablePointer<GtkWidget>?, _ handler: @escaping (Double, Double, Int) -> Void) {
+    guard let widget else { return }
+    if !dragHandlerInstalled {
+        dragHandlerInstalled = true
+        shim_set_drag_handler(dragForwarder)
+    }
+    shim_on_drag(widget, Unmanaged.passRetained(GtkDragBox(handler)).toOpaque())
 }
