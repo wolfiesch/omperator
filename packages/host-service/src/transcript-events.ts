@@ -4,7 +4,6 @@ import {
 	type PendingAttentionItem,
 	type SessionEvent,
 } from "@t4-code/host-wire";
-import { appendFileSync } from "node:fs";
 import type { AgentSessionEvent, RpcSessionEventFrame, RpcSubagentEventFrame } from "./omp-rpc-contract.ts";
 import { cleanText, projectToolArguments, projectToolResultDetails } from "./discovery.ts";
 import { type XdevWriteCall, xdevExecutionMatches, xdevResultEnvelope, xdevWriteCall } from "./xdev-envelope.ts";
@@ -777,15 +776,6 @@ export class TranscriptEventTranslator {
 	translate(frame: Record<string, unknown>, context: TranscriptFrameContext = {}): AppserverEvent[] {
 		const type = asString(frame.type);
 		if (!type) return [];
-		try {
-			if (type === "message_update") {
-				const ame = frame.assistantMessageEvent as Record<string, unknown> | undefined;
-				const msg = frame.message as Record<string, unknown> | undefined;
-				const msgContent = Array.isArray(msg?.content) ? (msg.content as unknown[]) : [];
-				const textBlock = msgContent.find((c) => (c as Record<string, unknown>)?.type === "text") as Record<string, unknown> | undefined;
-				appendFileSync("/tmp/host-frames.log", `MU ameType=${ame?.type ?? "NONE"} hasDelta=${ame?.delta !== undefined} deltaLen=${typeof ame?.delta === "string" ? (ame.delta as string).length : 0} hasPartial=${ame?.partial !== undefined} msgContentLen=${msgContent.length} msgTextLen=${typeof textBlock?.text === "string" ? (textBlock.text as string).length : 0}\n`);
-			}
-		} catch {}
 		if (isAgentSessionEventType(type)) return this.#translateAgentSessionEvent(frame as unknown as AgentSessionEvent);
 		if (type === "subagent_event") return this.#translateSubagentEvent(frame as unknown as RpcSubagentEventFrame);
 		if (type === "extension_ui_request") return this.extensionUi(frame);
