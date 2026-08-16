@@ -832,11 +832,12 @@ static inline void shim_set_col_resize_cursor(GtkWidget *w) {
    Cancels any in-flight animation for the same widget. */
 typedef struct { GtkWidget *widget; int start; int target; gint64 t0; int dur_ms; guint tick_id; } ShimWidthAnim;
 static gboolean shim_width_tick(GtkWidget *w, GdkFrameClock *clock, gpointer ud) {
+    (void)clock;
     ShimWidthAnim *a = (ShimWidthAnim*)ud;
     // If widget was destroyed or a newer anim replaced this one, stop.
     ShimWidthAnim *cur = (ShimWidthAnim*)g_object_get_data(G_OBJECT(w), "shim-width-anim");
     if (cur != a) return G_SOURCE_REMOVE;
-    gint64 now = gdk_frame_clock_get_frame_time(clock);
+    gint64 now = g_get_monotonic_time();
     double p = (double)(now - a->t0) / (double)(a->dur_ms * 1000);
     if (p >= 1.0) {
         gtk_widget_set_size_request(w, a->target, -1);
@@ -868,9 +869,6 @@ static inline void shim_animate_width(GtkWidget *w, int start, int target, int d
     a->start = start;
     a->target = target;
     a->t0 = g_get_monotonic_time();
-    // Use frame clock if available, otherwise monotonic; tick will correct on first frame
-    GdkFrameClock *clock = gtk_widget_get_frame_clock(w);
-    if (clock) a->t0 = gdk_frame_clock_get_frame_time(clock);
     a->dur_ms = dur_ms;
     // Need to know tick_id inside the struct before add, so add then store
     guint id = gtk_widget_add_tick_callback(w, shim_width_tick, a, NULL);
