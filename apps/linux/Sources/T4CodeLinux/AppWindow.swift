@@ -86,6 +86,7 @@ final class AppWindow {
     }()
     private var paneDragStartWidth = 0
     private var paneDividerBox: UnsafeMutablePointer<GtkWidget>?
+    private var railDividerBox: UnsafeMutablePointer<GtkWidget>?
     private var miniButton: UnsafeMutablePointer<GtkWidget>?
     private var miniMode = false
     private var fullSize: (width: Int, height: Int)?
@@ -209,7 +210,9 @@ final class AppWindow {
         railRevealerBox = railRevealer
         shim_revealer_set_child(railRevealer, rail)
         shim_box_append(workspace, railRevealer)
-        shim_box_append(workspace, makeRailDivider())
+        let railDivider = makeRailDivider()
+        railDividerBox = railDivider
+        shim_box_append(workspace, railDivider)
 
         let railHeader = shim_box_new(1, 6)
         let railTitle = makeLabel("Sessions", "subtle")
@@ -626,6 +629,7 @@ final class AppWindow {
         railVisible.toggle()
         guard let revealer = railRevealerBox else { return }
         shim_revealer_set_reveal(revealer, railVisible ? 1 : 0)
+        if railVisible { railDividerBox.map { shim_widget_show($0) } } else { railDividerBox.map { shim_widget_hide($0) } }
         if let check = settingsRailCheck { settingsSyncing = true; shim_check_set_active(check, railVisible ? 1 : 0); settingsSyncing = false }
     }
 
@@ -655,6 +659,7 @@ final class AppWindow {
             if railVisible {
                 railVisible = false
                 if let r = railRevealerBox { shim_revealer_set_reveal(r, 0) }
+                railDividerBox.map { shim_widget_hide($0) }
                 if let check = settingsRailCheck { settingsSyncing = true; shim_check_set_active(check, 0); settingsSyncing = false }
             }
             return
@@ -662,6 +667,7 @@ final class AppWindow {
         if !railVisible {
             railVisible = true
             if let r = railRevealerBox { shim_revealer_set_reveal(r, 1) }
+            railDividerBox.map { shim_widget_show($0) }
             if let check = settingsRailCheck { settingsSyncing = true; shim_check_set_active(check, 1); settingsSyncing = false }
         }
         let clamped = min(400, max(180, proposed))
@@ -725,7 +731,7 @@ final class AppWindow {
             var w: Int32 = 0, h: Int32 = 0
             shim_window_get_size(win, &w, &h)
             fullSize = (Int(w), Int(h))
-            if railVisible { railVisible = false; railRevealerBox.map { shim_revealer_set_reveal($0, 0) } }
+            if railVisible { railVisible = false; railRevealerBox.map { shim_revealer_set_reveal($0, 0) }; railDividerBox.map { shim_widget_hide($0) } }
             if paneVisible { paneVisible = false; paneDividerBox.map { shim_widget_hide($0) }; paneSidebar.map { shim_widget_hide($0) } }
             shim_window_resize(win, 440, 560)
             CompositorPin.setPinned(true, window: win)
@@ -735,6 +741,7 @@ final class AppWindow {
             if let size = fullSize { shim_window_resize(win, Int32(size.width), Int32(size.height)) }
             railVisible = true
             railRevealerBox.map { shim_revealer_set_reveal($0, 1) }
+            railDividerBox.map { shim_widget_show($0) }
             // The pane sidebar restores to its pre-mini visibility only if it was open.
         }
     }

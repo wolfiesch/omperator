@@ -790,7 +790,7 @@ static inline void shim_clipboard_set_texture(void *texture) {
 
 static inline GtkWidget *shim_revealer(void) {
     GtkWidget *r = gtk_revealer_new();
-    gtk_revealer_set_transition_type(GTK_REVEALER(r), GTK_REVEALER_TRANSITION_TYPE_SLIDE_LEFT);
+    gtk_revealer_set_transition_type(GTK_REVEALER(r), GTK_REVEALER_TRANSITION_TYPE_SLIDE_RIGHT);
     gtk_revealer_set_transition_duration(GTK_REVEALER(r), 220);
     return r;
 }
