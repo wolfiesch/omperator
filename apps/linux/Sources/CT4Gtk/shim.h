@@ -827,3 +827,53 @@ static inline void shim_set_col_resize_cursor(GtkWidget *w) {
     GdkCursor *c = gdk_cursor_new_from_name("col-resize", NULL);
     if (c) { gtk_widget_set_cursor(w, c); g_object_unref(c); }
 }
+
+/* Smooth width animation on the frame clock (vsync, ease-out cubic).
+   Cancels any in-flight animation for the same widget. */
+typedef struct { GtkWidget *widget; int start; int target; gint64 t0; int dur_ms; guint tick_id; } ShimWidthAnim;
+static gboolean shim_width_tick(GtkWidget *w, GdkFrameClock *clock, gpointer ud) {
+    ShimWidthAnim *a = (ShimWidthAnim*)ud;
+    // If widget was destroyed or a newer anim replaced this one, stop.
+    ShimWidthAnim *cur = (ShimWidthAnim*)g_object_get_data(G_OBJECT(w), "shim-width-anim");
+    if (cur != a) return G_SOURCE_REMOVE;
+    gint64 now = gdk_frame_clock_get_frame_time(clock);
+    double p = (double)(now - a->t0) / (double)(a->dur_ms * 1000);
+    if (p >= 1.0) {
+        gtk_widget_set_size_request(w, a->target, -1);
+        if (a->target == 0) gtk_widget_set_visible(w, FALSE);
+        g_object_set_data(G_OBJECT(w), "shim-width-anim", NULL);
+        // tick_id will be invalid after removal, clear before free
+        g_free(a);
+        return G_SOURCE_REMOVE;
+    }
+    double eased = p; // linear — Codex-like, no pause at end
+    int width = a->start + (int)((a->target - a->start) * eased);
+    gtk_widget_set_size_request(w, width, -1);
+    return G_SOURCE_CONTINUE;
+}
+static inline void shim_animate_width(GtkWidget *w, int start, int target, int dur_ms) {
+    // Cancel any in-flight anim
+    ShimWidthAnim *old = (ShimWidthAnim*)g_object_get_data(G_OBJECT(w), "shim-width-anim");
+    if (old) {
+        gtk_widget_remove_tick_callback(w, old->tick_id);
+        g_object_set_data(G_OBJECT(w), "shim-width-anim", NULL);
+        g_free(old);
+    }
+    if (target != 0) {
+        gtk_widget_set_visible(w, TRUE);
+        gtk_widget_set_size_request(w, start, -1);
+    }
+    ShimWidthAnim *a = g_new0(ShimWidthAnim, 1);
+    a->widget = w;
+    a->start = start;
+    a->target = target;
+    a->t0 = g_get_monotonic_time();
+    // Use frame clock if available, otherwise monotonic; tick will correct on first frame
+    GdkFrameClock *clock = gtk_widget_get_frame_clock(w);
+    if (clock) a->t0 = gdk_frame_clock_get_frame_time(clock);
+    a->dur_ms = dur_ms;
+    // Need to know tick_id inside the struct before add, so add then store
+    guint id = gtk_widget_add_tick_callback(w, shim_width_tick, a, NULL);
+    a->tick_id = id;
+    g_object_set_data(G_OBJECT(w), "shim-width-anim", a);
+}
