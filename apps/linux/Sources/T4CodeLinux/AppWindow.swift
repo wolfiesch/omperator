@@ -208,6 +208,8 @@ final class AppWindow {
         shim_widget_size(rail, Int32(railWidth))
         // Wrapper so open/close animates as ONE layout child (rail+divider move together, no double-relayout stutter)
         let railWrapper = shim_box_new(1, 0)
+        shim_set_overflow_hidden(railWrapper)
+        shim_set_halign_start(railWrapper)
         railWrapperBox = railWrapper
         shim_box_append(railWrapper, rail)
         let railDivider = makeRailDivider()

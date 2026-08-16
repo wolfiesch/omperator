@@ -875,3 +875,5 @@ static inline void shim_animate_width(GtkWidget *w, int start, int target, int d
     a->tick_id = id;
     g_object_set_data(G_OBJECT(w), "shim-width-anim", a);
 }
+static inline void shim_set_overflow_hidden(GtkWidget *w) { gtk_widget_set_overflow(w, GTK_OVERFLOW_HIDDEN); }
+static inline void shim_set_halign_start(GtkWidget *w) { gtk_widget_set_halign(w, GTK_ALIGN_START); gtk_widget_set_hexpand(w, FALSE); }
