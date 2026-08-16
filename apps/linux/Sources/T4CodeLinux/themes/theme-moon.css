@@ -633,7 +633,7 @@ scrollbar slider:hover {
   text-transform: uppercase;
 }
 
-/* Segmented grouping control: Recent / Project / Status */
+/* Segmented grouping control: Recent / Project */
 .rail-segmented {
   margin: 0 10px 6px 10px;
   background-color: rgba(35, 33, 54, 0.7);

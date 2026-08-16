@@ -788,15 +788,26 @@ static inline void shim_clipboard_set_texture(void *texture) {
    clips). Drag gesture drives the rail/pane width; snap-collapse handled
    on the Swift side. */
 
+#define SHIM_REVEALER_DURATION_MS 220
+
 static inline GtkWidget *shim_revealer(void) {
     GtkWidget *r = gtk_revealer_new();
     gtk_revealer_set_transition_type(GTK_REVEALER(r), GTK_REVEALER_TRANSITION_TYPE_SLIDE_RIGHT);
-    gtk_revealer_set_transition_duration(GTK_REVEALER(r), 220);
+    gtk_revealer_set_transition_duration(GTK_REVEALER(r), SHIM_REVEALER_DURATION_MS);
+    /* Revealer reports the animated width as its measure; it must not
+       hexpand or a parent GtkBox will stretch it to full allocation and
+       SLIDE_RIGHT will appear to snap. */
+    gtk_widget_set_hexpand(r, FALSE);
+    gtk_widget_set_halign(r, GTK_ALIGN_START);
+    gtk_widget_set_overflow(r, GTK_OVERFLOW_HIDDEN);
     return r;
 }
 static inline void shim_revealer_set_child(GtkWidget *r, GtkWidget *child) { gtk_revealer_set_child(GTK_REVEALER(r), child); }
 static inline void shim_revealer_set_reveal(GtkWidget *r, int reveal) { gtk_revealer_set_reveal_child(GTK_REVEALER(r), reveal); }
 static inline int shim_revealer_revealed(GtkWidget *r) { return gtk_revealer_get_child_revealed(GTK_REVEALER(r)); }
+static inline void shim_revealer_set_duration(GtkWidget *r, int ms) {
+    gtk_revealer_set_transition_duration(GTK_REVEALER(r), (guint)(ms < 0 ? 0 : ms));
+}
 
 typedef void (*ShimDragHandler)(void *userData, double offsetX, double offsetY, int ended);
 static ShimDragHandler shim_drag_handler = NULL;

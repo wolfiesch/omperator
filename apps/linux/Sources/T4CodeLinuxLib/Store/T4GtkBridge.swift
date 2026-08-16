@@ -26,6 +26,22 @@ public final class T4GtkBridge {
     public var sessions: [SessionRef] { store.sessions }
     public var selectedSession: SessionRef? { store.selectedSession }
 
+    /// Sessions with a turn in flight (`turn.start` … `turn.end`). Inventory
+    /// `status` often stays `idle` the whole time, so the rail cannot key
+    /// Active/Inactive off the ref alone.
+    public var activeTurnIds: Set<String> { store.activeTurns }
+
+    /// True while this session is producing a turn locally — live blocks,
+    /// streaming buffers, or an unclosed `turn.start`.
+    public func hasLiveTurn(sessionId: String) -> Bool {
+        if store.activeTurns.contains(sessionId) { return true }
+        if let timeline = store.liveTurns[sessionId], !timeline.isEmpty { return true }
+        if !(streamingText(for: sessionId).isEmpty && streamingReasoning(for: sessionId).isEmpty) {
+            return true
+        }
+        return store.liveTools[sessionId] != nil
+    }
+
     public func select(_ session: SessionRef?) { store.select(session) }
 
     public func createSession(projectId: String) async -> SessionRef? {

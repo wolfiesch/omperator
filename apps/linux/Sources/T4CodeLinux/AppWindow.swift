@@ -72,6 +72,7 @@ final class AppWindow {
     private var paneVisible = false
     private var railBox: UnsafeMutablePointer<GtkWidget>?
     private var railWrapperBox: UnsafeMutablePointer<GtkWidget>?
+    private var railRevealer: UnsafeMutablePointer<GtkWidget>?
     private var railVisible = true
     /// Rail width, persisted across launches (clamped to the resize bounds).
     private var railWidth: Int = {
@@ -202,6 +203,8 @@ final class AppWindow {
         }
 
         // Rail (left), wrapped in a revealer for the slide popout/popin.
+        // Revealer reports the animated width as its measure, so the
+        // transcript column reflows with the clip instead of snapping.
         let rail = shim_box_new(0, 0)
         railBox = rail
         addClass(rail, "rail")
@@ -215,7 +218,11 @@ final class AppWindow {
         let railDivider = makeRailDivider()
         railDividerBox = railDivider
         shim_box_append(railWrapper, railDivider)
-        shim_box_append(workspace, railWrapper)
+        let railRevealer = shim_revealer()
+        shim_revealer_set_child(railRevealer, railWrapper)
+        shim_revealer_set_reveal(railRevealer, 1)
+        self.railRevealer = railRevealer
+        shim_box_append(workspace, railRevealer)
 
         let railHeader = shim_box_new(1, 6)
         let railTitle = makeLabel("Sessions", "subtle")
@@ -244,17 +251,16 @@ final class AppWindow {
         }
         shim_box_append(rail, search)
 
-        // Grouping picker: a segmented control (Recent / Project / Status).
-        // Segmented buttons, not a GtkDropDown — the dropdown's popup crashed
-        // (its notify::selected signal has a 3-arg signature the onSignal
-        // trampoline doesn't handle) and its translucent closed state clashed
-        // with the rail. Buttons use the plain 2-arg "clicked" signal and show
-        // all three modes with the active one highlighted.
+        // Grouping picker: Recent (Active / Inactive, recency within each) or
+        // Project. Segmented buttons, not a GtkDropDown — the dropdown's popup
+        // crashed (its notify::selected signal has a 3-arg signature the
+        // onSignal trampoline doesn't handle) and its translucent closed state
+        // clashed with the rail. Buttons use the plain 2-arg "clicked" signal.
         let segmented = shim_box_new(1, 0)
         addClass(segmented, "rail-segmented")
         railSegmentButtons.removeAll()
-        for mode in [RailGrouping.recency, .project, .status] {
-            let label = mode == .recency ? "Recent" : (mode == .project ? "Project" : "Status")
+        for mode in [RailGrouping.recency, .project] {
+            let label = mode == .recency ? "Recent" : "Project"
             let button = shim_button(label)
             addClass(button, "rail-segment")
             shim_widget_expand(button, 1)
@@ -625,22 +631,29 @@ final class AppWindow {
         }
     }
 
-    private func toggleRail() {
-        guard let wrapper = railWrapperBox else { return }
-        if railVisible {
-            railVisible = false
-            let startWidth = railWidth + 6
-            shim_widget_size(wrapper, Int32(startWidth))
-            shim_animate_width(wrapper, Int32(startWidth), 0, 200)
-        } else {
-            railVisible = true
-            shim_widget_show(wrapper)
-            railBox.map { shim_widget_show($0) }
-            railDividerBox.map { shim_widget_show($0) }
-            shim_widget_size(wrapper, 0)
-            shim_animate_width(wrapper, 0, Int32(railWidth + 6), 200)
+    /// Slide the session rail open or closed. `animated: false` is for
+    /// mini-mode, where the window itself is resizing in the same beat.
+    private func setRailVisible(_ visible: Bool, animated: Bool = true) {
+        guard let revealer = railRevealer else { return }
+        railVisible = visible
+        // Drop leftover size requests from the old tick animation so the
+        // revealer can measure the child's natural width (rail + divider).
+        if let wrapper = railWrapperBox { shim_widget_size(wrapper, -1) }
+        railWrapperBox.map { shim_widget_show($0) }
+        railBox.map { shim_widget_show($0) }
+        railDividerBox.map { shim_widget_show($0) }
+        if !animated { shim_revealer_set_duration(revealer, 0) }
+        shim_revealer_set_reveal(revealer, visible ? 1 : 0)
+        if !animated { shim_revealer_set_duration(revealer, 220) }
+        if let check = settingsRailCheck {
+            settingsSyncing = true
+            shim_check_set_active(check, visible ? 1 : 0)
+            settingsSyncing = false
         }
-        if let check = settingsRailCheck { settingsSyncing = true; shim_check_set_active(check, railVisible ? 1 : 0); settingsSyncing = false }
+    }
+
+    private func toggleRail() {
+        setRailVisible(!railVisible)
     }
 
     /// Drag handle between the rail and the transcript. Dragging left of the
@@ -663,28 +676,16 @@ final class AppWindow {
     }
 
     private func applyRailDrag(offsetX: Double) {
-        guard let rail = railBox, let wrapper = railWrapperBox else { return }
+        guard let rail = railBox else { return }
         let proposed = railDragStartWidth + Int(offsetX)
         if proposed < 160 {
-            if railVisible {
-                railVisible = false
-                shim_widget_size(wrapper, 0)
-                shim_widget_hide(wrapper)
-                if let check = settingsRailCheck { settingsSyncing = true; shim_check_set_active(check, 0); settingsSyncing = false }
-            }
+            if railVisible { setRailVisible(false) }
             return
         }
-        if !railVisible {
-            railVisible = true
-            shim_widget_show(wrapper)
-            railBox.map { shim_widget_show($0) }
-            railDividerBox.map { shim_widget_show($0) }
-            if let check = settingsRailCheck { settingsSyncing = true; shim_check_set_active(check, 1); settingsSyncing = false }
-        }
+        if !railVisible { setRailVisible(true) }
         let clamped = min(400, max(180, proposed))
         railWidth = clamped
         shim_widget_size(rail, Int32(clamped))
-        if let wrapper = railWrapperBox { shim_widget_size(wrapper, Int32(clamped + 6)) }
     }
 
     private func finishRailDrag(offsetX: Double) {
@@ -743,7 +744,7 @@ final class AppWindow {
             var w: Int32 = 0, h: Int32 = 0
             shim_window_get_size(win, &w, &h)
             fullSize = (Int(w), Int(h))
-            if railVisible { railVisible = false; railWrapperBox.map { shim_widget_hide($0) } }
+            if railVisible { setRailVisible(false, animated: false) }
             if paneVisible { paneVisible = false; paneDividerBox.map { shim_widget_hide($0) }; paneSidebar.map { shim_widget_hide($0) } }
             shim_window_resize(win, 440, 560)
             CompositorPin.setPinned(true, window: win)
@@ -751,11 +752,8 @@ final class AppWindow {
             // Restore: full size, sidebars back, unpin.
             CompositorPin.setPinned(false, window: win)
             if let size = fullSize { shim_window_resize(win, Int32(size.width), Int32(size.height)) }
-            railVisible = true
-            railWrapperBox.map { shim_widget_show($0) }
-            if let rail = railBox { shim_widget_size(rail, Int32(railWidth)); shim_widget_show(rail) }
-            railDividerBox.map { shim_widget_show($0) }
-            if let wrapper = railWrapperBox { shim_widget_size(wrapper, Int32(railWidth + 6)) }
+            if let rail = railBox { shim_widget_size(rail, Int32(railWidth)) }
+            setRailVisible(true, animated: false)
             // The pane sidebar restores to its pre-mini visibility only if it was open.
         }
     }
@@ -934,6 +932,8 @@ final class AppWindow {
         if session.title.lowercased().contains(query) { return true }
         if let name = session.project.name, name.lowercased().contains(query) { return true }
         if session.status.lowercased().contains(query) { return true }
+        if (railIsActive(session) ? "active" : "inactive").contains(query) { return true }
+        if let label = railStatusLabel(session.status), label.lowercased().contains(query) { return true }
         if let model = session.model, model.lowercased().contains(query) { return true }
         return false
     }
@@ -941,7 +941,10 @@ final class AppWindow {
     private func refreshRail() {
         let sessions = store.sessions
         let needsYouIds = sessions.filter(needsYou).map(\.sessionId).sorted().joined()
-        let signature = "\(railGrouping.rawValue)|\(railSearchText)|\(sessions.count)|\(needsYouIds)"
+        let statusFingerprint = sessions.map { "\($0.sessionId):\($0.status)" }.joined()
+        let selectedId = store.selectedSession?.sessionId ?? ""
+        let liveIds = sessions.filter(railIsActive).map(\.sessionId).sorted().joined()
+        let signature = "\(railGrouping.rawValue)|\(railSearchText)|\(sessions.count)|\(needsYouIds)|\(statusFingerprint)|\(selectedId)|\(liveIds)"
         guard signature != lastRailSignature else { return }
         lastRailSignature = signature
         rebuildRail(sessions)
@@ -971,23 +974,15 @@ final class AppWindow {
 
         switch railGrouping {
         case .recency:
-            appendRailRows(rest)
+            // Two stacks only: live work vs everything else. Idle is the
+            // default living state, not a third bucket or a row marker.
+            appendRailSection("Active", rest.filter(railIsActive))
+            appendRailSection("Inactive", rest.filter { !railIsActive($0) })
         case .project:
             var seen: [String] = []
             var groups: [String: [SessionRef]] = [:]
             for session in rest {
                 let key = session.project.name?.isEmpty == false ? session.project.name! : "No project"
-                if groups[key] == nil { seen.append(key) }
-                groups[key, default: []].append(session)
-            }
-            for key in seen.sorted(by: { $0.lowercased() < $1.lowercased() }) {
-                appendRailSection(key, groups[key] ?? [])
-            }
-        case .status:
-            var seen: [String] = []
-            var groups: [String: [SessionRef]] = [:]
-            for session in rest {
-                let key = session.status.isEmpty ? "Unknown" : session.status
                 if groups[key] == nil { seen.append(key) }
                 groups[key, default: []].append(session)
             }
@@ -1013,9 +1008,17 @@ final class AppWindow {
             let title = makeLabel(session.title.isEmpty ? "Untitled session" : session.title, nil)
             shim_widget_halign_start(title)
             shim_box_append(row, title)
+            let meta = shim_box_new(1, 6)
+            if let status = railStatusLabel(session.status) {
+                let statusLabel = makeLabel(status, "muted")
+                shim_widget_halign_start(statusLabel)
+                shim_box_append(meta, statusLabel)
+            }
             let time = makeLabel(relativeTime(session.updatedAt), "muted")
             shim_widget_halign_start(time)
-            shim_box_append(row, time)
+            shim_box_append(meta, time)
+            shim_widget_halign_start(meta)
+            shim_box_append(row, meta)
             let captured = session.sessionId
             onPressed(row) { [weak self] in
                 guard let self else { return }
@@ -1027,6 +1030,55 @@ final class AppWindow {
             shim_box_append(railList, row)
             railRows[session.sessionId] = row
             railTimeLabels[session.sessionId] = time
+        }
+    }
+
+    /// Live work vs parked/stopped. Host `status` is usually `idle` even for
+    /// the chat in hand, so Active is: the open session, a local live turn,
+    /// or liveState/working flags — not the inventory string.
+    private func railIsActive(_ session: SessionRef) -> Bool {
+        if store.selectedSession?.sessionId == session.sessionId { return true }
+        if store.hasLiveTurn(sessionId: session.sessionId) { return true }
+        switch session.status.lowercased() {
+        case "active", "working": return true
+        default: return railLiveStateWorking(session)
+        }
+    }
+
+    /// Web's `sessionIsWorking` liveState signals. Extra activity lives here
+    /// when the catalog ref stays idle.
+    private func railLiveStateWorking(_ session: SessionRef) -> Bool {
+        guard case .object(let live) = session.liveState else { return false }
+        if case .string(let phase) = live["phase"] {
+            switch phase.lowercased() {
+            case "working", "running", "active", "streaming", "compacting", "queued",
+                 "waiting", "awaiting-input", "awaiting_input":
+                return true
+            default: break
+            }
+        }
+        func flag(_ key: String) -> Bool {
+            if case .bool(true) = live[key] { return true }
+            return false
+        }
+        if flag("working") || flag("isWorking") || flag("isRunning") || flag("turnActive")
+            || flag("inFlight") || flag("isStreaming") || flag("isCompacting")
+        {
+            return true
+        }
+        if case .number(let n) = live["queuedMessageCount"], n > 0 { return true }
+        if case .number(let n) = live["queue"], n > 0 { return true }
+        if case .array(let a) = live["queuedMessages"], !a.isEmpty { return true }
+        if case .array(let a) = live["queue"], !a.isEmpty { return true }
+        return false
+    }
+
+    /// Exceptional row labels only. Idle/active/closed are the Recents groups
+    /// (or silence), not per-row stamps.
+    private func railStatusLabel(_ status: String) -> String? {
+        switch status.lowercased() {
+        case "error", "failed": return "Error"
+        default: return nil
         }
     }
 

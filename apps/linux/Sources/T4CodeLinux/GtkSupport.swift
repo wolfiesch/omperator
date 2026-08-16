@@ -10,7 +10,6 @@ import CT4Gtk
 enum RailGrouping: Int {
     case recency = 0
     case project = 1
-    case status = 2
 }
 
 final class GtkBox {
