@@ -73,12 +73,19 @@ final class AppWindow {
     private var railBox: UnsafeMutablePointer<GtkWidget>?
     private var railRevealerBox: UnsafeMutablePointer<GtkWidget>?
     private var railVisible = true
-    /// Rail width, persisted across launches.
-    private var railWidth = UserDefaults.standard.object(forKey: "t4.railWidth") as? Int ?? 232
+    /// Rail width, persisted across launches (clamped to the resize bounds).
+    private var railWidth: Int = {
+        let v = UserDefaults.standard.object(forKey: "t4.railWidth") as? Int ?? 232
+        return min(400, max(180, v))
+    }()
     private var railDragStartWidth = 0
     /// Right panes sidebar width, persisted.
-    private var paneWidth = UserDefaults.standard.object(forKey: "t4.paneWidth") as? Int ?? 380
+    private var paneWidth: Int = {
+        let v = UserDefaults.standard.object(forKey: "t4.paneWidth") as? Int ?? 380
+        return min(600, max(280, v))
+    }()
     private var paneDragStartWidth = 0
+    private var paneDividerBox: UnsafeMutablePointer<GtkWidget>?
     private var miniButton: UnsafeMutablePointer<GtkWidget>?
     private var miniMode = false
     private var fullSize: (width: Int, height: Int)?
@@ -603,7 +610,10 @@ final class AppWindow {
         }
 
         shim_widget_hide(sidebar)
-        shim_box_append(workspace, makePaneDivider())
+        let paneDivider = makePaneDivider()
+        paneDividerBox = paneDivider
+        shim_widget_hide(paneDivider)
+        shim_box_append(workspace, paneDivider)
         shim_box_append(workspace, sidebar)
 
         panes.onURLChanged = { [weak self] url in
@@ -625,6 +635,7 @@ final class AppWindow {
     private func makeRailDivider() -> UnsafeMutablePointer<GtkWidget> {
         let divider = shim_box_new(0, 0)!
         addClass(divider, "pane-divider")
+        shim_set_col_resize_cursor(divider)
         onDrag(divider) { [weak self] ox, _, phase in
             guard let self else { return }
             switch phase {
@@ -666,12 +677,19 @@ final class AppWindow {
     private func togglePanes() {
         paneVisible.toggle()
         guard let sidebar = paneSidebar else { return }
-        if paneVisible { shim_widget_show(sidebar) } else { shim_widget_hide(sidebar) }
+        if paneVisible {
+            paneDividerBox.map { shim_widget_show($0) }
+            shim_widget_show(sidebar)
+        } else {
+            shim_widget_hide(sidebar)
+            paneDividerBox.map { shim_widget_hide($0) }
+        }
     }
 
     private func makePaneDivider() -> UnsafeMutablePointer<GtkWidget> {
         let divider = shim_box_new(0, 0)!
         addClass(divider, "pane-divider")
+        shim_set_col_resize_cursor(divider)
         onDrag(divider) { [weak self] ox, _, phase in
             guard let self else { return }
             switch phase {
@@ -708,7 +726,7 @@ final class AppWindow {
             shim_window_get_size(win, &w, &h)
             fullSize = (Int(w), Int(h))
             if railVisible { railVisible = false; railRevealerBox.map { shim_revealer_set_reveal($0, 0) } }
-            if paneVisible { paneVisible = false; paneSidebar.map { shim_widget_hide($0) } }
+            if paneVisible { paneVisible = false; paneDividerBox.map { shim_widget_hide($0) }; paneSidebar.map { shim_widget_hide($0) } }
             shim_window_resize(win, 440, 560)
             CompositorPin.setPinned(true, window: win)
         } else {

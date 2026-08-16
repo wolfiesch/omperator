@@ -822,3 +822,8 @@ static inline void shim_on_drag(GtkWidget *widget, void *userData) {
     gtk_widget_add_controller(widget, GTK_EVENT_CONTROLLER(g));
 }
 static inline void shim_set_drag_handler(ShimDragHandler h) { shim_drag_handler = h; }
+
+static inline void shim_set_col_resize_cursor(GtkWidget *w) {
+    GdkCursor *c = gdk_cursor_new_from_name("col-resize", NULL);
+    if (c) { gtk_widget_set_cursor(w, c); g_object_unref(c); }
+}
