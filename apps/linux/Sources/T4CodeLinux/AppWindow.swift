@@ -71,6 +71,7 @@ final class AppWindow {
     private var paneSidebar: UnsafeMutablePointer<GtkWidget>?
     private var paneVisible = false
     private var railBox: UnsafeMutablePointer<GtkWidget>?
+    private var railWrapperBox: UnsafeMutablePointer<GtkWidget>?
     private var railVisible = true
     /// Rail width, persisted across launches (clamped to the resize bounds).
     private var railWidth: Int = {
@@ -205,10 +206,14 @@ final class AppWindow {
         railBox = rail
         addClass(rail, "rail")
         shim_widget_size(rail, Int32(railWidth))
-        shim_box_append(workspace, rail)
+        // Wrapper so open/close animates as ONE layout child (rail+divider move together, no double-relayout stutter)
+        let railWrapper = shim_box_new(1, 0)
+        railWrapperBox = railWrapper
+        shim_box_append(railWrapper, rail)
         let railDivider = makeRailDivider()
         railDividerBox = railDivider
-        shim_box_append(workspace, railDivider)
+        shim_box_append(railWrapper, railDivider)
+        shim_box_append(workspace, railWrapper)
 
         let railHeader = shim_box_new(1, 6)
         let railTitle = makeLabel("Sessions", "subtle")
@@ -619,22 +624,19 @@ final class AppWindow {
     }
 
     private func toggleRail() {
-        guard let rail = railBox, let divider = railDividerBox else { return }
+        guard let wrapper = railWrapperBox else { return }
         if railVisible {
             railVisible = false
-            let start = railWidth
-            shim_widget_size(rail, Int32(start))
-            shim_widget_size(divider, 6)
-            shim_animate_width(rail, Int32(start), 0, 200)
-            shim_animate_width(divider, 6, 0, 200)
+            let startWidth = railWidth + 6
+            shim_widget_size(wrapper, Int32(startWidth))
+            shim_animate_width(wrapper, Int32(startWidth), 0, 200)
         } else {
             railVisible = true
-            shim_widget_show(rail)
-            shim_widget_show(divider)
-            shim_widget_size(rail, 0)
-            shim_widget_size(divider, 0)
-            shim_animate_width(rail, 0, Int32(railWidth), 200)
-            shim_animate_width(divider, 0, 6, 200)
+            shim_widget_show(wrapper)
+            railBox.map { shim_widget_show($0) }
+            railDividerBox.map { shim_widget_show($0) }
+            shim_widget_size(wrapper, 0)
+            shim_animate_width(wrapper, 0, Int32(railWidth + 6), 200)
         }
         if let check = settingsRailCheck { settingsSyncing = true; shim_check_set_active(check, railVisible ? 1 : 0); settingsSyncing = false }
     }
@@ -659,27 +661,28 @@ final class AppWindow {
     }
 
     private func applyRailDrag(offsetX: Double) {
-        guard let rail = railBox else { return }
+        guard let rail = railBox, let wrapper = railWrapperBox else { return }
         let proposed = railDragStartWidth + Int(offsetX)
         if proposed < 160 {
             if railVisible {
                 railVisible = false
-                shim_widget_size(rail, 0)
-                railBox.map { shim_widget_hide($0) }
-                railDividerBox.map { shim_widget_hide($0) }
+                shim_widget_size(wrapper, 0)
+                shim_widget_hide(wrapper)
                 if let check = settingsRailCheck { settingsSyncing = true; shim_check_set_active(check, 0); settingsSyncing = false }
             }
             return
         }
         if !railVisible {
             railVisible = true
-            shim_widget_show(rail)
+            shim_widget_show(wrapper)
+            railBox.map { shim_widget_show($0) }
             railDividerBox.map { shim_widget_show($0) }
             if let check = settingsRailCheck { settingsSyncing = true; shim_check_set_active(check, 1); settingsSyncing = false }
         }
         let clamped = min(400, max(180, proposed))
         railWidth = clamped
         shim_widget_size(rail, Int32(clamped))
+        if let wrapper = railWrapperBox { shim_widget_size(wrapper, Int32(clamped + 6)) }
     }
 
     private func finishRailDrag(offsetX: Double) {
@@ -738,7 +741,7 @@ final class AppWindow {
             var w: Int32 = 0, h: Int32 = 0
             shim_window_get_size(win, &w, &h)
             fullSize = (Int(w), Int(h))
-            if railVisible { railVisible = false; railBox.map { shim_widget_hide($0) }; railDividerBox.map { shim_widget_hide($0) } }
+            if railVisible { railVisible = false; railWrapperBox.map { shim_widget_hide($0) } }
             if paneVisible { paneVisible = false; paneDividerBox.map { shim_widget_hide($0) }; paneSidebar.map { shim_widget_hide($0) } }
             shim_window_resize(win, 440, 560)
             CompositorPin.setPinned(true, window: win)
@@ -747,8 +750,10 @@ final class AppWindow {
             CompositorPin.setPinned(false, window: win)
             if let size = fullSize { shim_window_resize(win, Int32(size.width), Int32(size.height)) }
             railVisible = true
+            railWrapperBox.map { shim_widget_show($0) }
             if let rail = railBox { shim_widget_size(rail, Int32(railWidth)); shim_widget_show(rail) }
             railDividerBox.map { shim_widget_show($0) }
+            if let wrapper = railWrapperBox { shim_widget_size(wrapper, Int32(railWidth + 6)) }
             // The pane sidebar restores to its pre-mini visibility only if it was open.
         }
     }
