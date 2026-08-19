@@ -53,6 +53,7 @@ function settledRuntimeRef(current: SessionRef, status: SessionRef["status"]): S
 	const next: SessionRef = { ...current, status };
 	delete next.pendingApproval;
 	delete next.pendingUserInput;
+	delete next.runtimeAlive;
 	if (current.attention) {
 		const attention = { ...current.attention, pending: [], pendingCount: 0, truncated: false };
 		if (attention.latestOutcome) next.attention = attention;
@@ -152,6 +153,18 @@ export class SessionProjection {
 		if (JSON.stringify(next) === JSON.stringify(current)) return undefined;
 		return this.updateRef(next, `status:${status}`);
 	}
+	updateRuntimeAlive(alive: boolean): ServerFrame | undefined {
+		const current = this.value.ref;
+		if (alive) {
+			if (current.status === "closed" || current.archivedAt) return undefined;
+			if (current.runtimeAlive === true) return undefined;
+			return this.updateRef({ ...current, runtimeAlive: true }, "runtime:alive");
+		}
+		if (current.runtimeAlive === undefined) return undefined;
+		const next = { ...current };
+		delete next.runtimeAlive;
+		return this.updateRef(next, "runtime:stopped");
+	}
 	markRuntimeCrashed(outcome?: AttentionOutcome): ServerFrame | undefined {
 		const current = this.value.ref;
 		this.#pendingAttention.clear();
@@ -194,10 +207,12 @@ export class SessionProjection {
 				: current.project;
 		const title = placeholderTitle(current.title) && !placeholderTitle(record.title) ? record.title : current.title;
 		const archivedAt = record.archivedAt;
-		if (project === current.project && title === current.title && archivedAt === current.archivedAt) return undefined;
 		const next = { ...current, project, title };
-		if (archivedAt) next.archivedAt = archivedAt;
-		else delete next.archivedAt;
+		if (archivedAt) {
+			next.archivedAt = archivedAt;
+			delete next.runtimeAlive;
+		} else delete next.archivedAt;
+		if (JSON.stringify(next) === JSON.stringify(current)) return undefined;
 		return this.updateRef(next, `record:${record.updatedAt}:${archivedAt ?? "restored"}`);
 	}
 	reconcileObserverRecord(record: SessionRecord): ServerFrame | undefined {
@@ -223,10 +238,13 @@ export class SessionProjection {
 		return this.updateRef(next, `observer-record:${record.updatedAt}`);
 	}
 	updateArchivedAt(archivedAt?: string): ServerFrame | undefined {
-		if (this.value.ref.archivedAt === archivedAt) return undefined;
-		const next = { ...this.value.ref };
-		if (archivedAt) next.archivedAt = archivedAt;
-		else delete next.archivedAt;
+		const current = this.value.ref;
+		const next = { ...current };
+		if (archivedAt) {
+			next.archivedAt = archivedAt;
+			delete next.runtimeAlive;
+		} else delete next.archivedAt;
+		if (JSON.stringify(next) === JSON.stringify(current)) return undefined;
 		return this.updateRef(next, `archived:${archivedAt ?? "restored"}`);
 	}
 	indexUpsert(): ServerFrame {

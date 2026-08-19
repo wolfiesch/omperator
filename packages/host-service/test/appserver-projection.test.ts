@@ -6,6 +6,12 @@ import { SessionProjection } from "../src/projection.ts";
 import { SubagentProjection } from "../src/subagent-projection.ts";
 import type { SessionRecord } from "../src/types.ts";
 
+function deltaUpsert(frame: { type: string } | undefined): Record<string, unknown> {
+  if (!frame || frame.type !== "session.delta" || !("upsert" in frame))
+    throw new Error("expected session.delta frame");
+  return frame.upsert as Record<string, unknown>;
+}
+
 const host = hostId("host-test");
 
 function record(id: string): SessionRecord {
@@ -185,6 +191,37 @@ describe("appserver projection and replay", () => {
       },
     });
     expect(projection.value.ref.pendingUserInput).toBeUndefined();
+  });
+
+  test("runtimeAlive is independent of turn status and drops on close", () => {
+    const projection = new SessionProjection(host, record("s"), "epoch-a");
+    expect(projection.value.ref.runtimeAlive).toBeUndefined();
+    const alive = projection.updateRuntimeAlive(true);
+    expect(alive).toMatchObject({ type: "session.delta", upsert: { runtimeAlive: true, status: "idle" } });
+    expect(projection.updateRuntimeAlive(true)).toBeUndefined();
+    expect(projection.updateStatus("active")).toMatchObject({
+      type: "session.delta",
+      upsert: { status: "active", runtimeAlive: true },
+    });
+    expect(projection.updateStatus("idle")).toMatchObject({
+      type: "session.delta",
+      upsert: { status: "idle", runtimeAlive: true },
+    });
+    expect(deltaUpsert(projection.updateRuntimeAlive(false))).not.toHaveProperty("runtimeAlive");
+    expect(projection.value.ref.runtimeAlive).toBeUndefined();
+
+    projection.updateRuntimeAlive(true);
+    projection.updateStatus("closed");
+    expect(projection.value.ref).toMatchObject({ status: "closed" });
+    expect(projection.value.ref).not.toHaveProperty("runtimeAlive");
+    expect(projection.updateRuntimeAlive(true)).toBeUndefined();
+
+    const archived = new SessionProjection(host, record("archived"), "epoch-a");
+    archived.updateRuntimeAlive(true);
+    const archiveDelta = deltaUpsert(archived.updateArchivedAt("2026-07-18T12:00:00.000Z"));
+    expect(archiveDelta).toMatchObject({ archivedAt: "2026-07-18T12:00:00.000Z" });
+    expect(archiveDelta).not.toHaveProperty("runtimeAlive");
+    expect(archived.updateRuntimeAlive(true)).toBeUndefined();
   });
 });
 

@@ -312,6 +312,21 @@ describe("app-wire authority", () => {
 		for (const mode of ["edit", "PLAN", "read-only", ""])
 			expect(() => decodeSessionRef({ ...base, mode }, "session")).toThrow(AppWireError);
 	});
+	test("runtimeAlive is an optional boolean independent of status", () => {
+		const base = {
+			hostId: "h",
+			sessionId: "s",
+			project: { projectId: "p" },
+			revision: "r",
+			title: "Task",
+			status: "idle",
+			updatedAt: "2026-07-18T12:00:00.000Z",
+		};
+		expect(decodeSessionRef(base, "session").runtimeAlive).toBeUndefined();
+		expect(decodeSessionRef({ ...base, runtimeAlive: true }, "session").runtimeAlive).toBe(true);
+		expect(decodeSessionRef({ ...base, runtimeAlive: false }, "session").runtimeAlive).toBe(false);
+		expect(() => decodeSessionRef({ ...base, runtimeAlive: "yes" }, "session")).toThrow(AppWireError);
+	});
 	test("hello and durable lineage decode in string and parsed modes", () => {
 		expect(decodeClientFrame(hello).type).toBe("hello");
 		for (const protocol of [

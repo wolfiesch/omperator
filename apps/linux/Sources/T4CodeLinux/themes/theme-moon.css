@@ -44,6 +44,14 @@ window {
   box-shadow: inset 0 1px 0 rgba(86, 82, 110, 0.4);
 }
 
+.rail-item-selected {
+  color: #F6C177;
+}
+
+.rail-caption-working {
+  color: #F6C177;
+}
+
 /* ── Transcript ───────────────────────────────────────────── */
 
 .transcript {

@@ -256,7 +256,7 @@ final class AppWindow {
         }
         shim_box_append(rail, search)
 
-        // Grouping picker: Recent (Active / Inactive, recency within each) or
+        // Grouping picker: Recent (Running / Saved, recency within each) or
         // Project. Segmented buttons, not a GtkDropDown — the dropdown's popup
         // crashed (its notify::selected signal has a 3-arg signature the
         // onSignal trampoline doesn't handle) and its translucent closed state
@@ -965,8 +965,8 @@ final class AppWindow {
         if session.title.lowercased().contains(query) { return true }
         if let name = session.project.name, name.lowercased().contains(query) { return true }
         if session.status.lowercased().contains(query) { return true }
-        if (railIsActive(session) ? "active" : "inactive").contains(query) { return true }
-        if let label = railStatusLabel(session.status), label.lowercased().contains(query) { return true }
+        if (store.sessionIsRunning(session) ? "running" : "saved").contains(query) { return true }
+        if let caption = store.railCaption(session), caption.lowercased().contains(query) { return true }
         if let model = session.model, model.lowercased().contains(query) { return true }
         return false
     }
@@ -976,8 +976,9 @@ final class AppWindow {
         let needsYouIds = sessions.filter(needsYou).map(\.sessionId).sorted().joined()
         let statusFingerprint = sessions.map { "\($0.sessionId):\($0.status)" }.joined()
         let selectedId = store.selectedSession?.sessionId ?? ""
-        let liveIds = sessions.filter(railIsActive).map(\.sessionId).sorted().joined()
-        let signature = "\(railGrouping.rawValue)|\(railSearchText)|\(sessions.count)|\(needsYouIds)|\(statusFingerprint)|\(selectedId)|\(liveIds)"
+        let runningIds = sessions.filter { store.sessionIsRunning($0) }.map(\.sessionId).sorted().joined()
+        let captionFingerprint = sessions.map { "\($0.sessionId):\(store.railCaption($0) ?? "")" }.joined()
+        let signature = "\(railGrouping.rawValue)|\(railSearchText)|\(sessions.count)|\(needsYouIds)|\(statusFingerprint)|\(selectedId)|\(runningIds)|\(captionFingerprint)"
         guard signature != lastRailSignature else { return }
         lastRailSignature = signature
         rebuildRail(sessions)
@@ -1007,10 +1008,10 @@ final class AppWindow {
 
         switch railGrouping {
         case .recency:
-            // Two stacks only: live work vs everything else. Idle is the
-            // default living state, not a third bucket or a row marker.
-            appendRailSection("Active", rest.filter(railIsActive))
-            appendRailSection("Inactive", rest.filter { !railIsActive($0) })
+            // Two stacks: a live runtime vs saved history. Selection and
+            // turn activity never move a row.
+            appendRailSection("Running", rest.filter { store.sessionIsRunning($0) })
+            appendRailSection("Saved", rest.filter { !store.sessionIsRunning($0) })
         case .project:
             var seen: [String] = []
             var groups: [String: [SessionRef]] = [:]
@@ -1038,12 +1039,16 @@ final class AppWindow {
         for session in sessions.prefix(80) {
             let row = shim_box_new(0, 2)
             addClass(row, "rail-item")
+            if store.selectedSession?.sessionId == session.sessionId {
+                addClass(row, "rail-item-selected")
+            }
             let title = makeLabel(session.title.isEmpty ? "Untitled session" : session.title, nil)
             shim_widget_halign_start(title)
             shim_box_append(row, title)
             let meta = shim_box_new(1, 6)
-            if let status = railStatusLabel(session.status) {
-                let statusLabel = makeLabel(status, "muted")
+            if let caption = store.railCaption(session) {
+                let captionClass = caption == "Working" ? "rail-caption-working" : "muted"
+                let statusLabel = makeLabel(caption, captionClass)
                 shim_widget_halign_start(statusLabel)
                 shim_box_append(meta, statusLabel)
             }
@@ -1063,55 +1068,6 @@ final class AppWindow {
             shim_box_append(railList, row)
             railRows[session.sessionId] = row
             railTimeLabels[session.sessionId] = time
-        }
-    }
-
-    /// Live work vs parked/stopped. Host `status` is usually `idle` even for
-    /// the chat in hand, so Active is: the open session, a local live turn,
-    /// or liveState/working flags — not the inventory string.
-    private func railIsActive(_ session: SessionRef) -> Bool {
-        if store.selectedSession?.sessionId == session.sessionId { return true }
-        if store.hasLiveTurn(sessionId: session.sessionId) { return true }
-        switch session.status.lowercased() {
-        case "active", "working": return true
-        default: return railLiveStateWorking(session)
-        }
-    }
-
-    /// Web's `sessionIsWorking` liveState signals. Extra activity lives here
-    /// when the catalog ref stays idle.
-    private func railLiveStateWorking(_ session: SessionRef) -> Bool {
-        guard case .object(let live) = session.liveState else { return false }
-        if case .string(let phase) = live["phase"] {
-            switch phase.lowercased() {
-            case "working", "running", "active", "streaming", "compacting", "queued",
-                 "waiting", "awaiting-input", "awaiting_input":
-                return true
-            default: break
-            }
-        }
-        func flag(_ key: String) -> Bool {
-            if case .bool(true) = live[key] { return true }
-            return false
-        }
-        if flag("working") || flag("isWorking") || flag("isRunning") || flag("turnActive")
-            || flag("inFlight") || flag("isStreaming") || flag("isCompacting")
-        {
-            return true
-        }
-        if case .number(let n) = live["queuedMessageCount"], n > 0 { return true }
-        if case .number(let n) = live["queue"], n > 0 { return true }
-        if case .array(let a) = live["queuedMessages"], !a.isEmpty { return true }
-        if case .array(let a) = live["queue"], !a.isEmpty { return true }
-        return false
-    }
-
-    /// Exceptional row labels only. Idle/active/closed are the Recents groups
-    /// (or silence), not per-row stamps.
-    private func railStatusLabel(_ status: String) -> String? {
-        switch status.lowercased() {
-        case "error", "failed": return "Error"
-        default: return nil
         }
     }
 

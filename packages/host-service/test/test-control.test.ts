@@ -124,9 +124,18 @@ test("test control requires explicit test mode and a bounded bearer token", asyn
 			return status(runId, "clean", 0);
 		},
 	};
-	expect(() => createAppserver({ testControl: control })).toThrow(
-		"appserver test control requires OMP_APP_TEST_MODE=1",
-	);
+	// Another file's timed-out test can leak OMP_APP_TEST_MODE into the shared
+	// process; this contract is about the variable being unset, so assert it
+	// from a clean slate.
+	const leakedTestMode = process.env.OMP_APP_TEST_MODE;
+	delete process.env.OMP_APP_TEST_MODE;
+	try {
+		expect(() => createAppserver({ testControl: control })).toThrow(
+			"appserver test control requires OMP_APP_TEST_MODE=1",
+		);
+	} finally {
+		if (leakedTestMode !== undefined) process.env.OMP_APP_TEST_MODE = leakedTestMode;
+	}
 	await withTestMode(async () => {
 		expect(() => createAppserver({ testControl: { ...control, token: "" } })).toThrow(
 			"appserver test control token must contain 32 to 256 bytes",

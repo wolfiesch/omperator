@@ -26,9 +26,8 @@ public final class T4GtkBridge {
     public var sessions: [SessionRef] { store.sessions }
     public var selectedSession: SessionRef? { store.selectedSession }
 
-    /// Sessions with a turn in flight (`turn.start` … `turn.end`). Inventory
-    /// `status` often stays `idle` the whole time, so the rail cannot key
-    /// Active/Inactive off the ref alone.
+    /// Sessions with a turn in flight (`turn.start` … `turn.end`). Used for
+    /// the composer Stop button and the rail "Working" caption — not grouping.
     public var activeTurnIds: Set<String> { store.activeTurns }
 
     /// True while this session is producing a turn locally — live blocks,
@@ -40,6 +39,19 @@ public final class T4GtkBridge {
             return true
         }
         return store.liveTools[sessionId] != nil
+    }
+
+    public func isDraftSession(_ sessionId: String) -> Bool {
+        T4RailGrouping.isDraftSession(sessionId)
+    }
+
+    /// Host currently has a live runtime, or this is a local draft still booting.
+    public func sessionIsRunning(_ session: SessionRef) -> Bool {
+        T4RailGrouping.isRunning(session)
+    }
+
+    public func railCaption(_ session: SessionRef) -> String? {
+        T4RailGrouping.caption(session, hasLiveTurn: hasLiveTurn(sessionId: session.sessionId))
     }
 
     public func select(_ session: SessionRef?) { store.select(session) }

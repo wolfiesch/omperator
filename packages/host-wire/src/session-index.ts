@@ -155,6 +155,10 @@ export interface SessionRef {
 	contextUsage?: ContextUsage;
 	attention?: SessionAttentionState;
 	runtime?: SessionRuntime;
+	/** True when this host currently has a live native/ACP/collab runtime for
+	 *  the session, or another process holds a live write lock. Absent means
+	 *  saved history only. Independent of `status` (turn activity). */
+	runtimeAlive?: boolean;
 }
 export interface SessionListResult {
 	cursor: Cursor;
@@ -411,6 +415,8 @@ export function decodeSessionRef(value: unknown, path: string): SessionRef {
 		fail("INVALID_FRAME", "pendingApproval must be boolean", `${path}.pendingApproval`);
 	if (session.pendingUserInput !== undefined && typeof session.pendingUserInput !== "boolean")
 		fail("INVALID_FRAME", "pendingUserInput must be boolean", `${path}.pendingUserInput`);
+	if (session.runtimeAlive !== undefined && typeof session.runtimeAlive !== "boolean")
+		fail("INVALID_FRAME", "runtimeAlive must be boolean", `${path}.runtimeAlive`);
 	if (session.proposedPlan !== undefined) optionalString(session.proposedPlan, `${path}.proposedPlan`, 4096);
 	if (session.contextUsage !== undefined) {
 		const usage = boundedMap(session.contextUsage, `${path}.contextUsage`);

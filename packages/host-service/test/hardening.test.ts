@@ -585,6 +585,7 @@ describe("projection, replay, and idempotency", () => {
 			...projection.value.ref,
 			pendingApproval: true,
 			pendingUserInput: true,
+			runtimeAlive: true,
 			liveState: {
 				...projection.value.ref.liveState,
 				pendingApproval: true,
@@ -619,6 +620,7 @@ describe("projection, replay, and idempotency", () => {
 		});
 		expect(projection.value.ref).not.toHaveProperty("pendingApproval");
 		expect(projection.value.ref).not.toHaveProperty("pendingUserInput");
+		expect(projection.value.ref).not.toHaveProperty("runtimeAlive");
 		expect(projection.value.ref.liveState).not.toHaveProperty("queuedMessages");
 		expect(projection.value.ref.liveState).not.toHaveProperty("pendingApproval");
 		expect(projection.value.ref.liveState).not.toHaveProperty("pendingUserInput");

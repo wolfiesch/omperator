@@ -169,6 +169,22 @@ struct HostWireFixtureTests {
         #expect(session.sessionControl == .unknown)
         #expect(session.sessionControl != nil)
     }
+
+    @Test("runtimeAlive decodes as an optional boolean")
+    func runtimeAliveField() throws {
+        let missing = Data("""
+        {"hostId":"h","sessionId":"s","project":{"projectId":"p"},"revision":"r",\
+        "title":"Saved","status":"idle","updatedAt":"2026-07-27T00:00:00.000Z"}
+        """.utf8)
+        #expect(try JSONDecoder().decode(SessionRef.self, from: missing).runtimeAlive == nil)
+
+        let alive = Data("""
+        {"hostId":"h","sessionId":"s","project":{"projectId":"p"},"revision":"r",\
+        "title":"Running","status":"idle","updatedAt":"2026-07-27T00:00:00.000Z",\
+        "runtimeAlive":true}
+        """.utf8)
+        #expect(try JSONDecoder().decode(SessionRef.self, from: alive).runtimeAlive == true)
+    }
     @Test("Snapshot, entry, and gap frames decode; durable entry decodes standalone")
     func transcriptFrames() throws {
         // Snapshot, durable-entry, and gap server frames.

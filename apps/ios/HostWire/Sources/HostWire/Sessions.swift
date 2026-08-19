@@ -7,7 +7,8 @@ import Foundation
 /// transport / cluster / ci), `attention`, and `runtime` — are carried as
 /// opaque `JSONValue` until their typed decoders are ported. Everything needed
 /// to render and group the rail (host, session, project, revision, title,
-/// status, activity flags, model, context usage) is typed and validated here.
+/// status, runtimeAlive, activity flags, model, context usage) is typed
+/// and validated here.
 
 public struct ProjectIdentity: Decodable, Equatable, Sendable {
     public let projectId: ProjectId
@@ -77,10 +78,14 @@ public struct SessionRef: Decodable, Equatable, Sendable {
     public let attention: JSONValue?
     public let runtime: JSONValue?
     public let mode: String?
+    /// Host-authoritative: a live native/ACP/collab runtime, or another app
+    /// with a live write lock. Absent means saved history only. Independent
+    /// of `status` (turn activity).
+    public let runtimeAlive: Bool?
     private enum CodingKeys: String, CodingKey {
         case hostId, sessionId, project, revision, title, status, updatedAt, archivedAt
         case liveState, model, thinking, pendingApproval, pendingUserInput, proposedPlan
-        case contextUsage, attention, runtime, mode
+        case contextUsage, attention, runtime, mode, runtimeAlive
     }
 
     public init(from decoder: Decoder) throws {
@@ -113,6 +118,7 @@ public struct SessionRef: Decodable, Equatable, Sendable {
         contextUsage = try c.decodeIfPresent(ContextUsage.self, forKey: .contextUsage)
         attention = try c.decodeIfPresent(JSONValue.self, forKey: .attention)
         runtime = try c.decodeIfPresent(JSONValue.self, forKey: .runtime)
+        runtimeAlive = try c.decodeIfPresent(Bool.self, forKey: .runtimeAlive)
     }
 
     /// A missing control field means ordinary writable appserver ownership.

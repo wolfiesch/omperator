@@ -575,13 +575,22 @@ describe("remote appserver policy transport", () => {
 			});
 			await flush();
 			expect(transformOrder).toEqual(["active:start"]);
-			expect(socket.sends).toEqual([]);
+			// The runtime:alive delta precedes the held status delta; it is
+			// unrelated to the ordering property under test.
+			const earlySends = sentFrames(socket);
+			expect(earlySends).toHaveLength(1);
+			expect(earlySends[0]).toMatchObject({ type: "session.delta", upsert: { runtimeAlive: true } });
 
 			releaseActive.resolve();
 			await promptDispatch;
 			await flush();
 			expect(transformOrder).toEqual(["active:start", "active:end", "active:start", "active:end", "response"]);
-			expect(sentFrames(socket).map(frame => frame.type)).toEqual(["session.delta", "session.delta", "response"]);
+			expect(sentFrames(socket).map(frame => frame.type)).toEqual([
+				"session.delta",
+				"session.delta",
+				"session.delta",
+				"response",
+			]);
 			await appserver.stop();
 		} finally {
 			harness.restore();

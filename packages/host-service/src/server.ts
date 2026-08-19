@@ -2732,6 +2732,7 @@ export class LocalAppserver implements AppserverHandle {
 			this.#records.set(publicSessionId, record);
 			this.#projections.set(publicSessionId, new SessionProjection(this.hostId, record, this.epoch, this.#ringSize));
 			this.#externalRuntimes.set(publicSessionId, { runtimeId, workspaceInstanceId, session: runtimeSession });
+			this.projectRuntimeAlive(publicSessionId);
 			return { sessionId: publicSessionId };
 		} catch (cause) {
 			if (runtimeSession) await runtimeSession.dispose().catch(() => undefined);
@@ -3170,6 +3171,7 @@ export class LocalAppserver implements AppserverHandle {
 			this.disposeCollabBridge(sessionId, "collab room closed");
 		});
 		this.#collabBridges.set(sessionId, bridge);
+		this.projectRuntimeAlive(sessionId);
 		this.#log("collab.bridge.open", { sessionId, relay: link.wsUrl });
 		bridge.start();
 	}
@@ -3179,6 +3181,7 @@ export class LocalAppserver implements AppserverHandle {
 		if (bridge) {
 			bridge.dispose();
 			this.#collabBridges.delete(sessionId);
+			this.projectRuntimeAlive(sessionId);
 			this.#collabDeadUntil.set(sessionId, Date.now() + 30_000);
 			this.#log("collab.bridge.close", { sessionId, reason });
 		}
@@ -3354,6 +3357,7 @@ export class LocalAppserver implements AppserverHandle {
 		// and is awaited by the first prompt — session.open stays instant.
 		if (!this.#externalRuntimes.has(createdSessionId))
 			await this.ensureSupervisor(createdSessionId, false, false);
+		this.projectRuntimeAlive(createdSessionId);
 		await this.broadcastIndex(projection.indexUpsert());
 		return {
 			frame: response(this.hostId, command, true, {
@@ -3450,6 +3454,7 @@ export class LocalAppserver implements AppserverHandle {
 			}
 			throw new SessionStartError(reason);
 		}
+		this.projectRuntimeAlive(record.sessionId);
 		await this.broadcastIndex(projection.indexUpsert());
 		return { frame: response(this.hostId, command, true, { session: projection.value.ref }) };
 	}
@@ -3790,6 +3795,7 @@ export class LocalAppserver implements AppserverHandle {
 		const current = this.#supervisors.get(sessionId);
 		if (current && current !== supervisor) return false;
 		this.#supervisors.delete(sessionId);
+		this.projectRuntimeAlive(sessionId);
 		this.#promptLifecycle.releaseAll(sessionId, "cancelled");
 		this.#stateRefreshGenerations.delete(sessionId);
 		this.#transcripts.delete(sessionId);
@@ -3803,6 +3809,7 @@ export class LocalAppserver implements AppserverHandle {
 			if (this.#supervisors.get(sessionId) !== supervisor) return;
 			this.#log("supervisor.exit", { sessionId });
 			this.#supervisors.delete(sessionId);
+			this.projectRuntimeAlive(sessionId);
 			if (this.#stopping || this.#closedSessions.has(sessionId)) return;
 			this.#transcripts.delete(sessionId);
 			this.disposeSubagentState(sessionId);
@@ -3875,6 +3882,7 @@ export class LocalAppserver implements AppserverHandle {
 		}
 		if (this.#externalRuntimes.get(sessionId) !== owner) return false;
 		this.#externalRuntimes.delete(sessionId);
+		this.projectRuntimeAlive(sessionId);
 		this.#promptLifecycle.releaseAll(sessionId, "cancelled");
 		this.#stateRefreshGenerations.delete(sessionId);
 		return true;
@@ -3926,6 +3934,7 @@ export class LocalAppserver implements AppserverHandle {
 			);
 			const delta = projection.updateArchivedAt(archivedAt);
 			if (delta) await this.broadcastIndex(delta);
+			this.projectRuntimeAlive(sessionId);
 			return { frame: response(this.hostId, command, true, { archived: true }) };
 		} catch {
 			return {
@@ -3966,6 +3975,7 @@ export class LocalAppserver implements AppserverHandle {
 			await this.broadcastAttachedOrdered(sessionId, projection.appendEvent({ type: "session_restored" }));
 			const delta = projection.updateArchivedAt();
 			if (delta) await this.broadcastIndex(delta);
+			this.projectRuntimeAlive(sessionId);
 			return { frame: response(this.hostId, command, true, { restored: true }) };
 		} catch {
 			return {
@@ -4268,10 +4278,12 @@ export class LocalAppserver implements AppserverHandle {
 		}
 		const start = Promise.resolve().then(() => this.startSupervisor(sessionId, ignoreLifecycleFence, waitForReady));
 		this.#startPromises.set(sessionId, start);
+		this.projectRuntimeAlive(sessionId);
 		try {
 			return await start;
 		} finally {
 			this.#startPromises.delete(sessionId);
+			this.projectRuntimeAlive(sessionId);
 		}
 	}
 	private async startSupervisor(
@@ -4436,6 +4448,7 @@ export class LocalAppserver implements AppserverHandle {
 			this.#ompVersion,
 		);
 		this.#supervisors.set(sessionId, supervisor);
+		this.projectRuntimeAlive(sessionId);
 		try {
 		if (waitForReady) {
 			await supervisor.start();
@@ -4466,7 +4479,10 @@ export class LocalAppserver implements AppserverHandle {
 	/** Cleanup after a failed supervisor start (shared by the awaited and
 	 * spawn-only paths). Rethrows the original error for awaited callers. */
 	private async cleanupFailedSupervisor(sessionId: SessionId, supervisor: RpcChildSupervisor, error: unknown): Promise<void> {
-		if (this.#supervisors.get(sessionId) === supervisor) this.#supervisors.delete(sessionId);
+		if (this.#supervisors.get(sessionId) === supervisor) {
+			this.#supervisors.delete(sessionId);
+			this.projectRuntimeAlive(sessionId);
+		}
 		this.#promptLifecycle.releaseAll(sessionId, "failed");
 		this.#transcripts.delete(sessionId);
 		this.disposeSubagentState(sessionId);
@@ -5296,7 +5312,10 @@ export class LocalAppserver implements AppserverHandle {
 			supervisor.stop("SIGKILL");
 			await child.exited.catch(() => undefined);
 		}
-		if (this.#supervisors.get(sessionId) === supervisor) this.#supervisors.delete(sessionId);
+		if (this.#supervisors.get(sessionId) === supervisor) {
+			this.#supervisors.delete(sessionId);
+			this.projectRuntimeAlive(sessionId);
+		}
 		this.#promptLifecycle.releaseAll(sessionId, "failed");
 		this.#stateRefreshGenerations.delete(sessionId);
 		this.#transcripts.delete(sessionId);
@@ -5337,6 +5356,7 @@ export class LocalAppserver implements AppserverHandle {
 		const record = this.#records.get(sessionId);
 		const projection = this.#projections.get(sessionId);
 		if (!record || !projection) return;
+		try {
 		// A local child owns the session. Never let external bytes rebase it.
 		// A restart can start that child while the attach-time observer still
 		// projects "reconciling"; settle the projection back to writable once
@@ -5542,6 +5562,9 @@ export class LocalAppserver implements AppserverHandle {
 		const control = projection.setSessionControl();
 		if (control) await this.broadcastIndex(control);
 		this.cleanupObserverState(sessionId);
+		} finally {
+			this.projectRuntimeAlive(sessionId);
+		}
 	}
 	/**
 	 * After a restart, re-spawn supervisors for sessions this host created
@@ -5580,6 +5603,24 @@ export class LocalAppserver implements AppserverHandle {
 			void this.enqueueExternalRefresh(sessionId).catch(() => undefined);
 		}, 250);
 		this.#observerTimers.set(sessionId, timer);
+	}
+
+	/** Live native/ACP/collab child, spawn in flight, or another app with a live write lock.
+	 *  Independent of turn `status`. Closed/archived sessions are never alive. */
+	private sessionRuntimeAlive(sessionId: SessionId): boolean {
+		if (this.#closedSessions.has(sessionId)) return false;
+		const ref = this.#projections.get(sessionId)?.value.ref;
+		if (!ref || ref.status === "closed" || ref.archivedAt) return false;
+		if (this.#supervisors.has(sessionId) || this.#startPromises.has(sessionId)) return true;
+		if (this.#externalRuntimes.has(sessionId) || this.#collabBridges.has(sessionId)) return true;
+		const control = ref.liveState?.sessionControl;
+		return control?.mode === "observer" && control.lockStatus === "live";
+	}
+	private projectRuntimeAlive(sessionId: SessionId): void {
+		const projection = this.#projections.get(sessionId);
+		if (!projection) return;
+		const frame = projection.updateRuntimeAlive(this.sessionRuntimeAlive(sessionId));
+		if (frame) this.broadcast(sessionId, frame);
 	}
 
 	private sessionListResult(): { sessions: SessionRef[]; totalCount: number; truncated: boolean } {
