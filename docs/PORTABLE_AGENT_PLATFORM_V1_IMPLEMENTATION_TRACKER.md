@@ -1,11 +1,11 @@
 # Portable Agent Platform v1 implementation tracker
 
-- Status: implementation in progress; P0, P1, P2-01 through P2-06, P3-01 through P3-03, and P4 are complete
+- Status: implementation merged in #101; the live-cluster proofs and release gates remain open in #108
 - Source specification: <https://roycorp.net/briefs/omperator-portable-agent-platform-v1-f4c81ee5.html>
 - Source SHA-256: `f31778a0d57b3b39b822faa0d6e7a3f1af2888dd09a9a39780025c43acce6194`
 - Specification baseline: `wolfiesch/omperator@2ab8fc7`, `manaflow-ai/cmux@192e444`, `can1357/oh-my-pi@d16c616`
 - Repository review baseline: `48b1ba7b94f468154ed0e0998118d01f7dbffbd0`
-- Execution tracker: project-local `td` database under `.todos/`
+- Execution tracker: GitHub issue #108 (the earlier local tracker is retired)
 
 ## Completed work packages
 
@@ -266,14 +266,14 @@ Every scenario uses real implementations where the contract requires them. Fixtu
 
 ## Goal-loop procedure
 
-1. Run `td usage --new-session` or `td resume`, then select the earliest unblocked critical-path issue.
+1. Select the earliest unblocked critical-path gate in #108.
 2. Main owns the shared contract issue. Dispatch at most two genuinely independent implementation issues.
 3. Every delegated issue names files/symbols, non-goals, required interface, and observable acceptance. Agents skip project-wide validation.
 4. Verify claimed changed files and one behavior contract before accepting delegated work.
 5. Run `pnpm verify:affected:plan`, then `pnpm verify:affected`, plus the direct smoke scenario for the changed contract. Go/package-specific checks may precede the affected gate.
 6. Run one fresh-context review after correctness gates. Act only on high-confidence correctness, security, contract, or test defects.
-7. Commit a completed, passing code slice. Update the `td` issue with files, evidence, decisions, and remaining risks.
-8. Close the issue, write `td handoff`, and continue to the next ready issue. A phase boundary is not a stopping condition.
+7. Commit a completed, passing code slice. Record files, evidence, decisions, and remaining risks on the issue.
+8. Check off the gate and continue to the next ready issue. A phase boundary is not a stopping condition.
 9. Stop only at an explicit user gate, external publication/deployment approval, destructive operation approval, or an unreachable prerequisite.
 
 ## Completion definition
